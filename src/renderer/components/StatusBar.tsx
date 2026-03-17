@@ -17,9 +17,12 @@ export function StatusBar() {
           <span className="text-red-600 dark:text-red-400">❌ 미설치</span>
         )}
       </div>
-      {ollamaStatus.version && (
-        <span className="text-gray-400 text-xs">{ollamaStatus.version}</span>
-      )}
+      <div className="flex items-center gap-3">
+        {ollamaStatus.version && (
+          <span className="text-gray-400 text-xs">{ollamaStatus.version}</span>
+        )}
+        <span className="text-gray-400 text-xs">copyright 2026. JJW.</span>
+      </div>
     </div>
   );
 }
