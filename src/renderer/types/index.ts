@@ -1,0 +1,98 @@
+// PDF 문서 정보
+export interface PdfDocument {
+  id: string;
+  fileName: string;
+  filePath: string;
+  pageCount: number;
+  extractedText: string;
+  chapters: Chapter[];
+  createdAt: Date;
+}
+
+// 챕터 (페이지 기반 분할)
+export interface Chapter {
+  index: number;
+  title: string;
+  startPage: number;
+  endPage: number;
+  text: string;
+}
+
+// 요약 결과
+export interface Summary {
+  id: string;
+  documentId: string;
+  type: SummaryType;
+  content: string;
+  model: string;
+  provider: AiProviderType;
+  createdAt: Date;
+  durationMs: number;
+}
+
+// 요약 유형
+export type SummaryType = 'full' | 'chapter' | 'keywords';
+
+// AI 제공자
+export type AiProviderType = 'ollama' | 'claude' | 'openai';
+
+// 앱 설정
+export interface AppSettings {
+  provider: AiProviderType;
+  model: string;
+  ollamaBaseUrl: string;
+  apiKey?: string;
+  theme: 'light' | 'dark' | 'system';
+  defaultSummaryType: SummaryType;
+  maxChunkSize: number;
+}
+
+// Ollama 상태
+export interface OllamaStatus {
+  installed: boolean;
+  running: boolean;
+  version?: string;
+  models: string[];
+  selectedModel?: string;
+}
+
+// 에러 코드
+export type AppErrorCode =
+  | 'PDF_PARSE_FAIL'
+  | 'PDF_NO_TEXT'
+  | 'OLLAMA_NOT_FOUND'
+  | 'OLLAMA_NOT_RUNNING'
+  | 'OLLAMA_INSTALL_FAIL'
+  | 'MODEL_NOT_FOUND'
+  | 'MODEL_PULL_FAIL'
+  | 'GENERATE_FAIL'
+  | 'GENERATE_TIMEOUT'
+  | 'EXPORT_FAIL';
+
+export interface AppError {
+  code: AppErrorCode;
+  message: string;
+  details?: string;
+}
+
+// IPC 채널
+export const IPC_CHANNELS = {
+  OLLAMA_STATUS: 'ollama:status',
+  OLLAMA_INSTALL: 'ollama:install',
+  OLLAMA_START: 'ollama:start',
+  OLLAMA_STOP: 'ollama:stop',
+  OLLAMA_PULL_MODEL: 'ollama:pull-model',
+  OLLAMA_LIST_MODELS: 'ollama:list-models',
+  FILE_SAVE: 'file:save',
+  FILE_OPEN_PDF: 'file:open-pdf',
+} as const;
+
+// 기본 설정값
+export const DEFAULT_SETTINGS: AppSettings = {
+  provider: 'ollama',
+  model: 'llama3.2',
+  ollamaBaseUrl: 'http://localhost:11434',
+  theme: 'system',
+  defaultSummaryType: 'full',
+  maxChunkSize: 4000,
+};
