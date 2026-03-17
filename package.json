@@ -39,7 +39,15 @@
       "out/**/*"
     ],
     "win": {
-      "target": "portable"
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": null,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "강의자료 요약기"
     },
     "forceCodeSigning": false,
     "mac": {
