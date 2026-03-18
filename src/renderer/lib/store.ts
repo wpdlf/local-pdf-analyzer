@@ -29,7 +29,7 @@ interface AppState {
 
   // 설정
   settings: AppSettings;
-  updateSettings: (partial: Partial<AppSettings>) => void;
+  updateSettings: (settings: AppSettings) => void;
   loadSettings: () => Promise<void>;
 
   // Ollama 상태
@@ -63,14 +63,13 @@ export const useAppStore = create<AppState>((set) => ({
 
   // 설정
   settings: DEFAULT_SETTINGS,
-  updateSettings: (partial) => {
-    set((s) => {
-      const newSettings = { ...s.settings, ...partial };
-      // 디스크에 저장 (실패해도 메모리 설정은 유지)
-      window.electronAPI.settings.set(partial).catch(() => {
+  updateSettings: (newSettings) => {
+    set(() => {
+      // 전체 설정을 디스크에 저장
+      window.electronAPI.settings.set(newSettings as Record<string, unknown>).catch(() => {
         console.error('설정 저장 실패');
       });
-      return { settings: newSettings };
+      return { settings: newSettings as AppSettings };
     });
   },
   loadSettings: async () => {

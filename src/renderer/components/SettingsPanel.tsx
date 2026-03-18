@@ -1,15 +1,61 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../lib/store';
+import type { AppSettings } from '../types';
 
 export function SettingsPanel() {
   const { settings, updateSettings, ollamaStatus, setOllamaStatus, setView } = useAppStore();
+
+  // 로컬 편집용 복사본 (저장 전까지 store에 반영하지 않음)
+  const [draft, setDraft] = useState<AppSettings>({ ...settings });
   const [models, setModels] = useState<string[]>(ollamaStatus.models);
   const [pullModelName, setPullModelName] = useState('');
   const [isPulling, setIsPulling] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  // 설정이 변경되었는지 확인
+  const hasChanges = JSON.stringify(draft) !== JSON.stringify(settings);
 
   useEffect(() => {
     window.electronAPI.ollama.listModels().then(setModels);
   }, []);
+
+  // 테마는 미리보기로 즉시 적용
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (draft.theme === 'dark') {
+      root.classList.add('dark');
+    } else if (draft.theme === 'light') {
+      root.classList.remove('dark');
+    } else {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      root.classList.toggle('dark', mq.matches);
+    }
+  }, [draft.theme]);
+
+  const updateDraft = (partial: Partial<AppSettings>) => {
+    setDraft((prev) => ({ ...prev, ...partial }));
+    setSaved(false);
+  };
+
+  const handleSave = () => {
+    updateSettings(draft);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleCancel = () => {
+    // 테마 미리보기 되돌리기
+    const root = window.document.documentElement;
+    if (settings.theme === 'dark') {
+      root.classList.add('dark');
+    } else if (settings.theme === 'light') {
+      root.classList.remove('dark');
+    } else {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      root.classList.toggle('dark', mq.matches);
+    }
+    setView('main');
+  };
 
   const handlePullModel = async () => {
     if (!pullModelName.trim()) return;
@@ -35,7 +81,7 @@ export function SettingsPanel() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold text-gray-800 dark:text-white">설정</h2>
         <button
-          onClick={() => setView('main')}
+          onClick={handleCancel}
           className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
         >
           ✕ 닫기
@@ -49,8 +95,8 @@ export function SettingsPanel() {
           <div>
             <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Provider</label>
             <select
-              value={settings.provider}
-              onChange={(e) => updateSettings({ provider: e.target.value as 'ollama' | 'claude' | 'openai' })}
+              value={draft.provider}
+              onChange={(e) => updateDraft({ provider: e.target.value as 'ollama' | 'claude' | 'openai' })}
               className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
             >
               <option value="ollama">Ollama (로컬)</option>
@@ -61,8 +107,8 @@ export function SettingsPanel() {
           <div>
             <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Model</label>
             <select
-              value={settings.model}
-              onChange={(e) => updateSettings({ model: e.target.value })}
+              value={draft.model}
+              onChange={(e) => updateDraft({ model: e.target.value })}
               className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
             >
               {models.map((m) => (
@@ -74,8 +120,8 @@ export function SettingsPanel() {
             <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Ollama URL</label>
             <input
               type="text"
-              value={settings.ollamaBaseUrl}
-              onChange={(e) => updateSettings({ ollamaBaseUrl: e.target.value })}
+              value={draft.ollamaBaseUrl}
+              onChange={(e) => updateDraft({ ollamaBaseUrl: e.target.value })}
               className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
             />
           </div>
@@ -125,8 +171,8 @@ export function SettingsPanel() {
               <input
                 type="radio"
                 name="theme"
-                checked={settings.theme === theme}
-                onChange={() => updateSettings({ theme })}
+                checked={draft.theme === theme}
+                onChange={() => updateDraft({ theme })}
                 className="accent-blue-500"
               />
               <span className="text-sm text-gray-700 dark:text-gray-200">
@@ -138,13 +184,13 @@ export function SettingsPanel() {
       </section>
 
       {/* 청크 크기 */}
-      <section className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+      <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">청크 크기</h3>
         <div className="flex items-center gap-2">
           <input
             type="number"
-            value={settings.maxChunkSize}
-            onChange={(e) => updateSettings({ maxChunkSize: Number(e.target.value) })}
+            value={draft.maxChunkSize}
+            onChange={(e) => updateDraft({ maxChunkSize: Number(e.target.value) })}
             min={1000}
             max={16000}
             step={500}
@@ -153,6 +199,23 @@ export function SettingsPanel() {
           <span className="text-sm text-gray-500">tokens</span>
         </div>
       </section>
+
+      {/* 저장 버튼 */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          disabled={!hasChanges && !saved}
+          className={`flex-1 py-2.5 rounded-lg font-medium transition-colors ${
+            saved
+              ? 'bg-green-500 text-white'
+              : hasChanges
+                ? 'bg-blue-500 text-white hover:bg-blue-600'
+                : 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          {saved ? '✅ 저장되었습니다' : hasChanges ? '설정 저장' : '변경 사항 없음'}
+        </button>
+      </div>
     </div>
   );
 }
