@@ -7,7 +7,7 @@ PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션
 
 ## 다운로드 및 설치
 
-> **[최신 버전 다운로드](https://github.com/wpdlf/summary_lecture_material/releases/latest)**
+> **[최신 버전 다운로드](https://github.com/wpdlf/summarize_PDF_files_locally/releases/latest)**
 
 1. 위 링크에서 `PDF.자료.요약기.Setup.x.x.x.exe`를 다운로드합니다
 2. 다운로드한 파일을 실행하여 설치합니다
