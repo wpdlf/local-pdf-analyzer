@@ -219,7 +219,13 @@ export function OllamaSetupWizard() {
               <p className="text-gray-500 text-sm mb-4">{errorHints[errorCode]}</p>
             )}
             <p className="text-gray-500 text-sm mb-4">
-              수동 설치: <a href="https://ollama.com" className="underline text-blue-500">https://ollama.com</a>
+              수동 설치:{' '}
+              <button
+                onClick={() => window.electronAPI.openExternal('https://ollama.com')}
+                className="underline text-blue-500 cursor-pointer bg-transparent border-none p-0"
+              >
+                https://ollama.com
+              </button>
             </p>
             <button
               onClick={startSetup}

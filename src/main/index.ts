@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { OllamaManager } from './ollama-manager';
@@ -39,7 +39,7 @@ function createWindow(): BrowserWindow {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
     title: 'PDF 자료 요약기',
   });
@@ -136,25 +136,45 @@ function registerIpcHandlers(): void {
     };
   });
 
+  const VALID_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
+  const VALID_SETTINGS_KEYS = [
+    'provider', 'model', 'ollamaBaseUrl', 'theme',
+    'defaultSummaryType', 'maxChunkSize',
+  ] as const;
+
   ipcMain.handle('apikey:save', (_event, provider: string, key: string) => {
+    if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {
+      return { success: false, error: 'Invalid provider' };
+    }
     saveApiKey(provider, key);
     return { success: true };
   });
 
   ipcMain.handle('apikey:get', (_event, provider: string) => {
+    if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {
+      return '';
+    }
     return loadApiKey(provider) || '';
   });
 
   ipcMain.handle('apikey:delete', (_event, provider: string) => {
+    if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {
+      return { success: false, error: 'Invalid provider' };
+    }
     saveApiKey(provider, '');
     return { success: true };
   });
 
   ipcMain.handle('settings:set', (_event, partial: Record<string, unknown>) => {
     const current = loadSettings();
-    // API 키는 settings.json에 저장하지 않음 (암호화 별도 저장)
-    const { claudeApiKey, openaiApiKey, ...rest } = partial;
-    const updated = { ...current, ...rest };
+    // API 키와 허용되지 않은 키는 settings.json에 저장하지 않음
+    const filtered: Record<string, unknown> = {};
+    for (const key of VALID_SETTINGS_KEYS) {
+      if (key in partial) {
+        filtered[key] = partial[key];
+      }
+    }
+    const updated = { ...current, ...filtered };
     saveSettings(updated);
     return updated;
   });
@@ -176,6 +196,9 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('ollama:pull-model', async (_event, model: string) => {
+    if (!/^[a-zA-Z0-9._:\/-]+$/.test(model)) {
+      return { success: false, error: 'Invalid model name' };
+    }
     return ollamaManager.pullModel(model);
   });
 
@@ -197,6 +220,13 @@ function registerIpcHandlers(): void {
       return filePath;
     }
     return null;
+  });
+
+  ipcMain.handle('shell:open-external', async (_event, url: string) => {
+    // https/http URL만 허용
+    if (/^https?:\/\//.test(url)) {
+      await shell.openExternal(url);
+    }
   });
 
   ipcMain.handle('file:open-pdf', async () => {

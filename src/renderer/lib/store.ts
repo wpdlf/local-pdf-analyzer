@@ -17,12 +17,14 @@ interface AppState {
   // 요약
   summary: Summary | null;
   summaryStream: string;
+  _streamBuffer: string[];
   summaryType: SummaryType;
   isGenerating: boolean;
   progress: number;
   setSummary: (summary: Summary | null) => void;
   appendStream: (token: string) => void;
   clearStream: () => void;
+  getStreamText: () => string;
   setSummaryType: (type: SummaryType) => void;
   setIsGenerating: (v: boolean) => void;
   setProgress: (p: number) => void;
@@ -51,12 +53,20 @@ export const useAppStore = create<AppState>((set) => ({
   // 요약
   summary: null,
   summaryStream: '',
+  _streamBuffer: [],
   summaryType: 'full',
   isGenerating: false,
   progress: 0,
   setSummary: (summary) => set({ summary }),
-  appendStream: (token) => set((s) => ({ summaryStream: s.summaryStream + token })),
-  clearStream: () => set({ summaryStream: '' }),
+  appendStream: (token) => set((s) => {
+    const buffer = [...s._streamBuffer, token];
+    return { _streamBuffer: buffer, summaryStream: buffer.join('') };
+  }),
+  clearStream: () => set({ summaryStream: '', _streamBuffer: [] }),
+  getStreamText: () => {
+    // 직접 버퍼를 읽어 join — 컴포넌트에서 summaryStream을 사용하면 동일하게 접근 가능
+    return useAppStore.getState()._streamBuffer.join('');
+  },
   setSummaryType: (summaryType) => set({ summaryType }),
   setIsGenerating: (isGenerating) => set({ isGenerating }),
   setProgress: (progress) => set({ progress }),

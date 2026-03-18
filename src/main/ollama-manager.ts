@@ -1,4 +1,4 @@
-import { exec, spawn, ChildProcess } from 'child_process';
+import { exec, execFile, spawn, ChildProcess } from 'child_process';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
@@ -89,8 +89,10 @@ export class OllamaManager {
       // 2. 설치 실행 (사용자가 설치 UI에서 완료할 때까지 대기)
       this.sendProgress('Ollama 설치 창이 열립니다. 설치를 완료해주세요...');
       await new Promise<void>((resolve, reject) => {
-        exec(
-          `powershell -Command "Start-Process -FilePath '${installerPath}' -Verb RunAs -Wait"`,
+        // execFile로 경로 인젝션 방지: powershell에 인수를 별도 배열로 전달
+        execFile(
+          'powershell',
+          ['-Command', `Start-Process -FilePath '${installerPath}' -Verb RunAs -Wait`],
           { timeout: 300000 },
           (error) => {
             // 설치 프로세스 종료 후 실제 설치 여부는 아래에서 확인

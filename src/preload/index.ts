@@ -23,11 +23,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     get: (provider: string) => ipcRenderer.invoke('apikey:get', provider),
     delete: (provider: string) => ipcRenderer.invoke('apikey:delete', provider),
   },
+  openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
   onSetupProgress: (callback: (message: string) => void) => {
-    ipcRenderer.on('setup:progress', (_event, message) => callback(message));
+    const handler = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
+    ipcRenderer.on('setup:progress', handler);
+    return () => ipcRenderer.removeListener('setup:progress', handler);
   },
   onFileDropped: (callback: (file: { path: string; name: string; data: ArrayBuffer }) => void) => {
-    ipcRenderer.on('file:dropped', (_event, file) => callback(file));
+    const handler = (_event: Electron.IpcRendererEvent, file: { path: string; name: string; data: ArrayBuffer }) => callback(file);
+    ipcRenderer.on('file:dropped', handler);
+    return () => ipcRenderer.removeListener('file:dropped', handler);
   },
 });
 
@@ -58,8 +63,9 @@ export type ElectronAPI = {
     get: (provider: string) => Promise<string>;
     delete: (provider: string) => Promise<{ success: boolean }>;
   };
-  onSetupProgress: (callback: (message: string) => void) => void;
-  onFileDropped: (callback: (file: { path: string; name: string; data: ArrayBuffer }) => void) => void;
+  openExternal: (url: string) => Promise<void>;
+  onSetupProgress: (callback: (message: string) => void) => () => void;
+  onFileDropped: (callback: (file: { path: string; name: string; data: ArrayBuffer }) => void) => () => void;
 };
 
 declare global {

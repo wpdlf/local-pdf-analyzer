@@ -10,14 +10,22 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { OllamaSetupWizard } from './components/OllamaSetupWizard';
 
 export default function App() {
-  const {
-    view, setView,
-    document, setDocument, summaryType, summaryStream,
-    isGenerating, setIsGenerating, setProgress,
-    appendStream, clearStream, setSummary,
-    settings, ollamaStatus, setOllamaStatus,
-    error, setError,
-  } = useAppStore();
+  const view = useAppStore((s) => s.view);
+  const setView = useAppStore((s) => s.setView);
+  const document = useAppStore((s) => s.document);
+  const setDocument = useAppStore((s) => s.setDocument);
+  const summaryType = useAppStore((s) => s.summaryType);
+  const summaryStream = useAppStore((s) => s.summaryStream);
+  const isGenerating = useAppStore((s) => s.isGenerating);
+  const setIsGenerating = useAppStore((s) => s.setIsGenerating);
+  const setProgress = useAppStore((s) => s.setProgress);
+  const appendStream = useAppStore((s) => s.appendStream);
+  const clearStream = useAppStore((s) => s.clearStream);
+  const setSummary = useAppStore((s) => s.setSummary);
+  const settings = useAppStore((s) => s.settings);
+  const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
+  const error = useAppStore((s) => s.error);
+  const setError = useAppStore((s) => s.setError);
 
   // 초기화: 설정 로드 + Ollama 상태 확인
   useEffect(() => {
@@ -67,6 +75,11 @@ export default function App() {
     } else {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
       root.classList.toggle('dark', mq.matches);
+      const handler = (e: MediaQueryListEvent) => {
+        root.classList.toggle('dark', e.matches);
+      };
+      mq.addEventListener('change', handler);
+      return () => mq.removeEventListener('change', handler);
     }
   }, [settings.theme]);
 

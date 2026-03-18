@@ -91,18 +91,6 @@ export interface AppError {
   details?: string;
 }
 
-// IPC 채널
-export const IPC_CHANNELS = {
-  OLLAMA_STATUS: 'ollama:status',
-  OLLAMA_INSTALL: 'ollama:install',
-  OLLAMA_START: 'ollama:start',
-  OLLAMA_STOP: 'ollama:stop',
-  OLLAMA_PULL_MODEL: 'ollama:pull-model',
-  OLLAMA_LIST_MODELS: 'ollama:list-models',
-  FILE_SAVE: 'file:save',
-  FILE_OPEN_PDF: 'file:open-pdf',
-} as const;
-
 // 기본 설정값
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: 'ollama',
