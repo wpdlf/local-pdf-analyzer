@@ -41,7 +41,7 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: false,
     },
-    title: '강의자료 요약기',
+    title: 'PDF 자료 요약기',
   });
 
   if (process.env['ELECTRON_RENDERER_URL']) {

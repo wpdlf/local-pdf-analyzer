@@ -34,7 +34,7 @@
   },
   "build": {
     "appId": "com.jjw.summary-lecture-material",
-    "productName": "강의자료 요약기",
+    "productName": "PDF 자료 요약기",
     "files": [
       "out/**/*"
     ],
@@ -47,7 +47,7 @@
       "installerIcon": null,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "강의자료 요약기"
+      "shortcutName": "PDF 자료 요약기"
     },
     "forceCodeSigning": false,
     "mac": {

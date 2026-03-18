@@ -6,6 +6,14 @@ import { ProgressBar } from './ProgressBar';
 export function SummaryViewer() {
   const { document, summaryStream, isGenerating, progress, setError } = useAppStore();
 
+  const handleClose = () => {
+    useAppStore.getState().setDocument(null);
+    useAppStore.getState().clearStream();
+    useAppStore.getState().setIsGenerating(false);
+    useAppStore.getState().setProgress(0);
+    useAppStore.getState().setSummary(null);
+  };
+
   const handleExport = async () => {
     if (!summaryStream) return;
     const defaultName = document
@@ -29,23 +37,18 @@ export function SummaryViewer() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* 문서 정보 */}
-      {document && (
-        <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-t-lg">
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
-            📎 {document.fileName} ({document.pageCount}p)
-          </span>
-          <button
-            onClick={() => {
-              useAppStore.getState().setDocument(null);
-              useAppStore.getState().clearStream();
-            }}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-          >
-            ✕ 닫기
-          </button>
-        </div>
-      )}
+      {/* 문서 정보 + 닫기 */}
+      <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-t-lg">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
+          {document ? `📎 ${document.fileName} (${document.pageCount}p)` : '📎 요약 결과'}
+        </span>
+        <button
+          onClick={handleClose}
+          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+        >
+          ✕ 닫기
+        </button>
+      </div>
 
       {/* 요약 내용 */}
       <div className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">

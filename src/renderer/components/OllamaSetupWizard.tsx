@@ -131,7 +131,7 @@ export function OllamaSetupWizard() {
   return (
     <div className="flex flex-col items-center justify-center h-full p-8">
       <h1 className="text-2xl font-bold mb-6 text-gray-800 dark:text-white">
-        강의자료 요약기 설정
+        PDF 자료 요약기 설정
       </h1>
 
       {/* 환영 화면 */}
