@@ -1,5 +1,5 @@
 import type { SummaryType, AppSettings } from '../types';
-import { OllamaProvider, type AiProvider } from './ai-provider';
+import { OllamaProvider, ClaudeProvider, OpenAiProvider, type AiProvider } from './ai-provider';
 import { buildPrompt } from './prompts';
 
 export class AiClient {
@@ -13,11 +13,17 @@ export class AiClient {
 
   private createProvider(settings: AppSettings): AiProvider {
     switch (settings.provider) {
+      case 'claude':
+        if (!settings.claudeApiKey) {
+          throw Object.assign(new Error('Claude API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.'), { code: 'API_KEY_MISSING' });
+        }
+        return new ClaudeProvider(settings.claudeApiKey);
+      case 'openai':
+        if (!settings.openaiApiKey) {
+          throw Object.assign(new Error('OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.'), { code: 'API_KEY_MISSING' });
+        }
+        return new OpenAiProvider(settings.openaiApiKey);
       case 'ollama':
-        return new OllamaProvider(settings.ollamaBaseUrl);
-      // 추후 확장:
-      // case 'claude': return new ClaudeProvider(settings.apiKey);
-      // case 'openai': return new OpenAiProvider(settings.apiKey);
       default:
         return new OllamaProvider(settings.ollamaBaseUrl);
     }

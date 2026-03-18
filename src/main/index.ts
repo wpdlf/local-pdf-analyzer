@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, webContents } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { OllamaManager } from './ollama-manager';
@@ -102,14 +102,59 @@ app.on('window-all-closed', () => {
   }
 });
 
+const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');
+
+function saveApiKey(provider: string, key: string): void {
+  let keys: Record<string, string> = {};
+  try {
+    const encrypted = fs.readFileSync(apiKeysPath);
+    keys = JSON.parse(safeStorage.decryptString(encrypted));
+  } catch { /* 첫 저장 */ }
+  keys[provider] = key;
+  const encrypted = safeStorage.encryptString(JSON.stringify(keys));
+  fs.writeFileSync(apiKeysPath, encrypted);
+}
+
+function loadApiKey(provider: string): string | undefined {
+  try {
+    const encrypted = fs.readFileSync(apiKeysPath);
+    const keys = JSON.parse(safeStorage.decryptString(encrypted));
+    return keys[provider];
+  } catch {
+    return undefined;
+  }
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle('settings:get', () => {
-    return loadSettings();
+    const settings = loadSettings();
+    // API 키를 마스킹하여 전달 (실제 키는 apikey:get으로 별도 조회)
+    return {
+      ...settings,
+      claudeApiKey: loadApiKey('claude') ? '••••••••' : undefined,
+      openaiApiKey: loadApiKey('openai') ? '••••••••' : undefined,
+    };
+  });
+
+  ipcMain.handle('apikey:save', (_event, provider: string, key: string) => {
+    saveApiKey(provider, key);
+    return { success: true };
+  });
+
+  ipcMain.handle('apikey:get', (_event, provider: string) => {
+    return loadApiKey(provider) || '';
+  });
+
+  ipcMain.handle('apikey:delete', (_event, provider: string) => {
+    saveApiKey(provider, '');
+    return { success: true };
   });
 
   ipcMain.handle('settings:set', (_event, partial: Record<string, unknown>) => {
     const current = loadSettings();
-    const updated = { ...current, ...partial };
+    // API 키는 settings.json에 저장하지 않음 (암호화 별도 저장)
+    const { claudeApiKey, openaiApiKey, ...rest } = partial;
+    const updated = { ...current, ...rest };
     saveSettings(updated);
     return updated;
   });

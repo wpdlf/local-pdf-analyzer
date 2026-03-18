@@ -41,11 +41,25 @@ export interface AppSettings {
   provider: AiProviderType;
   model: string;
   ollamaBaseUrl: string;
-  apiKey?: string;
+  claudeApiKey?: string;
+  openaiApiKey?: string;
   theme: 'light' | 'dark' | 'system';
   defaultSummaryType: SummaryType;
   maxChunkSize: number;
 }
+
+// Provider별 대표 모델
+export const PROVIDER_MODELS: Record<AiProviderType, { label: string; value: string }[]> = {
+  ollama: [], // 동적으로 로드
+  claude: [
+    { label: 'Claude Sonnet 4', value: 'claude-sonnet-4-20250514' },
+    { label: 'Claude Haiku 3.5', value: 'claude-3-5-haiku-20241022' },
+  ],
+  openai: [
+    { label: 'GPT-4o', value: 'gpt-4o' },
+    { label: 'GPT-4o mini', value: 'gpt-4o-mini' },
+  ],
+};
 
 // Ollama 상태
 export interface OllamaStatus {
@@ -67,7 +81,9 @@ export type AppErrorCode =
   | 'MODEL_PULL_FAIL'
   | 'GENERATE_FAIL'
   | 'GENERATE_TIMEOUT'
-  | 'EXPORT_FAIL';
+  | 'EXPORT_FAIL'
+  | 'API_KEY_MISSING'
+  | 'API_KEY_INVALID';
 
 export interface AppError {
   code: AppErrorCode;

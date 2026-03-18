@@ -18,6 +18,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     get: () => ipcRenderer.invoke('settings:get'),
     set: (settings: Record<string, unknown>) => ipcRenderer.invoke('settings:set', settings),
   },
+  apiKey: {
+    save: (provider: string, key: string) => ipcRenderer.invoke('apikey:save', provider, key),
+    get: (provider: string) => ipcRenderer.invoke('apikey:get', provider),
+    delete: (provider: string) => ipcRenderer.invoke('apikey:delete', provider),
+  },
   onSetupProgress: (callback: (message: string) => void) => {
     ipcRenderer.on('setup:progress', (_event, message) => callback(message));
   },
@@ -47,6 +52,11 @@ export type ElectronAPI = {
   settings: {
     get: () => Promise<Record<string, unknown>>;
     set: (settings: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  };
+  apiKey: {
+    save: (provider: string, key: string) => Promise<{ success: boolean }>;
+    get: (provider: string) => Promise<string>;
+    delete: (provider: string) => Promise<{ success: boolean }>;
   };
   onSetupProgress: (callback: (message: string) => void) => void;
   onFileDropped: (callback: (file: { path: string; name: string; data: ArrayBuffer }) => void) => void;
