@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.4.0] - 2026-03-19
+
+### Security (Critical)
+- **AI API를 Main 프로세스로 이전**: Claude/OpenAI API 호출이 Renderer에서 Main으로 이동하여 API 키가 DevTools에 노출되지 않음
+- **`apikey:get` → `apikey:has`**: Renderer에 복호화된 API 키 대신 boolean만 반환
+- **AppSettings에서 API 키 필드 제거**: `claudeApiKey`/`openaiApiKey`가 Zustand store와 settings.json에 저장되지 않음
+- **`anthropic-dangerous-direct-browser-access` 헤더 제거**: Main 프로세스에서 표준 헤더만 사용
+
+### Fixed (Bugs / Memory Leaks)
+- **IPC 리스너 cleanup**: `onFileDropped`, `onSetupProgress`의 useEffect에서 unsubscribe 반환
+- **setTimeout cleanup**: SettingsPanel/OllamaSetupWizard의 모든 타이머를 useEffect 기반으로 전환
+- **요약 중단 지원**: `ai:abort` IPC 추가로 진행 중인 AI 요청 중단 가능
+- **file:// URL 파싱**: 수동 replace → `fileURLToPath()` Node.js 표준 API
+
+### Performance
+- **appendStream O(n²) → O(1)**: 배열 복사+join 대신 문자열 직접 연결, `_streamBuffer` 제거
+- **ReactMarkdown debounce**: 스트리밍 중 150ms 간격 업데이트, 완료 시 즉시 반영
+- **PDF 배치 병렬 처리**: BATCH_SIZE=10으로 `Promise.all` 적용 (수백 페이지 속도 향상)
+- **Claude isAvailable() 최적화**: 실제 API 호출 대신 키 존재 여부만 확인 (과금 방지)
+
+### Accessibility
+- **ProgressBar**: `role="progressbar"`, `aria-valuenow/min/max`, `aria-label` 추가
+- **SummaryViewer**: 내보내기/복사 버튼에 `aria-label` 추가
+
+### Added
+- **`src/main/ai-service.ts`**: Main 프로세스 AI 서비스 (공통 스트리밍 유틸리티, 프롬프트 빌더)
+- **IPC 채널**: `ai:generate`, `ai:abort`, `ai:check-available`, `ai:token`, `ai:done`
+
+### Changed
+- **ai-client.ts**: Provider 직접 호출 → IPC AsyncGenerator 기반으로 전면 재작성
+- **ai-provider.ts**: Claude/OpenAI Provider 클래스 제거 (Main으로 이전), 인터페이스만 유지
+- **preload/index.ts**: `ai.*` 브릿지 추가, `apiKey.get` → `apiKey.has` 변경
+
+### Verified
+- **QA Match Rate**: 72/100 → 93.75% (15/16 이슈 수정, 1건 Accepted Risk)
+- **테스트**: 23/23 통과 (ai-client.test.ts IPC 모킹 기반 재작성)
+- **빌드**: electron-vite build 성공 (main/preload/renderer)
+
+---
+
 ## [0.2] - 2026-03-17
 
 ### Added
@@ -117,7 +157,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 | **Feature** | pdf-lecture-summary (PDF 대학교 강의자료 요약) |
 | **Project Level** | Starter |
 | **Start Date** | 2026-03-17 |
-| **Current Version** | 0.2 |
+| **Current Version** | 0.4.0 |
 | **Status** | PDCA Cycle Completed ✅ |
 
 ---
@@ -131,5 +171,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-**Last Updated**: 2026-03-17
+**Last Updated**: 2026-03-19
 **Maintainer**: jjw
