@@ -54,8 +54,9 @@ PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션
 
 - **오프라인 사용 가능** — Ollama로 인터넷 없이 요약
 - **유료 AI 지원** — Claude API, OpenAI API로 고품질 요약 가능
-- **API 키 암호화 저장** — OS 키체인 기반 암호화로 안전하게 보관
+- **API 키 보안** — OS 키체인 암호화 + Main 프로세스에서만 복호화 (Renderer에 노출되지 않음)
 - **개인 자료 보안** — Ollama 사용 시 PDF가 외부 서버로 전송되지 않음
+- **요약 중단 가능** — 진행 중인 요약을 언제든 중단 가능
 - **다크모드 지원** — 설정에서 라이트/다크/시스템 테마 선택
 - **대용량 PDF 지원** — 긴 문서도 자동으로 나누어 처리 후 통합 요약
 - **설정 저장** — 앱 재시작 후에도 설정 유지
@@ -91,8 +92,8 @@ PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (NSIS) |
-| 테스트 | Vitest (24개 단위 테스트) |
-| API 키 보안 | Electron safeStorage (OS 키체인 암호화) |
+| 테스트 | Vitest (23개 단위 테스트) |
+| API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화 |
 
 ### 개발 환경 설정
 
@@ -119,69 +120,56 @@ npx vitest run
 src/
 ├── main/                 # Electron main process
 │   ├── index.ts          # 앱 엔트리, IPC, 설정/API키 관리
+│   ├── ai-service.ts     # AI API 호출 (Claude/OpenAI/Ollama 스트리밍)
 │   └── ollama-manager.ts # Ollama 설치/시작/모델 관리
 ├── preload/
-│   └── index.ts          # contextBridge API (settings, apiKey, ollama, file)
+│   └── index.ts          # contextBridge API (ai, settings, apiKey, ollama, file)
 └── renderer/             # React UI
     ├── App.tsx            # 루트 컴포넌트, 요약 로직
     ├── components/        # UI 컴포넌트 (8개)
     ├── lib/
-    │   ├── ai-client.ts       # AI Client (Provider 선택)
-    │   ├── ai-provider.ts     # Ollama / Claude / OpenAI Provider
-    │   ├── pdf-parser.ts      # PDF 텍스트 추출 + 챕터 감지
+    │   ├── ai-client.ts       # AI Client (IPC를 통해 Main에 요약 요청)
+    │   ├── ai-provider.ts     # AiProvider 인터페이스 정의
+    │   ├── pdf-parser.ts      # PDF 텍스트 추출 + 챕터 감지 (배치 병렬)
     │   ├── prompts.ts         # 요약 프롬프트 템플릿 (3종)
     │   ├── chunker.ts         # 텍스트 청크 분할
     │   ├── store.ts           # Zustand 상태 관리
-    │   └── __tests__/         # 단위 테스트 (24개)
+    │   └── __tests__/         # 단위 테스트 (23개)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
 
 ### 아키텍처
 
+API 키 보안을 위해 AI API 호출은 Main 프로세스에서 수행됩니다. Renderer는 IPC를 통해 요약을 요청하고 토큰 스트림을 수신합니다.
+
 ```
-Electron Main Process              Renderer Process (React)
-┌────────────────────────┐        ┌──────────────────────────┐
-│ OllamaManager          │◄─IPC─►│ App.tsx                  │
-│ Settings (JSON)        │        │ ├── PdfUploader          │
-│ API Keys (safeStorage) │        │ ├── SummaryViewer        │
-│ File I/O               │        │ ├── SettingsPanel        │
-└────────────────────────┘        │ └── lib/                 │
-                                  │     ├── AiClient         │
-   Ollama (localhost)             │     │   ├── OllamaProvider│
-┌────────────────────────┐        │     │   ├── ClaudeProvider│
-│ llama3.2 / phi3        │◄─HTTP─┤     │   └── OpenAiProvider│
-└────────────────────────┘        │     ├── PdfParser        │
-                                  │     └── Zustand           │
-   Claude API                     │                           │
-┌────────────────────────┐        │                           │
-│ api.anthropic.com      │◄─HTTPS─┤                          │
-└────────────────────────┘        │                           │
-                                  │                           │
-   OpenAI API                     │                           │
-┌────────────────────────┐        │                           │
-│ api.openai.com         │◄─HTTPS─┤                          │
-└────────────────────────┘        └──────────────────────────┘
+Electron Main Process                Renderer Process (React)
+┌──────────────────────────┐        ┌──────────────────────────┐
+│ OllamaManager            │        │ App.tsx                  │
+│ AiService ──┐            │◄─IPC─►│ ├── PdfUploader          │
+│   ├── Ollama (HTTP)      │        │ ├── SummaryViewer        │
+│   ├── Claude (HTTPS)     │        │ ├── SettingsPanel        │
+│   └── OpenAI (HTTPS)     │        │ └── lib/                 │
+│ Settings (JSON)          │        │     ├── AiClient (IPC)   │
+│ API Keys (safeStorage)   │        │     ├── PdfParser        │
+│ File I/O                 │        │     └── Zustand           │
+└──────────────────────────┘        └──────────────────────────┘
+         │                                     │
+         │  ai:generate ──► Main에서 API 호출   │
+         │  ai:token    ◄── 토큰 스트리밍        │
+         │  ai:done     ◄── 완료 신호           │
+         │  ai:abort    ──► 요청 중단           │
 ```
 
-### AI Provider 구조
+### AI 요약 흐름
 
-`AiProvider` 인터페이스를 구현하는 3개의 Provider가 있습니다:
+1. Renderer에서 `ai:generate` IPC로 텍스트 + provider + model 전달
+2. Main 프로세스가 `safeStorage`에서 API 키를 복호화하여 직접 API 호출
+3. 스트리밍 토큰을 `ai:token` 이벤트로 Renderer에 전달
+4. Renderer의 `AiClient`가 AsyncGenerator로 토큰을 yield
 
-```typescript
-interface AiProvider {
-  generate(prompt: string, options?: GenerateOptions): AsyncGenerator<string>;
-  listModels(): Promise<string[]>;
-  isAvailable(): Promise<boolean>;
-}
-
-// 구현체
-class OllamaProvider implements AiProvider { ... }  // 로컬 LLM
-class ClaudeProvider implements AiProvider { ... }   // Anthropic API
-class OpenAiProvider implements AiProvider { ... }   // OpenAI API
-```
-
-새 Provider를 추가하려면 `AiProvider`를 구현하고 `ai-client.ts`의 `createProvider()`에 등록하면 됩니다.
+새 Provider를 추가하려면 `src/main/ai-service.ts`에 생성 함수를 추가하고 `generate()` switch문에 등록합니다.
 
 ## 라이선스
 
