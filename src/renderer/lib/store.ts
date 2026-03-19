@@ -12,7 +12,9 @@ import { DEFAULT_SETTINGS } from '../types';
 interface AppState {
   // PDF
   document: PdfDocument | null;
+  isParsing: boolean;
   setDocument: (doc: PdfDocument | null) => void;
+  setIsParsing: (v: boolean) => void;
 
   // 요약
   summary: Summary | null;
@@ -47,7 +49,9 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   // PDF
   document: null,
+  isParsing: false,
   setDocument: (document) => set({ document }),
+  setIsParsing: (isParsing) => set({ isParsing }),
 
   // 요약
   summary: null,

@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.4.1] - 2026-03-19
+
+### Added
+- **PDF 파싱 로딩 화면**: 파일 업로드/드롭 후 스피너 + "PDF를 읽고 있습니다..." 메시지 표시
+- **요약 생성 로딩 화면**: 첫 토큰 도착 전 스피너 + "AI가 강의자료를 분석하고 있습니다..." 메시지 표시
+- **`isParsing` 상태**: store에 PDF 파싱 진행 상태 추가
+
+### Changed
+- **SummaryViewer**: 생성 중 "PDF를 업로드하고 요약을 시작하세요." 안내 문구 제거, 로딩 화면으로 대체
+- **PdfUploader**: 파싱 중 클릭/드롭 이벤트 비활성화 (중복 파싱 방지)
+
+### Verified
+- **Design Match Rate**: 96.5% (loading-ux)
+- **테스트**: 23/23 통과
+- **빌드**: electron-vite build 성공
+
+---
+
 ## [0.4.0] - 2026-03-19
 
 ### Security (Critical)

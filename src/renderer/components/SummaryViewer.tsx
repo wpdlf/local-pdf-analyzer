@@ -13,11 +13,9 @@ export function SummaryViewer() {
 
   useEffect(() => {
     if (!isGenerating) {
-      // 생성 완료 시 즉시 반영
       setDebouncedContent(summaryStream);
       return;
     }
-    // 스트리밍 중에는 150ms 간격으로 업데이트
     timerRef.current = setTimeout(() => {
       setDebouncedContent(summaryStream);
     }, 150);
@@ -73,13 +71,19 @@ export function SummaryViewer() {
 
       {/* 요약 내용 */}
       <div className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
-        {debouncedContent ? (
+        {isGenerating && !debouncedContent ? (
+          <div className="flex flex-col items-center justify-center h-full gap-4">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-gray-200 dark:border-gray-700 border-t-blue-500" />
+            <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
+              AI가 강의자료를 분석하고 있습니다...
+            </p>
+            <p className="text-sm text-gray-400 dark:text-gray-500">
+              잠시만 기다려주세요
+            </p>
+          </div>
+        ) : debouncedContent ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{debouncedContent}</ReactMarkdown>
-        ) : (
-          <p className="text-gray-400 text-center mt-8">
-            PDF를 업로드하고 요약을 시작하세요.
-          </p>
-        )}
+        ) : null}
       </div>
 
       {/* 진행률 */}

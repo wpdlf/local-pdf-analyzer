@@ -50,6 +50,7 @@ export default function App() {
   // Main process에서 파일 드롭 수신 (IPC)
   useEffect(() => {
     const unsubscribe = window.electronAPI.onFileDropped(async (file) => {
+      useAppStore.getState().setIsParsing(true);
       try {
         const { parsePdf } = await import('./lib/pdf-parser');
         const doc = await parsePdf(file.data, file.name, file.path);
@@ -61,6 +62,8 @@ export default function App() {
           code: (error.code as 'PDF_PARSE_FAIL') || 'PDF_PARSE_FAIL',
           message: error.message || 'PDF를 읽을 수 없습니다.',
         });
+      } finally {
+        useAppStore.getState().setIsParsing(false);
       }
     });
     return unsubscribe;
