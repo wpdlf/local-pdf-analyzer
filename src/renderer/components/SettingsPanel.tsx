@@ -19,17 +19,27 @@ export function SettingsPanel() {
   const [openaiKeyStored, setOpenaiKeyStored] = useState(false);
   const [keyMessage, setKeyMessage] = useState('');
 
+  // keyMessage 자동 해제 (cleanup 포함)
+  useEffect(() => {
+    if (!keyMessage) return;
+    const timer = setTimeout(() => setKeyMessage(''), 2000);
+    return () => clearTimeout(timer);
+  }, [keyMessage]);
+
+  // saved 자동 해제 (cleanup 포함)
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [saved]);
+
   const hasChanges = JSON.stringify(draft) !== JSON.stringify(settings);
 
   useEffect(() => {
     window.electronAPI.ollama.listModels().then(setOllamaModels);
-    // 저장된 API 키 존재 여부 확인
-    window.electronAPI.apiKey.get('claude').then((k) => {
-      if (k) setClaudeKeyStored(true);
-    });
-    window.electronAPI.apiKey.get('openai').then((k) => {
-      if (k) setOpenaiKeyStored(true);
-    });
+    // 저장된 API 키 존재 여부 확인 (키 자체는 반환하지 않음)
+    window.electronAPI.apiKey.has('claude').then(setClaudeKeyStored);
+    window.electronAPI.apiKey.has('openai').then(setOpenaiKeyStored);
   }, []);
 
   // 테마 미리보기
@@ -73,7 +83,6 @@ export function SettingsPanel() {
       setOpenaiKey('');
     }
     setKeyMessage(`${provider === 'claude' ? 'Claude' : 'OpenAI'} API 키가 저장되었습니다.`);
-    setTimeout(() => setKeyMessage(''), 2000);
   };
 
   const handleDeleteApiKey = async (provider: 'claude' | 'openai') => {
@@ -87,33 +96,22 @@ export function SettingsPanel() {
       if (draft.provider === 'openai') updateDraft({ provider: 'ollama' });
     }
     setKeyMessage('API 키가 삭제되었습니다.');
-    setTimeout(() => setKeyMessage(''), 2000);
   };
 
   const handleSave = async () => {
     // provider가 API 키 필요한 경우 키 존재 확인
     if (draft.provider === 'claude' && !claudeKeyStored) {
       setKeyMessage('Claude API 키를 먼저 저장해주세요.');
-      setTimeout(() => setKeyMessage(''), 2000);
       return;
     }
     if (draft.provider === 'openai' && !openaiKeyStored) {
       setKeyMessage('OpenAI API 키를 먼저 저장해주세요.');
-      setTimeout(() => setKeyMessage(''), 2000);
       return;
     }
 
-    // API 키를 실제 값으로 주입하여 store에 저장
-    const settingsToSave = { ...draft };
-    if (draft.provider === 'claude') {
-      settingsToSave.claudeApiKey = await window.electronAPI.apiKey.get('claude');
-    } else if (draft.provider === 'openai') {
-      settingsToSave.openaiApiKey = await window.electronAPI.apiKey.get('openai');
-    }
-
-    updateSettings(settingsToSave);
+    // API 키는 Main 프로세스에서만 관리 — store에는 provider/model 등만 저장
+    updateSettings(draft);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   };
 
   const handleCancel = () => {

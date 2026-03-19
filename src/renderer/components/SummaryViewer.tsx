@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppStore } from '../lib/store';
@@ -5,6 +6,25 @@ import { ProgressBar } from './ProgressBar';
 
 export function SummaryViewer() {
   const { document, summaryStream, isGenerating, progress, setError } = useAppStore();
+
+  // 스트리밍 중 Markdown 렌더링 debounce (150ms)
+  const [debouncedContent, setDebouncedContent] = useState(summaryStream);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    if (!isGenerating) {
+      // 생성 완료 시 즉시 반영
+      setDebouncedContent(summaryStream);
+      return;
+    }
+    // 스트리밍 중에는 150ms 간격으로 업데이트
+    timerRef.current = setTimeout(() => {
+      setDebouncedContent(summaryStream);
+    }, 150);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [summaryStream, isGenerating]);
 
   const handleClose = () => {
     useAppStore.getState().setDocument(null);
@@ -45,6 +65,7 @@ export function SummaryViewer() {
         <button
           onClick={handleClose}
           className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+          aria-label="닫기"
         >
           ✕ 닫기
         </button>
@@ -52,8 +73,8 @@ export function SummaryViewer() {
 
       {/* 요약 내용 */}
       <div className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
-        {summaryStream ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryStream}</ReactMarkdown>
+        {debouncedContent ? (
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{debouncedContent}</ReactMarkdown>
         ) : (
           <p className="text-gray-400 text-center mt-8">
             PDF를 업로드하고 요약을 시작하세요.
@@ -70,12 +91,14 @@ export function SummaryViewer() {
           <button
             onClick={handleExport}
             className="px-3 py-1.5 text-sm bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+            aria-label="마크다운 파일로 내보내기"
           >
             💾 .md 내보내기
           </button>
           <button
             onClick={handleCopy}
             className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+            aria-label="클립보드에 복사"
           >
             📋 복사
           </button>

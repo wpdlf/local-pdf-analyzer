@@ -49,7 +49,7 @@ export default function App() {
 
   // Main process에서 파일 드롭 수신 (IPC)
   useEffect(() => {
-    window.electronAPI.onFileDropped(async (file) => {
+    const unsubscribe = window.electronAPI.onFileDropped(async (file) => {
       try {
         const { parsePdf } = await import('./lib/pdf-parser');
         const doc = await parsePdf(file.data, file.name, file.path);
@@ -63,6 +63,7 @@ export default function App() {
         });
       }
     });
+    return unsubscribe;
   }, []);
 
   // 테마 적용
@@ -99,7 +100,12 @@ export default function App() {
       const client = new AiClient(settings);
       const available = await client.isAvailable();
       if (!available) {
-        setError({ code: 'OLLAMA_NOT_RUNNING', message: 'Ollama가 실행 중이 아닙니다. 설정을 확인해주세요.' });
+        const providerMessages: Record<string, string> = {
+          ollama: 'Ollama가 실행 중이 아닙니다. 설정을 확인해주세요.',
+          claude: 'Claude API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
+          openai: 'OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
+        };
+        setError({ code: settings.provider === 'ollama' ? 'OLLAMA_NOT_RUNNING' : 'API_KEY_MISSING', message: providerMessages[settings.provider] });
         setIsGenerating(false);
         return;
       }

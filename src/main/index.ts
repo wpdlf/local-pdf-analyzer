@@ -1,7 +1,9 @@
 import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { OllamaManager } from './ollama-manager';
+import { generate, abortGenerate, checkAvailability } from './ai-service';
 
 const ollamaManager = new OllamaManager();
 
@@ -59,7 +61,7 @@ function createWindow(): BrowserWindow {
   win.webContents.on('will-navigate', (event, url) => {
     event.preventDefault();
     if (url.startsWith('file://') && url.toLowerCase().endsWith('.pdf')) {
-      const filePath = decodeURIComponent(url.replace('file:///', '').replace('file://', ''));
+      const filePath = fileURLToPath(url);
       try {
         const data = fs.readFileSync(filePath);
         win.webContents.send('file:dropped', {
@@ -127,13 +129,8 @@ function loadApiKey(provider: string): string | undefined {
 
 function registerIpcHandlers(): void {
   ipcMain.handle('settings:get', () => {
-    const settings = loadSettings();
-    // API 키를 마스킹하여 전달 (실제 키는 apikey:get으로 별도 조회)
-    return {
-      ...settings,
-      claudeApiKey: loadApiKey('claude') ? '••••••••' : undefined,
-      openaiApiKey: loadApiKey('openai') ? '••••••••' : undefined,
-    };
+    // API 키는 Renderer에 전달하지 않음 — Main 프로세스에서만 사용
+    return loadSettings();
   });
 
   const VALID_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
@@ -150,11 +147,12 @@ function registerIpcHandlers(): void {
     return { success: true };
   });
 
-  ipcMain.handle('apikey:get', (_event, provider: string) => {
+  ipcMain.handle('apikey:has', (_event, provider: string) => {
     if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {
-      return '';
+      return false;
     }
-    return loadApiKey(provider) || '';
+    const key = loadApiKey(provider);
+    return !!key && key.length > 0;
   });
 
   ipcMain.handle('apikey:delete', (_event, provider: string) => {
@@ -205,6 +203,48 @@ function registerIpcHandlers(): void {
   ipcMain.handle('ollama:list-models', async () => {
     return ollamaManager.listModels();
   });
+
+  // ─── AI 요약 (Main 프로세스에서 API 키를 사용하여 직접 호출) ───
+
+  ipcMain.handle('ai:generate', async (_event, requestId: string, request: {
+    text: string;
+    type: 'full' | 'chapter' | 'keywords';
+    provider: 'ollama' | 'claude' | 'openai';
+    model: string;
+    ollamaBaseUrl: string;
+    temperature?: number;
+  }) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return { success: false, error: '윈도우를 찾을 수 없습니다.' };
+
+    const apiKey = request.provider !== 'ollama'
+      ? loadApiKey(request.provider)
+      : undefined;
+
+    try {
+      await generate(requestId, request, apiKey, win);
+      return { success: true };
+    } catch (err) {
+      const error = err as Error & { code?: string };
+      return {
+        success: false,
+        error: error.message,
+        code: error.code,
+      };
+    }
+  });
+
+  ipcMain.handle('ai:abort', (_event, requestId: string) => {
+    abortGenerate(requestId);
+    return { success: true };
+  });
+
+  ipcMain.handle('ai:check-available', async (_event, provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) => {
+    const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
+    return checkAvailability(provider, ollamaBaseUrl, apiKey);
+  });
+
+  // ─── 파일 ───
 
   ipcMain.handle('file:save', async (_event, content: string, defaultName: string) => {
     const { filePath } = await dialog.showSaveDialog({

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../lib/store';
 import type { AppErrorCode } from '../types';
 
@@ -11,6 +11,7 @@ interface SetupItem {
 
 export function OllamaSetupWizard() {
   const { setOllamaStatus, setView, setError, settings } = useAppStore();
+  const doneTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const [step, setStep] = useState<SetupStep>('welcome');
   const [progressMessage, setProgressMessage] = useState('');
   const [errorCode, setErrorCode] = useState<AppErrorCode | null>(null);
@@ -23,9 +24,13 @@ export function OllamaSetupWizard() {
 
   // main process에서 보내는 진행 상태 수신
   useEffect(() => {
-    window.electronAPI.onSetupProgress((message) => {
+    const unsubscribe = window.electronAPI.onSetupProgress((message) => {
       setProgressMessage(message);
     });
+    return () => {
+      unsubscribe();
+      if (doneTimerRef.current) clearTimeout(doneTimerRef.current);
+    };
   }, []);
 
   const updateItem = (index: number, status: SetupItem['status']) => {
@@ -102,7 +107,7 @@ export function OllamaSetupWizard() {
       setError(null);
       setStep('done');
 
-      setTimeout(() => setView('main'), 1500);
+      doneTimerRef.current = setTimeout(() => setView('main'), 1500);
     } catch (err) {
       handleError(
         'OLLAMA_NOT_FOUND',

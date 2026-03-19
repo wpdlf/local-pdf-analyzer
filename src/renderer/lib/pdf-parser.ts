@@ -14,15 +14,25 @@ export async function parsePdf(
 ): Promise<PdfDocument> {
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   const pageCount = pdf.numPages;
-  const pages: string[] = [];
 
-  for (let i = 1; i <= pageCount; i++) {
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    const pageText = textContent.items
-      .map((item) => ('str' in item ? item.str : ''))
-      .join(' ');
-    pages.push(pageText);
+  // 배치 병렬 처리 (한 번에 10페이지씩)
+  const BATCH_SIZE = 10;
+  const pages: string[] = new Array(pageCount);
+
+  for (let batchStart = 0; batchStart < pageCount; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, pageCount);
+    const promises = [];
+    for (let i = batchStart; i < batchEnd; i++) {
+      promises.push(
+        pdf.getPage(i + 1).then(async (page) => {
+          const textContent = await page.getTextContent();
+          pages[i] = textContent.items
+            .map((item) => ('str' in item ? item.str : ''))
+            .join(' ');
+        }),
+      );
+    }
+    await Promise.all(promises);
   }
 
   const extractedText = pages.join('\n\n');

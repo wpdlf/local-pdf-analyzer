@@ -36,13 +36,11 @@ export type SummaryType = 'full' | 'chapter' | 'keywords';
 // AI 제공자
 export type AiProviderType = 'ollama' | 'claude' | 'openai';
 
-// 앱 설정
+// 앱 설정 (API 키는 Main 프로세스에서만 관리)
 export interface AppSettings {
   provider: AiProviderType;
   model: string;
   ollamaBaseUrl: string;
-  claudeApiKey?: string;
-  openaiApiKey?: string;
   theme: 'light' | 'dark' | 'system';
   defaultSummaryType: SummaryType;
   maxChunkSize: number;

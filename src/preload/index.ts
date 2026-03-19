@@ -9,6 +9,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pullModel: (model: string) => ipcRenderer.invoke('ollama:pull-model', model),
     listModels: () => ipcRenderer.invoke('ollama:list-models'),
   },
+  ai: {
+    generate: (requestId: string, request: {
+      text: string;
+      type: 'full' | 'chapter' | 'keywords';
+      provider: 'ollama' | 'claude' | 'openai';
+      model: string;
+      ollamaBaseUrl: string;
+      temperature?: number;
+    }) => ipcRenderer.invoke('ai:generate', requestId, request),
+    abort: (requestId: string) => ipcRenderer.invoke('ai:abort', requestId),
+    checkAvailable: (provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) =>
+      ipcRenderer.invoke('ai:check-available', provider, ollamaBaseUrl),
+    onToken: (callback: (requestId: string, token: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, requestId: string, token: string) =>
+        callback(requestId, token);
+      ipcRenderer.on('ai:token', handler);
+      return () => ipcRenderer.removeListener('ai:token', handler);
+    },
+    onDone: (callback: (requestId: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, requestId: string) =>
+        callback(requestId);
+      ipcRenderer.on('ai:done', handler);
+      return () => ipcRenderer.removeListener('ai:done', handler);
+    },
+  },
   file: {
     save: (content: string, defaultName: string) =>
       ipcRenderer.invoke('file:save', content, defaultName),
@@ -20,7 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   apiKey: {
     save: (provider: string, key: string) => ipcRenderer.invoke('apikey:save', provider, key),
-    get: (provider: string) => ipcRenderer.invoke('apikey:get', provider),
+    has: (provider: string) => ipcRenderer.invoke('apikey:has', provider),
     delete: (provider: string) => ipcRenderer.invoke('apikey:delete', provider),
   },
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
@@ -50,6 +75,20 @@ export type ElectronAPI = {
     pullModel: (model: string) => Promise<{ success: boolean; error?: string }>;
     listModels: () => Promise<string[]>;
   };
+  ai: {
+    generate: (requestId: string, request: {
+      text: string;
+      type: 'full' | 'chapter' | 'keywords';
+      provider: 'ollama' | 'claude' | 'openai';
+      model: string;
+      ollamaBaseUrl: string;
+      temperature?: number;
+    }) => Promise<{ success: boolean; error?: string; code?: string }>;
+    abort: (requestId: string) => Promise<{ success: boolean }>;
+    checkAvailable: (provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) => Promise<boolean>;
+    onToken: (callback: (requestId: string, token: string) => void) => () => void;
+    onDone: (callback: (requestId: string) => void) => () => void;
+  };
   file: {
     save: (content: string, defaultName: string) => Promise<string | null>;
     openPdf: () => Promise<{ path: string; name: string; data: Buffer } | null>;
@@ -60,7 +99,7 @@ export type ElectronAPI = {
   };
   apiKey: {
     save: (provider: string, key: string) => Promise<{ success: boolean }>;
-    get: (provider: string) => Promise<string>;
+    has: (provider: string) => Promise<boolean>;
     delete: (provider: string) => Promise<{ success: boolean }>;
   };
   openExternal: (url: string) => Promise<void>;

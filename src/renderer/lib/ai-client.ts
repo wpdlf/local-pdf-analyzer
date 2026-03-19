@@ -1,47 +1,79 @@
 import type { SummaryType, AppSettings } from '../types';
-import { OllamaProvider, ClaudeProvider, OpenAiProvider, type AiProvider } from './ai-provider';
-import { buildPrompt } from './prompts';
 
 export class AiClient {
-  private provider: AiProvider;
-  private model: string;
+  private settings: AppSettings;
 
   constructor(settings: AppSettings) {
-    this.model = settings.model;
-    this.provider = this.createProvider(settings);
-  }
-
-  private createProvider(settings: AppSettings): AiProvider {
-    switch (settings.provider) {
-      case 'claude':
-        if (!settings.claudeApiKey) {
-          throw Object.assign(new Error('Claude API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.'), { code: 'API_KEY_MISSING' });
-        }
-        return new ClaudeProvider(settings.claudeApiKey);
-      case 'openai':
-        if (!settings.openaiApiKey) {
-          throw Object.assign(new Error('OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.'), { code: 'API_KEY_MISSING' });
-        }
-        return new OpenAiProvider(settings.openaiApiKey);
-      case 'ollama':
-      default:
-        return new OllamaProvider(settings.ollamaBaseUrl);
-    }
+    this.settings = settings;
   }
 
   async *summarize(text: string, type: SummaryType): AsyncGenerator<string> {
-    const prompt = buildPrompt(text, type);
-    yield* this.provider.generate(prompt, {
-      model: this.model,
+    const requestId = crypto.randomUUID();
+
+    // 토큰 수신을 위한 큐
+    const tokenQueue: string[] = [];
+    let done = false;
+    let error: Error | null = null;
+    let resolver: (() => void) | null = null;
+
+    const unsubToken = window.electronAPI.ai.onToken((id, token) => {
+      if (id !== requestId) return;
+      tokenQueue.push(token);
+      resolver?.();
+    });
+
+    const unsubDone = window.electronAPI.ai.onDone((id) => {
+      if (id !== requestId) return;
+      done = true;
+      resolver?.();
+    });
+
+    // Main 프로세스에 생성 요청 (API 키는 Main에서 처리)
+    const resultPromise = window.electronAPI.ai.generate(requestId, {
+      text,
+      type,
+      provider: this.settings.provider,
+      model: this.settings.model,
+      ollamaBaseUrl: this.settings.ollamaBaseUrl,
       temperature: 0.3,
     });
+
+    // 에러 감지를 위해 비동기로 결과 확인
+    resultPromise.then((result) => {
+      if (!result.success) {
+        error = Object.assign(new Error(result.error || '요약 생성에 실패했습니다.'), {
+          code: result.code || 'GENERATE_FAIL',
+        });
+        done = true;
+        resolver?.();
+      }
+    });
+
+    try {
+      while (!done || tokenQueue.length > 0) {
+        if (tokenQueue.length > 0) {
+          yield tokenQueue.shift()!;
+        } else if (!done) {
+          await new Promise<void>((r) => { resolver = r; });
+          resolver = null;
+        }
+      }
+
+      if (error) throw error;
+    } finally {
+      unsubToken();
+      unsubDone();
+    }
   }
 
   async isAvailable(): Promise<boolean> {
-    return this.provider.isAvailable();
+    return window.electronAPI.ai.checkAvailable(
+      this.settings.provider,
+      this.settings.ollamaBaseUrl,
+    );
   }
 
-  async listModels(): Promise<string[]> {
-    return this.provider.listModels();
+  abort(requestId: string): void {
+    window.electronAPI.ai.abort(requestId);
   }
 }
