@@ -81,7 +81,7 @@ export function SummaryViewer() {
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <div className="animate-spin rounded-full h-12 w-12 border-4 border-gray-200 dark:border-gray-700 border-t-blue-500" />
             <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
-              AI가 강의자료를 분석하고 있습니다...
+              AI가 자료를 분석하고 있습니다...
             </p>
             <p className="text-sm text-gray-400 dark:text-gray-500">
               잠시만 기다려주세요

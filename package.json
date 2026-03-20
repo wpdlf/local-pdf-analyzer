@@ -1,7 +1,7 @@
 {
   "name": "summary-lecture-material",
   "version": "0.5.0",
-  "description": "PDF 대학교 강의자료 요약 데스크톱 앱",
+  "description": "PDF 자료 요약 데스크톱 앱",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

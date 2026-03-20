@@ -143,7 +143,7 @@ export function OllamaSetupWizard() {
       {step === 'welcome' && (
         <div className="text-center">
           <p className="text-gray-600 dark:text-gray-300 mb-2">
-            이 앱은 로컬 AI(Ollama)를 사용하여 강의자료를 요약합니다.
+            이 앱은 로컬 AI(Ollama)를 사용하여 PDF 자료를 요약합니다.
           </p>
           <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">
             아래 항목이 자동으로 설치됩니다:
