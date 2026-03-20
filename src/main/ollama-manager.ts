@@ -1,4 +1,4 @@
-import { exec, execFile, spawn, ChildProcess } from 'child_process';
+import { exec, execFile, spawn, ChildProcess, ExecFileException } from 'child_process';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
@@ -139,10 +139,13 @@ export class OllamaManager {
         const dmgPath = path.join(app.getPath('temp'), 'Ollama-darwin.zip');
         await this.downloadFile(dmgUrl, dmgPath);
         await new Promise<void>((resolve, reject) => {
-          exec(`unzip -o "${dmgPath}" -d /Applications && open /Applications/Ollama.app`, (error) => {
+          execFile('unzip', ['-o', dmgPath, '-d', '/Applications'], (error: ExecFileException | null) => {
             if (error) reject(error);
             else resolve();
           });
+        });
+        await new Promise<void>((resolve) => {
+          execFile('open', ['/Applications/Ollama.app'], () => resolve());
         });
         await new Promise((r) => setTimeout(r, 3000));
         return { success: true };

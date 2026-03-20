@@ -163,13 +163,35 @@ function registerIpcHandlers(): void {
     return { success: true };
   });
 
+  const VALID_THEMES = ['light', 'dark', 'system'] as const;
+  const VALID_SUMMARY_TYPES = ['full', 'chapter', 'keywords'] as const;
+
   ipcMain.handle('settings:set', (_event, partial: Record<string, unknown>) => {
     const current = loadSettings();
-    // API 키와 허용되지 않은 키는 settings.json에 저장하지 않음
     const filtered: Record<string, unknown> = {};
     for (const key of VALID_SETTINGS_KEYS) {
-      if (key in partial) {
-        filtered[key] = partial[key];
+      if (!(key in partial)) continue;
+      const val = partial[key];
+      // 값 타입 검증
+      switch (key) {
+        case 'provider':
+          if (VALID_PROVIDERS.includes(val as typeof VALID_PROVIDERS[number])) filtered[key] = val;
+          break;
+        case 'model':
+          if (typeof val === 'string' && val.length > 0 && val.length <= 100) filtered[key] = val;
+          break;
+        case 'ollamaBaseUrl':
+          if (typeof val === 'string' && val.startsWith('http')) filtered[key] = val;
+          break;
+        case 'theme':
+          if (VALID_THEMES.includes(val as typeof VALID_THEMES[number])) filtered[key] = val;
+          break;
+        case 'defaultSummaryType':
+          if (VALID_SUMMARY_TYPES.includes(val as typeof VALID_SUMMARY_TYPES[number])) filtered[key] = val;
+          break;
+        case 'maxChunkSize':
+          if (typeof val === 'number' && val >= 1000 && val <= 16000) filtered[key] = val;
+          break;
       }
     }
     const updated = { ...current, ...filtered };

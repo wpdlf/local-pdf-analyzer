@@ -5,3 +5,4 @@
 | pdf-lecture-summary | 2026-03-18 | 95.6% | 2 | ~11h | `pdf-lecture-summary/` |
 | summary-lecture-material | 2026-03-19 | 93.75% | 1 | 단일 세션 | `summary-lecture-material/` |
 | loading-ux | 2026-03-19 | 96.5% | 0 | 단일 세션 | `loading-ux/` |
+| security-ux-fix | 2026-03-20 | 100% | 0 | 단일 세션 | `security-ux-fix/` |

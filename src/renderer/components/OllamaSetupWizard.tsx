@@ -232,12 +232,20 @@ export function OllamaSetupWizard() {
                 https://ollama.com
               </button>
             </p>
-            <button
-              onClick={startSetup}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
-            >
-              다시 시도
-            </button>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={startSetup}
+                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+              >
+                다시 시도
+              </button>
+              <button
+                onClick={() => setView('settings')}
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              >
+                다른 AI Provider 사용
+              </button>
+            </div>
           </div>
         </div>
       )}

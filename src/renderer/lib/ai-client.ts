@@ -2,6 +2,11 @@ import type { SummaryType, AppSettings } from '../types';
 
 export class AiClient {
   private settings: AppSettings;
+  private _lastRequestId: string | null = null;
+
+  get lastRequestId(): string | null {
+    return this._lastRequestId;
+  }
 
   constructor(settings: AppSettings) {
     this.settings = settings;
@@ -9,6 +14,7 @@ export class AiClient {
 
   async *summarize(text: string, type: SummaryType): AsyncGenerator<string> {
     const requestId = crypto.randomUUID();
+    this._lastRequestId = requestId;
 
     // 토큰 수신을 위한 큐
     const tokenQueue: string[] = [];

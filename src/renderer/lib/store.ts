@@ -21,6 +21,7 @@ interface AppState {
   summaryStream: string;
   summaryType: SummaryType;
   isGenerating: boolean;
+  currentRequestId: string | null;
   progress: number;
   setSummary: (summary: Summary | null) => void;
   appendStream: (token: string) => void;
@@ -28,6 +29,7 @@ interface AppState {
   getStreamText: () => string;
   setSummaryType: (type: SummaryType) => void;
   setIsGenerating: (v: boolean) => void;
+  setCurrentRequestId: (id: string | null) => void;
   setProgress: (p: number) => void;
 
   // 설정
@@ -58,6 +60,7 @@ export const useAppStore = create<AppState>((set) => ({
   summaryStream: '',
   summaryType: 'full',
   isGenerating: false,
+  currentRequestId: null,
   progress: 0,
   setSummary: (summary) => set({ summary }),
   appendStream: (token) => set((s) => ({
@@ -67,6 +70,7 @@ export const useAppStore = create<AppState>((set) => ({
   getStreamText: () => useAppStore.getState().summaryStream,
   setSummaryType: (summaryType) => set({ summaryType }),
   setIsGenerating: (isGenerating) => set({ isGenerating }),
+  setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
   setProgress: (progress) => set({ progress }),
 
   // 설정

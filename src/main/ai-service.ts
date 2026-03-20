@@ -13,6 +13,21 @@ interface GenerateRequest {
 
 const activeRequests = new Map<string, { abort: () => void }>();
 
+function validateOllamaUrl(url: string): void {
+  try {
+    const parsed = new URL(url);
+    const allowedHosts = ['localhost', '127.0.0.1', '::1'];
+    if (!allowedHosts.includes(parsed.hostname)) {
+      throw new Error(`허용되지 않는 Ollama 호스트: ${parsed.hostname}. localhost만 허용됩니다.`);
+    }
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error('올바르지 않은 Ollama URL 형식입니다.');
+    }
+    throw err;
+  }
+}
+
 export function abortGenerate(requestId: string): void {
   const req = activeRequests.get(requestId);
   if (req) {
@@ -48,6 +63,11 @@ export async function checkAvailability(
 ): Promise<boolean> {
   switch (provider) {
     case 'ollama':
+      try {
+        validateOllamaUrl(ollamaBaseUrl);
+      } catch {
+        return false;
+      }
       return new Promise((resolve) => {
         http.get(ollamaBaseUrl, (res) => resolve(res.statusCode === 200))
           .on('error', () => resolve(false));
@@ -67,6 +87,7 @@ async function generateOllama(
   request: GenerateRequest,
   win: BrowserWindow,
 ): Promise<void> {
+  validateOllamaUrl(request.ollamaBaseUrl);
   const url = new URL('/api/generate', request.ollamaBaseUrl);
   const body = JSON.stringify({
     model: request.model || 'llama3.2',
@@ -185,12 +206,14 @@ function streamRequest(
       },
       (res) => {
         if (config.checkAuthError?.(res.statusCode || 0)) {
+          activeRequests.delete(requestId);
           reject(Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID' }));
           res.destroy();
           return;
         }
 
         if (res.statusCode && res.statusCode >= 400) {
+          activeRequests.delete(requestId);
           reject(new Error(`API 요청 실패: HTTP ${res.statusCode}`));
           res.destroy();
           return;
@@ -232,7 +255,9 @@ function streamRequest(
 
         res.on('end', () => {
           activeRequests.delete(requestId);
-          win.webContents.send('ai:done', requestId);
+          if (!win.isDestroyed()) {
+            win.webContents.send('ai:done', requestId);
+          }
           resolve();
         });
 

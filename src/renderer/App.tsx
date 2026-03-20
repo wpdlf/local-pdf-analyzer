@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAppStore } from './lib/store';
 import { AiClient } from './lib/ai-client';
 import { chunkText, chunkChapters } from './lib/chunker';
@@ -26,6 +26,8 @@ export default function App() {
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
   const error = useAppStore((s) => s.error);
   const setError = useAppStore((s) => s.setError);
+  const isParsing = useAppStore((s) => s.isParsing);
+  const clientRef = useRef<AiClient | null>(null);
 
   // 초기화: 설정 로드 + Ollama 상태 확인
   useEffect(() => {
@@ -87,6 +89,16 @@ export default function App() {
     }
   }, [settings.theme]);
 
+  const handleAbortSummarize = () => {
+    const reqId = useAppStore.getState().currentRequestId;
+    if (reqId) {
+      window.electronAPI.ai.abort(reqId);
+    }
+    clientRef.current = null;
+    useAppStore.getState().setCurrentRequestId(null);
+    setIsGenerating(false);
+  };
+
   const handleSummarize = async () => {
     if (!document || isGenerating) return;
 
@@ -101,6 +113,13 @@ export default function App() {
 
     try {
       const client = new AiClient(settings);
+      clientRef.current = client;
+
+      const trackSummarize = (text: string, type: typeof summaryType) => {
+        const gen = trackSummarize(text, type);
+        useAppStore.getState().setCurrentRequestId(client.lastRequestId);
+        return gen;
+      };
       const available = await client.isAvailable();
       if (!available) {
         const providerMessages: Record<string, string> = {
@@ -132,7 +151,7 @@ export default function App() {
           appendStream(`\n## ${chapter.title}\n\n`);
           for (const chunk of chunks) {
             if (timedOut) break;
-            for await (const token of client.summarize(chunk, 'chapter')) {
+            for await (const token of trackSummarize(chunk, 'chapter')) {
               if (checkTimeout()) break;
               appendStream(token);
             }
@@ -149,7 +168,7 @@ export default function App() {
         for (let i = 0; i < chunks.length; i++) {
           if (timedOut) break;
           let chunkResult = '';
-          for await (const token of client.summarize(chunks[i], summaryType)) {
+          for await (const token of trackSummarize(chunks[i], summaryType)) {
             if (checkTimeout()) break;
             appendStream(token);
             chunkResult += token;
@@ -165,7 +184,7 @@ export default function App() {
         if (!timedOut && chunks.length > 1 && summaryType === 'full') {
           appendStream('\n\n---\n\n## 📋 통합 요약\n\n');
           const combined = chunkSummaries.join('\n\n');
-          for await (const token of client.summarize(
+          for await (const token of trackSummarize(
             `다음은 강의자료의 파트별 요약입니다. 이를 하나의 통합 요약으로 정리해주세요.\n\n${combined}`,
             'full',
           )) {
@@ -234,8 +253,9 @@ export default function App() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setView('settings')}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            title="설정"
+            disabled={isGenerating || isParsing}
+            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title={isGenerating ? '요약 중에는 설정을 열 수 없습니다' : '설정'}
           >
             ⚙️
           </button>
@@ -246,8 +266,15 @@ export default function App() {
       <main className="flex-1 overflow-y-auto p-4">
         {/* 에러 표시 */}
         {error && (
-          <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+          <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start justify-between">
             <p className="text-red-700 dark:text-red-400 text-sm">{error.message}</p>
+            <button
+              onClick={() => setError(null)}
+              className="text-red-400 hover:text-red-600 dark:hover:text-red-300 ml-2 shrink-0"
+              aria-label="에러 닫기"
+            >
+              ✕
+            </button>
           </div>
         )}
 
@@ -264,7 +291,12 @@ export default function App() {
                 📎 {document.fileName} ({document.pageCount}p)
               </span>
               <button
-                onClick={() => setDocument(null)}
+                onClick={() => {
+                  setDocument(null);
+                  clearStream();
+                  setSummary(null);
+                  setProgress(0);
+                }}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm"
               >
                 ✕ 다른 파일

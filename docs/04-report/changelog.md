@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.5.0] - 2026-03-20
+
+### Security (Critical)
+- **SSRF 방어**: `ollamaBaseUrl` 호스트를 localhost/127.0.0.1/::1로 제한 (`validateOllamaUrl()`)
+- **macOS Command Injection 수정**: `exec` → `execFile`로 교체, unzip/open 명령 분리
+- **요약 중 닫기 시 AI 요청 중단**: `currentRequestId` + `ai:abort` IPC로 백그라운드 실행 방지
+- **요약 중 설정 변경 차단**: 설정 버튼 `disabled` 처리 (`isGenerating || isParsing`)
+
+### Fixed
+- **`win.isDestroyed()` 체크**: 스트리밍 종료 시 윈도우 닫힌 상태에서 크래시 방지
+- **`activeRequests` 정리**: HTTP 4xx 에러 시 Map에서 즉시 삭제
+- **에러 닫기 버튼**: 에러 메시지 영역에 X 버튼 추가 (`setError(null)`)
+- **"다른 파일" 상태 초기화**: document + summaryStream + summary + progress 모두 초기화
+- **설정값 타입 검증**: provider, theme, maxChunkSize 등 값 타입/범위 서버 측 검증
+
+### Changed
+- **Ollama Setup 탈출 경로**: 설치 실패 시 "다른 AI Provider 사용" 버튼 추가 → 설정 패널 이동
+- **Dead code 삭제**: `ai-provider.ts` (미사용) 제거
+
+### Verified
+- **Match Rate**: 100% (12/12)
+- **테스트**: 23/23 통과
+- **빌드**: electron-vite build 성공
+
+---
+
 ## [0.4.1] - 2026-03-19
 
 ### Added

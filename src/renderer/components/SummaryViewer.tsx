@@ -25,6 +25,12 @@ export function SummaryViewer() {
   }, [summaryStream, isGenerating]);
 
   const handleClose = () => {
+    // 요약 중이면 AI 요청 중단
+    const reqId = useAppStore.getState().currentRequestId;
+    if (reqId) {
+      window.electronAPI.ai.abort(reqId);
+      useAppStore.getState().setCurrentRequestId(null);
+    }
     useAppStore.getState().setDocument(null);
     useAppStore.getState().clearStream();
     useAppStore.getState().setIsGenerating(false);
