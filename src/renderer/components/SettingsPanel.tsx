@@ -145,9 +145,15 @@ export function SettingsPanel() {
   };
 
   // 현재 provider에 맞는 모델 목록
-  const modelOptions = draft.provider === 'ollama'
-    ? ollamaModels.map((m) => ({ label: m, value: m }))
-    : PROVIDER_MODELS[draft.provider];
+  const modelOptions = (() => {
+    if (draft.provider !== 'ollama') return PROVIDER_MODELS[draft.provider];
+    const models = ollamaModels.map((m) => ({ label: m, value: m }));
+    // 현재 선택된 모델이 목록에 없으면 추가
+    if (draft.model && !ollamaModels.includes(draft.model)) {
+      models.unshift({ label: `${draft.model} (미설치)`, value: draft.model });
+    }
+    return models;
+  })();
 
   return (
     <div className="p-6 max-w-lg mx-auto">
@@ -220,6 +226,16 @@ export function SettingsPanel() {
         {draft.provider !== 'ollama' && (
           <p className="text-xs text-gray-500 mt-2">
             API 사용량에 따라 요금이 부과됩니다.
+          </p>
+        )}
+        {draft.provider === 'ollama' && ollamaModels.length === 0 && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+            Ollama에 설치된 모델이 없습니다. 아래에서 모델을 추가해주세요.
+          </p>
+        )}
+        {draft.provider === 'ollama' && ollamaModels.length > 0 && (
+          <p className="text-xs text-gray-500 mt-2">
+            한국어 요약에는 gemma3, qwen2.5 모델을 권장합니다.
           </p>
         )}
       </section>
