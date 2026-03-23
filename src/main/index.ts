@@ -158,7 +158,10 @@ function registerIpcHandlers(): void {
     if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {
       return { success: false, error: 'Invalid provider' };
     }
-    saveApiKey(provider, key);
+    if (typeof key !== 'string' || key.trim().length === 0 || key.length > 512) {
+      return { success: false, error: 'Invalid API key' };
+    }
+    saveApiKey(provider, key.trim());
     return { success: true };
   });
 

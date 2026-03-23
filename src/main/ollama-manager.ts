@@ -261,17 +261,17 @@ export class OllamaManager {
 
   async healthCheck(): Promise<boolean> {
     return new Promise((resolve) => {
-      http.get(this.baseUrl, (res) => {
+      const req = http.get({ hostname: 'localhost', port: 11434, path: '/', timeout: 5000 }, (res) => {
         resolve(res.statusCode === 200);
-      }).on('error', () => {
-        resolve(false);
       });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => { req.destroy(); resolve(false); });
     });
   }
 
   async listModels(): Promise<string[]> {
     return new Promise((resolve) => {
-      http.get(`${this.baseUrl}/api/tags`, (res) => {
+      const req = http.get({ hostname: 'localhost', port: 11434, path: '/api/tags', timeout: 5000 }, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
@@ -283,9 +283,9 @@ export class OllamaManager {
             resolve([]);
           }
         });
-      }).on('error', () => {
-        resolve([]);
       });
+      req.on('error', () => resolve([]));
+      req.on('timeout', () => { req.destroy(); resolve([]); });
     });
   }
 

@@ -71,8 +71,9 @@ export async function checkAvailability(
       }
       const parsed = new URL(ollamaBaseUrl);
       return new Promise((resolve) => {
-        http.get({ hostname: parsed.hostname, port: parsed.port, path: '/' }, (res) => resolve(res.statusCode === 200))
-          .on('error', () => resolve(false));
+        const req = http.get({ hostname: parsed.hostname, port: parsed.port, path: '/', timeout: 5000 }, (res) => resolve(res.statusCode === 200));
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => { req.destroy(); resolve(false); });
       });
     case 'claude':
       return !!apiKey;
@@ -282,15 +283,16 @@ function streamRequest(
       reject(new Error('AI 서버 응답 타임아웃 (5분)'));
     });
 
-    req.write(config.body);
-    req.end();
-
+    // abort를 write 전에 등록하여 race condition 방지
     activeRequests.set(requestId, {
       abort: () => {
-        req.destroy();
         activeRequests.delete(requestId);
+        if (!req.destroyed) req.destroy();
       },
     });
+
+    req.write(config.body);
+    req.end();
   });
 }
 
