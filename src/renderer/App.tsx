@@ -140,6 +140,16 @@ export default function App() {
     const TIMEOUT_MS = 300000; // 5분 타임아웃
     let timedOut = false;
 
+    // 실제 타이머 기반 타임아웃 — 모델 무응답 시에도 동작
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      handleAbortSummarize();
+      setError({
+        code: 'GENERATE_TIMEOUT',
+        message: '요약 시간이 초과되었습니다. 생성된 부분까지 표시됩니다. 청크 크기를 줄이거나 경량 모델을 사용해보세요.',
+      });
+    }, TIMEOUT_MS);
+
     try {
       const client = new AiClient(settings);
       clientRef.current = client;
@@ -226,13 +236,6 @@ export default function App() {
         }
       }
 
-      if (timedOut) {
-        setError({
-          code: 'GENERATE_TIMEOUT',
-          message: '요약 시간이 초과되었습니다. 생성된 부분까지 표시됩니다. 청크 크기를 줄이거나 경량 모델을 사용해보세요.',
-        });
-      }
-
       const durationMs = Date.now() - startTime;
       const finalContent = useAppStore.getState().summaryStream;
       setSummary({
@@ -252,6 +255,7 @@ export default function App() {
         message: error.message || '요약 생성에 실패했습니다.',
       });
     } finally {
+      clearTimeout(timeoutTimer);
       setIsGenerating(false);
     }
   };

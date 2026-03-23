@@ -168,7 +168,12 @@ export class OllamaManager {
         const client = targetUrl.startsWith('https') ? https : http;
         client.get(targetUrl, (response) => {
           if (response.statusCode && [301, 302, 303, 307, 308].includes(response.statusCode)) {
-            follow(response.headers.location!, redirects + 1);
+            const location = response.headers.location;
+            if (!location) {
+              reject(new Error(`리다이렉트 응답에 Location 헤더가 없습니다 (HTTP ${response.statusCode})`));
+              return;
+            }
+            follow(location, redirects + 1);
           } else if (response.statusCode === 200) {
             const file = fs.createWriteStream(dest);
             response.pipe(file);

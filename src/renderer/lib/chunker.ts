@@ -9,7 +9,7 @@ function estimateCharsPerToken(text: string): number {
   const koreanChars = (sample.match(/[\uAC00-\uD7AF\u3130-\u318F\u1100-\u11FF]/g) || []).length;
   const koreanRatio = koreanChars / Math.max(sample.length, 1);
   // 한글 비율이 높을수록 토큰당 문자 수 감소
-  return 4 - (koreanRatio * 2.5); // 100% 한글 → 1.5, 0% 한글 → 4
+  return Math.max(1.5, 4 - (koreanRatio * 2.5)); // 100% 한글 → 1.5, 0% 한글 → 4
 }
 
 /**

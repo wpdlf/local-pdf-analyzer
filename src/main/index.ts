@@ -117,6 +117,17 @@ function saveApiKey(provider: string, key: string): void {
   fs.writeFileSync(apiKeysPath, encrypted);
 }
 
+function deleteApiKey(provider: string): void {
+  let keys: Record<string, string> = {};
+  try {
+    const encrypted = fs.readFileSync(apiKeysPath);
+    keys = JSON.parse(safeStorage.decryptString(encrypted));
+  } catch { /* 파일 없음 */ }
+  delete keys[provider];
+  const encrypted = safeStorage.encryptString(JSON.stringify(keys));
+  fs.writeFileSync(apiKeysPath, encrypted);
+}
+
 function loadApiKey(provider: string): string | undefined {
   try {
     const encrypted = fs.readFileSync(apiKeysPath);
@@ -159,7 +170,7 @@ function registerIpcHandlers(): void {
     if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {
       return { success: false, error: 'Invalid provider' };
     }
-    saveApiKey(provider, '');
+    deleteApiKey(provider);
     return { success: true };
   });
 
