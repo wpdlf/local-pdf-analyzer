@@ -1,16 +1,27 @@
 import type { Chapter } from '../types';
 
-const APPROX_CHARS_PER_TOKEN = 4;
+/**
+ * 한글 비율에 따라 토큰당 문자 수를 동적으로 계산
+ * 영어: ~4 chars/token, 한글: ~1.5 chars/token
+ */
+function estimateCharsPerToken(text: string): number {
+  const sample = text.slice(0, 2000);
+  const koreanChars = (sample.match(/[\uAC00-\uD7AF\u3130-\u318F\u1100-\u11FF]/g) || []).length;
+  const koreanRatio = koreanChars / Math.max(sample.length, 1);
+  // 한글 비율이 높을수록 토큰당 문자 수 감소
+  return 4 - (koreanRatio * 2.5); // 100% 한글 → 1.5, 0% 한글 → 4
+}
 
 /**
  * 텍스트를 토큰 기준으로 청크 분할
- * 챕터가 maxChunkSize보다 크면 추가 분할
+ * 한글/영어 비율에 따라 청크 크기를 자동 조절
  */
 export function chunkText(
   text: string,
   maxChunkSize: number = 4000,
 ): string[] {
-  const maxChars = maxChunkSize * APPROX_CHARS_PER_TOKEN;
+  const charsPerToken = estimateCharsPerToken(text);
+  const maxChars = Math.floor(maxChunkSize * charsPerToken);
 
   if (text.length <= maxChars) {
     return [text];

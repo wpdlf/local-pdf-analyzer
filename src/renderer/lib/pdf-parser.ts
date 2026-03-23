@@ -26,9 +26,42 @@ export async function parsePdf(
       promises.push(
         pdf.getPage(i + 1).then(async (page) => {
           const textContent = await page.getTextContent();
-          pages[i] = textContent.items
-            .map((item) => ('str' in item ? item.str : ''))
-            .join(' ');
+          // 텍스트 아이템 간 위치 기반 공백/줄바꿈 삽입 (한글 깨짐 방지)
+          let lastY: number | null = null;
+          let lastEndX = 0;
+          const parts: string[] = [];
+
+          for (const item of textContent.items) {
+            if (!('str' in item) || !item.str) continue;
+            const tx = ('transform' in item) ? item.transform : null;
+            if (!tx) {
+              // transform이 없으면 공백 연결 fallback
+              if (parts.length > 0) parts.push(' ');
+              parts.push(item.str);
+              continue;
+            }
+            const x = tx[4];
+            const y = tx[5];
+            const fontSize = Math.abs(tx[0]) || Math.abs(tx[3]) || 12;
+
+            if (lastY !== null) {
+              const yDiff = Math.abs(y - lastY);
+              if (yDiff > fontSize * 0.5) {
+                // 줄이 바뀜
+                parts.push('\n');
+              } else if (x > lastEndX + fontSize * 0.3) {
+                // 같은 줄에서 간격이 있으면 공백
+                parts.push(' ');
+              }
+              // 한글 글자 단위 분할: 간격이 매우 좁으면 공백 없이 연결
+            }
+
+            parts.push(item.str);
+            lastY = y;
+            lastEndX = x + (item.width ?? item.str.length * fontSize * 0.5);
+          }
+
+          pages[i] = parts.join('');
         }),
       );
     }

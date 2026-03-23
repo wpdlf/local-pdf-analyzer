@@ -1,5 +1,6 @@
 import http from 'http';
 import https from 'https';
+import { StringDecoder } from 'string_decoder';
 import { BrowserWindow } from 'electron';
 
 interface GenerateRequest {
@@ -220,6 +221,7 @@ function streamRequest(
         }
 
         let buffer = '';
+        const decoder = new StringDecoder('utf8');
 
         res.on('data', (chunk: Buffer) => {
           if (win.isDestroyed()) {
@@ -227,7 +229,7 @@ function streamRequest(
             return;
           }
 
-          buffer += chunk.toString();
+          buffer += decoder.write(chunk);
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
 
@@ -291,11 +293,12 @@ function buildPrompt(text: string, type: 'full' | 'chapter' | 'keywords'): strin
   switch (type) {
     case 'full':
       return `당신은 대학교 강의자료 요약 전문가입니다.
+반드시 한국어로 답변하세요. 원문이 영어라도 한국어로 요약합니다.
 
 다음 강의자료를 분석하여 구조적으로 요약해주세요.
 
 ## 요약 규칙
-1. **핵심 개념**: 주요 개념과 정의를 목록으로 정리
+1. **핵심 개념**: 주요 개념과 정의를 목록으로 정리 (전문 용어는 원어 병기)
 2. **주요 내용**: 각 섹션의 핵심 내용을 간결하게 요약
 3. **수식/공식**: 중요한 수식이 있으면 원문 그대로 포함
 4. **예제**: 핵심 예제가 있으면 간략히 포함
@@ -309,11 +312,12 @@ function buildPrompt(text: string, type: 'full' | 'chapter' | 'keywords'): strin
 ${text}`;
     case 'chapter':
       return `당신은 대학교 강의자료 요약 전문가입니다.
+반드시 한국어로 답변하세요. 원문이 영어라도 한국어로 요약합니다.
 
 다음 강의자료의 이 섹션을 요약해주세요.
 
 ## 요약 규칙
-1. 해당 섹션의 **핵심 개념**과 **정의**를 정리
+1. 해당 섹션의 **핵심 개념**과 **정의**를 정리 (전문 용어는 원어 병기)
 2. 중요한 **수식/공식**은 원문 그대로 포함
 3. **예제**가 있으면 핵심만 간략히 포함
 4. 3~5개의 **핵심 포인트**로 정리
@@ -326,6 +330,7 @@ ${text}`;
 ${text}`;
     case 'keywords':
       return `다음 강의자료에서 핵심 키워드를 추출하고 각각 간단히 설명해주세요.
+반드시 한국어로 답변하세요. 전문 용어는 원어를 병기합니다.
 
 ## 출력 형식
 아래 마크다운 테이블 형식으로 출력하세요:
