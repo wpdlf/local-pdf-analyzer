@@ -260,8 +260,9 @@ export class OllamaManager {
   }
 
   async healthCheck(): Promise<boolean> {
+    const url = new URL(this.baseUrl);
     return new Promise((resolve) => {
-      const req = http.get({ hostname: 'localhost', port: 11434, path: '/', timeout: 5000 }, (res) => {
+      const req = http.get({ hostname: url.hostname, port: url.port || 11434, path: '/', timeout: 5000 }, (res) => {
         resolve(res.statusCode === 200);
       });
       req.on('error', () => resolve(false));
@@ -270,8 +271,9 @@ export class OllamaManager {
   }
 
   async listModels(): Promise<string[]> {
+    const url = new URL(this.baseUrl);
     return new Promise((resolve) => {
-      const req = http.get({ hostname: 'localhost', port: 11434, path: '/api/tags', timeout: 5000 }, (res) => {
+      const req = http.get({ hostname: url.hostname, port: url.port || 11434, path: '/api/tags', timeout: 5000 }, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
@@ -291,9 +293,21 @@ export class OllamaManager {
 
   async pullModel(model: string): Promise<{ success: boolean; error?: string }> {
     const ollamaPath = this.getOllamaPath();
+    const PULL_TIMEOUT_MS = 1800000; // 30분
+
     return new Promise((resolve) => {
+      let settled = false;
+      const safeResolve = (result: { success: boolean; error?: string }) => {
+        if (!settled) { settled = true; resolve(result); }
+      };
+
       const proc = spawn(ollamaPath, ['pull', model]);
       let lastProgress = '';
+
+      const timeout = setTimeout(() => {
+        proc.kill();
+        safeResolve({ success: false, error: '모델 다운로드 타임아웃 (30분). 네트워크를 확인 후 다시 시도해주세요.' });
+      }, PULL_TIMEOUT_MS);
 
       const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
@@ -314,14 +328,16 @@ export class OllamaManager {
       });
 
       proc.on('error', (err) => {
-        resolve({ success: false, error: `모델 다운로드 실패: ${err.message}` });
+        clearTimeout(timeout);
+        safeResolve({ success: false, error: `모델 다운로드 실패: ${err.message}` });
       });
 
       proc.on('close', (code) => {
+        clearTimeout(timeout);
         if (code === 0) {
-          resolve({ success: true });
+          safeResolve({ success: true });
         } else {
-          resolve({ success: false, error: `모델 다운로드 실패 (exit code: ${code})` });
+          safeResolve({ success: false, error: `모델 다운로드 실패 (exit code: ${code})` });
         }
       });
     });

@@ -18,10 +18,22 @@ const defaultSettings = {
   maxChunkSize: 4000,
 };
 
+const VALID_SETTINGS_KEYS_SET = new Set([
+  'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize',
+]);
+
 function loadSettings(): Record<string, unknown> {
   try {
     const data = fs.readFileSync(settingsPath, 'utf-8');
-    return { ...defaultSettings, ...JSON.parse(data) };
+    const parsed = JSON.parse(data);
+    // 허용된 키만 로드하여 임의 속성 주입 방지
+    const filtered: Record<string, unknown> = {};
+    for (const key of Object.keys(parsed)) {
+      if (VALID_SETTINGS_KEYS_SET.has(key)) {
+        filtered[key] = parsed[key];
+      }
+    }
+    return { ...defaultSettings, ...filtered };
   } catch {
     return { ...defaultSettings };
   }
@@ -248,7 +260,7 @@ function registerIpcHandlers(): void {
 
   // ─── AI 요약 (Main 프로세스에서 API 키를 사용하여 직접 호출) ───
 
-  ipcMain.handle('ai:generate', async (_event, requestId: string, request: {
+  ipcMain.handle('ai:generate', async (event, requestId: string, request: {
     text: string;
     type: 'full' | 'chapter' | 'keywords';
     provider: 'ollama' | 'claude' | 'openai';
@@ -273,7 +285,7 @@ function registerIpcHandlers(): void {
       return { success: false, error: 'Invalid model' };
     }
 
-    const win = BrowserWindow.getAllWindows()[0];
+    const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return { success: false, error: '윈도우를 찾을 수 없습니다.' };
 
     const apiKey = request.provider !== 'ollama'
