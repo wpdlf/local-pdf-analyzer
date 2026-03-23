@@ -235,12 +235,23 @@ function streamRequest(
           return;
         }
 
+        const MAX_RESPONSE_SIZE = 50 * 1024 * 1024; // 50MB
+        let totalBytes = 0;
+
         let buffer = '';
         const decoder = new StringDecoder('utf8');
 
         res.on('data', (chunk: Buffer) => {
           if (win.isDestroyed()) {
             res.destroy();
+            return;
+          }
+
+          totalBytes += chunk.length;
+          if (totalBytes > MAX_RESPONSE_SIZE) {
+            activeRequests.delete(requestId);
+            res.destroy();
+            safeReject(new Error('AI 응답이 너무 큽니다 (50MB 초과).'));
             return;
           }
 

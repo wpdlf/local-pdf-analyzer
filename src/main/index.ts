@@ -41,7 +41,9 @@ function loadSettings(): Record<string, unknown> {
 }
 
 function saveSettings(settings: Record<string, unknown>): void {
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+  const tmpPath = settingsPath + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, settingsPath);
 }
 
 function createWindow(): BrowserWindow {
@@ -78,17 +80,24 @@ function createWindow(): BrowserWindow {
     if (url.startsWith('file://') && url.toLowerCase().endsWith('.pdf')) {
       const filePath = fileURLToPath(url);
       try {
-        const stat = fs.statSync(filePath);
-        if (stat.size > 100 * 1024 * 1024) {
-          console.error('Dropped file too large:', stat.size);
-          return;
+        const MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
+        const fd = fs.openSync(filePath, 'r');
+        try {
+          const stat = fs.fstatSync(fd);
+          if (stat.size > MAX_PDF_SIZE) {
+            console.error('Dropped file too large:', stat.size);
+            return;
+          }
+          const data = Buffer.alloc(stat.size);
+          fs.readSync(fd, data, 0, stat.size, 0);
+          win.webContents.send('file:dropped', {
+            path: filePath,
+            name: path.basename(filePath),
+            data: data.buffer,
+          });
+        } finally {
+          fs.closeSync(fd);
         }
-        const data = fs.readFileSync(filePath);
-        win.webContents.send('file:dropped', {
-          path: filePath,
-          name: path.basename(filePath),
-          data: data.buffer,
-        });
       } catch (err) {
         console.error('Failed to read dropped file:', err);
       }
@@ -130,6 +139,13 @@ app.on('before-quit', () => {
 
 const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');
 
+function writeApiKeys(keys: Record<string, string>): void {
+  const tmpPath = apiKeysPath + '.tmp';
+  const encrypted = safeStorage.encryptString(JSON.stringify(keys));
+  fs.writeFileSync(tmpPath, encrypted);
+  fs.renameSync(tmpPath, apiKeysPath);
+}
+
 function saveApiKey(provider: string, key: string): void {
   let keys: Record<string, string> = {};
   try {
@@ -137,8 +153,7 @@ function saveApiKey(provider: string, key: string): void {
     keys = JSON.parse(safeStorage.decryptString(encrypted));
   } catch { /* 첫 저장 */ }
   keys[provider] = key;
-  const encrypted = safeStorage.encryptString(JSON.stringify(keys));
-  fs.writeFileSync(apiKeysPath, encrypted);
+  writeApiKeys(keys);
 }
 
 function deleteApiKey(provider: string): void {
@@ -148,8 +163,7 @@ function deleteApiKey(provider: string): void {
     keys = JSON.parse(safeStorage.decryptString(encrypted));
   } catch { /* 파일 없음 */ }
   delete keys[provider];
-  const encrypted = safeStorage.encryptString(JSON.stringify(keys));
-  fs.writeFileSync(apiKeysPath, encrypted);
+  writeApiKeys(keys);
 }
 
 function loadApiKey(provider: string): string | undefined {
@@ -358,12 +372,17 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('file:open-pdf', async () => {
+    const MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
     const { filePaths } = await dialog.showOpenDialog({
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
       properties: ['openFile'],
     });
     if (filePaths.length > 0) {
       const fsp = await import('fs/promises');
+      const stat = await fsp.stat(filePaths[0]);
+      if (stat.size > MAX_PDF_SIZE) {
+        return { error: 'PDF 파일이 너무 큽니다 (최대 100MB).' };
+      }
       const buffer = await fsp.readFile(filePaths[0]);
       return {
         path: filePaths[0],

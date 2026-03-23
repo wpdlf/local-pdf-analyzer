@@ -47,7 +47,9 @@ export function PdfUploader() {
     input.onchange = () => {
       const file = input.files?.[0];
       if (file) handleFile(file);
+      input.remove();
     };
+    document.body.appendChild(input);
     input.click();
   }, [handleFile]);
 

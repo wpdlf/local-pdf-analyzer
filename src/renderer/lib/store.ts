@@ -26,7 +26,6 @@ interface AppState {
   setSummary: (summary: Summary | null) => void;
   appendStream: (token: string) => void;
   clearStream: () => void;
-  getStreamText: () => string;
   setSummaryType: (type: SummaryType) => void;
   setIsGenerating: (v: boolean) => void;
   setCurrentRequestId: (id: string | null) => void;
@@ -67,7 +66,6 @@ export const useAppStore = create<AppState>((set) => ({
     summaryStream: s.summaryStream + token,
   })),
   clearStream: () => set({ summaryStream: '' }),
-  getStreamText: () => useAppStore.getState().summaryStream,
   setSummaryType: (summaryType) => set({ summaryType }),
   setIsGenerating: (isGenerating) => set({ isGenerating }),
   setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
