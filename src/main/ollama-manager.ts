@@ -321,21 +321,47 @@ export class OllamaManager {
         safeResolve({ success: false, error: '모델 다운로드 타임아웃 (30분). 네트워크를 확인 후 다시 시도해주세요.' });
       }, PULL_TIMEOUT_MS);
 
-      const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
+      // ANSI 이스케이프 시퀀스 전체 제거 (색상, 커서 이동 등)
+      const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+
+      // ollama pull은 \r과 \n을 혼용하므로, 둘 다 기준으로 split 후 마지막 비어있지 않은 줄만 취함
+      const extractLastLine = (raw: string): string => {
+        const cleaned = stripAnsi(raw);
+        const parts = cleaned.split(/[\r\n]+/).map(s => s.trim()).filter(Boolean);
+        return parts.length > 0 ? parts[parts.length - 1] : '';
+      };
+
+      // ollama pull 원본 출력을 사용자 친화적 메시지로 변환
+      const toFriendlyMessage = (line: string): string => {
+        // "pulling abc123..." → 퍼센트 추출
+        const pullMatch = line.match(/^pulling\s+\S+.*?(\d+%)/);
+        if (pullMatch) return `모델 다운로드 중... ${pullMatch[1]}`;
+        // "pulling manifest"
+        if (/^pulling\s+manifest/i.test(line)) return '모델 정보 확인 중...';
+        // "verifying sha256 digest"
+        if (/^verifying/i.test(line)) return '무결성 검증 중...';
+        // "writing manifest"
+        if (/^writing/i.test(line)) return '설치 마무리 중...';
+        // "success"
+        if (/^success/i.test(line)) return '다운로드 완료!';
+        // 그 외 (예: pulling hash without %)
+        if (/^pulling\s+[a-f0-9]/i.test(line)) return '모델 다운로드 준비 중...';
+        return line;
+      };
 
       proc.stdout?.on('data', (data: Buffer) => {
-        const line = stripAnsi(data.toString().trim());
+        const line = extractLastLine(data.toString());
         if (line && line !== lastProgress) {
           lastProgress = line;
-          this.sendProgress(`모델 다운로드: ${line}`);
+          this.sendProgress(toFriendlyMessage(line));
         }
       });
 
       proc.stderr?.on('data', (data: Buffer) => {
-        const line = stripAnsi(data.toString().trim());
+        const line = extractLastLine(data.toString());
         if (line && line !== lastProgress) {
           lastProgress = line;
-          this.sendProgress(`모델 다운로드: ${line}`);
+          this.sendProgress(toFriendlyMessage(line));
         }
       });
 

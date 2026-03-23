@@ -92,10 +92,13 @@ export interface AppError {
 // 한국어 성능이 우수한 Ollama 추천 모델
 export const KOREAN_RECOMMENDED_MODELS = ['gemma3', 'qwen2.5', 'exaone3.5'];
 
+// 초기 설치 시 함께 다운로드할 모델 (한국어 PDF 요약 특화)
+export const INITIAL_INSTALL_MODELS = ['gemma3', 'exaone3.5'] as const;
+
 // 기본 설정값
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: 'ollama',
-  model: 'llama3.2',
+  model: 'gemma3',
   ollamaBaseUrl: 'http://localhost:11434',
   theme: 'system',
   defaultSummaryType: 'full',

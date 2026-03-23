@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../lib/store';
 import type { AppErrorCode } from '../types';
+import { INITIAL_INSTALL_MODELS } from '../types';
 
 type SetupStep = 'welcome' | 'progress' | 'done' | 'error';
 
@@ -19,7 +20,7 @@ export function OllamaSetupWizard() {
   const [items, setItems] = useState<SetupItem[]>([
     { label: 'Ollama 설치 확인', status: 'pending' },
     { label: 'Ollama 서비스 시작', status: 'pending' },
-    { label: `AI 모델 다운로드 (${settings.model})`, status: 'pending' },
+    ...INITIAL_INSTALL_MODELS.map((m) => ({ label: `한국어 AI 모델 다운로드 (${m})`, status: 'pending' as const })),
   ]);
 
   // main process에서 보내는 진행 상태 수신
@@ -80,17 +81,29 @@ export function OllamaSetupWizard() {
       }
       updateItem(1, 'done');
 
-      // ── Step 3: AI 모델 다운로드 ──
-      updateItem(2, 'running');
-      const models = await window.electronAPI.ollama.listModels();
-      if (models.length === 0) {
-        setProgressMessage(`AI 모델(${settings.model})을 다운로드하고 있습니다. 모델 크기에 따라 수 분이 소요됩니다...`);
-        const pullResult = await window.electronAPI.ollama.pullModel(settings.model);
+      // ── Step 3+: 한국어 AI 모델 다운로드 ──
+      const existingModels = await window.electronAPI.ollama.listModels();
+
+      for (let i = 0; i < INITIAL_INSTALL_MODELS.length; i++) {
+        const modelName = INITIAL_INSTALL_MODELS[i];
+        const itemIndex = 2 + i; // items 배열에서의 인덱스
+        updateItem(itemIndex, 'running');
+
+        // 이미 설치된 모델은 건너뛰기
+        const alreadyInstalled = existingModels.some((m) => m.startsWith(modelName));
+        if (alreadyInstalled) {
+          updateItem(itemIndex, 'done');
+          continue;
+        }
+
+        setProgressMessage(`한국어 AI 모델(${modelName})을 다운로드하고 있습니다. 모델 크기에 따라 수 분이 소요됩니다...`);
+        const pullResult = await window.electronAPI.ollama.pullModel(modelName);
         if (!pullResult.success) {
-          updateItem(2, 'error');
-          handleError('MODEL_PULL_FAIL', pullResult.error || '모델 다운로드에 실패했습니다.');
+          updateItem(itemIndex, 'error');
+          handleError('MODEL_PULL_FAIL', pullResult.error || `${modelName} 모델 다운로드에 실패했습니다.`);
           return;
         }
+        updateItem(itemIndex, 'done');
       }
 
       const finalModels = await window.electronAPI.ollama.listModels();
@@ -99,7 +112,6 @@ export function OllamaSetupWizard() {
         handleError('MODEL_NOT_FOUND', '설치된 모델이 없습니다. 네트워크를 확인 후 다시 시도해주세요.');
         return;
       }
-      updateItem(2, 'done');
 
       // ── 완료 ──
       const finalStatus = await window.electronAPI.ollama.getStatus();
