@@ -192,7 +192,9 @@ function registerIpcHandlers(): void {
           if (typeof val === 'string' && val.length > 0 && val.length <= 100) filtered[key] = val;
           break;
         case 'ollamaBaseUrl':
-          if (typeof val === 'string' && val.startsWith('http')) filtered[key] = val;
+          if (typeof val === 'string') {
+            try { new URL(val); filtered[key] = val; } catch { /* 유효하지 않은 URL 무시 */ }
+          }
           break;
         case 'theme':
           if (VALID_THEMES.includes(val as typeof VALID_THEMES[number])) filtered[key] = val;

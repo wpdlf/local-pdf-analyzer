@@ -276,15 +276,15 @@ function streamRequest(
       reject(err);
     });
 
+    req.write(config.body);
+    req.end();
+
     activeRequests.set(requestId, {
       abort: () => {
         req.destroy();
         activeRequests.delete(requestId);
       },
     });
-
-    req.write(config.body);
-    req.end();
   });
 }
 

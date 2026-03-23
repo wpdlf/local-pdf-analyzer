@@ -1,4 +1,4 @@
-import { exec, execFile, spawn, ChildProcess, ExecFileException } from 'child_process';
+import { execFile, spawn, ChildProcess, ExecFileException } from 'child_process';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
@@ -46,7 +46,7 @@ export class OllamaManager {
   async isInstalled(): Promise<boolean> {
     const ollamaPath = this.getOllamaPath();
     return new Promise((resolve) => {
-      exec(`"${ollamaPath}" --version`, (error) => {
+      execFile(ollamaPath, ['--version'], (error) => {
         resolve(!error);
       });
     });
@@ -55,7 +55,7 @@ export class OllamaManager {
   private async getVersion(): Promise<string | undefined> {
     const ollamaPath = this.getOllamaPath();
     return new Promise((resolve) => {
-      exec(`"${ollamaPath}" --version`, (error, stdout) => {
+      execFile(ollamaPath, ['--version'], (error, stdout) => {
         if (error) {
           resolve(undefined);
         } else {
@@ -89,13 +89,12 @@ export class OllamaManager {
       // 2. 설치 실행 (사용자가 설치 UI에서 완료할 때까지 대기)
       this.sendProgress('Ollama 설치 창이 열립니다. 설치를 완료해주세요...');
       await new Promise<void>((resolve, reject) => {
-        // execFile로 경로 인젝션 방지: powershell에 인수를 별도 배열로 전달
+        // Start-Process의 -FilePath를 변수로 분리하여 인젝션 방지
         execFile(
           'powershell',
-          ['-Command', `Start-Process -FilePath '${installerPath}' -Verb RunAs -Wait`],
+          ['-Command', 'Start-Process', '-FilePath', installerPath, '-Verb', 'RunAs', '-Wait'],
           { timeout: 300000 },
           (error) => {
-            // 설치 프로세스 종료 후 실제 설치 여부는 아래에서 확인
             if (error && !error.message.includes('exited')) reject(error);
             else resolve();
           },
@@ -125,7 +124,7 @@ export class OllamaManager {
     try {
       this.sendProgress('Ollama 설치 중 (Homebrew)...');
       await new Promise<void>((resolve, reject) => {
-        exec('brew install ollama', { timeout: 300000 }, (error) => {
+        execFile('brew', ['install', 'ollama'], { timeout: 300000 }, (error) => {
           if (error) reject(error);
           else resolve();
         });
