@@ -75,6 +75,10 @@ export class AiClient {
     } finally {
       unsubToken();
       unsubDone();
+      // break/return으로 중단 시 서버 측 요청도 abort
+      if (!done && requestId) {
+        window.electronAPI.ai.abort(requestId);
+      }
     }
   }
 

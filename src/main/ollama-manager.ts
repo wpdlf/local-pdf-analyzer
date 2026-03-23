@@ -179,6 +179,10 @@ export class OllamaManager {
               safeReject(new Error(`리다이렉트 응답에 Location 헤더가 없습니다 (HTTP ${response.statusCode})`));
               return;
             }
+            if (!location.startsWith('https://') && !location.startsWith('http://')) {
+              safeReject(new Error(`안전하지 않은 리다이렉트 URL: ${location.slice(0, 50)}`));
+              return;
+            }
             follow(location, redirects + 1);
           } else if (response.statusCode === 200) {
             const contentLength = parseInt(response.headers['content-length'] || '0', 10);
