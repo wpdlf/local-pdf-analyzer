@@ -256,6 +256,23 @@ function registerIpcHandlers(): void {
     ollamaBaseUrl: string;
     temperature?: number;
   }) => {
+    // 입력값 검증
+    if (typeof requestId !== 'string' || !requestId) {
+      return { success: false, error: 'Invalid requestId' };
+    }
+    if (!request || typeof request.text !== 'string' || !request.text) {
+      return { success: false, error: 'Invalid text' };
+    }
+    if (!['full', 'chapter', 'keywords'].includes(request.type)) {
+      return { success: false, error: 'Invalid type' };
+    }
+    if (!VALID_PROVIDERS.includes(request.provider as typeof VALID_PROVIDERS[number])) {
+      return { success: false, error: 'Invalid provider' };
+    }
+    if (typeof request.model !== 'string' || !request.model) {
+      return { success: false, error: 'Invalid model' };
+    }
+
     const win = BrowserWindow.getAllWindows()[0];
     if (!win) return { success: false, error: '윈도우를 찾을 수 없습니다.' };
 
@@ -288,9 +305,13 @@ function registerIpcHandlers(): void {
 
   // ─── 파일 ───
 
-  ipcMain.handle('file:save', async (_event, content: string, defaultName: string) => {
+  ipcMain.handle('file:save', async (_event, content: unknown, defaultName: unknown) => {
+    if (typeof content !== 'string' || typeof defaultName !== 'string') {
+      return null;
+    }
+    const safeName = path.basename(defaultName).slice(0, 255);
     const { filePath } = await dialog.showSaveDialog({
-      defaultPath: defaultName,
+      defaultPath: safeName,
       filters: [
         { name: 'Markdown', extensions: ['md'] },
         { name: 'Text', extensions: ['txt'] },

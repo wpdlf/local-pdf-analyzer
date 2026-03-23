@@ -193,6 +193,10 @@ function streamRequest(
   win: BrowserWindow,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const safeResolve = () => { if (!settled) { settled = true; resolve(); } };
+    const safeReject = (err: Error) => { if (!settled) { settled = true; reject(err); } };
+
     const parsedUrl = new URL(config.url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
 
@@ -210,14 +214,14 @@ function streamRequest(
       (res) => {
         if (config.checkAuthError?.(res.statusCode || 0)) {
           activeRequests.delete(requestId);
-          reject(Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID' }));
+          safeReject(Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID' }));
           res.destroy();
           return;
         }
 
         if (res.statusCode && res.statusCode >= 400) {
           activeRequests.delete(requestId);
-          reject(new Error(`API 요청 실패: HTTP ${res.statusCode}`));
+          safeReject(new Error(`API 요청 실패: HTTP ${res.statusCode}`));
           res.destroy();
           return;
         }
@@ -262,25 +266,25 @@ function streamRequest(
           if (!win.isDestroyed()) {
             win.webContents.send('ai:done', requestId);
           }
-          resolve();
+          safeResolve();
         });
 
         res.on('error', (err) => {
           activeRequests.delete(requestId);
-          reject(err);
+          safeReject(err);
         });
       },
     );
 
     req.on('error', (err) => {
       activeRequests.delete(requestId);
-      reject(err);
+      safeReject(err);
     });
 
     req.setTimeout(300000, () => {
       activeRequests.delete(requestId);
       req.destroy();
-      reject(new Error('AI 서버 응답 타임아웃 (5분)'));
+      safeReject(new Error('AI 서버 응답 타임아웃 (5분)'));
     });
 
     // abort를 write 전에 등록하여 race condition 방지
