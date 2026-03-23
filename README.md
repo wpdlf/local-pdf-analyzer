@@ -53,12 +53,15 @@ PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션
 ## 주요 특징
 
 - **오프라인 사용 가능** — Ollama로 인터넷 없이 요약
+- **한국어 최적화** — 한글 PDF 텍스트 추출 품질 개선, 한글 비율에 따른 청크 자동 조절
+- **한국어 모델 추천** — 한국어 PDF 감지 시 gemma3, qwen2.5 등 한국어 우수 모델 자동 추천
 - **유료 AI 지원** — Claude API, OpenAI API로 고품질 요약 가능
 - **API 키 보안** — OS 키체인 암호화 + Main 프로세스에서만 복호화 (Renderer에 노출되지 않음)
 - **개인 자료 보안** — Ollama 사용 시 PDF가 외부 서버로 전송되지 않음
-- **요약 중단 가능** — 진행 중인 요약을 언제든 중단 가능
+- **요약 중단 가능** — 진행 중인 요약을 언제든 중단 가능, 5분 타임아웃 자동 abort
+- **로딩 UX** — PDF 파싱 중/요약 생성 중 스피너 로딩 화면 표시
 - **다크모드 지원** — 설정에서 라이트/다크/시스템 테마 선택
-- **대용량 PDF 지원** — 긴 문서도 자동으로 나누어 처리 후 통합 요약
+- **대용량 PDF 지원** — 긴 문서도 자동으로 나누어 처리 후 통합 요약 (배치 병렬 처리)
 - **설정 저장** — 앱 재시작 후에도 설정 유지
 
 ## 시스템 요구 사항
@@ -71,7 +74,8 @@ PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션
 
 | 증상 | 해결 방법 |
 |------|----------|
-| Ollama 설치 실패 | [ollama.com](https://ollama.com)에서 수동 설치 후 앱 재실행 |
+| Ollama 설치 실패 | [ollama.com](https://ollama.com)에서 수동 설치하거나, "다른 AI Provider 사용" 버튼으로 Claude/OpenAI 전환 |
+| 한국어 요약 품질이 낮음 | 모델 추천 알림이 표시되면 설정에서 gemma3, qwen2.5 등으로 변경해보세요 |
 | 요약이 느림 | 설정에서 경량 모델(phi3 등)로 변경하거나 청크 크기를 줄여보세요 |
 | PDF 텍스트 추출 불가 | 스캔/이미지 기반 PDF는 지원하지 않습니다 (텍스트 PDF만 가능) |
 | API 키 오류 | 설정에서 API 키가 올바른지 확인. Claude: `sk-ant-...`, OpenAI: `sk-...` |
@@ -87,12 +91,12 @@ PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션
 |------|------|
 | 프레임워크 | Electron 34 + React 19 |
 | 언어 | TypeScript (strict mode) |
-| AI | Ollama (로컬) / Claude API / OpenAI API — Provider 패턴으로 교체 가능 |
-| PDF 파싱 | pdfjs-dist |
+| AI | Ollama (로컬) / Claude API / OpenAI API — Main 프로세스 IPC 기반 |
+| PDF 파싱 | pdfjs-dist (위치 기반 텍스트 추출, 한글 최적화) |
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (NSIS) |
-| 테스트 | Vitest (23개 단위 테스트) |
+| 테스트 | Vitest (19개 단위 테스트) |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화 |
 
 ### 개발 환경 설정
@@ -129,12 +133,10 @@ src/
     ├── components/        # UI 컴포넌트 (8개)
     ├── lib/
     │   ├── ai-client.ts       # AI Client (IPC를 통해 Main에 요약 요청)
-    │   ├── ai-provider.ts     # AiProvider 인터페이스 정의
-    │   ├── pdf-parser.ts      # PDF 텍스트 추출 + 챕터 감지 (배치 병렬)
-    │   ├── prompts.ts         # 요약 프롬프트 템플릿 (3종)
-    │   ├── chunker.ts         # 텍스트 청크 분할
+    │   ├── pdf-parser.ts      # PDF 텍스트 추출 + 챕터 감지 (위치 기반, 배치 병렬)
+    │   ├── chunker.ts         # 텍스트 청크 분할 (한글 비율 자동 감지)
     │   ├── store.ts           # Zustand 상태 관리
-    │   └── __tests__/         # 단위 테스트 (23개)
+    │   └── __tests__/         # 단위 테스트 (19개)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
