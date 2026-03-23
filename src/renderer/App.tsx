@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from './lib/store';
 import { AiClient } from './lib/ai-client';
 import { chunkText, chunkChapters } from './lib/chunker';
+import { KOREAN_RECOMMENDED_MODELS } from './types';
 import { PdfUploader } from './components/PdfUploader';
 import { SummaryViewer } from './components/SummaryViewer';
 import { SummaryTypeSelector } from './components/SummaryTypeSelector';
@@ -28,6 +29,7 @@ export default function App() {
   const setError = useAppStore((s) => s.setError);
   const isParsing = useAppStore((s) => s.isParsing);
   const clientRef = useRef<AiClient | null>(null);
+  const [modelHint, setModelHint] = useState<string | null>(null);
 
   // 초기화: 설정 로드 + Ollama 상태 확인
   useEffect(() => {
@@ -88,6 +90,33 @@ export default function App() {
       return () => mq.removeEventListener('change', handler);
     }
   }, [settings.theme]);
+
+  // PDF 업로드 후 한국어 감지 → 모델 추천
+  useEffect(() => {
+    if (!document || settings.provider !== 'ollama') {
+      setModelHint(null);
+      return;
+    }
+    const sample = document.extractedText.slice(0, 3000);
+    const koreanChars = (sample.match(/[\uAC00-\uD7AF]/g) || []).length;
+    const koreanRatio = koreanChars / Math.max(sample.length, 1);
+
+    if (koreanRatio > 0.15) {
+      const currentModel = settings.model.split(':')[0]; // 태그 제거
+      const isKoreanModel = KOREAN_RECOMMENDED_MODELS.some(
+        (m) => currentModel.startsWith(m),
+      );
+      if (!isKoreanModel) {
+        setModelHint(
+          `현재 모델(${settings.model})은 한국어 성능이 제한적일 수 있습니다. 설정에서 ${KOREAN_RECOMMENDED_MODELS.join(', ')} 등의 모델로 변경하면 요약 품질이 향상됩니다.`,
+        );
+      } else {
+        setModelHint(null);
+      }
+    } else {
+      setModelHint(null);
+    }
+  }, [document, settings.provider, settings.model]);
 
   const handleAbortSummarize = () => {
     const reqId = useAppStore.getState().currentRequestId;
@@ -281,6 +310,20 @@ export default function App() {
         {/* 1) PDF 미업로드: 업로드 영역 */}
         {!document && !summaryStream && (
           <PdfUploader />
+        )}
+
+        {/* 모델 추천 알림 */}
+        {modelHint && !isGenerating && (
+          <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start justify-between">
+            <p className="text-amber-700 dark:text-amber-400 text-sm">{modelHint}</p>
+            <button
+              onClick={() => setModelHint(null)}
+              className="text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 ml-2 shrink-0"
+              aria-label="닫기"
+            >
+              ✕
+            </button>
+          </div>
         )}
 
         {/* 2) PDF 업로드 완료, 요약 대기: 파일 정보 + 요약 유형 + 시작 버튼 */}

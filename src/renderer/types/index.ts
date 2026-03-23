@@ -89,6 +89,9 @@ export interface AppError {
   details?: string;
 }
 
+// 한국어 성능이 우수한 Ollama 추천 모델
+export const KOREAN_RECOMMENDED_MODELS = ['gemma3', 'qwen2.5', 'exaone3.5'];
+
 // 기본 설정값
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: 'ollama',
