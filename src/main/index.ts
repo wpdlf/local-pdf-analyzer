@@ -9,6 +9,7 @@ const ollamaManager = new OllamaManager();
 
 // electron-store는 ESM 전용이므로 JSON 파일로 직접 관리
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+// 기본 설정값 (src/renderer/types/index.ts의 DEFAULT_SETTINGS와 동기화 필요)
 const defaultSettings = {
   provider: 'ollama',
   model: 'llama3.2',
@@ -16,7 +17,7 @@ const defaultSettings = {
   theme: 'system',
   defaultSummaryType: 'full',
   maxChunkSize: 4000,
-};
+} as const;
 
 const VALID_SETTINGS_KEYS_SET = new Set([
   'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize',
@@ -57,6 +58,8 @@ function createWindow(): BrowserWindow {
     },
     title: 'PDF 자료 요약기',
   });
+
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);

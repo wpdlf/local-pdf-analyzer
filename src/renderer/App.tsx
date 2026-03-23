@@ -9,6 +9,68 @@ import { SummaryTypeSelector } from './components/SummaryTypeSelector';
 import { StatusBar } from './components/StatusBar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { OllamaSetupWizard } from './components/OllamaSetupWizard';
+import type { PdfDocument, SummaryType, AppSettings } from './types';
+
+type TrackFn = (text: string, type: SummaryType) => AsyncGenerator<string>;
+
+async function summarizeByChapter(
+  doc: PdfDocument, settings: AppSettings, track: TrackFn,
+  checkTimeout: () => boolean, isTimedOut: () => boolean,
+  append: (s: string) => void, setProgress: (p: number) => void,
+) {
+  const chaptersData = chunkChapters(doc.chapters, settings.maxChunkSize);
+  const total = chaptersData.reduce((sum, c) => sum + c.chunks.length, 0);
+  let processed = 0;
+  for (const { chapter, chunks } of chaptersData) {
+    if (isTimedOut()) break;
+    append(`\n## ${chapter.title}\n\n`);
+    for (const chunk of chunks) {
+      if (isTimedOut()) break;
+      for await (const token of track(chunk, 'chapter')) {
+        if (checkTimeout()) break;
+        append(token);
+      }
+      processed++;
+      setProgress((processed / total) * 100);
+    }
+    append('\n\n---\n');
+  }
+}
+
+async function summarizeFull(
+  doc: PdfDocument, summaryType: SummaryType, settings: AppSettings, track: TrackFn,
+  checkTimeout: () => boolean, isTimedOut: () => boolean,
+  append: (s: string) => void, setProgress: (p: number) => void,
+) {
+  const chunks = chunkText(doc.extractedText, settings.maxChunkSize);
+  const chunkSummaries: string[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    if (isTimedOut()) break;
+    let chunkResult = '';
+    for await (const token of track(chunks[i], summaryType)) {
+      if (checkTimeout()) break;
+      append(token);
+      chunkResult += token;
+    }
+    chunkSummaries.push(chunkResult);
+    setProgress(((i + 1) / chunks.length) * 90);
+    if (i < chunks.length - 1) append('\n\n---\n\n');
+  }
+  if (!isTimedOut() && chunks.length > 1 && summaryType === 'full') {
+    append('\n\n---\n\n## 📋 통합 요약\n\n');
+    const combined = chunkSummaries.join('\n\n');
+    for await (const token of track(
+      `다음은 강의자료의 파트별 요약입니다. 이를 하나의 통합 요약으로 정리해주세요.\n\n${combined}`,
+      'full',
+    )) {
+      if (checkTimeout()) break;
+      append(token);
+    }
+    setProgress(100);
+  } else {
+    setProgress(100);
+  }
+}
 
 export default function App() {
   const view = useAppStore((s) => s.view);
@@ -180,60 +242,9 @@ export default function App() {
       };
 
       if (summaryType === 'chapter' && document.chapters.length > 1) {
-        // 챕터별 요약
-        const chaptersData = chunkChapters(document.chapters, settings.maxChunkSize);
-        const total = chaptersData.reduce((sum, c) => sum + c.chunks.length, 0);
-        let processed = 0;
-
-        for (const { chapter, chunks } of chaptersData) {
-          if (timedOut) break;
-          appendStream(`\n## ${chapter.title}\n\n`);
-          for (const chunk of chunks) {
-            if (timedOut) break;
-            for await (const token of trackSummarize(chunk, 'chapter')) {
-              if (checkTimeout()) break;
-              appendStream(token);
-            }
-            processed++;
-            setProgress((processed / total) * 100);
-          }
-          appendStream('\n\n---\n');
-        }
+        await summarizeByChapter(document, settings, trackSummarize, checkTimeout, () => timedOut, appendStream, setProgress);
       } else {
-        // 전체 요약 / 키워드
-        const chunks = chunkText(document.extractedText, settings.maxChunkSize);
-        const chunkSummaries: string[] = [];
-
-        for (let i = 0; i < chunks.length; i++) {
-          if (timedOut) break;
-          let chunkResult = '';
-          for await (const token of trackSummarize(chunks[i], summaryType)) {
-            if (checkTimeout()) break;
-            appendStream(token);
-            chunkResult += token;
-          }
-          chunkSummaries.push(chunkResult);
-          setProgress(((i + 1) / chunks.length) * 90); // 90%까지 개별 요약
-          if (i < chunks.length - 1) {
-            appendStream('\n\n---\n\n');
-          }
-        }
-
-        // 통합 요약: 청크가 2개 이상이고 전체 요약 모드일 때
-        if (!timedOut && chunks.length > 1 && summaryType === 'full') {
-          appendStream('\n\n---\n\n## 📋 통합 요약\n\n');
-          const combined = chunkSummaries.join('\n\n');
-          for await (const token of trackSummarize(
-            `다음은 강의자료의 파트별 요약입니다. 이를 하나의 통합 요약으로 정리해주세요.\n\n${combined}`,
-            'full',
-          )) {
-            if (checkTimeout()) break;
-            appendStream(token);
-          }
-          setProgress(100);
-        } else {
-          setProgress(100);
-        }
+        await summarizeFull(document, summaryType, settings, trackSummarize, checkTimeout, () => timedOut, appendStream, setProgress);
       }
 
       const durationMs = Date.now() - startTime;

@@ -93,9 +93,11 @@ async function generateOllama(
 ): Promise<void> {
   validateOllamaUrl(request.ollamaBaseUrl);
   const url = new URL('/api/generate', request.ollamaBaseUrl);
+  const { system, user } = splitPrompt(prompt);
   const body = JSON.stringify({
     model: request.model || 'llama3.2',
-    prompt,
+    system,
+    prompt: user,
     stream: true,
     options: { temperature: request.temperature ?? 0.3 },
   });
@@ -118,11 +120,13 @@ async function generateClaude(
   apiKey: string,
   win: BrowserWindow,
 ): Promise<void> {
+  const { system, user } = splitPrompt(prompt);
   const body = JSON.stringify({
     model: request.model || 'claude-sonnet-4-20250514',
     max_tokens: 4096,
     stream: true,
-    messages: [{ role: 'user', content: prompt }],
+    ...(system ? { system } : {}),
+    messages: [{ role: 'user', content: user }],
     temperature: request.temperature ?? 0.3,
   });
 
@@ -155,10 +159,14 @@ async function generateOpenAi(
   apiKey: string,
   win: BrowserWindow,
 ): Promise<void> {
+  const { system, user } = splitPrompt(prompt);
+  const messages = [];
+  if (system) messages.push({ role: 'system', content: system });
+  messages.push({ role: 'user', content: user });
   const body = JSON.stringify({
     model: request.model || 'gpt-4o-mini',
     stream: true,
-    messages: [{ role: 'user', content: prompt }],
+    messages,
     temperature: request.temperature ?? 0.3,
   });
 
@@ -315,6 +323,18 @@ function streamRequest(
     req.write(config.body);
     req.end();
   });
+}
+
+// ─── 프롬프트 분리 (시스템 지시 / 사용자 입력) ───
+
+function splitPrompt(prompt: string): { system: string; user: string } {
+  const separator = '---\n\n';
+  const idx = prompt.lastIndexOf(separator);
+  if (idx === -1) return { system: '', user: prompt };
+  return {
+    system: prompt.slice(0, idx).trim(),
+    user: prompt.slice(idx + separator.length).trim(),
+  };
 }
 
 // ─── 프롬프트 빌더 (Main 프로세스용) ───
