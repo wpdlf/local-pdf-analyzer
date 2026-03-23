@@ -236,7 +236,8 @@ function registerIpcHandlers(): void {
           if (typeof val === 'string') {
             try {
               const parsed = new URL(val);
-              if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+              const allowedHosts = ['localhost', '127.0.0.1', '::1'];
+              if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && allowedHosts.includes(parsed.hostname)) {
                 filtered[key] = val;
               }
             } catch { /* 유효하지 않은 URL 무시 */ }
@@ -299,8 +300,11 @@ function registerIpcHandlers(): void {
     if (typeof requestId !== 'string' || !requestId) {
       return { success: false, error: 'Invalid requestId' };
     }
-    if (!request || typeof request.text !== 'string' || !request.text) {
+    if (!request || typeof request.text !== 'string' || !request.text || request.text.length > 10 * 1024 * 1024) {
       return { success: false, error: 'Invalid text' };
+    }
+    if (typeof request.ollamaBaseUrl !== 'string') {
+      return { success: false, error: 'Invalid ollamaBaseUrl' };
     }
     if (!['full', 'chapter', 'keywords'].includes(request.type)) {
       return { success: false, error: 'Invalid type' };

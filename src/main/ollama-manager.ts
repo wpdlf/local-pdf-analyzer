@@ -117,6 +117,8 @@ export class OllamaManager {
         success: false,
         error: `설치 실패: ${error instanceof Error ? error.message : String(error)}. https://ollama.com 에서 수동 설치해주세요.`,
       };
+    } finally {
+      try { fs.unlinkSync(installerPath); } catch { /* 임시 파일 정리 실패 무시 */ }
     }
   }
 
@@ -153,6 +155,8 @@ export class OllamaManager {
           success: false,
           error: `설치 실패: ${error instanceof Error ? error.message : String(error)}. https://ollama.com 에서 수동 설치해주세요.`,
         };
+      } finally {
+        try { fs.unlinkSync(path.join(app.getPath('temp'), 'Ollama-darwin.zip')); } catch { /* 무시 */ }
       }
     }
   }

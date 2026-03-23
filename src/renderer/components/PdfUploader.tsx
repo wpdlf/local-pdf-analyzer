@@ -8,6 +8,11 @@ export function PdfUploader() {
 
   const handleFile = useCallback(
     async (file: File) => {
+      const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+      if (file.size > MAX_FILE_SIZE) {
+        setError({ code: 'PDF_PARSE_FAIL', message: `파일이 너무 큽니다 (${Math.round(file.size / 1024 / 1024)}MB). 최대 100MB까지 지원합니다.` });
+        return;
+      }
       setIsParsing(true);
       try {
         const buffer = await file.arrayBuffer();
@@ -40,18 +45,26 @@ export function PdfUploader() {
     [handleFile, isParsing],
   );
 
-  const handleFileSelect = useCallback(() => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.pdf';
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (file) handleFile(file);
-      input.remove();
-    };
-    document.body.appendChild(input);
-    input.click();
-  }, [handleFile]);
+  const handleFileSelect = useCallback(async () => {
+    setIsParsing(true);
+    try {
+      const result = await window.electronAPI.file.openPdf();
+      if (!result) { setIsParsing(false); return; }
+      if ('error' in result) {
+        setError({ code: 'PDF_PARSE_FAIL', message: (result as { error: string }).error });
+        setIsParsing(false);
+        return;
+      }
+      const doc = await parsePdf(result.data, result.name, result.path);
+      setDocument(doc);
+      setError(null);
+    } catch (err) {
+      const error = err as Error & { code?: string };
+      setError({ code: (error.code as 'PDF_PARSE_FAIL') || 'PDF_PARSE_FAIL', message: error.message || 'PDF를 읽을 수 없습니다.' });
+    } finally {
+      setIsParsing(false);
+    }
+  }, [setDocument, setError, setIsParsing]);
 
   return (
     <div
