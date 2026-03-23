@@ -145,7 +145,7 @@ export default function App() {
       clientRef.current = client;
 
       const trackSummarize = (text: string, type: typeof summaryType) => {
-        const gen = trackSummarize(text, type);
+        const gen = client.summarize(text, type);
         useAppStore.getState().setCurrentRequestId(client.lastRequestId);
         return gen;
       };

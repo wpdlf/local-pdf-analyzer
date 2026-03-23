@@ -69,8 +69,9 @@ export async function checkAvailability(
       } catch {
         return false;
       }
+      const parsed = new URL(ollamaBaseUrl);
       return new Promise((resolve) => {
-        http.get(ollamaBaseUrl, (res) => resolve(res.statusCode === 200))
+        http.get({ hostname: parsed.hostname, port: parsed.port, path: '/' }, (res) => resolve(res.statusCode === 200))
           .on('error', () => resolve(false));
       });
     case 'claude':
