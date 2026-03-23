@@ -10,6 +10,7 @@ export function SettingsPanel() {
   const [ollamaModels, setOllamaModels] = useState<string[]>(ollamaStatus.models);
   const [pullModelName, setPullModelName] = useState('');
   const [isPulling, setIsPulling] = useState(false);
+  const [pullProgress, setPullProgress] = useState('');
   const [saved, setSaved] = useState(false);
 
   // API 키 관련 상태
@@ -128,12 +129,23 @@ export function SettingsPanel() {
   const handlePullModel = async () => {
     if (!pullModelName.trim()) return;
     setIsPulling(true);
-    const result = await window.electronAPI.ollama.pullModel(pullModelName.trim());
-    setIsPulling(false);
-    if (result.success) {
-      const updated = await window.electronAPI.ollama.listModels();
-      setOllamaModels(updated);
-      setPullModelName('');
+    setPullProgress('다운로드 준비 중...');
+    const unsubscribe = window.electronAPI.onSetupProgress((message) => {
+      setPullProgress(message);
+    });
+    try {
+      const result = await window.electronAPI.ollama.pullModel(pullModelName.trim());
+      if (result.success) {
+        const updated = await window.electronAPI.ollama.listModels();
+        setOllamaModels(updated);
+        setPullModelName('');
+        setPullProgress('');
+      } else {
+        setPullProgress(result.error || '다운로드 실패');
+      }
+    } finally {
+      unsubscribe();
+      setIsPulling(false);
     }
   };
 
@@ -342,6 +354,17 @@ export function SettingsPanel() {
               {isPulling ? '다운로드 중...' : '모델 추가'}
             </button>
           </div>
+          {isPulling && pullProgress && (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="animate-spin h-4 w-4 text-blue-500" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <p className="text-xs text-blue-600 dark:text-blue-400 truncate">{pullProgress}</p>
+              </div>
+            </div>
+          )}
           <div className="flex gap-2">
             <button onClick={handleRestartOllama} className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
               Ollama 재시작
