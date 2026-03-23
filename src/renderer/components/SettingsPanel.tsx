@@ -307,17 +307,36 @@ export function SettingsPanel() {
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
             설치된 모델: {ollamaModels.join(', ') || '없음'}
           </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">추천 모델 (클릭하여 설치):</p>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {[
+              { name: 'gemma3', desc: '한국어 우수' },
+              { name: 'qwen2.5', desc: '다국어 강점' },
+              { name: 'exaone3.5', desc: '한국어 특화' },
+              { name: 'llama3.2', desc: '범용 경량' },
+              { name: 'phi3', desc: '초경량' },
+            ].filter((m) => !ollamaModels.some((om) => om.startsWith(m.name))).map((m) => (
+              <button
+                key={m.name}
+                onClick={() => { setPullModelName(m.name); }}
+                disabled={isPulling}
+                className="px-2 py-1 text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors"
+              >
+                {m.name} <span className="text-gray-400">({m.desc})</span>
+              </button>
+            ))}
+          </div>
           <div className="flex gap-2 mb-3">
             <input
               type="text"
-              placeholder="모델명 (예: phi3)"
+              placeholder="모델명 (예: gemma3)"
               value={pullModelName}
               onChange={(e) => setPullModelName(e.target.value)}
               className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
             />
             <button
               onClick={handlePullModel}
-              disabled={isPulling}
+              disabled={isPulling || !pullModelName.trim()}
               className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 transition-colors"
             >
               {isPulling ? '다운로드 중...' : '모델 추가'}
