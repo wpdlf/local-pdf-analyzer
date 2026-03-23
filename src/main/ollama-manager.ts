@@ -273,9 +273,13 @@ export class OllamaManager {
   async listModels(): Promise<string[]> {
     const url = new URL(this.baseUrl);
     return new Promise((resolve) => {
+      const MAX_RESPONSE = 1024 * 1024; // 1MB
       const req = http.get({ hostname: url.hostname, port: url.port || 11434, path: '/api/tags', timeout: 5000 }, (res) => {
         let data = '';
-        res.on('data', (chunk) => { data += chunk; });
+        res.on('data', (chunk) => {
+          data += chunk;
+          if (data.length > MAX_RESPONSE) { res.destroy(); resolve([]); return; }
+        });
         res.on('end', () => {
           try {
             const parsed = JSON.parse(data);

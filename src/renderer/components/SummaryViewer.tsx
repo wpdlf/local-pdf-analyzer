@@ -1,8 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppStore } from '../lib/store';
 import { ProgressBar } from './ProgressBar';
+
+// javascript:/data: URL 차단
+const safeComponents: Components = {
+  a: ({ href, children, ...props }) => {
+    const isSafe = href && (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('#'));
+    return isSafe
+      ? <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+      : <span {...props}>{children}</span>;
+  },
+};
 
 export function SummaryViewer() {
   const { document, summaryStream, isGenerating, progress, setError } = useAppStore();
@@ -88,7 +98,7 @@ export function SummaryViewer() {
             </p>
           </div>
         ) : debouncedContent ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{debouncedContent}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeComponents}>{debouncedContent}</ReactMarkdown>
         ) : null}
       </div>
 

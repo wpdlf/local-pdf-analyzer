@@ -58,7 +58,7 @@ function createWindow(): BrowserWindow {
     title: 'PDF 자료 요약기',
   });
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
     win.webContents.openDevTools({ mode: 'detach' });
   } else {
@@ -75,6 +75,11 @@ function createWindow(): BrowserWindow {
     if (url.startsWith('file://') && url.toLowerCase().endsWith('.pdf')) {
       const filePath = fileURLToPath(url);
       try {
+        const stat = fs.statSync(filePath);
+        if (stat.size > 100 * 1024 * 1024) {
+          console.error('Dropped file too large:', stat.size);
+          return;
+        }
         const data = fs.readFileSync(filePath);
         win.webContents.send('file:dropped', {
           path: filePath,
@@ -212,7 +217,12 @@ function registerIpcHandlers(): void {
           break;
         case 'ollamaBaseUrl':
           if (typeof val === 'string') {
-            try { new URL(val); filtered[key] = val; } catch { /* 유효하지 않은 URL 무시 */ }
+            try {
+              const parsed = new URL(val);
+              if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                filtered[key] = val;
+              }
+            } catch { /* 유효하지 않은 URL 무시 */ }
           }
           break;
         case 'theme':

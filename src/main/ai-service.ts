@@ -263,6 +263,22 @@ function streamRequest(
         });
 
         res.on('end', () => {
+          // 버퍼에 남은 마지막 데이터 처리
+          if (buffer.trim() && !win.isDestroyed()) {
+            let jsonStr = buffer;
+            if (config.isSSE && jsonStr.startsWith('data: ')) {
+              jsonStr = jsonStr.slice(6);
+            }
+            if (jsonStr && jsonStr !== '[DONE]') {
+              try {
+                const parsed = JSON.parse(jsonStr);
+                const token = config.extractToken(parsed);
+                if (token) {
+                  win.webContents.send('ai:token', requestId, token);
+                }
+              } catch { /* 파싱 실패 무시 */ }
+            }
+          }
           activeRequests.delete(requestId);
           if (!win.isDestroyed()) {
             win.webContents.send('ai:done', requestId);
