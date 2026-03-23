@@ -162,9 +162,13 @@ export class OllamaManager {
     const TIMEOUT_MS = 600000; // 10분
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const safeResolve = () => { if (!settled) { settled = true; resolve(); } };
+      const safeReject = (err: Error) => { if (!settled) { settled = true; reject(err); } };
+
       const follow = (targetUrl: string, redirects = 0) => {
         if (redirects > 5) {
-          reject(new Error('너무 많은 리다이렉트'));
+          safeReject(new Error('너무 많은 리다이렉트'));
           return;
         }
         const client = targetUrl.startsWith('https') ? https : http;
@@ -172,14 +176,14 @@ export class OllamaManager {
           if (response.statusCode && [301, 302, 303, 307, 308].includes(response.statusCode)) {
             const location = response.headers.location;
             if (!location) {
-              reject(new Error(`리다이렉트 응답에 Location 헤더가 없습니다 (HTTP ${response.statusCode})`));
+              safeReject(new Error(`리다이렉트 응답에 Location 헤더가 없습니다 (HTTP ${response.statusCode})`));
               return;
             }
             follow(location, redirects + 1);
           } else if (response.statusCode === 200) {
             const contentLength = parseInt(response.headers['content-length'] || '0', 10);
             if (contentLength > MAX_SIZE) {
-              reject(new Error(`파일이 너무 큽니다 (${Math.round(contentLength / 1024 / 1024)}MB). 최대 500MB`));
+              safeReject(new Error(`파일이 너무 큽니다 (${Math.round(contentLength / 1024 / 1024)}MB). 최대 500MB`));
               response.destroy();
               return;
             }
@@ -191,20 +195,20 @@ export class OllamaManager {
               if (downloaded > MAX_SIZE) {
                 response.destroy();
                 file.destroy();
-                reject(new Error('다운로드 크기가 500MB를 초과했습니다.'));
+                safeReject(new Error('다운로드 크기가 500MB를 초과했습니다.'));
               }
             });
             response.pipe(file);
-            file.on('finish', () => { file.close(); resolve(); });
-            file.on('error', reject);
+            file.on('finish', () => { file.close(); safeResolve(); });
+            file.on('error', safeReject);
           } else {
-            reject(new Error(`다운로드 실패: HTTP ${response.statusCode}`));
+            safeReject(new Error(`다운로드 실패: HTTP ${response.statusCode}`));
           }
         });
-        req.on('error', reject);
+        req.on('error', safeReject);
         req.setTimeout(TIMEOUT_MS, () => {
           req.destroy();
-          reject(new Error('다운로드 타임아웃 (10분)'));
+          safeReject(new Error('다운로드 타임아웃 (10분)'));
         });
       };
       follow(url);

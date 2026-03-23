@@ -53,6 +53,12 @@ export class AiClient {
         done = true;
         resolver?.();
       }
+    }).catch((err) => {
+      error = Object.assign(new Error(err instanceof Error ? err.message : '요약 요청에 실패했습니다.'), {
+        code: 'GENERATE_FAIL',
+      });
+      done = true;
+      resolver?.();
     });
 
     try {
