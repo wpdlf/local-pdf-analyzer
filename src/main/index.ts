@@ -104,6 +104,10 @@ app.on('window-all-closed', () => {
   }
 });
 
+app.on('before-quit', () => {
+  ollamaManager.stop();
+});
+
 const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');
 
 function saveApiKey(provider: string, key: string): void {

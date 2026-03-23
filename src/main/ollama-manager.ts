@@ -158,6 +158,9 @@ export class OllamaManager {
   }
 
   private downloadFile(url: string, dest: string): Promise<void> {
+    const MAX_SIZE = 500 * 1024 * 1024; // 500MB
+    const TIMEOUT_MS = 600000; // 10분
+
     return new Promise((resolve, reject) => {
       const follow = (targetUrl: string, redirects = 0) => {
         if (redirects > 5) {
@@ -165,7 +168,7 @@ export class OllamaManager {
           return;
         }
         const client = targetUrl.startsWith('https') ? https : http;
-        client.get(targetUrl, (response) => {
+        const req = client.get(targetUrl, (response) => {
           if (response.statusCode && [301, 302, 303, 307, 308].includes(response.statusCode)) {
             const location = response.headers.location;
             if (!location) {
@@ -174,14 +177,35 @@ export class OllamaManager {
             }
             follow(location, redirects + 1);
           } else if (response.statusCode === 200) {
+            const contentLength = parseInt(response.headers['content-length'] || '0', 10);
+            if (contentLength > MAX_SIZE) {
+              reject(new Error(`파일이 너무 큽니다 (${Math.round(contentLength / 1024 / 1024)}MB). 최대 500MB`));
+              response.destroy();
+              return;
+            }
+
+            let downloaded = 0;
             const file = fs.createWriteStream(dest);
+            response.on('data', (chunk: Buffer) => {
+              downloaded += chunk.length;
+              if (downloaded > MAX_SIZE) {
+                response.destroy();
+                file.destroy();
+                reject(new Error('다운로드 크기가 500MB를 초과했습니다.'));
+              }
+            });
             response.pipe(file);
             file.on('finish', () => { file.close(); resolve(); });
             file.on('error', reject);
           } else {
             reject(new Error(`다운로드 실패: HTTP ${response.statusCode}`));
           }
-        }).on('error', reject);
+        });
+        req.on('error', reject);
+        req.setTimeout(TIMEOUT_MS, () => {
+          req.destroy();
+          reject(new Error('다운로드 타임아웃 (10분)'));
+        });
       };
       follow(url);
     });

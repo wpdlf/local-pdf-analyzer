@@ -238,16 +238,18 @@ export default function App() {
 
       const durationMs = Date.now() - startTime;
       const finalContent = useAppStore.getState().summaryStream;
-      setSummary({
-        id: crypto.randomUUID(),
-        documentId: document.id,
-        type: summaryType,
-        content: finalContent,
-        model: settings.model,
-        provider: settings.provider,
-        createdAt: new Date(),
-        durationMs,
-      });
+      if (!timedOut && finalContent) {
+        setSummary({
+          id: crypto.randomUUID(),
+          documentId: document.id,
+          type: summaryType,
+          content: finalContent,
+          model: settings.model,
+          provider: settings.provider,
+          createdAt: new Date(),
+          durationMs,
+        });
+      }
     } catch (err) {
       const error = err as Error & { code?: string };
       setError({

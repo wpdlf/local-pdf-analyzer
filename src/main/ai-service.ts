@@ -276,6 +276,12 @@ function streamRequest(
       reject(err);
     });
 
+    req.setTimeout(300000, () => {
+      activeRequests.delete(requestId);
+      req.destroy();
+      reject(new Error('AI 서버 응답 타임아웃 (5분)'));
+    });
+
     req.write(config.body);
     req.end();
 

@@ -76,12 +76,9 @@ export const useAppStore = create<AppState>((set) => ({
   // 설정
   settings: DEFAULT_SETTINGS,
   updateSettings: (newSettings) => {
-    set(() => {
-      // 전체 설정을 디스크에 저장
-      window.electronAPI.settings.set(newSettings as Record<string, unknown>).catch(() => {
-        console.error('설정 저장 실패');
-      });
-      return { settings: newSettings as AppSettings };
+    set({ settings: newSettings as AppSettings });
+    window.electronAPI.settings.set(newSettings as Record<string, unknown>).catch(() => {
+      set({ error: { code: 'EXPORT_FAIL' as const, message: '설정 저장에 실패했습니다. 다시 시도해주세요.' } });
     });
   },
   loadSettings: async () => {
