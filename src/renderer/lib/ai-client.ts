@@ -96,6 +96,14 @@ export class AiClient {
     );
   }
 
+  async analyzeImage(imageBase64: string): Promise<string | null> {
+    const result = await window.electronAPI.ai.analyzeImage(imageBase64);
+    if (result.success && result.description) {
+      return result.description;
+    }
+    return null;
+  }
+
   abort(requestId: string): void {
     window.electronAPI.ai.abort(requestId);
   }

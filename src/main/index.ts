@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { OllamaManager } from './ollama-manager';
-import { generate, abortGenerate, checkAvailability } from './ai-service';
+import { generate, abortGenerate, checkAvailability, analyzeImage } from './ai-service';
 
 const ollamaManager = new OllamaManager();
 
@@ -17,10 +17,11 @@ const defaultSettings = {
   theme: 'system',
   defaultSummaryType: 'full',
   maxChunkSize: 4000,
+  enableImageAnalysis: true,
 } as const;
 
 const VALID_SETTINGS_KEYS_SET = new Set([
-  'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize',
+  'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis',
 ]);
 
 function loadSettings(): Record<string, unknown> {
@@ -185,7 +186,7 @@ function registerIpcHandlers(): void {
   const VALID_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
   const VALID_SETTINGS_KEYS = [
     'provider', 'model', 'ollamaBaseUrl', 'theme',
-    'defaultSummaryType', 'maxChunkSize',
+    'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis',
   ] as const;
 
   ipcMain.handle('apikey:save', (_event, provider: string, key: string) => {
@@ -251,6 +252,9 @@ function registerIpcHandlers(): void {
           break;
         case 'maxChunkSize':
           if (typeof val === 'number' && val >= 1000 && val <= 16000) filtered[key] = val;
+          break;
+        case 'enableImageAnalysis':
+          if (typeof val === 'boolean') filtered[key] = val;
           break;
       }
     }
@@ -344,6 +348,35 @@ function registerIpcHandlers(): void {
   ipcMain.handle('ai:check-available', async (_event, provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) => {
     const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
     return checkAvailability(provider, ollamaBaseUrl, apiKey);
+  });
+
+  ipcMain.handle('ai:analyze-image', async (_event, imageBase64: string) => {
+    if (typeof imageBase64 !== 'string' || imageBase64.length === 0 || imageBase64.length > 10 * 1024 * 1024) {
+      return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
+    }
+    try {
+      const settings = loadSettings();
+      const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
+      const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
+      // Ollama: Vision 모델 자동 선택 (텍스트 모델은 Vision 미지원)
+      const OLLAMA_VISION_MODELS = ['llava', 'llama3.2-vision', 'bakllava', 'moondream'];
+      const configuredModel = (settings.model as string) || '';
+      let model = configuredModel;
+      if (provider === 'ollama' && !OLLAMA_VISION_MODELS.some((v) => configuredModel.startsWith(v))) {
+        // 설치된 Vision 모델 탐색
+        const installed = await ollamaManager.listModels();
+        const availableVision = installed.filter((m: string) => OLLAMA_VISION_MODELS.some((v) => m.startsWith(v)));
+        if (availableVision.length === 0) {
+          return { success: false, error: '이미지 분석을 위해 Vision 모델이 필요합니다. 설정에서 llava 모델을 설치해주세요.' };
+        }
+        model = availableVision[0];
+      }
+      const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
+      const description = await analyzeImage(imageBase64, provider, model, ollamaBaseUrl, apiKey);
+      return { success: true, description };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Vision 분석 실패' };
+    }
   });
 
   // ─── 파일 ───

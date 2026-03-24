@@ -412,6 +412,25 @@ export function SettingsPanel() {
         </div>
       </section>
 
+      {/* 이미지 분석 */}
+      <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">이미지 분석</h3>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={draft.enableImageAnalysis}
+            onChange={(e) => updateDraft({ enableImageAnalysis: e.target.checked })}
+            className="w-4 h-4 rounded"
+          />
+          <div>
+            <span className="text-sm text-gray-700 dark:text-gray-200">PDF 이미지 자동 분석</span>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              Vision 지원 모델 필요 (llava, Claude, GPT-4o 등)
+            </p>
+          </div>
+        </label>
+      </section>
+
       {/* 저장 버튼 */}
       <div className="flex items-center gap-3">
         <button

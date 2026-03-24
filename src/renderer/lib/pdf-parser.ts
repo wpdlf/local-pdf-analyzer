@@ -1,5 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist';
-import type { PdfDocument, Chapter } from '../types';
+import { OPS } from 'pdfjs-dist';
+import type { PdfDocument, Chapter, PageImage } from '../types';
 
 // PDF.js worker 설정
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -17,7 +18,9 @@ export async function parsePdf(
 
   // 배치 병렬 처리 (한 번에 10페이지씩)
   const BATCH_SIZE = 10;
+  const MAX_TOTAL_IMAGES = 50;
   const pages: string[] = new Array(pageCount);
+  const allImages: PageImage[] = [];
 
   for (let batchStart = 0; batchStart < pageCount; batchStart += BATCH_SIZE) {
     const batchEnd = Math.min(batchStart + BATCH_SIZE, pageCount);
@@ -25,6 +28,9 @@ export async function parsePdf(
     for (let i = batchStart; i < batchEnd; i++) {
       promises.push(
         pdf.getPage(i + 1).then(async (page) => {
+          // 이미지 추출 (텍스트와 병렬)
+          const imagePromise = extractPageImages(page, i).catch(() => [] as PageImage[]);
+
           const textContent = await page.getTextContent();
           // 텍스트 아이템 간 위치 기반 공백/줄바꿈 삽입 (한글 깨짐 방지)
           let lastY: number | null = null;
@@ -62,6 +68,9 @@ export async function parsePdf(
           }
 
           pages[i] = parts.join('');
+
+          const pageImages = await imagePromise;
+          allImages.push(...pageImages);
         }),
       );
     }
@@ -84,7 +93,9 @@ export async function parsePdf(
     filePath,
     pageCount,
     extractedText,
+    pageTexts: [...pages],
     chapters,
+    images: allImages.slice(0, MAX_TOTAL_IMAGES),
     createdAt: new Date(),
   };
 }
@@ -140,4 +151,129 @@ function detectChapters(pages: string[]): Chapter[] {
   }
 
   return chapters;
+}
+
+// ─── 이미지 추출 ───
+
+const MIN_IMAGE_SIZE = 50;
+const MAX_IMAGE_EDGE = 1024;
+const MAX_IMAGES_PER_PAGE = 10;
+
+async function extractPageImages(
+  page: pdfjsLib.PDFPageProxy,
+  pageIndex: number,
+): Promise<PageImage[]> {
+  const ops = await page.getOperatorList();
+  const images: PageImage[] = [];
+
+  for (let j = 0; j < ops.fnArray.length && images.length < MAX_IMAGES_PER_PAGE; j++) {
+    if (ops.fnArray[j] !== OPS.paintImageXObject) continue;
+
+    const imageName = ops.argsArray[j]![0] as string;
+    let imgData: { width: number; height: number; data: Uint8ClampedArray; kind?: number } | null = null;
+    try {
+      imgData = await new Promise((resolve, reject) => {
+        page.objs.get(imageName, (obj: unknown) => {
+          if (obj && typeof obj === 'object' && 'width' in obj && 'height' in obj && 'data' in obj) {
+            const imgObj = obj as { width: number; height: number; data: Uint8ClampedArray; kind?: number };
+            if (typeof imgObj.width === 'number' && typeof imgObj.height === 'number' && imgObj.data && imgObj.data.length > 0) {
+              resolve(imgObj);
+            } else {
+              reject(new Error('invalid image data'));
+            }
+          } else {
+            reject(new Error('not an image'));
+          }
+        });
+        setTimeout(() => reject(new Error('timeout')), 3000);
+      });
+    } catch {
+      continue;
+    }
+
+    if (!imgData || imgData.width < MIN_IMAGE_SIZE || imgData.height < MIN_IMAGE_SIZE) continue;
+    if (!imgData.data || imgData.data.length === 0) continue;
+
+    try {
+      const base64 = await imageDataToBase64(imgData.width, imgData.height, imgData.data);
+      if (base64) {
+        images.push({
+          pageIndex,
+          imageIndex: images.length,
+          base64,
+          width: imgData.width,
+          height: imgData.height,
+          mimeType: 'image/jpeg',
+        });
+      }
+    } catch {
+      // 개별 이미지 변환 실패 무시
+    }
+  }
+
+  return images;
+}
+
+async function imageDataToBase64(
+  width: number,
+  height: number,
+  data: Uint8ClampedArray,
+): Promise<string | null> {
+  let targetW = width;
+  let targetH = height;
+  if (Math.max(width, height) > MAX_IMAGE_EDGE) {
+    const scale = MAX_IMAGE_EDGE / Math.max(width, height);
+    targetW = Math.round(width * scale);
+    targetH = Math.round(height * scale);
+  }
+
+  const srcCanvas = new OffscreenCanvas(width, height);
+  const srcCtx = srcCanvas.getContext('2d');
+  if (!srcCtx) return null;
+
+  const pixelCount = width * height;
+  const isRGBA = data.length >= pixelCount * 4;
+  const isRGB = !isRGBA && data.length >= pixelCount * 3;
+  const isGrayscale = !isRGBA && !isRGB && data.length >= pixelCount;
+
+  if (!isRGBA && !isRGB && !isGrayscale) return null; // 비지원 포맷 (CMYK 등)
+
+  const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+
+  if (isRGBA) {
+    rgbaData.set(data.subarray(0, pixelCount * 4));
+  } else if (isRGB) {
+    for (let p = 0; p < pixelCount; p++) {
+      rgbaData[p * 4] = data[p * 3]!;
+      rgbaData[p * 4 + 1] = data[p * 3 + 1]!;
+      rgbaData[p * 4 + 2] = data[p * 3 + 2]!;
+      rgbaData[p * 4 + 3] = 255;
+    }
+  } else {
+    // 그레이스케일
+    for (let p = 0; p < pixelCount; p++) {
+      const v = data[p] ?? 0;
+      rgbaData[p * 4] = v;
+      rgbaData[p * 4 + 1] = v;
+      rgbaData[p * 4 + 2] = v;
+      rgbaData[p * 4 + 3] = 255;
+    }
+  }
+
+  srcCtx.putImageData(new ImageData(rgbaData, width, height), 0, 0);
+
+  const canvas = new OffscreenCanvas(targetW, targetH);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
+
+  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 0x8000;
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(parts.join(''));
 }

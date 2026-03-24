@@ -235,6 +235,59 @@ export default function App() {
         return;
       }
 
+      // ─── 이미지 분석 단계 (이미지가 있고 설정 on인 경우만) ───
+      let textForSummary = document.extractedText;
+      let enrichedPagesRef: string[] | null = null;
+      if (document.images.length > 0 && settings.enableImageAnalysis) {
+        // Vision 모델 사전 확인 (첫 이미지로 테스트)
+        const preflight = await window.electronAPI.ai.analyzeImage(document.images[0]!.base64);
+        if (!preflight.success) {
+          setError({ code: 'GENERATE_FAIL', message: preflight.error || '이미지 분석에 실패했습니다.' });
+          setIsGenerating(false);
+          clearTimeout(timeoutTimer);
+          return;
+        }
+
+        const imageDescriptions = new Map<number, string[]>();
+        // 첫 이미지 결과 저장
+        if (preflight.description) {
+          const firstImg = document.images[0]!;
+          imageDescriptions.set(firstImg.pageIndex, [preflight.description]);
+        }
+
+        const BATCH = 3;
+        for (let bi = 1; bi < document.images.length && !timedOut; bi += BATCH) {
+          if (!useAppStore.getState().isGenerating) break;
+          const batch = document.images.slice(bi, bi + BATCH);
+          const results = await Promise.allSettled(
+            batch.map((img) => client.analyzeImage(img.base64)),
+          );
+          for (let ri = 0; ri < results.length; ri++) {
+            const r = results[ri]!;
+            const img = batch[ri]!;
+            if (r.status === 'fulfilled' && r.value) {
+              const list = imageDescriptions.get(img.pageIndex) || [];
+              list.push(r.value);
+              imageDescriptions.set(img.pageIndex, list);
+            }
+          }
+          setProgress(Math.round(((bi + batch.length + 1) / document.images.length) * 20));
+        }
+
+        // 페이지별로 이미지 설명을 텍스트에 삽입 (pageTexts로 정확한 매핑)
+        if (imageDescriptions.size > 0) {
+          const enrichedPages = [...document.pageTexts];
+          for (const [pageIdx, descriptions] of imageDescriptions) {
+            if (pageIdx < enrichedPages.length) {
+              const desc = descriptions.map((d) => `[이미지 분석: ${d}]`).join('\n');
+              enrichedPages[pageIdx] = enrichedPages[pageIdx] + '\n' + desc;
+            }
+          }
+          textForSummary = enrichedPages.join('\n\n');
+          enrichedPagesRef = enrichedPages;
+        }
+      }
+
       const checkTimeout = () => {
         if (Date.now() - startTime > TIMEOUT_MS) {
           timedOut = true;
@@ -243,10 +296,21 @@ export default function App() {
         return false;
       };
 
+      // abort 확인 — 이미지 분석 중 사용자가 취소했으면 요약 시작하지 않음
+      if (!useAppStore.getState().isGenerating) return;
+
+      const docWithImages = { ...document, extractedText: textForSummary };
+      // chapter 모드: 이미지 설명이 삽입된 페이지로 챕터 텍스트 재구성
+      if (enrichedPagesRef) {
+        docWithImages.chapters = document.chapters.map((ch) => ({
+          ...ch,
+          text: enrichedPagesRef!.slice(ch.startPage - 1, ch.endPage).join('\n\n'),
+        }));
+      }
       if (summaryType === 'chapter' && document.chapters.length > 1) {
-        await summarizeByChapter(document, settings, trackSummarize, checkTimeout, () => timedOut, appendStream, setProgress);
+        await summarizeByChapter(docWithImages, settings, trackSummarize, checkTimeout, () => timedOut, appendStream, setProgress);
       } else {
-        await summarizeFull(document, summaryType, settings, trackSummarize, checkTimeout, () => timedOut, appendStream, setProgress);
+        await summarizeFull(docWithImages, summaryType, settings, trackSummarize, checkTimeout, () => timedOut, appendStream, setProgress);
       }
 
       const durationMs = Date.now() - startTime;

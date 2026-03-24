@@ -1,3 +1,13 @@
+// 페이지별 추출 이미지
+export interface PageImage {
+  pageIndex: number;
+  imageIndex: number;
+  base64: string;
+  width: number;
+  height: number;
+  mimeType: 'image/jpeg' | 'image/png';
+}
+
 // PDF 문서 정보
 export interface PdfDocument {
   id: string;
@@ -5,7 +15,9 @@ export interface PdfDocument {
   filePath: string;
   pageCount: number;
   extractedText: string;
+  pageTexts: string[];
   chapters: Chapter[];
+  images: PageImage[];
   createdAt: Date;
 }
 
@@ -44,6 +56,7 @@ export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   defaultSummaryType: SummaryType;
   maxChunkSize: number;
+  enableImageAnalysis: boolean;
 }
 
 // Provider별 대표 모델
@@ -103,4 +116,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
   defaultSummaryType: 'full',
   maxChunkSize: 4000,
+  enableImageAnalysis: true,
 };
