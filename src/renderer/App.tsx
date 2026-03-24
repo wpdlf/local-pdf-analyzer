@@ -84,6 +84,7 @@ export default function App() {
   const setProgress = useAppStore((s) => s.setProgress);
   const appendStream = useAppStore((s) => s.appendStream);
   const clearStream = useAppStore((s) => s.clearStream);
+  const flushStream = useAppStore((s) => s.flushStream);
   const setSummary = useAppStore((s) => s.setSummary);
   const settings = useAppStore((s) => s.settings);
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
@@ -187,6 +188,7 @@ export default function App() {
     }
     clientRef.current = null;
     useAppStore.getState().setCurrentRequestId(null);
+    flushStream();
     setIsGenerating(false);
   };
 
@@ -217,9 +219,9 @@ export default function App() {
       clientRef.current = client;
 
       const trackSummarize = (text: string, type: typeof summaryType) => {
-        const gen = client.summarize(text, type);
-        useAppStore.getState().setCurrentRequestId(client.lastRequestId);
-        return gen;
+        const requestId = client.prepareSummarize();
+        useAppStore.getState().setCurrentRequestId(requestId);
+        return client.summarize(text, type, requestId);
       };
       const available = await client.isAvailable();
       if (!available) {
@@ -248,6 +250,7 @@ export default function App() {
       }
 
       const durationMs = Date.now() - startTime;
+      flushStream();
       const finalContent = useAppStore.getState().summaryStream;
       if (!timedOut && finalContent) {
         setSummary({
@@ -262,13 +265,20 @@ export default function App() {
         });
       }
     } catch (err) {
-      const error = err as Error & { code?: string };
-      setError({
-        code: (error.code as 'GENERATE_FAIL') || 'GENERATE_FAIL',
-        message: error.message || '요약 생성에 실패했습니다.',
-      });
+      // 타임아웃이나 사용자 취소로 인한 abort 에러는 이미 적절한 메시지가 설정됨
+      if (!timedOut && useAppStore.getState().document) {
+        const error = err as Error & { code?: string };
+        setError({
+          code: (error.code as 'GENERATE_FAIL') || 'GENERATE_FAIL',
+          message: error.message || '요약 생성에 실패했습니다.',
+        });
+      }
     } finally {
       clearTimeout(timeoutTimer);
+      // document가 null이면 사용자가 닫기를 눌렀으므로 flush 불필요
+      if (useAppStore.getState().document) {
+        flushStream();
+      }
       setIsGenerating(false);
     }
   };
@@ -302,6 +312,7 @@ export default function App() {
             disabled={isGenerating || isParsing}
             className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title={isGenerating ? '요약 중에는 설정을 열 수 없습니다' : '설정'}
+            aria-label="설정"
           >
             ⚙️
           </button>
@@ -358,6 +369,7 @@ export default function App() {
                   setProgress(0);
                 }}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm"
+                aria-label="현재 파일 제거"
               >
                 ✕ 다른 파일
               </button>

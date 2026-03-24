@@ -12,6 +12,12 @@ const safeComponents: Components = {
       ? <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
       : <span {...props}>{children}</span>;
   },
+  img: ({ src, alt, ...props }) => {
+    const isSafe = src && (src.startsWith('http://') || src.startsWith('https://'));
+    return isSafe
+      ? <img src={src} alt={alt || ''} {...props} />
+      : <span>{alt || ''}</span>;
+  },
 };
 
 export function SummaryViewer() {

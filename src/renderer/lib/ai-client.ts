@@ -12,9 +12,16 @@ export class AiClient {
     this.settings = settings;
   }
 
-  async *summarize(text: string, type: SummaryType): AsyncGenerator<string> {
+  prepareSummarize(): string {
     const requestId = crypto.randomUUID();
     this._lastRequestId = requestId;
+    return requestId;
+  }
+
+  async *summarize(text: string, type: SummaryType, requestId?: string): AsyncGenerator<string> {
+    if (!requestId) {
+      requestId = this.prepareSummarize();
+    }
 
     // 토큰 수신을 위한 큐
     const tokenQueue: string[] = [];

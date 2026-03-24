@@ -208,6 +208,7 @@ function streamRequest(
 
     const parsedUrl = new URL(config.url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
+    let responseStream: import('http').IncomingMessage | null = null;
 
     const req = client.request(
       {
@@ -221,6 +222,7 @@ function streamRequest(
         },
       },
       (res) => {
+        responseStream = res;
         if (config.checkAuthError?.(res.statusCode || 0)) {
           activeRequests.delete(requestId);
           safeReject(Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID' }));
@@ -324,9 +326,11 @@ function streamRequest(
     });
 
     // abort를 write 전에 등록하여 race condition 방지
+    // response 스트림도 함께 파괴하여 generator 무한 대기 방지
     activeRequests.set(requestId, {
       abort: () => {
         activeRequests.delete(requestId);
+        if (responseStream && !responseStream.destroyed) responseStream.destroy();
         if (!req.destroyed) req.destroy();
       },
     });

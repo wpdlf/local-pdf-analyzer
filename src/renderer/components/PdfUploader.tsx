@@ -68,6 +68,9 @@ export function PdfUploader() {
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label="PDF 파일 업로드"
       onDrop={handleDrop}
       onDragOver={(e) => {
         e.preventDefault();
@@ -75,6 +78,12 @@ export function PdfUploader() {
       }}
       onDragLeave={() => setIsDragging(false)}
       onClick={isParsing ? undefined : handleFileSelect}
+      onKeyDown={(e) => {
+        if (!isParsing && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          handleFileSelect();
+        }
+      }}
       className={`
         relative border-2 border-dashed rounded-xl p-12 text-center
         transition-colors duration-200

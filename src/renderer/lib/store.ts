@@ -9,6 +9,10 @@ import type {
 } from '../types';
 import { DEFAULT_SETTINGS } from '../types';
 
+// appendStream 배치 처리용 버퍼 (50ms 간격 flush)
+let streamBuffer = '';
+let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
 interface AppState {
   // PDF
   document: PdfDocument | null;
@@ -25,6 +29,7 @@ interface AppState {
   progress: number;
   setSummary: (summary: Summary | null) => void;
   appendStream: (token: string) => void;
+  flushStream: () => void;
   clearStream: () => void;
   setSummaryType: (type: SummaryType) => void;
   setIsGenerating: (v: boolean) => void;
@@ -62,10 +67,36 @@ export const useAppStore = create<AppState>((set) => ({
   currentRequestId: null,
   progress: 0,
   setSummary: (summary) => set({ summary }),
-  appendStream: (token) => set((s) => ({
-    summaryStream: s.summaryStream + token,
-  })),
-  clearStream: () => set({ summaryStream: '' }),
+  appendStream: (token) => {
+    streamBuffer += token;
+    if (!streamFlushTimer) {
+      streamFlushTimer = setTimeout(() => {
+        const buffered = streamBuffer;
+        streamBuffer = '';
+        streamFlushTimer = null;
+        set((s) => ({ summaryStream: s.summaryStream + buffered }));
+      }, 50);
+    }
+  },
+  flushStream: () => {
+    if (streamFlushTimer) {
+      clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+    if (streamBuffer) {
+      const buffered = streamBuffer;
+      streamBuffer = '';
+      set((s) => ({ summaryStream: s.summaryStream + buffered }));
+    }
+  },
+  clearStream: () => {
+    streamBuffer = '';
+    if (streamFlushTimer) {
+      clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+    set({ summaryStream: '' });
+  },
   setSummaryType: (summaryType) => set({ summaryType }),
   setIsGenerating: (isGenerating) => set({ isGenerating }),
   setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),

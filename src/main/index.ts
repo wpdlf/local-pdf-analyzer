@@ -12,7 +12,7 @@ const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 // 기본 설정값 (src/renderer/types/index.ts의 DEFAULT_SETTINGS와 동기화 필요)
 const defaultSettings = {
   provider: 'ollama',
-  model: 'llama3.2',
+  model: 'gemma3',
   ollamaBaseUrl: 'http://localhost:11434',
   theme: 'system',
   defaultSummaryType: 'full',
@@ -276,7 +276,7 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('ollama:pull-model', async (_event, model: string) => {
-    if (!/^[a-zA-Z0-9._:\/-]+$/.test(model)) {
+    if (typeof model !== 'string' || model.length === 0 || model.length > 128 || !/^[a-zA-Z0-9]([a-zA-Z0-9._:\/-]*[a-zA-Z0-9])?$/.test(model)) {
       return { success: false, error: 'Invalid model name' };
     }
     return ollamaManager.pullModel(model);
