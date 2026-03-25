@@ -1,7 +1,9 @@
 # PDF 자료 요약기
 
-PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션입니다.
-강의자료, 논문, 보고서 등 어떤 PDF든 핵심 내용을 빠르게 파악할 수 있습니다.
+**내 컴퓨터에서 직접 돌아가는 로컬 AI 기반 PDF 요약 도구입니다.**
+클라우드 서비스와 달리, Ollama 로컬 AI 엔진을 사용해 PDF 파일이 외부 서버로 전송되지 않습니다.
+강의자료, 논문, 보고서 등 어떤 PDF든 텍스트는 물론 **차트, 다이어그램, 표 등 삽입 이미지까지 Vision AI로 분석**하여 핵심 내용을 빠르게 파악할 수 있습니다.
+필요에 따라 Claude, OpenAI 등 유료 API로 전환하여 더 높은 품질의 요약도 가능합니다.
 
 ---
 
@@ -50,9 +52,27 @@ PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션
 2. API 키 입력 후 **저장** (키는 암호화되어 로컬에 저장됩니다)
 3. 모델 선택 후 **설정 저장**
 
+## PDF 이미지 분석
+
+PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동으로 분석하여 요약에 포함합니다.
+
+- PDF 페이지에서 이미지를 개별 추출하여 Vision 모델로 의미 분석
+- 분석 결과가 해당 페이지 텍스트에 자연스럽게 통합되어 요약 품질 향상
+- 이미지가 없는 PDF는 기존과 동일하게 텍스트만 요약
+- 설정에서 이미지 분석 on/off 가능
+
+| Provider | Vision 모델 | 비고 |
+|----------|------------|------|
+| **Ollama** | llava, llama3.2-vision | 로컬 실행, 미설치 시 자동 안내 |
+| **Claude** | claude-sonnet-4 | API 비용 발생 |
+| **OpenAI** | gpt-4o | API 비용 발생 |
+
+> Ollama 사용 시 Vision 모델(llava 등)이 별도로 필요합니다. 설정 → 모델 관리에서 설치할 수 있습니다.
+
 ## 주요 특징
 
-- **오프라인 사용 가능** — Ollama로 인터넷 없이 요약
+- **로컬 AI 기반** — Ollama 로컬 엔진으로 인터넷 없이 요약, PDF가 외부로 전송되지 않음
+- **이미지 분석** — PDF 내 차트/다이어그램/표를 Vision AI로 분석하여 요약에 통합
 - **한국어 최적화** — 한글 PDF 텍스트 추출 품질 개선, 한글 비율에 따른 청크 자동 조절
 - **한국어 모델 자동 설치** — 첫 실행 시 gemma3, exaone3.5 한국어 특화 모델 자동 다운로드
 - **유료 AI 지원** — Claude API, OpenAI API로 고품질 요약 가능
@@ -78,6 +98,7 @@ PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션
 | 한국어 요약 품질이 낮음 | 설정에서 gemma3 또는 exaone3.5 모델이 선택되어 있는지 확인해보세요 |
 | 요약이 느림 | 설정에서 경량 모델(phi3 등)로 변경하거나 청크 크기를 줄여보세요 |
 | PDF 텍스트 추출 불가 | 스캔/이미지 기반 PDF는 지원하지 않습니다 (텍스트 PDF만 가능) |
+| 이미지 분석이 안 됨 | Ollama 사용 시 llava 등 Vision 모델이 필요합니다. 설정에서 모델을 설치해주세요 |
 | API 키 오류 | 설정에서 API 키가 올바른지 확인. Claude: `sk-ant-...`, OpenAI: `sk-...` |
 | Claude/OpenAI 사용 불가 | API 키를 먼저 저장한 후 Provider를 선택해주세요 |
 
@@ -92,7 +113,7 @@ PDF 파일을 AI가 자동으로 요약해주는 데스크톱 애플리케이션
 | 프레임워크 | Electron 34 + React 19 |
 | 언어 | TypeScript (strict mode) |
 | AI | Ollama (로컬) / Claude API / OpenAI API — Main 프로세스 IPC 기반 |
-| PDF 파싱 | pdfjs-dist (위치 기반 텍스트 추출, 한글 최적화) |
+| PDF 파싱 | pdfjs-dist (위치 기반 텍스트 추출 + 이미지 추출, 한글 최적화) |
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (NSIS) |
@@ -124,7 +145,7 @@ npx vitest run
 src/
 ├── main/                 # Electron main process
 │   ├── index.ts          # 앱 엔트리, IPC, 설정/API키 관리
-│   ├── ai-service.ts     # AI API 호출 (Claude/OpenAI/Ollama 스트리밍)
+│   ├── ai-service.ts     # AI API 호출 (스트리밍 요약 + Vision 이미지 분석)
 │   └── ollama-manager.ts # Ollama 설치/시작/모델 관리
 ├── preload/
 │   └── index.ts          # contextBridge API (ai, settings, apiKey, ollama, file)
@@ -133,7 +154,7 @@ src/
     ├── components/        # UI 컴포넌트 (8개)
     ├── lib/
     │   ├── ai-client.ts       # AI Client (IPC를 통해 Main에 요약 요청)
-    │   ├── pdf-parser.ts      # PDF 텍스트 추출 + 챕터 감지 (위치 기반, 배치 병렬)
+    │   ├── pdf-parser.ts      # PDF 텍스트 + 이미지 추출, 챕터 감지 (배치 병렬)
     │   ├── chunker.ts         # 텍스트 청크 분할 (한글 비율 자동 감지)
     │   ├── store.ts           # Zustand 상태 관리
     │   └── __tests__/         # 단위 테스트 (19개)
