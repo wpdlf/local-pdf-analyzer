@@ -23,7 +23,11 @@ npm run package      # 빌드 + electron-builder 패키징
 4. GitHub Actions가 자동으로 빌드 + 설치 파일 첨부 (`.github/workflows/release.yml`)
 5. `gh release create` 또는 기존 릴리즈에 노트 업데이트
 
-**중요**: `gh release create`에 `--tag` 대신 태그 이름만 전달. 태그 푸시가 CI를 트리거하므로 수동 빌드/업로드 불필요.
+**중요**:
+- `gh release create`에 `--tag` 대신 태그 이름만 전달
+- 태그 푸시가 CI를 트리거하므로 수동 빌드/업로드 불필요
+- CI 빌드에 약 3분 소요 — 릴리즈 생성 직후에는 설치 파일 미첨부 상태가 정상
+- 릴리즈 생성 후 `gh run watch <run-id> --exit-status`로 CI 완료를 확인하고, 설치 파일 첨부를 `gh release view` 로 검증할 것
 
 ## Tech Stack
 
