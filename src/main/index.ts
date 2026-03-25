@@ -345,9 +345,11 @@ function registerIpcHandlers(): void {
     return { success: true };
   });
 
-  ipcMain.handle('ai:check-available', async (_event, provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) => {
+  ipcMain.handle('ai:check-available', async (_event, provider: string, ollamaBaseUrl: string) => {
+    if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) return false;
+    if (typeof ollamaBaseUrl !== 'string') return false;
     const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
-    return checkAvailability(provider, ollamaBaseUrl, apiKey);
+    return checkAvailability(provider as 'ollama' | 'claude' | 'openai', ollamaBaseUrl, apiKey);
   });
 
   ipcMain.handle('ai:analyze-image', async (_event, imageBase64: string) => {

@@ -289,8 +289,10 @@ export default function App() {
       }
 
       const checkTimeout = () => {
+        if (timedOut) return true;
         if (Date.now() - startTime > TIMEOUT_MS) {
           timedOut = true;
+          clearTimeout(timeoutTimer);
           return true;
         }
         return false;

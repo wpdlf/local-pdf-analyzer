@@ -19,7 +19,7 @@ export async function parsePdf(
   // 배치 병렬 처리 (한 번에 10페이지씩)
   const BATCH_SIZE = 10;
   const MAX_TOTAL_IMAGES = 50;
-  const pages: string[] = new Array(pageCount);
+  const pages: string[] = new Array(pageCount).fill('');
   const allImages: PageImage[] = [];
 
   for (let batchStart = 0; batchStart < pageCount; batchStart += BATCH_SIZE) {
@@ -173,7 +173,14 @@ async function extractPageImages(
     let imgData: { width: number; height: number; data: Uint8ClampedArray; kind?: number } | null = null;
     try {
       imgData = await new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (!settled) { settled = true; reject(new Error('timeout')); }
+        }, 1000);
         page.objs.get(imageName, (obj: unknown) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           if (obj && typeof obj === 'object' && 'width' in obj && 'height' in obj && 'data' in obj) {
             const imgObj = obj as { width: number; height: number; data: Uint8ClampedArray; kind?: number };
             if (typeof imgObj.width === 'number' && typeof imgObj.height === 'number' && imgObj.data && imgObj.data.length > 0) {
@@ -185,7 +192,6 @@ async function extractPageImages(
             reject(new Error('not an image'));
           }
         });
-        setTimeout(() => reject(new Error('timeout')), 3000);
       });
     } catch {
       continue;
