@@ -1,4 +1,4 @@
-# PDF 자료 요약기
+# 📄 로컬 AI PDF 요약기 (Local AI PDF Summarizer)
 
 **개인 PC에서 직접 실행되는 로컬 AI 기반 PDF 요약 도구입니다.**
 
