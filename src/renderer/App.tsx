@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from './lib/store';
 import { AiClient } from './lib/ai-client';
 import { chunkText, chunkChapters } from './lib/chunker';
-import { KOREAN_RECOMMENDED_MODELS } from './types';
+import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS } from './types';
 import { PdfUploader } from './components/PdfUploader';
 import { SummaryViewer } from './components/SummaryViewer';
 import { SummaryTypeSelector } from './components/SummaryTypeSelector';
@@ -99,6 +99,7 @@ export default function App() {
   const isParsing = useAppStore((s) => s.isParsing);
   const clientRef = useRef<AiClient | null>(null);
   const [modelHint, setModelHint] = useState<string | null>(null);
+  const [bgModelSync, setBgModelSync] = useState<string | null>(null);
 
   // 초기화: 설정 로드 + Ollama 상태 확인
   useEffect(() => {
@@ -113,6 +114,9 @@ export default function App() {
         const currentSettings = useAppStore.getState().settings;
         if (currentSettings.provider === 'ollama' && (!status.installed || !status.running || status.models.length === 0)) {
           setView('setup');
+        } else if (status.running) {
+          // 기존 사용자: 누락된 기본 모델 백그라운드 다운로드
+          ensureDefaultModels(status.models);
         }
       } catch {
         const currentSettings = useAppStore.getState().settings;
@@ -123,6 +127,28 @@ export default function App() {
     };
     init();
   }, [setOllamaStatus, setView]);
+
+  // 누락된 기본 모델 백그라운드 다운로드
+  const ensureDefaultModels = async (installedModels: string[]) => {
+    const missing = INITIAL_INSTALL_MODELS.filter(
+      (model) => !installedModels.some((m) => m.startsWith(model)),
+    );
+    if (missing.length === 0) return;
+
+    for (const model of missing) {
+      setBgModelSync(`기본 모델 다운로드 중: ${model}`);
+      const result = await window.electronAPI.ollama.pullModel(model);
+      if (!result.success) {
+        setBgModelSync(null);
+        return;
+      }
+    }
+    // 다운로드 완료 후 상태 갱신
+    const updatedStatus = await window.electronAPI.ollama.getStatus();
+    setOllamaStatus(updatedStatus);
+    setBgModelSync('기본 모델 설치 완료');
+    setTimeout(() => setBgModelSync(null), 3000);
+  };
 
   // Main process에서 파일 드롭 수신 (IPC)
   useEffect(() => {
@@ -380,6 +406,19 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* 백그라운드 모델 다운로드 알림 */}
+      {bgModelSync && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-400">
+          {!bgModelSync.includes('완료') && (
+            <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
+          <span>{bgModelSync}</span>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-4">

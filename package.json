@@ -1,6 +1,6 @@
 {
   "name": "summary-lecture-material",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "PDF 자료 요약 데스크톱 앱",
   "main": "./out/main/index.js",
   "scripts": {
