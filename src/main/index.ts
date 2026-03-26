@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electro
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
 import { generate, abortGenerate, checkAvailability, analyzeImage } from './ai-service';
 
@@ -75,33 +76,31 @@ function createWindow(): BrowserWindow {
     console.error('Failed to load:', errorCode, errorDescription);
   });
 
-  // 파일 드롭 시 file:// 탐색 차단 → 대신 IPC로 파일 데이터 전달
+  // 파일 드롭 시 file:// 탐색 차단 → 대신 IPC로 파일 데이터 전달 (비동기)
   win.webContents.on('will-navigate', (event, url) => {
     event.preventDefault();
     if (url.startsWith('file://') && url.toLowerCase().endsWith('.pdf')) {
       const filePath = fileURLToPath(url);
-      try {
-        const MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
-        const fd = fs.openSync(filePath, 'r');
+      const MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
+      (async () => {
         try {
-          const stat = fs.fstatSync(fd);
+          const stat = await fsp.stat(filePath);
           if (stat.size > MAX_PDF_SIZE) {
             console.error('Dropped file too large:', stat.size);
             return;
           }
-          const data = Buffer.alloc(stat.size);
-          fs.readSync(fd, data, 0, stat.size, 0);
-          win.webContents.send('file:dropped', {
-            path: filePath,
-            name: path.basename(filePath),
-            data: data.buffer,
-          });
-        } finally {
-          fs.closeSync(fd);
+          const data = await fsp.readFile(filePath);
+          if (!win.isDestroyed()) {
+            win.webContents.send('file:dropped', {
+              path: filePath,
+              name: path.basename(filePath),
+              data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+            });
+          }
+        } catch (err) {
+          console.error('Failed to read dropped file:', err);
         }
-      } catch (err) {
-        console.error('Failed to read dropped file:', err);
-      }
+      })();
     }
   });
 
@@ -319,6 +318,9 @@ function registerIpcHandlers(): void {
     if (typeof request.model !== 'string' || !request.model) {
       return { success: false, error: 'Invalid model' };
     }
+    if (request.temperature !== undefined && (typeof request.temperature !== 'number' || request.temperature < 0 || request.temperature > 2)) {
+      return { success: false, error: 'Invalid temperature' };
+    }
 
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return { success: false, error: '윈도우를 찾을 수 없습니다.' };
@@ -396,18 +398,22 @@ function registerIpcHandlers(): void {
       ],
     });
     if (filePath) {
-      const fsp = await import('fs/promises');
       await fsp.writeFile(filePath, content, 'utf-8');
       return filePath;
     }
     return null;
   });
 
+  const ALLOWED_EXTERNAL_DOMAINS = ['ollama.com', 'anthropic.com', 'openai.com', 'github.com'];
+
   ipcMain.handle('shell:open-external', async (_event, url: string) => {
-    // https/http URL만 허용
-    if (/^https?:\/\//.test(url)) {
+    if (typeof url !== 'string') return;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:') return;
+      if (!ALLOWED_EXTERNAL_DOMAINS.some(d => parsed.hostname === d || parsed.hostname.endsWith('.' + d))) return;
       await shell.openExternal(url);
-    }
+    } catch { /* 유효하지 않은 URL 무시 */ }
   });
 
   ipcMain.handle('file:open-pdf', async () => {
@@ -417,7 +423,6 @@ function registerIpcHandlers(): void {
       properties: ['openFile'],
     });
     if (filePaths.length > 0) {
-      const fsp = await import('fs/promises');
       const stat = await fsp.stat(filePaths[0]);
       if (stat.size > MAX_PDF_SIZE) {
         return { error: 'PDF 파일이 너무 큽니다 (최대 100MB).' };

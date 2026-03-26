@@ -11,8 +11,8 @@ interface SetupItem {
 }
 
 export function OllamaSetupWizard() {
-  const { setOllamaStatus, setView, setError, settings } = useAppStore();
-  const doneTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const { setOllamaStatus, setView, setError } = useAppStore();
+  const doneTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [step, setStep] = useState<SetupStep>('welcome');
   const [progressMessage, setProgressMessage] = useState('');
   const [errorCode, setErrorCode] = useState<AppErrorCode | null>(null);

@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { OPS } from 'pdfjs-dist';
-import type { PdfDocument, Chapter, PageImage } from '../types';
+import type { PdfDocument, Chapter, PageImage, AppError } from '../types';
+import { useAppStore } from './store';
 
 // PDF.js worker 설정
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -157,6 +158,7 @@ function detectChapters(pages: string[]): Chapter[] {
 
 const MIN_IMAGE_SIZE = 50;
 const MAX_IMAGE_EDGE = 1024;
+const MAX_IMAGE_PIXELS = 4_000_000; // 4M 픽셀 초과 시 스킵 (OOM 방지)
 const MAX_IMAGES_PER_PAGE = 10;
 
 async function extractPageImages(
@@ -199,6 +201,7 @@ async function extractPageImages(
 
     if (!imgData || imgData.width < MIN_IMAGE_SIZE || imgData.height < MIN_IMAGE_SIZE) continue;
     if (!imgData.data || imgData.data.length === 0) continue;
+    if (imgData.width * imgData.height > MAX_IMAGE_PIXELS) continue; // OOM 방지
 
     try {
       const base64 = await imageDataToBase64(imgData.width, imgData.height, imgData.data);
@@ -282,4 +285,37 @@ async function imageDataToBase64(
     parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
   }
   return btoa(parts.join(''));
+}
+
+// ─── 공용 PDF 처리 함수 (PdfUploader + App file drop 공통) ───
+
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+
+export async function handlePdfData(
+  data: ArrayBuffer,
+  name: string,
+  filePath: string,
+): Promise<void> {
+  const store = useAppStore.getState();
+  if (data.byteLength > MAX_FILE_SIZE) {
+    store.setError({
+      code: 'PDF_PARSE_FAIL',
+      message: `파일이 너무 큽니다 (${Math.round(data.byteLength / 1024 / 1024)}MB). 최대 100MB까지 지원합니다.`,
+    } as AppError);
+    return;
+  }
+  store.setIsParsing(true);
+  try {
+    const doc = await parsePdf(data, name, filePath);
+    store.setDocument(doc);
+    store.setError(null);
+  } catch (err) {
+    const error = err as Error & { code?: string };
+    store.setError({
+      code: (error.code as 'PDF_PARSE_FAIL') || 'PDF_PARSE_FAIL',
+      message: error.message || 'PDF를 읽을 수 없습니다.',
+    } as AppError);
+  } finally {
+    store.setIsParsing(false);
+  }
 }

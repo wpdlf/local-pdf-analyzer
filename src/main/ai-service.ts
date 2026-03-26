@@ -195,7 +195,8 @@ interface StreamConfig {
   headers: Record<string, string>;
   body: string;
   isSSE?: boolean;
-  extractToken: (parsed: Record<string, unknown>) => string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  extractToken: (parsed: any) => string | null;
   checkAuthError?: (statusCode: number) => boolean;
 }
 
@@ -439,7 +440,8 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
         res.on('data', (c: Buffer) => { if (errChunks.length < 8) errChunks.push(c); });
         res.on('end', () => {
           const errBody = Buffer.concat(errChunks).toString('utf-8').slice(0, 500);
-          reject(new Error(`Vision API 요청 실패: HTTP ${res.statusCode} — ${errBody}`));
+          console.error(`Vision API error: HTTP ${res.statusCode}`, errBody);
+          reject(new Error(`Vision API 요청 실패: HTTP ${res.statusCode}`));
         });
         res.on('error', () => reject(new Error(`Vision API 요청 실패: HTTP ${res.statusCode}`)));
         return;

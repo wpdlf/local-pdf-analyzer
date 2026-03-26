@@ -35,6 +35,7 @@ interface AppState {
   setIsGenerating: (v: boolean) => void;
   setCurrentRequestId: (id: string | null) => void;
   setProgress: (p: number) => void;
+  resetSummaryState: () => void;
 
   // 설정
   settings: AppSettings;
@@ -101,12 +102,27 @@ export const useAppStore = create<AppState>((set) => ({
   setIsGenerating: (isGenerating) => set({ isGenerating }),
   setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
   setProgress: (progress) => set({ progress }),
+  resetSummaryState: () => {
+    streamBuffer = '';
+    if (streamFlushTimer) {
+      clearTimeout(streamFlushTimer);
+      streamFlushTimer = null;
+    }
+    set({
+      document: null,
+      summaryStream: '',
+      isGenerating: false,
+      progress: 0,
+      summary: null,
+      currentRequestId: null,
+    });
+  },
 
   // 설정
   settings: DEFAULT_SETTINGS,
   updateSettings: (newSettings) => {
     set({ settings: newSettings as AppSettings });
-    window.electronAPI.settings.set(newSettings as Record<string, unknown>).catch(() => {
+    window.electronAPI.settings.set(newSettings as unknown as Record<string, unknown>).catch(() => {
       set({ error: { code: 'EXPORT_FAIL' as const, message: '설정 저장에 실패했습니다. 다시 시도해주세요.' } });
     });
   },

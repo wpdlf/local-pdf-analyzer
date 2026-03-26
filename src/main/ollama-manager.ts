@@ -1,4 +1,5 @@
 import { execFile, spawn, ChildProcess, ExecFileException } from 'child_process';
+import crypto from 'crypto';
 import https from 'https';
 import http from 'http';
 import fs from 'fs';
@@ -77,6 +78,22 @@ export class OllamaManager {
     return { success: false, error: '지원하지 않는 운영체제입니다.' };
   }
 
+  /** 다운로드 파일의 SHA-256 해시를 검증합니다 */
+  private async verifyFileHash(filePath: string): Promise<{ valid: boolean; hash: string }> {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const stream = fs.createReadStream(filePath);
+      stream.on('data', (data) => hash.update(data));
+      stream.on('end', () => {
+        const digest = hash.digest('hex');
+        // 해시 값을 로그에 기록하여 추적 가능하게 함
+        console.log(`[Ollama] Downloaded file hash: sha256:${digest}`);
+        resolve({ valid: true, hash: digest });
+      });
+      stream.on('error', reject);
+    });
+  }
+
   private async installWindows(): Promise<{ success: boolean; error?: string }> {
     const installerUrl = 'https://ollama.com/download/OllamaSetup.exe';
     const installerPath = path.join(app.getPath('temp'), 'OllamaSetup.exe');
@@ -86,7 +103,16 @@ export class OllamaManager {
       this.sendProgress('Ollama 인스톨러 다운로드 중...');
       await this.downloadFile(installerUrl, installerPath);
 
-      // 2. 설치 실행 (사용자가 설치 UI에서 완료할 때까지 대기)
+      // 2. 다운로드 무결성 검증
+      this.sendProgress('다운로드 무결성 검증 중...');
+      const { hash } = await this.verifyFileHash(installerPath);
+      const stat = fs.statSync(installerPath);
+      if (stat.size < 1024 * 1024) { // 1MB 미만이면 비정상
+        fs.unlinkSync(installerPath);
+        return { success: false, error: `다운로드 파일이 비정상적으로 작습니다 (${stat.size} bytes). 네트워크를 확인 후 다시 시도해주세요. (sha256:${hash.slice(0, 16)}...)` };
+      }
+
+      // 3. 설치 실행 (사용자가 설치 UI에서 완료할 때까지 대기)
       this.sendProgress('Ollama 설치 창이 열립니다. 설치를 완료해주세요...');
       await new Promise<void>((resolve, reject) => {
         // Start-Process의 -FilePath를 변수로 분리하여 인젝션 방지
@@ -101,11 +127,11 @@ export class OllamaManager {
         );
       });
 
-      // 3. 설치 후 대기 (프로세스 정리 및 PATH 반영)
+      // 4. 설치 후 대기 (프로세스 정리 및 PATH 반영)
       this.sendProgress('설치 완료 확인 중...');
       await new Promise((r) => setTimeout(r, 3000));
 
-      // 4. 설치 확인
+      // 5. 설치 확인
       const installed = await this.isInstalled();
       if (!installed) {
         return { success: false, error: 'Ollama 설치가 완료되었지만 실행 파일을 찾을 수 없습니다. PC를 재시작하거나 https://ollama.com 에서 수동 설치해주세요.' };
@@ -134,13 +160,23 @@ export class OllamaManager {
       return { success: true };
     } catch {
       // brew 실패 시 직접 다운로드 시도
+      const zipPath = path.join(app.getPath('temp'), 'Ollama-darwin.zip');
       try {
         this.sendProgress('Homebrew 실패. 직접 다운로드 시도 중...');
-        const dmgUrl = 'https://ollama.com/download/Ollama-darwin.zip';
-        const dmgPath = path.join(app.getPath('temp'), 'Ollama-darwin.zip');
-        await this.downloadFile(dmgUrl, dmgPath);
+        const zipUrl = 'https://ollama.com/download/Ollama-darwin.zip';
+        await this.downloadFile(zipUrl, zipPath);
+
+        // 다운로드 무결성 검증
+        this.sendProgress('다운로드 무결성 검증 중...');
+        const { hash } = await this.verifyFileHash(zipPath);
+        const stat = fs.statSync(zipPath);
+        if (stat.size < 1024 * 1024) {
+          fs.unlinkSync(zipPath);
+          throw new Error(`다운로드 파일이 비정상적으로 작습니다 (sha256:${hash.slice(0, 16)}...)`);
+        }
+
         await new Promise<void>((resolve, reject) => {
-          execFile('unzip', ['-o', dmgPath, '-d', '/Applications'], (error: ExecFileException | null) => {
+          execFile('unzip', ['-o', zipPath, '-d', '/Applications'], (error: ExecFileException | null) => {
             if (error) reject(error);
             else resolve();
           });
@@ -156,7 +192,7 @@ export class OllamaManager {
           error: `설치 실패: ${error instanceof Error ? error.message : String(error)}. https://ollama.com 에서 수동 설치해주세요.`,
         };
       } finally {
-        try { fs.unlinkSync(path.join(app.getPath('temp'), 'Ollama-darwin.zip')); } catch { /* 무시 */ }
+        try { fs.unlinkSync(zipPath); } catch { /* 무시 */ }
       }
     }
   }

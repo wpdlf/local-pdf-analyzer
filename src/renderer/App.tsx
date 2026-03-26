@@ -9,6 +9,7 @@ import { SummaryTypeSelector } from './components/SummaryTypeSelector';
 import { StatusBar } from './components/StatusBar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { OllamaSetupWizard } from './components/OllamaSetupWizard';
+import { handlePdfData } from './lib/pdf-parser';
 import type { PdfDocument, SummaryType, AppSettings } from './types';
 
 type TrackFn = (text: string, type: SummaryType) => AsyncGenerator<string>;
@@ -100,15 +101,19 @@ export default function App() {
       // 저장된 설정 로드
       await useAppStore.getState().loadSettings();
 
-      // Ollama 상태 확인
+      // Ollama 상태 확인 (Ollama provider인 경우만 setup wizard 표시)
       try {
         const status = await window.electronAPI.ollama.getStatus();
         setOllamaStatus(status);
-        if (!status.installed || !status.running || status.models.length === 0) {
+        const currentSettings = useAppStore.getState().settings;
+        if (currentSettings.provider === 'ollama' && (!status.installed || !status.running || status.models.length === 0)) {
           setView('setup');
         }
       } catch {
-        setView('setup');
+        const currentSettings = useAppStore.getState().settings;
+        if (currentSettings.provider === 'ollama') {
+          setView('setup');
+        }
       }
     };
     init();
@@ -117,21 +122,7 @@ export default function App() {
   // Main process에서 파일 드롭 수신 (IPC)
   useEffect(() => {
     const unsubscribe = window.electronAPI.onFileDropped(async (file) => {
-      useAppStore.getState().setIsParsing(true);
-      try {
-        const { parsePdf } = await import('./lib/pdf-parser');
-        const doc = await parsePdf(file.data, file.name, file.path);
-        useAppStore.getState().setDocument(doc);
-        useAppStore.getState().setError(null);
-      } catch (err) {
-        const error = err as Error & { code?: string };
-        useAppStore.getState().setError({
-          code: (error.code as 'PDF_PARSE_FAIL') || 'PDF_PARSE_FAIL',
-          message: error.message || 'PDF를 읽을 수 없습니다.',
-        });
-      } finally {
-        useAppStore.getState().setIsParsing(false);
-      }
+      await handlePdfData(file.data, file.name, file.path);
     });
     return unsubscribe;
   }, []);
@@ -271,7 +262,7 @@ export default function App() {
               imageDescriptions.set(img.pageIndex, list);
             }
           }
-          setProgress(Math.round(((bi + batch.length + 1) / document.images.length) * 20));
+          setProgress(Math.min(20, Math.round(((bi + batch.length) / document.images.length) * 20)));
         }
 
         // 페이지별로 이미지 설명을 텍스트에 삽입 (pageTexts로 정확한 매핑)

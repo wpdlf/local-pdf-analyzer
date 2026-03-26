@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import type { AppSettings, AiProviderType } from '../types';
 import { PROVIDER_MODELS } from '../types';
@@ -56,8 +56,13 @@ export function SettingsPanel() {
     }
   }, [draft.theme]);
 
-  // Provider 변경 시 모델 자동 선택
+  // Provider 변경 시 모델 자동 선택 (ollamaModels 변경 시에는 리셋하지 않음)
+  const prevProviderRef = useRef(draft.provider);
   useEffect(() => {
+    const providerChanged = prevProviderRef.current !== draft.provider;
+    prevProviderRef.current = draft.provider;
+    if (!providerChanged) return;
+
     if (draft.provider === 'claude') {
       setDraft((d) => ({ ...d, model: PROVIDER_MODELS.claude[0].value }));
     } else if (draft.provider === 'openai') {

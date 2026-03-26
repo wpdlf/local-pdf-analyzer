@@ -8,8 +8,8 @@ const mockElectronAPI = {
     generate: vi.fn(),
     abort: vi.fn(),
     checkAvailable: vi.fn(),
-    onToken: vi.fn(() => vi.fn()),
-    onDone: vi.fn(() => vi.fn()),
+    onToken: vi.fn((_cb: (id: string, token: string) => void) => vi.fn()),
+    onDone: vi.fn((_cb: (id: string) => void) => vi.fn()),
   },
 };
 vi.stubGlobal('window', { electronAPI: mockElectronAPI });
@@ -45,11 +45,11 @@ describe('AiClient', () => {
     let tokenCallback: ((id: string, token: string) => void) | null = null;
     let doneCallback: ((id: string) => void) | null = null;
 
-    mockElectronAPI.ai.onToken.mockImplementation((cb: (id: string, token: string) => void) => {
+    mockElectronAPI.ai.onToken.mockImplementation((cb) => {
       tokenCallback = cb;
       return vi.fn();
     });
-    mockElectronAPI.ai.onDone.mockImplementation((cb: (id: string) => void) => {
+    mockElectronAPI.ai.onDone.mockImplementation((cb) => {
       doneCallback = cb;
       return vi.fn();
     });
@@ -75,7 +75,7 @@ describe('AiClient', () => {
     let doneCallback: ((id: string) => void) | null = null;
 
     mockElectronAPI.ai.onToken.mockImplementation(() => vi.fn());
-    mockElectronAPI.ai.onDone.mockImplementation((cb: (id: string) => void) => {
+    mockElectronAPI.ai.onDone.mockImplementation((cb) => {
       doneCallback = cb;
       return vi.fn();
     });

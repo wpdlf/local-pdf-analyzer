@@ -25,7 +25,8 @@ export function SummaryViewer() {
 
   // 스트리밍 중 Markdown 렌더링 debounce (150ms)
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isGenerating) {
@@ -40,18 +41,24 @@ export function SummaryViewer() {
     };
   }, [summaryStream, isGenerating]);
 
+  // 스트리밍 중 자동 스크롤 (사용자가 위로 스크롤한 경우 강제 이동하지 않음)
+  useEffect(() => {
+    if (isGenerating && contentRef.current) {
+      const el = contentRef.current;
+      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+      if (isNearBottom) {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+  }, [debouncedContent, isGenerating]);
+
   const handleClose = () => {
     // 요약 중이면 AI 요청 중단
     const reqId = useAppStore.getState().currentRequestId;
     if (reqId) {
       window.electronAPI.ai.abort(reqId);
-      useAppStore.getState().setCurrentRequestId(null);
     }
-    useAppStore.getState().setDocument(null);
-    useAppStore.getState().clearStream();
-    useAppStore.getState().setIsGenerating(false);
-    useAppStore.getState().setProgress(0);
-    useAppStore.getState().setSummary(null);
+    useAppStore.getState().resetSummaryState();
   };
 
   const handleExport = async () => {
@@ -92,7 +99,7 @@ export function SummaryViewer() {
       </div>
 
       {/* 요약 내용 */}
-      <div className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
+      <div ref={contentRef} className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
         {isGenerating && !debouncedContent ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <svg className="animate-spin h-12 w-12 text-blue-500" viewBox="0 0 24 24" fill="none">
