@@ -24,12 +24,17 @@ async function summarizeByChapter(
   let processed = 0;
   for (const { chapter, chunks } of chaptersData) {
     if (isTimedOut()) break;
-    append(`\n## ${chapter.title}\n\n`);
+    let chapterHeaderPending = `\n## ${chapter.title}\n\n`;
     for (const chunk of chunks) {
       if (isTimedOut()) break;
       for await (const token of track(chunk, 'chapter')) {
         if (checkTimeout()) break;
-        append(token);
+        if (chapterHeaderPending) {
+          append(chapterHeaderPending + token);
+          chapterHeaderPending = '';
+        } else {
+          append(token);
+        }
       }
       processed++;
       setProgress((processed / total) * 100);
