@@ -112,6 +112,7 @@ function detectChapters(pages: string[]): Chapter[] {
 
   let currentChapter: Chapter | null = null;
   let chapterIndex = 0;
+  let preChapterText = '';
 
   for (let i = 0; i < pages.length; i++) {
     const firstLine = pages[i].trim().split('\n')[0] || '';
@@ -132,12 +133,21 @@ function detectChapters(pages: string[]): Chapter[] {
       };
     } else if (currentChapter) {
       currentChapter.text += '\n\n' + pages[i];
+    } else {
+      // 첫 챕터 이전 페이지 수집
+      preChapterText += (preChapterText ? '\n\n' : '') + pages[i];
     }
   }
 
   if (currentChapter) {
     currentChapter.endPage = pages.length;
     chapters.push(currentChapter);
+  }
+
+  // 첫 챕터 이전 페이지(서론/목차 등)를 첫 챕터에 포함
+  if (preChapterText && chapters.length > 0) {
+    chapters[0].text = preChapterText + '\n\n' + chapters[0].text;
+    chapters[0].startPage = 1;
   }
 
   // 챕터 감지 실패 시 페이지 기반 분할
@@ -301,6 +311,13 @@ export async function handlePdfData(
   filePath: string,
 ): Promise<void> {
   const store = useAppStore.getState();
+  if (store.isGenerating) {
+    store.setError({
+      code: 'PDF_PARSE_FAIL',
+      message: '요약 진행 중에는 새 파일을 열 수 없습니다.',
+    } as AppError);
+    return;
+  }
   if (data.byteLength > MAX_FILE_SIZE) {
     store.setError({
       code: 'PDF_PARSE_FAIL',

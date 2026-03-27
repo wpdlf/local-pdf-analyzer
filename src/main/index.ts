@@ -331,7 +331,7 @@ function registerIpcHandlers(): void {
     if (typeof request.model !== 'string' || !request.model) {
       return { success: false, error: 'Invalid model' };
     }
-    if (request.temperature !== undefined && (typeof request.temperature !== 'number' || request.temperature < 0 || request.temperature > 2)) {
+    if (request.temperature !== undefined && (typeof request.temperature !== 'number' || Number.isNaN(request.temperature) || request.temperature < 0 || request.temperature > 2)) {
       return { success: false, error: 'Invalid temperature' };
     }
 
@@ -444,7 +444,9 @@ function registerIpcHandlers(): void {
       return {
         path: filePaths[0],
         name: path.basename(filePaths[0]),
-        data: buffer,
+        data: buffer.byteOffset === 0 && buffer.byteLength === buffer.buffer.byteLength
+          ? buffer.buffer
+          : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
       };
     }
     return null;

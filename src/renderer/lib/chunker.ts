@@ -44,7 +44,12 @@ export function chunkText(
     chunks.push(current.trim());
   }
 
-  return chunks;
+  // 단일 단락이 maxChars를 초과하는 경우 강제 분할
+  return chunks.flatMap((chunk) =>
+    chunk.length > maxChars
+      ? (chunk.match(new RegExp(`.{1,${maxChars}}`, 'gs')) || [chunk])
+      : [chunk],
+  );
 }
 
 /**

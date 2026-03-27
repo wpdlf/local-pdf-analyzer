@@ -220,6 +220,7 @@ export class OllamaManager {
         const client = targetUrl.startsWith('https') ? https : http;
         const req = client.get(targetUrl, (response) => {
           if (response.statusCode && [301, 302, 303, 307, 308].includes(response.statusCode)) {
+            response.resume(); // 리다이렉트 응답 body 소비하여 소켓 해제
             const location = response.headers.location;
             if (!location) {
               safeReject(new Error(`리다이렉트 응답에 Location 헤더가 없습니다 (HTTP ${response.statusCode})`));
@@ -268,6 +269,7 @@ export class OllamaManager {
               safeReject(err);
             });
           } else {
+            response.resume();
             safeReject(new Error(`다운로드 실패: HTTP ${response.statusCode}`));
           }
         });
@@ -337,6 +339,7 @@ export class OllamaManager {
     const url = new URL(this.baseUrl);
     return new Promise((resolve) => {
       const req = http.get({ hostname: url.hostname, port: url.port || 11434, path: '/', timeout: 5000 }, (res) => {
+        res.resume();
         resolve(res.statusCode === 200);
       });
       req.on('error', () => resolve(false));

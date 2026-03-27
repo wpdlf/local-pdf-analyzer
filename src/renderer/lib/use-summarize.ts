@@ -113,8 +113,13 @@ async function summarizeFull(
   if (!isTimedOut() && chunks.length > 1 && summaryType === 'full') {
     append('\n\n---\n\n## 📋 통합 요약\n\n');
     const combined = chunkSummaries.join('\n\n');
+    const charsPerToken = Math.max(1.5, 4 - ((combined.match(/[\uAC00-\uD7AF]/g) || []).length / Math.max(combined.length, 1)) * 2.5);
+    const maxCombinedChars = Math.floor(settings.maxChunkSize * charsPerToken);
+    const safeCombined = combined.length > maxCombinedChars
+      ? combined.slice(0, maxCombinedChars) + '\n\n[... 이하 생략 — 청크 수가 많아 일부만 포함]'
+      : combined;
     for await (const token of track(
-      `다음은 강의자료의 파트별 요약입니다. 이를 하나의 통합 요약으로 정리해주세요.\n\n${combined}`,
+      `다음은 강의자료의 파트별 요약입니다. 이를 하나의 통합 요약으로 정리해주세요.\n\n${safeCombined}`,
       'full',
     )) {
       if (checkTimeout()) break;
@@ -241,10 +246,11 @@ export function useSummarize() {
         }));
       }
 
+      const isCancelled = () => timedOut || !useAppStore.getState().isGenerating;
       if (summaryType === 'chapter' && document.chapters.length > 1) {
-        await summarizeByChapter(docWithImages, settings, trackSummarize, checkTimeout, () => timedOut, appendStream, setProgress);
+        await summarizeByChapter(docWithImages, settings, trackSummarize, checkTimeout, isCancelled, appendStream, setProgress);
       } else {
-        await summarizeFull(docWithImages, summaryType, settings, trackSummarize, checkTimeout, () => timedOut, appendStream, setProgress);
+        await summarizeFull(docWithImages, summaryType, settings, trackSummarize, checkTimeout, isCancelled, appendStream, setProgress);
       }
 
       const durationMs = Date.now() - startTime;

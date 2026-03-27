@@ -75,7 +75,7 @@ export async function checkAvailability(
       const parsed = new URL(ollamaBaseUrl);
       const client = parsed.protocol === 'https:' ? https : http;
       return new Promise((resolve) => {
-        const req = client.get({ hostname: parsed.hostname, port: parsed.port, path: '/', timeout: 5000 }, (res) => resolve(res.statusCode === 200));
+        const req = client.get({ hostname: parsed.hostname, port: parsed.port, path: '/', timeout: 5000 }, (res) => { res.resume(); resolve(res.statusCode === 200); });
         req.on('error', () => resolve(false));
         req.on('timeout', () => { req.destroy(); resolve(false); });
       });
@@ -270,7 +270,9 @@ function streamRequest(
 
           if (win.isDestroyed()) {
             streamAborted = true;
+            activeRequests.delete(requestId);
             res.destroy();
+            safeResolve();
             return;
           }
 
@@ -312,6 +314,7 @@ function streamRequest(
         });
 
         res.on('end', () => {
+          buffer += decoder.end(); // 잔여 멀티바이트 시퀀스 flush
           // abort/에러로 스트림이 종료된 경우 ai:done 전송 방지
           if (streamAborted) {
             safeResolve();
