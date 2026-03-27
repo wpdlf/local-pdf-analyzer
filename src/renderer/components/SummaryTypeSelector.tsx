@@ -8,7 +8,8 @@ const options: { value: SummaryType; label: string }[] = [
 ];
 
 export function SummaryTypeSelector() {
-  const { summaryType, setSummaryType } = useAppStore();
+  const summaryType = useAppStore((s) => s.summaryType);
+  const setSummaryType = useAppStore((s) => s.setSummaryType);
 
   return (
     <div className="flex items-center gap-4">

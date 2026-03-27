@@ -78,17 +78,16 @@ export class OllamaManager {
     return { success: false, error: '지원하지 않는 운영체제입니다.' };
   }
 
-  /** 다운로드 파일의 SHA-256 해시를 검증합니다 */
-  private async verifyFileHash(filePath: string): Promise<{ valid: boolean; hash: string }> {
+  /** 다운로드 파일의 SHA-256 해시를 계산합니다 (무결성 추적용, 자동 검증 아님) */
+  private async computeFileHash(filePath: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const hash = crypto.createHash('sha256');
       const stream = fs.createReadStream(filePath);
       stream.on('data', (data) => hash.update(data));
       stream.on('end', () => {
         const digest = hash.digest('hex');
-        // 해시 값을 로그에 기록하여 추적 가능하게 함
         console.log(`[Ollama] Downloaded file hash: sha256:${digest}`);
-        resolve({ valid: true, hash: digest });
+        resolve(digest);
       });
       stream.on('error', reject);
     });
@@ -105,7 +104,7 @@ export class OllamaManager {
 
       // 2. 다운로드 무결성 검증
       this.sendProgress('다운로드 무결성 검증 중...');
-      const { hash } = await this.verifyFileHash(installerPath);
+      const hash = await this.computeFileHash(installerPath);
       const stat = fs.statSync(installerPath);
       if (stat.size < 1024 * 1024) { // 1MB 미만이면 비정상
         fs.unlinkSync(installerPath);
@@ -168,7 +167,7 @@ export class OllamaManager {
 
         // 다운로드 무결성 검증
         this.sendProgress('다운로드 무결성 검증 중...');
-        const { hash } = await this.verifyFileHash(zipPath);
+        const hash = await this.computeFileHash(zipPath);
         const stat = fs.statSync(zipPath);
         if (stat.size < 1024 * 1024) {
           fs.unlinkSync(zipPath);
@@ -204,7 +203,14 @@ export class OllamaManager {
     return new Promise((resolve, reject) => {
       let settled = false;
       const safeResolve = () => { if (!settled) { settled = true; resolve(); } };
-      const safeReject = (err: Error) => { if (!settled) { settled = true; reject(err); } };
+      const safeReject = (err: Error) => {
+        if (!settled) {
+          settled = true;
+          // 에러 시 부분 다운로드 파일 삭제
+          try { fs.unlinkSync(dest); } catch { /* 파일 미존재 무시 */ }
+          reject(err);
+        }
+      };
 
       const follow = (targetUrl: string, redirects = 0) => {
         if (redirects > 5) {
@@ -233,18 +239,34 @@ export class OllamaManager {
             }
 
             let downloaded = 0;
+            let aborted = false;
             const file = fs.createWriteStream(dest);
             response.on('data', (chunk: Buffer) => {
+              if (aborted) return;
               downloaded += chunk.length;
               if (downloaded > MAX_SIZE) {
+                aborted = true;
                 response.destroy();
-                file.destroy();
-                safeReject(new Error('다운로드 크기가 500MB를 초과했습니다.'));
+                file.end(() => safeReject(new Error('다운로드 크기가 500MB를 초과했습니다.')));
+                return;
               }
+              file.write(chunk);
             });
-            response.pipe(file);
-            file.on('finish', () => { file.close(); safeResolve(); });
-            file.on('error', safeReject);
+            response.on('end', () => {
+              if (aborted) return;
+              file.end(() => safeResolve());
+            });
+            response.on('error', (err) => {
+              if (aborted) return;
+              aborted = true;
+              file.end(() => safeReject(err));
+            });
+            file.on('error', (err) => {
+              if (aborted) return;
+              aborted = true;
+              response.destroy();
+              safeReject(err);
+            });
           } else {
             safeReject(new Error(`다운로드 실패: HTTP ${response.statusCode}`));
           }
@@ -298,7 +320,15 @@ export class OllamaManager {
 
   async stop(): Promise<void> {
     if (this.process) {
-      this.process.kill();
+      const pid = this.process.pid;
+      if (process.platform === 'win32' && pid) {
+        // Windows: detached 프로세스 트리 전체 종료
+        try {
+          execFile('taskkill', ['/F', '/T', '/PID', String(pid)]);
+        } catch { /* taskkill 실패 시 무시 */ }
+      } else {
+        this.process.kill();
+      }
       this.process = null;
     }
   }

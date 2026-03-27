@@ -25,9 +25,9 @@ const VALID_SETTINGS_KEYS_SET = new Set([
   'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis',
 ]);
 
-function loadSettings(): Record<string, unknown> {
+async function loadSettings(): Promise<Record<string, unknown>> {
   try {
-    const data = fs.readFileSync(settingsPath, 'utf-8');
+    const data = await fsp.readFile(settingsPath, 'utf-8');
     const parsed = JSON.parse(data);
     // 허용된 키만 로드하여 임의 속성 주입 방지
     const filtered: Record<string, unknown> = {};
@@ -42,10 +42,10 @@ function loadSettings(): Record<string, unknown> {
   }
 }
 
-function saveSettings(settings: Record<string, unknown>): void {
+async function saveSettings(settings: Record<string, unknown>): Promise<void> {
   const tmpPath = settingsPath + '.tmp';
-  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2), 'utf-8');
-  fs.renameSync(tmpPath, settingsPath);
+  await fsp.writeFile(tmpPath, JSON.stringify(settings, null, 2), 'utf-8');
+  await fsp.rename(tmpPath, settingsPath);
 }
 
 function createWindow(): BrowserWindow {
@@ -77,11 +77,16 @@ function createWindow(): BrowserWindow {
   });
 
   // 파일 드롭 시 file:// 탐색 차단 → 대신 IPC로 파일 데이터 전달 (비동기)
+  let dropAbortController: AbortController | null = null;
   win.webContents.on('will-navigate', (event, url) => {
     event.preventDefault();
     if (url.startsWith('file://') && url.toLowerCase().endsWith('.pdf')) {
       const filePath = fileURLToPath(url);
       const MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
+      // 이전 드롭 읽기 취소
+      dropAbortController?.abort();
+      const ac = new AbortController();
+      dropAbortController = ac;
       (async () => {
         try {
           const stat = await fsp.stat(filePath);
@@ -89,19 +94,27 @@ function createWindow(): BrowserWindow {
             console.error('Dropped file too large:', stat.size);
             return;
           }
-          const data = await fsp.readFile(filePath);
+          const data = await fsp.readFile(filePath, { signal: ac.signal });
           if (!win.isDestroyed()) {
             win.webContents.send('file:dropped', {
               path: filePath,
               name: path.basename(filePath),
-              data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+              data: data.byteOffset === 0 && data.byteLength === data.buffer.byteLength
+                ? data.buffer
+                : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
             });
           }
         } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') return;
           console.error('Failed to read dropped file:', err);
         }
       })();
     }
+  });
+
+  // 창 닫힐 때 진행 중인 파일 읽기 취소
+  win.on('closed', () => {
+    dropAbortController?.abort();
   });
 
   return win;
@@ -139,7 +152,21 @@ app.on('before-quit', () => {
 
 const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');
 
+function readApiKeys(): Record<string, string> {
+  if (!safeStorage.isEncryptionAvailable()) return {};
+  try {
+    const encrypted = fs.readFileSync(apiKeysPath);
+    return JSON.parse(safeStorage.decryptString(encrypted));
+  } catch {
+    return {};
+  }
+}
+
 function writeApiKeys(keys: Record<string, string>): void {
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.warn('[API Keys] OS 키체인을 사용할 수 없어 API 키를 저장할 수 없습니다.');
+    return;
+  }
   const tmpPath = apiKeysPath + '.tmp';
   const encrypted = safeStorage.encryptString(JSON.stringify(keys));
   fs.writeFileSync(tmpPath, encrypted);
@@ -147,33 +174,19 @@ function writeApiKeys(keys: Record<string, string>): void {
 }
 
 function saveApiKey(provider: string, key: string): void {
-  let keys: Record<string, string> = {};
-  try {
-    const encrypted = fs.readFileSync(apiKeysPath);
-    keys = JSON.parse(safeStorage.decryptString(encrypted));
-  } catch { /* 첫 저장 */ }
+  const keys = readApiKeys();
   keys[provider] = key;
   writeApiKeys(keys);
 }
 
 function deleteApiKey(provider: string): void {
-  let keys: Record<string, string> = {};
-  try {
-    const encrypted = fs.readFileSync(apiKeysPath);
-    keys = JSON.parse(safeStorage.decryptString(encrypted));
-  } catch { /* 파일 없음 */ }
+  const keys = readApiKeys();
   delete keys[provider];
   writeApiKeys(keys);
 }
 
 function loadApiKey(provider: string): string | undefined {
-  try {
-    const encrypted = fs.readFileSync(apiKeysPath);
-    const keys = JSON.parse(safeStorage.decryptString(encrypted));
-    return keys[provider];
-  } catch {
-    return undefined;
-  }
+  return readApiKeys()[provider];
 }
 
 function registerIpcHandlers(): void {
@@ -218,8 +231,8 @@ function registerIpcHandlers(): void {
   const VALID_THEMES = ['light', 'dark', 'system'] as const;
   const VALID_SUMMARY_TYPES = ['full', 'chapter', 'keywords'] as const;
 
-  ipcMain.handle('settings:set', (_event, partial: Record<string, unknown>) => {
-    const current = loadSettings();
+  ipcMain.handle('settings:set', async (_event, partial: Record<string, unknown>) => {
+    const current = await loadSettings();
     const filtered: Record<string, unknown> = {};
     for (const key of VALID_SETTINGS_KEYS) {
       if (!(key in partial)) continue;
@@ -258,7 +271,7 @@ function registerIpcHandlers(): void {
       }
     }
     const updated = { ...current, ...filtered };
-    saveSettings(updated);
+    await saveSettings(updated);
     return updated;
   });
 
@@ -359,7 +372,7 @@ function registerIpcHandlers(): void {
       return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
     }
     try {
-      const settings = loadSettings();
+      const settings = await loadSettings();
       const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
       const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
       // Ollama: Vision 모델 자동 선택 (텍스트 모델은 Vision 미지원)

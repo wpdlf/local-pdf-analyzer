@@ -1,7 +1,8 @@
 import { useAppStore } from '../lib/store';
 
 export function StatusBar() {
-  const { ollamaStatus, settings } = useAppStore();
+  const ollamaStatus = useAppStore((s) => s.ollamaStatus);
+  const settings = useAppStore((s) => s.settings);
 
   const providerStatus = () => {
     if (settings.provider === 'ollama') {

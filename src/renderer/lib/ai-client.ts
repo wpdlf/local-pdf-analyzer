@@ -73,7 +73,11 @@ export class AiClient {
         if (tokenQueue.length > 0) {
           yield tokenQueue.shift()!;
         } else if (!done) {
-          await new Promise<void>((r) => { resolver = r; });
+          await new Promise<void>((r) => {
+            resolver = r;
+            // resolver 할당 후 상태 재확인 — done/token이 할당 직전에 변경된 경우 즉시 해제
+            if (done || tokenQueue.length > 0) r();
+          });
           resolver = null;
         }
       }

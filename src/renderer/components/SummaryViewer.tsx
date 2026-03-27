@@ -4,24 +4,26 @@ import remarkGfm from 'remark-gfm';
 import { useAppStore } from '../lib/store';
 import { ProgressBar } from './ProgressBar';
 
-// javascript:/data: URL 차단
+// javascript:/data:/http: URL 차단 — https only
 const safeComponents: Components = {
   a: ({ href, children, ...props }) => {
-    const isSafe = href && (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('#'));
+    const isSafe = href && (href.startsWith('https://') || href.startsWith('#'));
     return isSafe
       ? <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
       : <span {...props}>{children}</span>;
   },
-  img: ({ src, alt, ...props }) => {
-    const isSafe = src && (src.startsWith('http://') || src.startsWith('https://'));
-    return isSafe
-      ? <img src={src} alt={alt || ''} {...props} />
-      : <span>{alt || ''}</span>;
+  img: ({ alt }) => {
+    // PDF 요약 결과에 외부 이미지 로드 불필요 — 트래킹 픽셀/데이터 유출 방지
+    return <span>{alt || '[이미지]'}</span>;
   },
 };
 
 export function SummaryViewer() {
-  const { document, summaryStream, isGenerating, progress, setError } = useAppStore();
+  const document = useAppStore((s) => s.document);
+  const summaryStream = useAppStore((s) => s.summaryStream);
+  const isGenerating = useAppStore((s) => s.isGenerating);
+  const progress = useAppStore((s) => s.progress);
+  const setError = useAppStore((s) => s.setError);
 
   // 스트리밍 중 Markdown 렌더링 debounce (150ms)
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);

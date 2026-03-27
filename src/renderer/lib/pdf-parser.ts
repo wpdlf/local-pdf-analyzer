@@ -24,13 +24,17 @@ export async function parsePdf(
   const allImages: PageImage[] = [];
 
   for (let batchStart = 0; batchStart < pageCount; batchStart += BATCH_SIZE) {
+    // 이미지 상한 도달 시 추가 추출 불필요
+    if (allImages.length >= MAX_TOTAL_IMAGES) break;
     const batchEnd = Math.min(batchStart + BATCH_SIZE, pageCount);
     const promises = [];
     for (let i = batchStart; i < batchEnd; i++) {
       promises.push(
         pdf.getPage(i + 1).then(async (page) => {
-          // 이미지 추출 (텍스트와 병렬)
-          const imagePromise = extractPageImages(page, i).catch(() => [] as PageImage[]);
+          // 이미지 추출 (텍스트와 병렬, 상한 도달 시 스킵)
+          const imagePromise = allImages.length < MAX_TOTAL_IMAGES
+            ? extractPageImages(page, i).catch(() => [] as PageImage[])
+            : Promise.resolve([] as PageImage[]);
 
           const textContent = await page.getTextContent();
           // 텍스트 아이템 간 위치 기반 공백/줄바꿈 삽입 (한글 깨짐 방지)

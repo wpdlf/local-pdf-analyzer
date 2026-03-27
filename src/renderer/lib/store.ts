@@ -10,8 +10,18 @@ import type {
 import { DEFAULT_SETTINGS } from '../types';
 
 // appendStream 배치 처리용 버퍼 (50ms 간격 flush)
-let streamBuffer = '';
-let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+// 캡슐화하여 HMR/테스트 시 안전한 리셋 지원
+const streamState = {
+  buffer: '',
+  flushTimer: null as ReturnType<typeof setTimeout> | null,
+  reset() {
+    this.buffer = '';
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+  },
+};
 
 interface AppState {
   // PDF
@@ -69,33 +79,29 @@ export const useAppStore = create<AppState>((set) => ({
   progress: 0,
   setSummary: (summary) => set({ summary }),
   appendStream: (token) => {
-    streamBuffer += token;
-    if (!streamFlushTimer) {
-      streamFlushTimer = setTimeout(() => {
-        const buffered = streamBuffer;
-        streamBuffer = '';
-        streamFlushTimer = null;
+    streamState.buffer += token;
+    if (!streamState.flushTimer) {
+      streamState.flushTimer = setTimeout(() => {
+        const buffered = streamState.buffer;
+        streamState.buffer = '';
+        streamState.flushTimer = null;
         set((s) => ({ summaryStream: s.summaryStream + buffered }));
       }, 50);
     }
   },
   flushStream: () => {
-    if (streamFlushTimer) {
-      clearTimeout(streamFlushTimer);
-      streamFlushTimer = null;
+    if (streamState.flushTimer) {
+      clearTimeout(streamState.flushTimer);
+      streamState.flushTimer = null;
     }
-    if (streamBuffer) {
-      const buffered = streamBuffer;
-      streamBuffer = '';
+    if (streamState.buffer) {
+      const buffered = streamState.buffer;
+      streamState.buffer = '';
       set((s) => ({ summaryStream: s.summaryStream + buffered }));
     }
   },
   clearStream: () => {
-    streamBuffer = '';
-    if (streamFlushTimer) {
-      clearTimeout(streamFlushTimer);
-      streamFlushTimer = null;
-    }
+    streamState.reset();
     set({ summaryStream: '' });
   },
   setSummaryType: (summaryType) => set({ summaryType }),
@@ -103,11 +109,7 @@ export const useAppStore = create<AppState>((set) => ({
   setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
   setProgress: (progress) => set({ progress }),
   resetSummaryState: () => {
-    streamBuffer = '';
-    if (streamFlushTimer) {
-      clearTimeout(streamFlushTimer);
-      streamFlushTimer = null;
-    }
+    streamState.reset();
     set({
       document: null,
       summaryStream: '',

@@ -2,9 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import type { AppSettings, AiProviderType } from '../types';
 import { PROVIDER_MODELS } from '../types';
+import { applyTheme } from '../lib/theme';
 
 export function SettingsPanel() {
-  const { settings, updateSettings, ollamaStatus, setOllamaStatus, setView } = useAppStore();
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
+  const ollamaStatus = useAppStore((s) => s.ollamaStatus);
+  const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
+  const setView = useAppStore((s) => s.setView);
 
   const [draft, setDraft] = useState<AppSettings>({ ...settings });
   const [ollamaModels, setOllamaModels] = useState<string[]>(ollamaStatus.models);
@@ -34,7 +39,9 @@ export function SettingsPanel() {
     return () => clearTimeout(timer);
   }, [saved]);
 
-  const hasChanges = JSON.stringify(draft) !== JSON.stringify(settings);
+  const hasChanges = (Object.keys(draft) as (keyof AppSettings)[]).some(
+    (key) => draft[key] !== settings[key],
+  );
 
   useEffect(() => {
     window.electronAPI.ollama.listModels().then(setOllamaModels);
@@ -45,15 +52,7 @@ export function SettingsPanel() {
 
   // 테마 미리보기
   useEffect(() => {
-    const root = window.document.documentElement;
-    if (draft.theme === 'dark') {
-      root.classList.add('dark');
-    } else if (draft.theme === 'light') {
-      root.classList.remove('dark');
-    } else {
-      const mq = window.matchMedia('(prefers-color-scheme: dark)');
-      root.classList.toggle('dark', mq.matches);
-    }
+    return applyTheme(draft.theme);
   }, [draft.theme]);
 
   // Provider 변경 시 모델 자동 선택 (ollamaModels 변경 시에는 리셋하지 않음)
@@ -121,13 +120,7 @@ export function SettingsPanel() {
   };
 
   const handleCancel = () => {
-    const root = window.document.documentElement;
-    if (settings.theme === 'dark') root.classList.add('dark');
-    else if (settings.theme === 'light') root.classList.remove('dark');
-    else {
-      const mq = window.matchMedia('(prefers-color-scheme: dark)');
-      root.classList.toggle('dark', mq.matches);
-    }
+    applyTheme(settings.theme);
     setView('main');
   };
 
@@ -409,7 +402,7 @@ export function SettingsPanel() {
           <input
             type="number"
             value={draft.maxChunkSize}
-            onChange={(e) => updateDraft({ maxChunkSize: Number(e.target.value) })}
+            onChange={(e) => { const v = Number(e.target.value); if (!isNaN(v) && v >= 1000 && v <= 16000) updateDraft({ maxChunkSize: v }); }}
             min={1000} max={16000} step={500}
             className="w-24 px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
           />

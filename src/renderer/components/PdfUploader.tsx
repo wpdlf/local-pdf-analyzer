@@ -3,15 +3,24 @@ import { useAppStore } from '../lib/store';
 import { handlePdfData } from '../lib/pdf-parser';
 
 export function PdfUploader() {
-  const { setError, isParsing, setIsParsing } = useAppStore();
+  const setError = useAppStore((s) => s.setError);
+  const isParsing = useAppStore((s) => s.isParsing);
   const [isDragging, setIsDragging] = useState(false);
 
+  const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
   const handleFile = useCallback(
     async (file: File) => {
+      if (file.size > MAX_FILE_SIZE) {
+        setError({
+          code: 'PDF_PARSE_FAIL',
+          message: `파일이 너무 큽니다 (${Math.round(file.size / 1024 / 1024)}MB). 최대 100MB까지 지원합니다.`,
+        });
+        return;
+      }
       const buffer = await file.arrayBuffer();
       await handlePdfData(buffer, file.name, file.name);
     },
-    [],
+    [setError],
   );
 
   const handleDrop = useCallback(
@@ -28,22 +37,20 @@ export function PdfUploader() {
   );
 
   const handleFileSelect = useCallback(async () => {
-    setIsParsing(true);
     try {
       const result = await window.electronAPI.file.openPdf();
-      if (!result) { setIsParsing(false); return; }
+      if (!result) return;
       if ('error' in result) {
         setError({ code: 'PDF_PARSE_FAIL', message: (result as { error: string }).error });
-        setIsParsing(false);
         return;
       }
+      // handlePdfData가 isParsing 상태를 관리
       await handlePdfData(result.data, result.name, result.path);
     } catch (err) {
       const error = err as Error & { code?: string };
       setError({ code: (error.code as 'PDF_PARSE_FAIL') || 'PDF_PARSE_FAIL', message: error.message || 'PDF를 읽을 수 없습니다.' });
-      setIsParsing(false);
     }
-  }, [setError, setIsParsing]);
+  }, [setError]);
 
   return (
     <div
