@@ -45,9 +45,10 @@ export function chunkText(
   }
 
   // 단일 단락이 maxChars를 초과하는 경우 강제 분할
+  const overflowRegex = new RegExp(`.{1,${maxChars}}`, 'gs');
   return chunks.flatMap((chunk) =>
     chunk.length > maxChars
-      ? (chunk.match(new RegExp(`.{1,${maxChars}}`, 'gs')) || [chunk])
+      ? (chunk.match(overflowRegex) || [chunk])
       : [chunk],
   );
 }

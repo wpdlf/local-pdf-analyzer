@@ -9,6 +9,9 @@ import type {
 } from '../types';
 import { DEFAULT_SETTINGS } from '../types';
 
+// 설정 저장 IPC 디바운스 타이머
+let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
 // appendStream 배치 처리용 버퍼 (50ms 간격 flush)
 // 캡슐화하여 HMR/테스트 시 안전한 리셋 지원
 const streamState = {
@@ -129,14 +132,27 @@ export const useAppStore = create<AppState>((set) => ({
   settings: DEFAULT_SETTINGS,
   updateSettings: (newSettings) => {
     set({ settings: newSettings as AppSettings });
-    window.electronAPI.settings.set(newSettings as unknown as Record<string, unknown>).catch(() => {
-      set({ error: { code: 'EXPORT_FAIL' as const, message: '설정 저장에 실패했습니다. 다시 시도해주세요.' } });
-    });
+    // 디바운스: 빠른 연속 변경 시 마지막 1건만 IPC 전송 (TOCTOU 경쟁 방지)
+    if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = setTimeout(() => {
+      settingsSaveTimer = null;
+      window.electronAPI.settings.set(newSettings as unknown as Record<string, unknown>).catch(() => {
+        set({ error: { code: 'EXPORT_FAIL' as const, message: '설정 저장에 실패했습니다. 다시 시도해주세요.' } });
+      });
+    }, 300);
   },
   loadSettings: async () => {
     try {
       const saved = await window.electronAPI.settings.get();
-      set((s) => ({ settings: { ...s.settings, ...saved } as AppSettings }));
+      set((s) => {
+        const merged = { ...s.settings, ...saved } as AppSettings;
+        const update: Partial<AppState> = { settings: merged };
+        // defaultSummaryType 설정을 summaryType에 반영
+        if (merged.defaultSummaryType) {
+          update.summaryType = merged.defaultSummaryType;
+        }
+        return update;
+      });
     } catch {
       // 저장된 설정 없으면 기본값 유지
     }

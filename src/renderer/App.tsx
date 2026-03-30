@@ -29,7 +29,7 @@ export default function App() {
   const [modelHint, setModelHint] = useState<string | null>(null);
   const [bgModelSync, setBgModelSync] = useState<string | null>(null);
 
-  const { handleSummarize } = useSummarize();
+  const { handleSummarize, handleAbort } = useSummarize();
 
   // 초기화: 설정 로드 + Ollama 상태 확인
   useEffect(() => {
@@ -47,7 +47,8 @@ export default function App() {
         const result = await window.electronAPI.ollama.pullModel(model);
         if (aborted) return;
         if (!result.success) {
-          setBgModelSync(null);
+          setBgModelSync(`모델 다운로드 실패: ${model} — ${result.error || '네트워크를 확인해주세요'}`);
+          setTimeout(() => { if (!aborted) setBgModelSync(null); }, 5000);
           return;
         }
       }
@@ -243,7 +244,7 @@ export default function App() {
 
         {/* 3) 요약 진행 중 또는 완료: 결과 뷰어 */}
         {(isGenerating || summaryStream) && (
-          <SummaryViewer />
+          <SummaryViewer onAbort={handleAbort} />
         )}
       </main>
 

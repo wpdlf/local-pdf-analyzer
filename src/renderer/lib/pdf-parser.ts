@@ -107,8 +107,8 @@ export async function parsePdf(
 
 function detectChapters(pages: string[]): Chapter[] {
   const chapters: Chapter[] = [];
-  // 헤딩 패턴: "1.", "제1장", "Chapter 1", "1장" 등
-  const headingPattern = /^(제?\d+[장절]|chapter\s*\d+|\d+\.\s)/i;
+  // 헤딩 패턴: "제1장", "Chapter 1", "1장", "1. " (1~99번만, 번호 목록 오탐 방지)
+  const headingPattern = /^(제?\d+[장절]|chapter\s*\d+|[1-9]\d?\.\s)/i;
 
   let currentChapter: Chapter | null = null;
   let chapterIndex = 0;
@@ -294,14 +294,11 @@ async function imageDataToBase64(
     const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
     const buffer = await blob.arrayBuffer();
     const bytes = new Uint8Array(buffer);
-    // 안전한 바이너리→문자열 변환 (콜스택 오버플로 방지)
-    const CHUNK = 1024;
+    // 청크 단위 바이너리→문자열 변환 (8KB 청크는 콜스택 안전 + 고성능)
+    const CHUNK = 8192;
     const parts: string[] = [];
     for (let i = 0; i < bytes.length; i += CHUNK) {
-      const slice = bytes.subarray(i, i + CHUNK);
-      for (let j = 0; j < slice.length; j++) {
-        parts.push(String.fromCharCode(slice[j]!));
-      }
+      parts.push(String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length))));
     }
     return btoa(parts.join(''));
   } catch {
@@ -326,6 +323,9 @@ export async function handlePdfData(
       message: '요약 진행 중에는 새 파일을 열 수 없습니다.',
     } as AppError);
     return;
+  }
+  if (store.isParsing) {
+    return; // 이미 파싱 진행 중 — 중복 실행 방지
   }
   if (data.byteLength > MAX_FILE_SIZE) {
     store.setError({

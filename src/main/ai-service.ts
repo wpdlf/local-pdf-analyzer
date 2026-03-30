@@ -16,7 +16,7 @@ const activeRequests = new Map<string, { abort: () => void; createdAt: number }>
 
 // activeRequests TTL 정리 (10분 초과 항목 자동 제거)
 const ACTIVE_REQUEST_TTL_MS = 600000;
-setInterval(() => {
+const ttlCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [id, entry] of activeRequests) {
     if (now - entry.createdAt > ACTIVE_REQUEST_TTL_MS) {
@@ -25,6 +25,15 @@ setInterval(() => {
     }
   }
 }, 60000);
+
+/** 앱 종료 시 TTL 정리 타이머 해제 */
+export function cleanupAiService(): void {
+  clearInterval(ttlCleanupInterval);
+  for (const [id, entry] of activeRequests) {
+    entry.abort();
+    activeRequests.delete(id);
+  }
+}
 
 function validateOllamaUrl(url: string): void {
   try {
@@ -242,6 +251,8 @@ function streamRequest(
     const parsedUrl = new URL(config.url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
     let responseStream: import('http').IncomingMessage | null = null;
+    // abort 콜백에서도 접근 가능하도록 Promise 스코프에 배치
+    let streamAborted = false;
 
     const req = client.request(
       {
@@ -273,7 +284,6 @@ function streamRequest(
         const MAX_RESPONSE_SIZE = 50 * 1024 * 1024; // 50MB
         const IDLE_TIMEOUT_MS = 60000; // 60초 idle timeout — 데이터 수신 중단 감지
         let totalBytes = 0;
-        let streamAborted = false;
 
         let buffer = '';
         const decoder = new StringDecoder('utf8');
@@ -411,6 +421,7 @@ function streamRequest(
     // response 스트림도 함께 파괴하여 generator 무한 대기 방지
     activeRequests.set(requestId, {
       abort: () => {
+        streamAborted = true;
         activeRequests.delete(requestId);
         if (responseStream && !responseStream.destroyed) responseStream.destroy();
         if (!req.destroyed) req.destroy();
@@ -510,11 +521,17 @@ export async function analyzeImage(
   }
 }
 
-function httpPost(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<string> {
+function httpPost(url: string, headers: Record<string, string>, body: string, timeoutMs: number, signal?: { aborted: boolean }): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const safeResolve = (value: string) => { if (!settled) { settled = true; resolve(value); } };
     const safeReject = (err: Error) => { if (!settled) { settled = true; reject(err); } };
+
+    // 이미 취소된 경우 즉시 거부
+    if (signal?.aborted) {
+      safeReject(new Error('요청이 취소되었습니다.'));
+      return;
+    }
 
     const parsedUrl = new URL(url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
@@ -526,6 +543,7 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       method: 'POST',
       headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
     }, (res) => {
+      if (signal?.aborted) { res.destroy(); safeReject(new Error('요청이 취소되었습니다.')); return; }
       if (res.statusCode && res.statusCode >= 400) {
         const errChunks: Buffer[] = [];
         res.on('data', (c: Buffer) => { if (errChunks.length < 8) errChunks.push(c); });
@@ -540,6 +558,7 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       const chunks: Buffer[] = [];
       let totalBytes = 0;
       res.on('data', (chunk: Buffer) => {
+        if (signal?.aborted) { res.destroy(); safeReject(new Error('요청이 취소되었습니다.')); return; }
         totalBytes += chunk.length;
         if (totalBytes > 10 * 1024 * 1024) { res.destroy(); safeReject(new Error('응답이 너무 큽니다.')); return; }
         chunks.push(chunk);
@@ -558,8 +577,9 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
 // ─── 프롬프트 분리 (시스템 지시 / 사용자 입력) ───
 
 function splitPrompt(prompt: string): { system: string; user: string } {
+  // indexOf 사용 — PDF 텍스트에 '---\n\n'이 포함될 수 있으므로 첫 번째 구분자만 사용
   const separator = '---\n\n';
-  const idx = prompt.lastIndexOf(separator);
+  const idx = prompt.indexOf(separator);
   if (idx === -1) return { system: '', user: prompt };
   return {
     system: prompt.slice(0, idx).trim(),

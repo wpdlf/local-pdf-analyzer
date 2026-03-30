@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
-import { generate, abortGenerate, checkAvailability, analyzeImage } from './ai-service';
+import { generate, abortGenerate, checkAvailability, analyzeImage, cleanupAiService } from './ai-service';
 
 const ollamaManager = new OllamaManager();
 
@@ -70,6 +70,10 @@ function createWindow(): BrowserWindow {
     win.webContents.openDevTools({ mode: 'detach' });
   } else {
     win.loadFile(path.join(__dirname, '../renderer/index.html'));
+    // 프로덕션에서 DevTools 접근 차단
+    win.webContents.on('devtools-opened', () => {
+      win.webContents.closeDevTools();
+    });
   }
 
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
@@ -145,6 +149,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  cleanupAiService();
   ollamaManager.stop();
 });
 
@@ -320,6 +325,16 @@ function registerIpcHandlers(): void {
     if (typeof request.ollamaBaseUrl !== 'string') {
       return { success: false, error: 'Invalid ollamaBaseUrl' };
     }
+    // IPC 경계에서 localhost URL 검증 (defense-in-depth)
+    if (request.provider === 'ollama') {
+      try {
+        const parsed = new URL(request.ollamaBaseUrl);
+        const allowedHosts = ['localhost', '127.0.0.1', '::1'];
+        if (!['http:', 'https:'].includes(parsed.protocol) || !allowedHosts.includes(parsed.hostname)) {
+          return { success: false, error: 'Invalid ollamaBaseUrl: localhost only' };
+        }
+      } catch { return { success: false, error: 'Invalid ollamaBaseUrl' }; }
+    }
     if (!['full', 'chapter', 'keywords'].includes(request.type)) {
       return { success: false, error: 'Invalid type' };
     }
@@ -354,6 +369,9 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('ai:abort', (_event, requestId: string) => {
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 256) {
+      return { success: false, error: 'Invalid requestId' };
+    }
     abortGenerate(requestId);
     return { success: true };
   });
@@ -361,12 +379,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle('ai:check-available', async (_event, provider: string, ollamaBaseUrl: string) => {
     if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) return false;
     if (typeof ollamaBaseUrl !== 'string') return false;
+    // IPC 경계에서 localhost URL 검증
+    if (provider === 'ollama') {
+      try {
+        const parsed = new URL(ollamaBaseUrl);
+        const allowedHosts = ['localhost', '127.0.0.1', '::1'];
+        if (!['http:', 'https:'].includes(parsed.protocol) || !allowedHosts.includes(parsed.hostname)) return false;
+      } catch { return false; }
+    }
     const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
     return checkAvailability(provider as 'ollama' | 'claude' | 'openai', ollamaBaseUrl, apiKey);
   });
 
   ipcMain.handle('ai:analyze-image', async (_event, imageBase64: string) => {
-    if (typeof imageBase64 !== 'string' || imageBase64.length === 0 || imageBase64.length > 10 * 1024 * 1024) {
+    if (typeof imageBase64 !== 'string' || imageBase64.length === 0 || imageBase64.length > 10 * 1024 * 1024
+      || !/^[A-Za-z0-9+/\n]+=*$/.test(imageBase64)) {
       return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
     }
     try {
@@ -396,8 +423,12 @@ function registerIpcHandlers(): void {
 
   // ─── 파일 ───
 
+  const MAX_EXPORT_SIZE = 10 * 1024 * 1024; // 10MB
   ipcMain.handle('file:save', async (_event, content: unknown, defaultName: unknown) => {
     if (typeof content !== 'string' || typeof defaultName !== 'string') {
+      return null;
+    }
+    if (content.length > MAX_EXPORT_SIZE) {
       return null;
     }
     const safeName = path.basename(defaultName).slice(0, 255);

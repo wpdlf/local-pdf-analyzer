@@ -227,8 +227,8 @@ export class OllamaManager {
               safeReject(new Error(`리다이렉트 응답에 Location 헤더가 없습니다 (HTTP ${response.statusCode})`));
               return;
             }
-            if (!location.startsWith('https://') && !location.startsWith('http://')) {
-              safeReject(new Error(`안전하지 않은 리다이렉트 URL: ${location.slice(0, 50)}`));
+            if (!location.startsWith('https://')) {
+              safeReject(new Error(`안전하지 않은 리다이렉트 URL (HTTPS만 허용): ${location.slice(0, 50)}`));
               return;
             }
             follow(location, redirects + 1);
@@ -309,6 +309,11 @@ export class OllamaManager {
         this.process = null;
         this.isStarting = false;
         resolve(false);
+      });
+
+      // 프로세스가 예기치 않게 종료되면 참조 정리
+      this.process.on('close', () => {
+        this.process = null;
       });
 
       this.process.unref();

@@ -17,13 +17,12 @@ async function analyzeDocumentImages(
   const firstImg = doc.images[0];
   if (!firstImg) return imageDescriptions;
 
-  const preflight = await window.electronAPI.ai.analyzeImage(firstImg.base64);
-  if (!preflight.success) {
-    throw new Error(preflight.error || '이미지 분석에 실패했습니다.');
+  // preflight도 client를 통해 호출 (일관된 에러 처리 경로)
+  const preflightResult = await client.analyzeImage(firstImg.base64);
+  if (preflightResult === null) {
+    throw new Error('이미지 분석에 실패했습니다. Vision 모델을 확인해주세요.');
   }
-  if (preflight.description) {
-    imageDescriptions.set(firstImg.pageIndex, [preflight.description]);
-  }
+  imageDescriptions.set(firstImg.pageIndex, [preflightResult]);
 
   const BATCH = 3;
   for (let bi = 1; bi < doc.images.length && !isAborted(); bi += BATCH) {
@@ -177,7 +176,12 @@ export function useSummarize() {
   }, []);
 
   const handleSummarize = async () => {
-    if (!document || isGenerating) return;
+    // stale closure 방지: store에서 최신 상태 직접 읽기
+    const currentState = useAppStore.getState();
+    if (!currentState.document || currentState.isGenerating) return;
+    const currentSettings = currentState.settings;
+    const currentSummaryType = currentState.summaryType;
+    const doc = currentState.document;
 
     setIsGenerating(true);
     clearStream();
@@ -199,7 +203,7 @@ export function useSummarize() {
     }, TIMEOUT_MS);
 
     try {
-      const client = new AiClient(settings);
+      const client = new AiClient(currentSettings);
       clientRef.current = client;
 
       const trackSummarize = (text: string, type: SummaryType) => {
@@ -215,21 +219,21 @@ export function useSummarize() {
           claude: 'Claude API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
           openai: 'OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
         };
-        setError({ code: settings.provider === 'ollama' ? 'OLLAMA_NOT_RUNNING' : 'API_KEY_MISSING', message: providerMessages[settings.provider] });
+        setError({ code: currentSettings.provider === 'ollama' ? 'OLLAMA_NOT_RUNNING' : 'API_KEY_MISSING', message: providerMessages[currentSettings.provider] });
         setIsGenerating(false);
         return;
       }
 
       // 이미지 분석
-      let textForSummary = document.extractedText;
+      let textForSummary = doc.extractedText;
       let enrichedPagesRef: string[] | null = null;
-      if (document.images.length > 0 && settings.enableImageAnalysis) {
+      if (doc.images.length > 0 && currentSettings.enableImageAnalysis) {
         try {
           const imageDescriptions = await analyzeDocumentImages(
-            document, client, setProgress,
+            doc, client, setProgress,
             () => timedOut || !useAppStore.getState().isGenerating,
           );
-          const enriched = enrichDocumentWithImages(document, imageDescriptions);
+          const enriched = enrichDocumentWithImages(doc, imageDescriptions);
           textForSummary = enriched.textForSummary;
           enrichedPagesRef = enriched.enrichedPages;
         } catch (imgErr) {
@@ -252,19 +256,19 @@ export function useSummarize() {
 
       if (!useAppStore.getState().isGenerating) return;
 
-      const docWithImages = { ...document, extractedText: textForSummary };
+      const docWithImages = { ...doc, extractedText: textForSummary };
       if (enrichedPagesRef) {
-        docWithImages.chapters = document.chapters.map((ch) => ({
+        docWithImages.chapters = doc.chapters.map((ch) => ({
           ...ch,
           text: enrichedPagesRef!.slice(ch.startPage - 1, ch.endPage).join('\n\n'),
         }));
       }
 
       const isCancelled = () => timedOut || !useAppStore.getState().isGenerating;
-      if (summaryType === 'chapter' && document.chapters.length > 1) {
-        await summarizeByChapter(docWithImages, settings, trackSummarize, checkTimeout, isCancelled, appendStream, setProgress);
+      if (currentSummaryType === 'chapter' && docWithImages.chapters.length > 1) {
+        await summarizeByChapter(docWithImages, currentSettings, trackSummarize, checkTimeout, isCancelled, appendStream, setProgress);
       } else {
-        await summarizeFull(docWithImages, summaryType, settings, trackSummarize, checkTimeout, isCancelled, appendStream, setProgress);
+        await summarizeFull(docWithImages, currentSummaryType, currentSettings, trackSummarize, checkTimeout, isCancelled, appendStream, setProgress);
       }
 
       const durationMs = Date.now() - startTime;
@@ -273,28 +277,31 @@ export function useSummarize() {
       if (!timedOut && finalContent) {
         setSummary({
           id: crypto.randomUUID(),
-          documentId: document.id,
-          type: summaryType,
+          documentId: doc.id,
+          type: currentSummaryType,
           content: finalContent,
-          model: settings.model,
-          provider: settings.provider,
+          model: currentSettings.model,
+          provider: currentSettings.provider,
           createdAt: new Date(),
           durationMs,
         });
       }
     } catch (err) {
       if (!timedOut && useAppStore.getState().document) {
-        const error = err as Error & { code?: string };
+        const message = err instanceof Error ? err.message : String(err);
+        const code = (err instanceof Error && 'code' in err ? (err as Error & { code?: string }).code : undefined) || 'GENERATE_FAIL';
         setError({
-          code: (error.code as 'GENERATE_FAIL') || 'GENERATE_FAIL',
-          message: error.message || '요약 생성에 실패했습니다.',
+          code: code as 'GENERATE_FAIL',
+          message: message || '요약 생성에 실패했습니다.',
         });
       }
     } finally {
-      if (timeoutTimerRef.current) { clearTimeout(timeoutTimerRef.current); timeoutTimerRef.current = null; };
-      if (useAppStore.getState().document) {
-        flushStream();
-      }
+      try {
+        if (timeoutTimerRef.current) { clearTimeout(timeoutTimerRef.current); timeoutTimerRef.current = null; }
+        if (useAppStore.getState().document) {
+          flushStream();
+        }
+      } catch { /* finally 블록 에러 무시 */ }
       setIsGenerating(false);
     }
   };

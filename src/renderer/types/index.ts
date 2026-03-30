@@ -25,8 +25,8 @@ export interface PdfDocument {
 export interface Chapter {
   index: number;
   title: string;
-  startPage: number;
-  endPage: number;
+  startPage: number;   // 1-based inclusive (첫 페이지 번호)
+  endPage: number;     // slice용 exclusive 경계 (중간 챕터: 다음 챕터 시작 인덱스, 마지막 챕터: pages.length)
   text: string;
 }
 

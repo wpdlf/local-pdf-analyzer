@@ -4,6 +4,9 @@ import remarkGfm from 'remark-gfm';
 import { useAppStore } from '../lib/store';
 import { ProgressBar } from './ProgressBar';
 
+// 모듈 스코프 상수 — 매 렌더 새 참조 생성 방지
+const REMARK_PLUGINS = [remarkGfm];
+
 // javascript:/data:/http: URL 차단 — https only
 const safeComponents: Components = {
   a: ({ href, children, ...props }) => {
@@ -18,28 +21,35 @@ const safeComponents: Components = {
   },
 };
 
-export function SummaryViewer() {
+interface SummaryViewerProps {
+  onAbort?: () => void;
+}
+
+export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const document = useAppStore((s) => s.document);
   const summaryStream = useAppStore((s) => s.summaryStream);
   const isGenerating = useAppStore((s) => s.isGenerating);
   const progress = useAppStore((s) => s.progress);
   const setError = useAppStore((s) => s.setError);
 
-  // 스트리밍 중 Markdown 렌더링 debounce (150ms)
+  // 스트리밍 중 Markdown 렌더링 debounce (150ms, useRef 기반 — GC 부하 감소)
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isGenerating) {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = undefined; }
       setDebouncedContent(summaryStream);
       return;
     }
+    if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
+      timerRef.current = undefined;
       setDebouncedContent(summaryStream);
     }, 150);
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = undefined; }
     };
   }, [summaryStream, isGenerating]);
 
@@ -120,12 +130,27 @@ export function SummaryViewer() {
             </p>
           </div>
         ) : debouncedContent ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={safeComponents}>{debouncedContent}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{debouncedContent}</ReactMarkdown>
         ) : null}
       </div>
 
-      {/* 진행률 */}
-      {isGenerating && <ProgressBar progress={progress} />}
+      {/* 진행률 + 중지 버튼 */}
+      {isGenerating && (
+        <div className="flex items-center gap-2 px-4 py-2 border-t dark:border-gray-700">
+          <div className="flex-1">
+            <ProgressBar progress={progress} />
+          </div>
+          {onAbort && (
+            <button
+              onClick={onAbort}
+              className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors shrink-0"
+              aria-label="요약 중지"
+            >
+              ■ 중지
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 액션 버튼 */}
       {summaryStream && !isGenerating && (
