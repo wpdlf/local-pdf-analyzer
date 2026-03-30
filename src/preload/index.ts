@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ai: {
     generate: (requestId: string, request: {
       text: string;
-      type: 'full' | 'chapter' | 'keywords';
+      type: 'full' | 'chapter' | 'keywords' | 'qa';
       provider: 'ollama' | 'claude' | 'openai';
       model: string;
       ollamaBaseUrl: string;
@@ -79,7 +79,7 @@ export type ElectronAPI = {
   ai: {
     generate: (requestId: string, request: {
       text: string;
-      type: 'full' | 'chapter' | 'keywords';
+      type: 'full' | 'chapter' | 'keywords' | 'qa';
       provider: 'ollama' | 'claude' | 'openai';
       model: string;
       ollamaBaseUrl: string;

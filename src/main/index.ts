@@ -50,10 +50,10 @@ async function saveSettings(settings: Record<string, unknown>): Promise<void> {
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 900,
-    height: 700,
+    width: 1000,
+    height: 1200,
     minWidth: 700,
-    minHeight: 500,
+    minHeight: 600,
     icon: app.isPackaged
       ? path.join(process.resourcesPath, 'icon.png')
       : path.join(__dirname, '../../resources/icon.png'),
@@ -312,7 +312,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('ai:generate', async (event, requestId: string, request: {
     text: string;
-    type: 'full' | 'chapter' | 'keywords';
+    type: 'full' | 'chapter' | 'keywords' | 'qa';
     provider: 'ollama' | 'claude' | 'openai';
     model: string;
     ollamaBaseUrl: string;
@@ -338,7 +338,7 @@ function registerIpcHandlers(): void {
         }
       } catch { return { success: false, error: 'Invalid ollamaBaseUrl' }; }
     }
-    if (!['full', 'chapter', 'keywords'].includes(request.type)) {
+    if (!['full', 'chapter', 'keywords', 'qa'].includes(request.type)) {
       return { success: false, error: 'Invalid type' };
     }
     if (!VALID_PROVIDERS.includes(request.provider as typeof VALID_PROVIDERS[number])) {

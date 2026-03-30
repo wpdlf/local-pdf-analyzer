@@ -6,6 +6,7 @@ import type {
   AppSettings,
   OllamaStatus,
   AppError,
+  QaMessage,
 } from '../types';
 import { DEFAULT_SETTINGS } from '../types';
 
@@ -15,6 +16,19 @@ let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 // appendStream 배치 처리용 버퍼 (50ms 간격 flush)
 // 캡슐화하여 HMR/테스트 시 안전한 리셋 지원
 const streamState = {
+  buffer: '',
+  flushTimer: null as ReturnType<typeof setTimeout> | null,
+  reset() {
+    this.buffer = '';
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+  },
+};
+
+// Q&A 스트림 배치 버퍼 (요약 버퍼와 격리)
+const qaStreamState = {
   buffer: '',
   flushTimer: null as ReturnType<typeof setTimeout> | null,
   reset() {
@@ -49,6 +63,19 @@ interface AppState {
   setCurrentRequestId: (id: string | null) => void;
   setProgress: (p: number) => void;
   resetSummaryState: () => void;
+
+  // Q&A
+  qaMessages: QaMessage[];
+  qaStream: string;
+  isQaGenerating: boolean;
+  qaRequestId: string | null;
+  addQaMessage: (msg: Omit<QaMessage, 'id'>) => void;
+  appendQaStream: (token: string) => void;
+  flushQaStream: () => void;
+  clearQaStream: () => void;
+  setIsQaGenerating: (v: boolean) => void;
+  setQaRequestId: (id: string | null) => void;
+  clearQa: () => void;
 
   // 설정
   settings: AppSettings;
@@ -118,6 +145,7 @@ export const useAppStore = create<AppState>((set) => ({
   setProgress: (progress) => set({ progress }),
   resetSummaryState: () => {
     streamState.reset();
+    qaStreamState.reset();
     set({
       document: null,
       summaryStream: '',
@@ -125,7 +153,62 @@ export const useAppStore = create<AppState>((set) => ({
       progress: 0,
       summary: null,
       currentRequestId: null,
+      qaMessages: [],
+      qaStream: '',
+      isQaGenerating: false,
+      qaRequestId: null,
     });
+  },
+
+  // Q&A
+  qaMessages: [],
+  qaStream: '',
+  isQaGenerating: false,
+  qaRequestId: null,
+  addQaMessage: (msg) => set((s) => {
+    const MAX_QA_TURNS = 10;
+    const msgs = [...s.qaMessages, { ...msg, id: crypto.randomUUID() }];
+    // 10턴(20메시지) 초과 시 FIFO — 가장 오래된 쌍 제거
+    if (msgs.length > MAX_QA_TURNS * 2) {
+      return { qaMessages: msgs.slice(msgs.length - MAX_QA_TURNS * 2) };
+    }
+    return { qaMessages: msgs };
+  }),
+  appendQaStream: (token) => {
+    qaStreamState.buffer += token;
+    if (!qaStreamState.flushTimer) {
+      qaStreamState.flushTimer = setTimeout(() => {
+        const buffered = qaStreamState.buffer;
+        qaStreamState.buffer = '';
+        qaStreamState.flushTimer = null;
+        set((s) => ({ qaStream: s.qaStream + buffered }));
+      }, 50);
+    }
+  },
+  flushQaStream: () => {
+    if (qaStreamState.flushTimer) {
+      clearTimeout(qaStreamState.flushTimer);
+      qaStreamState.flushTimer = null;
+    }
+    if (qaStreamState.buffer) {
+      const buffered = qaStreamState.buffer;
+      qaStreamState.buffer = '';
+      set((s) => ({ qaStream: s.qaStream + buffered }));
+    }
+  },
+  clearQaStream: () => {
+    qaStreamState.buffer = '';
+    if (qaStreamState.flushTimer) {
+      clearTimeout(qaStreamState.flushTimer);
+      qaStreamState.flushTimer = null;
+    }
+    set({ qaStream: '' });
+  },
+  setIsQaGenerating: (isQaGenerating) => set({ isQaGenerating }),
+  setQaRequestId: (qaRequestId) => set({ qaRequestId }),
+  clearQa: () => {
+    qaStreamState.reset();
+    set({ qaMessages: [], qaStream: '', isQaGenerating: false, qaRequestId: null });
   },
 
   // 설정

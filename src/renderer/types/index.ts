@@ -8,6 +8,13 @@ export interface PageImage {
   mimeType: 'image/jpeg' | 'image/png';
 }
 
+// Q&A 메시지
+export interface QaMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 // PDF 문서 정보
 export interface PdfDocument {
   id: string;
@@ -43,7 +50,7 @@ export interface Summary {
 }
 
 // 요약 유형
-export type SummaryType = 'full' | 'chapter' | 'keywords';
+export type SummaryType = 'full' | 'chapter' | 'keywords' | 'qa';
 
 // AI 제공자
 export type AiProviderType = 'ollama' | 'claude' | 'openai';

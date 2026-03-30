@@ -1,0 +1,134 @@
+import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { useQa } from '../lib/use-qa';
+
+const REMARK_PLUGINS = [remarkGfm];
+
+export function QaChat() {
+  const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating } = useQa();
+  const [input, setInput] = useState('');
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // 새 메시지/스트리밍 시 자동 스크롤
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [qaMessages.length, qaStream]);
+
+  const handleSubmit = () => {
+    const trimmed = input.trim();
+    if (!trimmed || isQaGenerating) return;
+    setInput('');
+    // 높이 리셋
+    if (inputRef.current) inputRef.current.style.height = 'auto';
+    handleAsk(trimmed);
+  };
+
+  // textarea 자동 높이 조절 (최대 6줄)
+  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    const el = e.target;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 144) + 'px'; // 144px ≈ 6줄
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full border-t dark:border-gray-700">
+      {/* 헤더 */}
+      <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b dark:border-gray-700">
+        <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
+          문서에 대해 질문하세요
+        </span>
+      </div>
+
+      {/* 빈 상태 안내 */}
+      {qaMessages.length === 0 && !qaStream && (
+        <div className="px-4 py-3 text-center text-sm text-gray-400 dark:text-gray-500">
+          요약된 내용이나 원문에 대해 궁금한 점을 질문해보세요
+        </div>
+      )}
+
+      {/* 대화 목록 — flex-1로 남은 공간 차지, 스크롤 */}
+      {(qaMessages.length > 0 || qaStream) && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-3">
+          {qaMessages.map((msg) => (
+            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                msg.role === 'user'
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none'
+              }`}>
+                {msg.role === 'user' ? (
+                  msg.content
+                ) : (
+                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{msg.content}</ReactMarkdown>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* 스트리밍 중인 답변 */}
+          {qaStream && (
+            <div className="flex justify-start">
+              <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none">
+                <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{qaStream}</ReactMarkdown>
+              </div>
+            </div>
+          )}
+
+          {/* 생성 중 로딩 표시 */}
+          {isQaGenerating && !qaStream && (
+            <div className="flex justify-start">
+              <div className="rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-400">
+                답변 생성 중...
+              </div>
+            </div>
+          )}
+
+          <div ref={chatEndRef} />
+        </div>
+      )}
+
+      {/* 입력 영역 */}
+      <div className="flex items-end gap-2 px-4 py-3">
+        <textarea
+          ref={inputRef}
+          value={input}
+          onChange={handleInput}
+          onKeyDown={handleKeyDown}
+          placeholder="질문을 입력하세요... (Enter: 전송, Shift+Enter: 줄바꿈)"
+          disabled={isQaGenerating}
+          rows={1}
+          className="flex-1 resize-none rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 placeholder:text-gray-400"
+          aria-label="질문 입력"
+        />
+        {isQaGenerating ? (
+          <button
+            onClick={handleQaAbort}
+            className="px-3 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shrink-0"
+            aria-label="답변 중지"
+          >
+            ■ 중지
+          </button>
+        ) : (
+          <button
+            onClick={handleSubmit}
+            disabled={!input.trim()}
+            className="px-3 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            aria-label="질문 전송"
+          >
+            전송
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}

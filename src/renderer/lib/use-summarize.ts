@@ -6,6 +6,33 @@ import type { PdfDocument, SummaryType, AppSettings } from '../types';
 
 type TrackFn = (text: string, type: SummaryType) => AsyncGenerator<string>;
 
+/** 로컬 LLM이 생성한 대화형 멘트를 후처리로 제거 */
+function stripConversationalText(text: string): string {
+  // 줄 단위로 처리 — 대화형 패턴이 포함된 줄 제거
+  const patterns = [
+    /도움이\s*되[길었]?\s*(바랍|되었|되셨)/,
+    /궁금한\s*점이?\s*있으시면/,
+    /추가\s*질문이?\s*있으시면/,
+    /언제든지?\s*물어보세요/,
+    /요약해\s*드리겠습니다/,
+    /설명해\s*드리겠습니다/,
+    /정리해\s*드리겠습니다/,
+    /알려\s*드리겠습니다/,
+    /다루고\s*있습니다.*:?\s*$/,
+    /주요\s*내용을?\s*요약/,
+    /이상으로\s*.*(마치|끝|정리)/,
+    /좋은\s*자료입니다/,
+    /잘\s*정리되어/,
+  ];
+  const lines = text.split('\n');
+  const filtered = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true; // 빈 줄 유지
+    return !patterns.some((p) => p.test(trimmed));
+  });
+  return filtered.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 async function analyzeDocumentImages(
   doc: PdfDocument,
   client: { analyzeImage: (base64: string) => Promise<string> },
@@ -118,7 +145,7 @@ async function summarizeFull(
       ? combined.slice(0, maxCombinedChars) + '\n\n[... 이하 생략 — 청크 수가 많아 일부만 포함]'
       : combined;
     for await (const token of track(
-      `다음은 강의자료의 파트별 요약입니다. 이를 하나의 통합 요약으로 정리해주세요.\n\n${safeCombined}`,
+      `다음은 문서의 파트별 요약입니다. 이를 하나의 통합 요약으로 정리해주세요.\n\n${safeCombined}`,
       'full',
     )) {
       if (checkTimeout()) break;
@@ -178,7 +205,7 @@ export function useSummarize() {
   const handleSummarize = async () => {
     // stale closure 방지: store에서 최신 상태 직접 읽기
     const currentState = useAppStore.getState();
-    if (!currentState.document || currentState.isGenerating) return;
+    if (!currentState.document || currentState.isGenerating || currentState.isQaGenerating) return;
     const currentSettings = currentState.settings;
     const currentSummaryType = currentState.summaryType;
     const doc = currentState.document;
@@ -273,7 +300,12 @@ export function useSummarize() {
 
       const durationMs = Date.now() - startTime;
       flushStream();
-      const finalContent = useAppStore.getState().summaryStream;
+      const rawContent = useAppStore.getState().summaryStream;
+      // 후처리: 로컬 LLM이 프롬프트 금지 사항을 무시한 대화형 멘트 제거
+      const finalContent = stripConversationalText(rawContent);
+      if (finalContent !== rawContent) {
+        useAppStore.setState({ summaryStream: finalContent });
+      }
       if (!timedOut && finalContent) {
         setSummary({
           id: crypto.randomUUID(),

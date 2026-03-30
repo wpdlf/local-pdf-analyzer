@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useAppStore } from '../lib/store';
 import { ProgressBar } from './ProgressBar';
+import { QaChat } from './QaChat';
 
 // 모듈 스코프 상수 — 매 렌더 새 참조 생성 방지
 const REMARK_PLUGINS = [remarkGfm];
@@ -74,7 +75,11 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
       store.flushStream();
       store.setIsGenerating(false);
     }
-    store.resetSummaryState();
+    // Q&A 중이면 함께 중단
+    if (store.qaRequestId) {
+      window.electronAPI.ai.abort(store.qaRequestId);
+    }
+    store.resetSummaryState(); // Q&A 상태도 함께 초기화됨
   };
 
   const handleExport = async () => {
@@ -114,8 +119,8 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
         </button>
       </div>
 
-      {/* 요약 내용 */}
-      <div ref={contentRef} className="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
+      {/* 요약 내용 — 요약 전용 스크롤 영역 */}
+      <div ref={contentRef} className="flex-1 basis-1/2 min-h-0 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
         {isGenerating && !debouncedContent ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <svg className="animate-spin h-12 w-12 text-blue-500" viewBox="0 0 24 24" fill="none">
@@ -169,6 +174,13 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
           >
             📋 복사
           </button>
+        </div>
+      )}
+
+      {/* Q&A 채팅 — 요약과 동일 비율로 공간 분배 */}
+      {summaryStream && !isGenerating && (
+        <div className="flex-1 basis-1/2 min-h-0 flex flex-col overflow-hidden">
+          <QaChat />
         </div>
       )}
     </div>
