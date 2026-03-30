@@ -40,20 +40,29 @@
     "files": [
       "out/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "icon": "resources/icon.png",
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "resources/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon": null,
+      "installerIcon": "resources/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "PDF 자료 요약기"
     },
     "forceCodeSigning": false,
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "resources/icon.png"
     }
   }
 }

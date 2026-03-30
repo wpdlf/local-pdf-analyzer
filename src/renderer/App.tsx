@@ -10,6 +10,7 @@ import { OllamaSetupWizard } from './components/OllamaSetupWizard';
 import { handlePdfData } from './lib/pdf-parser';
 import { applyTheme } from './lib/theme';
 import { useSummarize } from './lib/use-summarize';
+import logoImg from './assets/logo.png';
 
 export default function App() {
   const view = useAppStore((s) => s.view);
@@ -148,8 +149,9 @@ export default function App() {
     <div className="flex flex-col h-screen bg-white dark:bg-gray-900">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b dark:border-gray-700">
-        <h1 className="text-lg font-bold text-gray-800 dark:text-white">
-          📄 PDF 자료 요약기
+        <h1 className="flex items-center gap-2 text-lg font-bold text-gray-800 dark:text-white">
+          <img src={logoImg} alt="로고" className="w-6 h-6 rounded" />
+          PDF 자료 요약기
         </h1>
         <div className="flex items-center gap-2">
           <button
