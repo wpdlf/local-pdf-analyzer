@@ -99,9 +99,7 @@ function createWindow(): BrowserWindow {
             win.webContents.send('file:dropped', {
               path: filePath,
               name: path.basename(filePath),
-              data: data.byteOffset === 0 && data.byteLength === data.buffer.byteLength
-                ? data.buffer
-                : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+              data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
             });
           }
         } catch (err) {
@@ -444,9 +442,7 @@ function registerIpcHandlers(): void {
       return {
         path: filePaths[0],
         name: path.basename(filePaths[0]),
-        data: buffer.byteOffset === 0 && buffer.byteLength === buffer.buffer.byteLength
-          ? buffer.buffer
-          : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
+        data: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
       };
     }
     return null;

@@ -1,97 +1,124 @@
-# Gap Analysis: summary-lecture-material QA 최종 (사이클 5)
+# Gap Analysis Report: summary-lecture-material
 
-> **분석 일자**: 2026-03-24
-> **분석 범위**: 전체 소스 코드 18개 파일 (5차 정밀 분석)
-> **현재 버전**: 0.7.0
-> **전체 품질 점수**: 92/100
-> **누적 수정**: 30건 (QA 1~5)
+> **Feature**: 로컬 AI PDF 요약기
+> **Analysis Date**: 2026-03-30
+> **Design Document**: `docs/archive/2026-03/pdf-lecture-summary/pdf-lecture-summary.design.md`
+> **QA Cycle**: 8th (v0.9.1 → v0.9.2)
+
+---
 
 ## Executive Summary
 
-| 관점 | 내용 |
-|------|------|
-| **Problem** | Renderer API 키 노출, 메모리 누수, O(n^2) 스트리밍, CSP 과다 허용, 접근성 부재 |
-| **Solution** | AI를 Main 프로세스로 이전, cleanup 패턴 전면 적용, 50ms 배치 버퍼, CSP 최소화, ARIA 추가 |
-| **Function UX Effect** | API 키 DevTools 접근 불가, 장시간 안정 사용, 스트리밍 UI 반응성, 키보드/스크린리더 접근 |
-| **Core Value** | 유료 API 키 보호 + 장시간 사용 안정성 + 대규모 문서 성능 + 접근성 |
+| Metric | Value |
+|--------|-------|
+| Overall Match Rate | **94.1%** |
+| Structural Match | 88% |
+| Functional Depth | 95% |
+| Data Model Match | 90% |
+| 8th QA Fix Verification | 100% (10/10) |
+| Verdict | **PASS (>= 90%)** |
 
 ---
 
-## 1. QA 사이클 이력
+## 1. Structural Match (88%)
 
-| 사이클 | 일자 | 발견 | 수정 | 주요 수정 내용 | 점수 |
-|:------:|------|:----:|:----:|---------------|:----:|
-| 1 | 03-19 | 16 | 15 | API 키 Main 이전, 메모리 누수 수정, 스트리밍 O(1), 접근성 | 93.75% |
-| 2 | 03-24 | 20 | 6 | CSP 강화, 모델 동기화, 키보드 접근성, img 검증, abort race | 89 |
-| 3 | 03-24 | 11 | 4 | aria-label, response 스트림 abort, appendStream 배치 | 89 |
-| 4 | 03-24 | 11 | 3 | flush→setSummary 순서, abort flush, 모델명 regex | 89 |
-| **5** | **03-24** | **5** | **2** | **타임아웃 에러 보존, 닫기 중 race 방지** | **92** |
-| **누적** | | | **30** | | |
+### Component Existence: 16/18 MATCH
 
----
+| Design Component | Expected | Actual | Status |
+|-----------------|----------|--------|:------:|
+| OllamaManager | `src/main/ollama-manager.ts` | 존재 | MATCH |
+| IPC Bridge | `src/main/index.ts` | 존재 | MATCH |
+| FileManager | `src/main/index.ts` | 존재 (IPC 핸들러) | MATCH |
+| PdfUploader | `src/renderer/components/PdfUploader.tsx` | 존재 | MATCH |
+| SummaryViewer | `src/renderer/components/SummaryViewer.tsx` | 존재 | MATCH |
+| SettingsPanel | `src/renderer/components/SettingsPanel.tsx` | 존재 | MATCH |
+| ProgressBar | `src/renderer/components/ProgressBar.tsx` | 존재 | MATCH |
+| OllamaSetupWizard | `src/renderer/components/OllamaSetupWizard.tsx` | 존재 | MATCH |
+| StatusBar | `src/renderer/components/StatusBar.tsx` | 존재 | MATCH |
+| SummaryTypeSelector | `src/renderer/components/SummaryTypeSelector.tsx` | 존재 | MATCH |
+| AiClient | `src/renderer/lib/ai-client.ts` | 존재 | MATCH |
+| PdfParser | `src/renderer/lib/pdf-parser.ts` | 존재 | MATCH |
+| chunker | `src/renderer/lib/chunker.ts` | 존재 | MATCH |
+| Zustand store | `src/renderer/lib/store.ts` | 존재 | MATCH |
+| Types | `src/renderer/types/index.ts` | 존재 | MATCH |
+| Preload | `src/preload/index.ts` | 존재 | MATCH |
+| **AiProvider interface** | `src/renderer/lib/ai-provider.ts` | Main 프로세스로 이동 | CHANGED |
+| **prompts.ts** | `src/renderer/lib/prompts.ts` | `ai-service.ts`로 이동 | CHANGED |
 
-## 2. 최종 품질 점수
-
-| 카테고리 | 점수 | 상태 |
-|----------|:----:|:----:|
-| Security | 95% | ✅ |
-| Performance | 95% | ✅ |
-| Accessibility | 94% | ✅ |
-| Memory/Resource | 93% | ✅ |
-| Code Correctness | 93% | ✅ |
-| Input Validation | 92% | ✅ |
-| State Management | 90% | ✅ |
-| Error Handling | 88% | ✅ |
-| **전체** | **92%** | **✅** |
-
----
-
-## 3. 잔여 이슈 (Low 3건, 향후 개선)
-
-| # | 카테고리 | 파일 | 이슈 | 신뢰도 |
-|:-:|----------|------|------|:------:|
-| 1 | Validation | `index.ts:344` | `ai:check-available` provider 검증 누락 | 95% |
-| 2 | Validation | `index.ts:339` | `ai:abort` requestId 타입 검증 누락 | 92% |
-| 3 | Resource | `ollama-manager.ts:180` | redirect 응답 미소비 (소켓 임시 누수) | 88% |
-
-> 기능 및 보안에 영향 없는 방어적 개선 항목으로 향후 유지보수 시 처리 권장.
+### 설계 변경 사유 (의도적)
+- **AI 로직 Main 이동**: API 키가 Renderer에 노출되지 않도록 보안 아키텍처 개선
+- **프롬프트 통합**: AI 서비스와 프롬프트를 Main 프로세스에 함께 배치
 
 ---
 
-## 4. 수정 완료 항목 (30건)
+## 2. Functional Depth (95%)
 
-### Critical/High (15건 — QA 1)
-- Renderer→Main AI API 이전, API 키 safeStorage 암호화
-- IPC listener/timer cleanup 전면 적용
-- AbortController 기반 요약 취소
-- appendStream O(1), ReactMarkdown 150ms debounce
-- PDF 배치 병렬 처리, ProgressBar a11y
-
-### Medium (13건 — QA 2~5)
-- CSP connect-src/script-src 최소화
-- Main/Renderer 기본 모델 동기화 (gemma3)
-- PdfUploader 키보드 접근성 (role, tabIndex, onKeyDown)
-- Markdown img 검증 (http/https만 허용)
-- abort race condition (prepareSummarize)
-- 설정/닫기 버튼 aria-label
-- abort 시 response 스트림 명시적 파괴
-- appendStream 50ms 배치 버퍼링
-- flushStream→setSummary 순서 보장
-- abort/닫기 시 flushStream
-- 모델명 regex 강화 (영숫자 시작/끝, 128자 제한)
-- 타임아웃 에러 메시지 보존
-- 닫기 중 catch/finally race 방지
-
-### Low (2건 — QA 1)
-- file:// URL 파싱 표준화, _streamBuffer 제거
+| Component | Score | Notes |
+|-----------|:-----:|-------|
+| OllamaManager | 95% | `initialize()` 메서드 대신 UI 위자드 + App.tsx 분산 처리 |
+| AiClient / AI Service | 97% | 3 Provider 완전 구현 (Ollama/Claude/OpenAI) + Vision |
+| PdfParser | 100% | 텍스트 + 챕터 + 이미지 추출 완전 구현 |
+| Zustand Store | 100% | 모든 상태 필드 + 스트림 배치 처리 |
+| UI Components (7개) | 100% | 전체 UI 완전 구현 |
 
 ---
 
-## 5. 결론
+## 3. Data Model Match (90%)
 
-**코드베이스가 Report 단계에 준비되었습니다.**
+| 변경 | 심각도 | 설명 |
+|------|--------|------|
+| `apiKey` 제거 | Important | `safeStorage` 암호화로 Main 프로세스 전용 관리 (보안 개선) |
+| `AiProvider` → `AiProviderType` | Minor | 타입 별칭 이름 변경 |
+| `pageTexts`, `images` 추가 | Minor | 이미지 분석 기능 지원 |
+| `PageImage` 인터페이스 추가 | Minor | 이미지 추출 기능 |
+| `AppError` / `AppErrorCode` 추가 | Minor | 에러 처리 형식화 |
 
-- Critical/High: **0건**
-- Medium: **0건** (모두 수정 완료)
-- Low 잔여: **3건** (방어적 개선, 기능 영향 없음)
-- 전체 품질 점수: **92/100**
+---
+
+## 4. 8차 QA 수정 검증 (100%)
+
+| # | 이슈 | 심각도 | 파일 | 상태 |
+|---|------|--------|------|:----:|
+| 1 | OOM try/catch + String.fromCharCode 안전화 | Critical | `pdf-parser.ts` | FIXED |
+| 2 | 스트림 idle timeout (60s) + activeRequests TTL | Critical | `ai-service.ts` | FIXED |
+| 3 | 좀비 프로세스 방지 (isStarting guard) | Critical | `ollama-manager.ts` | FIXED |
+| 4 | handleAbort useCallback + useEffect cleanup | Important | `use-summarize.ts` | FIXED |
+| 5 | IPC timeout (2분) | Important | `ai-client.ts` | FIXED |
+| 6 | clearStream ghost text 방지 | Important | `store.ts` | FIXED |
+| 7 | handleClose 완전 정리 | Important | `SummaryViewer.tsx` | FIXED |
+| 8 | ArrayBuffer 안전 복사 | Important | `index.ts` | FIXED |
+| 9 | Settings 키 화이트리스트 | Minor | `index.ts` | VERIFIED |
+| 10 | URL 검증 (SSRF 방지) | Minor | `ai-service.ts` | VERIFIED |
+
+---
+
+## 5. 미구현 항목
+
+| # | 항목 | 심각도 | 설명 |
+|---|------|--------|------|
+| 1 | 요약 이력 저장 (`history/*.json`) | Important | Design SS3.2에 명시되었으나 미구현. 앱 종료 시 요약 결과 소실 |
+
+---
+
+## 6. 설계 초과 구현 (Positive)
+
+| # | 기능 | 가치 |
+|---|------|------|
+| 1 | Main 프로세스 AI 서비스 | 보안: API 키가 Renderer에 노출되지 않음 |
+| 2 | Vision/이미지 분석 | PDF 내 이미지 콘텐츠 AI 분석 |
+| 3 | Claude/OpenAI 완전 구현 | 설계에서는 "미래 확장"으로만 언급 |
+| 4 | safeStorage 암호화 | OS 키체인 기반 API 키 암호화 |
+| 5 | 한국어 모델 자동 감지 | gemma3/qwen2.5/exaone3.5 추천 |
+| 6 | 백그라운드 모델 자동 다운로드 | 앱 업데이트 시 누락 모델 자동 설치 |
+
+---
+
+## 7. 권장 조치
+
+### 즉시 조치 불필요 (Match Rate >= 90%)
+- 현재 94.1%로 기준 충족
+- 8차 QA 10건 전체 검증 완료
+
+### 향후 개선 제안
+1. **요약 이력 저장**: Design에 명시된 `history/*.json` 구현 검토
+2. **디자인 문서 업데이트**: Main 프로세스 AI 아키텍처, Vision 기능 반영

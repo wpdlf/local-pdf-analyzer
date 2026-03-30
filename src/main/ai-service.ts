@@ -12,7 +12,19 @@ interface GenerateRequest {
   temperature?: number;
 }
 
-const activeRequests = new Map<string, { abort: () => void }>();
+const activeRequests = new Map<string, { abort: () => void; createdAt: number }>();
+
+// activeRequests TTL 정리 (10분 초과 항목 자동 제거)
+const ACTIVE_REQUEST_TTL_MS = 600000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, entry] of activeRequests) {
+    if (now - entry.createdAt > ACTIVE_REQUEST_TTL_MS) {
+      entry.abort();
+      activeRequests.delete(id);
+    }
+  }
+}, 60000);
 
 function validateOllamaUrl(url: string): void {
   try {
@@ -259,17 +271,44 @@ function streamRequest(
         }
 
         const MAX_RESPONSE_SIZE = 50 * 1024 * 1024; // 50MB
+        const IDLE_TIMEOUT_MS = 60000; // 60초 idle timeout — 데이터 수신 중단 감지
         let totalBytes = 0;
         let streamAborted = false;
 
         let buffer = '';
         const decoder = new StringDecoder('utf8');
 
+        // idle timeout: 마지막 data 이벤트 이후 60초간 데이터 없으면 스트림 종료
+        let idleTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+          if (!streamAborted) {
+            streamAborted = true;
+            activeRequests.delete(requestId);
+            res.destroy();
+            safeReject(new Error('AI 서버 응답이 중단되었습니다 (60초 무응답).'));
+          }
+        }, IDLE_TIMEOUT_MS);
+        const resetIdleTimer = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            if (!streamAborted) {
+              streamAborted = true;
+              activeRequests.delete(requestId);
+              res.destroy();
+              safeReject(new Error('AI 서버 응답이 중단되었습니다 (60초 무응답).'));
+            }
+          }, IDLE_TIMEOUT_MS);
+        };
+        const clearIdleTimer = () => {
+          if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+        };
+
         res.on('data', (chunk: Buffer) => {
           if (streamAborted) return;
+          resetIdleTimer();
 
           if (win.isDestroyed()) {
             streamAborted = true;
+            clearIdleTimer();
             activeRequests.delete(requestId);
             res.destroy();
             safeResolve();
@@ -279,6 +318,7 @@ function streamRequest(
           totalBytes += chunk.length;
           if (totalBytes > MAX_RESPONSE_SIZE) {
             streamAborted = true;
+            clearIdleTimer();
             activeRequests.delete(requestId);
             res.destroy();
             safeReject(new Error('AI 응답이 너무 큽니다 (50MB 초과).'));
@@ -314,6 +354,7 @@ function streamRequest(
         });
 
         res.on('end', () => {
+          clearIdleTimer();
           buffer += decoder.end(); // 잔여 멀티바이트 시퀀스 flush
           // abort/에러로 스트림이 종료된 경우 ai:done 전송 방지
           if (streamAborted) {
@@ -348,6 +389,7 @@ function streamRequest(
         });
 
         res.on('error', (err) => {
+          clearIdleTimer();
           activeRequests.delete(requestId);
           safeReject(err);
         });
@@ -373,6 +415,7 @@ function streamRequest(
         if (responseStream && !responseStream.destroyed) responseStream.destroy();
         if (!req.destroyed) req.destroy();
       },
+      createdAt: Date.now(),
     });
 
     req.write(config.body);

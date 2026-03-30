@@ -68,9 +68,25 @@ export class AiClient {
       resolver?.();
     });
 
+    // IPC 연결 해제 감지: 일정 시간 토큰 없으면 안전하게 종료
+    const IPC_TIMEOUT_MS = 120000; // 2분
+    let ipcTimer: ReturnType<typeof setTimeout> | null = null;
+    const resetIpcTimer = () => {
+      if (ipcTimer) clearTimeout(ipcTimer);
+      ipcTimer = setTimeout(() => {
+        if (!done) {
+          error = new Error('AI 응답 수신이 중단되었습니다.');
+          done = true;
+          resolver?.();
+        }
+      }, IPC_TIMEOUT_MS);
+    };
+
     try {
+      resetIpcTimer();
       while (!done || tokenQueue.length > 0) {
         if (tokenQueue.length > 0) {
+          resetIpcTimer();
           yield tokenQueue.shift()!;
         } else if (!done) {
           await new Promise<void>((r) => {
@@ -84,6 +100,7 @@ export class AiClient {
 
       if (error) throw error;
     } finally {
+      if (ipcTimer) clearTimeout(ipcTimer);
       unsubToken();
       unsubDone();
       // break/return으로 중단 시 서버 측 요청도 abort

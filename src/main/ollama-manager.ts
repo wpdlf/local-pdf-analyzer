@@ -16,6 +16,7 @@ interface OllamaStatusResult {
 export class OllamaManager {
   private process: ChildProcess | null = null;
   private baseUrl = 'http://localhost:11434';
+  private isStarting = false; // 중복 start() 호출 방지
 
   // Ollama 실행 파일 경로 (설치 직후 PATH 반영 안 될 수 있으므로 직접 지정)
   private getOllamaPath(): string {
@@ -283,13 +284,20 @@ export class OllamaManager {
     });
   }
 
-  async start(): Promise<void> {
-    if (await this.healthCheck()) return;
+  async start(): Promise<boolean> {
+    if (this.isStarting) return false; // 중복 start() 호출 방지
+    if (await this.healthCheck()) return true;
 
     const installed = await this.isInstalled();
-    if (!installed) return;
+    if (!installed) return false;
 
+    this.isStarting = true;
     const ollamaPath = this.getOllamaPath();
+
+    // 기존 프로세스가 남아있으면 먼저 정리
+    if (this.process) {
+      await this.stop();
+    }
 
     return new Promise((resolve) => {
       this.process = spawn(ollamaPath, ['serve'], {
@@ -299,19 +307,22 @@ export class OllamaManager {
 
       this.process.on('error', () => {
         this.process = null;
-        resolve();
+        this.isStarting = false;
+        resolve(false);
       });
 
       this.process.unref();
 
       const check = async (retries: number) => {
         if (retries <= 0) {
-          resolve();
+          this.isStarting = false;
+          resolve(false);
           return;
         }
         const ok = await this.healthCheck();
         if (ok) {
-          resolve();
+          this.isStarting = false;
+          resolve(true);
         } else {
           setTimeout(() => check(retries - 1), 1000);
         }
@@ -326,10 +337,12 @@ export class OllamaManager {
       if (process.platform === 'win32' && pid) {
         // Windows: detached 프로세스 트리 전체 종료
         try {
-          execFile('taskkill', ['/F', '/T', '/PID', String(pid)]);
+          await new Promise<void>((resolve) => {
+            execFile('taskkill', ['/F', '/T', '/PID', String(pid)], () => resolve());
+          });
         } catch { /* taskkill 실패 시 무시 */ }
       } else {
-        this.process.kill();
+        try { this.process.kill('SIGTERM'); } catch { /* 이미 종료된 프로세스 */ }
       }
       this.process = null;
     }

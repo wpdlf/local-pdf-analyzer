@@ -101,7 +101,12 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
   clearStream: () => {
-    streamState.reset();
+    // 먼저 pending flush를 비우고 나서 상태 초기화 (ghost text 방지)
+    streamState.buffer = '';
+    if (streamState.flushTimer) {
+      clearTimeout(streamState.flushTimer);
+      streamState.flushTimer = null;
+    }
     set({ summaryStream: '' });
   },
   setSummaryType: (summaryType) => set({ summaryType }),

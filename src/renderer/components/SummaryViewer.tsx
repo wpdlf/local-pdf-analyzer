@@ -55,12 +55,16 @@ export function SummaryViewer() {
   }, [debouncedContent, isGenerating]);
 
   const handleClose = () => {
-    // 요약 중이면 AI 요청 중단
-    const reqId = useAppStore.getState().currentRequestId;
-    if (reqId) {
-      window.electronAPI.ai.abort(reqId);
+    const store = useAppStore.getState();
+    // 요약 중이면 AI 요청 중단 + 생성 상태 해제
+    if (store.currentRequestId) {
+      window.electronAPI.ai.abort(store.currentRequestId);
     }
-    useAppStore.getState().resetSummaryState();
+    if (store.isGenerating) {
+      store.flushStream();
+      store.setIsGenerating(false);
+    }
+    store.resetSummaryState();
   };
 
   const handleExport = async () => {

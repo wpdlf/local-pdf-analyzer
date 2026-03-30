@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { AiClient } from './ai-client';
 import { chunkText, chunkChapters } from './chunker';
@@ -146,7 +146,7 @@ export function useSummarize() {
   const clientRef = useRef<AiClient | null>(null);
   const timeoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleAbort = () => {
+  const handleAbort = useCallback(() => {
     // 타임아웃 타이머 클리어 — 사용자 수동 abort 시 이중 abort 방지
     if (timeoutTimerRef.current) {
       clearTimeout(timeoutTimerRef.current);
@@ -160,7 +160,21 @@ export function useSummarize() {
     useAppStore.getState().setCurrentRequestId(null);
     flushStream();
     setIsGenerating(false);
-  };
+  }, [flushStream, setIsGenerating]);
+
+  // 언마운트 시 진행 중인 요약 정리 (타이머 + AI 요청)
+  useEffect(() => {
+    return () => {
+      if (timeoutTimerRef.current) {
+        clearTimeout(timeoutTimerRef.current);
+        timeoutTimerRef.current = null;
+      }
+      const reqId = useAppStore.getState().currentRequestId;
+      if (reqId) {
+        window.electronAPI.ai.abort(reqId);
+      }
+    };
+  }, []);
 
   const handleSummarize = async () => {
     if (!document || isGenerating) return;

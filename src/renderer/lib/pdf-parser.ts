@@ -242,63 +242,72 @@ async function imageDataToBase64(
   height: number,
   data: Uint8ClampedArray,
 ): Promise<string | null> {
-  let targetW = width;
-  let targetH = height;
-  if (Math.max(width, height) > MAX_IMAGE_EDGE) {
-    const scale = MAX_IMAGE_EDGE / Math.max(width, height);
-    targetW = Math.round(width * scale);
-    targetH = Math.round(height * scale);
-  }
-
-  const srcCanvas = new OffscreenCanvas(width, height);
-  const srcCtx = srcCanvas.getContext('2d');
-  if (!srcCtx) return null;
-
-  const pixelCount = width * height;
-  const isRGBA = data.length >= pixelCount * 4;
-  const isRGB = !isRGBA && data.length >= pixelCount * 3;
-  const isGrayscale = !isRGBA && !isRGB && data.length >= pixelCount;
-
-  if (!isRGBA && !isRGB && !isGrayscale) return null; // 비지원 포맷 (CMYK 등)
-
-  const rgbaData = new Uint8ClampedArray(pixelCount * 4);
-
-  if (isRGBA) {
-    rgbaData.set(data.subarray(0, pixelCount * 4));
-  } else if (isRGB) {
-    for (let p = 0; p < pixelCount; p++) {
-      rgbaData[p * 4] = data[p * 3]!;
-      rgbaData[p * 4 + 1] = data[p * 3 + 1]!;
-      rgbaData[p * 4 + 2] = data[p * 3 + 2]!;
-      rgbaData[p * 4 + 3] = 255;
+  try {
+    let targetW = width;
+    let targetH = height;
+    if (Math.max(width, height) > MAX_IMAGE_EDGE) {
+      const scale = MAX_IMAGE_EDGE / Math.max(width, height);
+      targetW = Math.round(width * scale);
+      targetH = Math.round(height * scale);
     }
-  } else {
-    // 그레이스케일
-    for (let p = 0; p < pixelCount; p++) {
-      const v = data[p] ?? 0;
-      rgbaData[p * 4] = v;
-      rgbaData[p * 4 + 1] = v;
-      rgbaData[p * 4 + 2] = v;
-      rgbaData[p * 4 + 3] = 255;
+
+    const srcCanvas = new OffscreenCanvas(width, height);
+    const srcCtx = srcCanvas.getContext('2d');
+    if (!srcCtx) return null;
+
+    const pixelCount = width * height;
+    const isRGBA = data.length >= pixelCount * 4;
+    const isRGB = !isRGBA && data.length >= pixelCount * 3;
+    const isGrayscale = !isRGBA && !isRGB && data.length >= pixelCount;
+
+    if (!isRGBA && !isRGB && !isGrayscale) return null; // 비지원 포맷 (CMYK 등)
+
+    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+
+    if (isRGBA) {
+      rgbaData.set(data.subarray(0, pixelCount * 4));
+    } else if (isRGB) {
+      for (let p = 0; p < pixelCount; p++) {
+        rgbaData[p * 4] = data[p * 3]!;
+        rgbaData[p * 4 + 1] = data[p * 3 + 1]!;
+        rgbaData[p * 4 + 2] = data[p * 3 + 2]!;
+        rgbaData[p * 4 + 3] = 255;
+      }
+    } else {
+      // 그레이스케일
+      for (let p = 0; p < pixelCount; p++) {
+        const v = data[p] ?? 0;
+        rgbaData[p * 4] = v;
+        rgbaData[p * 4 + 1] = v;
+        rgbaData[p * 4 + 2] = v;
+        rgbaData[p * 4 + 3] = 255;
+      }
     }
+
+    srcCtx.putImageData(new ImageData(rgbaData, width, height), 0, 0);
+
+    const canvas = new OffscreenCanvas(targetW, targetH);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
+
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    // 안전한 바이너리→문자열 변환 (콜스택 오버플로 방지)
+    const CHUNK = 1024;
+    const parts: string[] = [];
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      const slice = bytes.subarray(i, i + CHUNK);
+      for (let j = 0; j < slice.length; j++) {
+        parts.push(String.fromCharCode(slice[j]!));
+      }
+    }
+    return btoa(parts.join(''));
+  } catch {
+    // OOM 또는 Canvas 생성 실패 시 안전하게 null 반환
+    return null;
   }
-
-  srcCtx.putImageData(new ImageData(rgbaData, width, height), 0, 0);
-
-  const canvas = new OffscreenCanvas(targetW, targetH);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
-
-  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
-  const buffer = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  const CHUNK = 0x8000;
-  const parts: string[] = [];
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
-  }
-  return btoa(parts.join(''));
 }
 
 // ─── 공용 PDF 처리 함수 (PdfUploader + App file drop 공통) ───
