@@ -63,7 +63,7 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
     },
-    title: 'PDF 자료 요약기',
+    title: '',
   });
 
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
