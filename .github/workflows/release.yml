@@ -36,7 +36,7 @@ jobs:
 
       - run: npm install
 
-      - run: npx electron-vite build && npx electron-builder --publish never
+      - run: npm run build && npx electron-builder --publish never
 
       - name: Upload installer to release
         uses: softprops/action-gh-release@v2

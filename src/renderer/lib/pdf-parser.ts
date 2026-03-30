@@ -14,7 +14,11 @@ export async function parsePdf(
   fileName: string,
   filePath: string,
 ): Promise<PdfDocument> {
-  const pdf = await pdfjsLib.getDocument({ data }).promise;
+  const pdf = await pdfjsLib.getDocument({
+    data,
+    cMapUrl: './cmaps/',
+    cMapPacked: true,
+  }).promise;
   const pageCount = pdf.numPages;
 
   // 배치 병렬 처리 (한 번에 10페이지씩)

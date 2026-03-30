@@ -5,9 +5,9 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build && node -e \"require('fs').cpSync('node_modules/pdfjs-dist/cmaps','out/renderer/cmaps',{recursive:true})\"",
     "preview": "electron-vite preview",
-    "package": "electron-vite build && electron-builder",
+    "package": "npm run build && electron-builder",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
