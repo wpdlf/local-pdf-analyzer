@@ -7,3 +7,4 @@
 | loading-ux | 2026-03-19 | 96.5% | 0 | 단일 세션 | `loading-ux/` |
 | security-ux-fix | 2026-03-20 | 100% | 0 | 단일 세션 | `security-ux-fix/` |
 | pdf-image-recognition | 2026-03-24 | 95/100 | 5 (QA 사이클) | 단일 세션 | `pdf-image-recognition/` |
+| pdf-qa | 2026-03-30 | 17차 QA 통과 | 9 (QA 사이클) | 단일 세션 | `pdf-qa/` |
