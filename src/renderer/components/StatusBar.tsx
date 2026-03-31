@@ -23,7 +23,7 @@ export function StatusBar() {
   return (
     <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-gray-800 text-sm">
       <div className="flex items-center gap-2">
-        <span>{providerLabel}:</span>
+        <span className="text-gray-700 dark:text-gray-300">{providerLabel}:</span>
         {providerStatus()}
       </div>
       <div className="flex items-center gap-3">
