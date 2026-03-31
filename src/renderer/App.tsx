@@ -97,6 +97,46 @@ export default function App() {
     return unsubscribe;
   }, []);
 
+  // 글로벌 드래그 앤 드롭: 앱 어디서든 PDF 파일 드롭 가능 (프로덕션 빌드에서 동작)
+  useEffect(() => {
+    const handleDragOver = (e: DragEvent) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+    const handleDrop = async (e: DragEvent) => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files[0];
+      if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
+        const buffer = await file.arrayBuffer();
+        await handlePdfData(buffer, file.name, file.name);
+      }
+    };
+    window.addEventListener('dragover', handleDragOver, true);
+    window.addEventListener('drop', handleDrop, true);
+    return () => {
+      window.removeEventListener('dragover', handleDragOver, true);
+      window.removeEventListener('drop', handleDrop, true);
+    };
+  }, []);
+
+  // Ctrl+O: 파일 열기 단축키
+  useEffect(() => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
+        e.preventDefault();
+        const result = await window.electronAPI.file.openPdf();
+        if (!result) return;
+        if ('error' in result) {
+          useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: result.error });
+          return;
+        }
+        await handlePdfData(result.data, result.name, result.path);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // 테마 적용
   useEffect(() => {
     return applyTheme(settings.theme);
