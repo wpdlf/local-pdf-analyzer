@@ -175,6 +175,22 @@ export class OllamaManager {
           throw new Error(`다운로드 파일이 비정상적으로 작습니다 (sha256:${hash.slice(0, 16)}...)`);
         }
 
+        // zip エントリのパス検証 (path traversal 防止)
+        await new Promise<void>((resolve, reject) => {
+          execFile('unzip', ['-l', zipPath], (error, stdout) => {
+            if (error) { reject(error); return; }
+            const hasTraversal = stdout.split('\n').some((line) => {
+              const parts = line.trim().split(/\s+/);
+              const entryPath = parts[parts.length - 1] || '';
+              return entryPath.includes('..') || entryPath.startsWith('/');
+            });
+            if (hasTraversal) {
+              reject(new Error('다운로드 파일에 위험한 경로가 포함되어 있습니다. 수동 설치를 권장합니다.'));
+              return;
+            }
+            resolve();
+          });
+        });
         await new Promise<void>((resolve, reject) => {
           execFile('unzip', ['-o', zipPath, '-d', '/Applications'], (error: ExecFileException | null) => {
             if (error) reject(error);
@@ -300,6 +316,11 @@ export class OllamaManager {
     }
 
     return new Promise((resolve) => {
+      let settled = false;
+      const safeResolve = (value: boolean) => {
+        if (!settled) { settled = true; resolve(value); }
+      };
+
       this.process = spawn(ollamaPath, ['serve'], {
         detached: true,
         stdio: 'ignore',
@@ -308,7 +329,7 @@ export class OllamaManager {
       this.process.on('error', () => {
         this.process = null;
         this.isStarting = false;
-        resolve(false);
+        safeResolve(false);
       });
 
       // 프로세스가 예기치 않게 종료되면 참조 정리
@@ -319,15 +340,18 @@ export class OllamaManager {
       this.process.unref();
 
       const check = async (retries: number) => {
+        if (settled) return; // error 이벤트로 이미 resolve된 경우 중단
         if (retries <= 0) {
           this.isStarting = false;
-          resolve(false);
+          // healthCheck 실패 시 spawned 프로세스 정리 (백그라운드 누수 방지)
+          await this.stop();
+          safeResolve(false);
           return;
         }
         const ok = await this.healthCheck();
         if (ok) {
           this.isStarting = false;
-          resolve(true);
+          safeResolve(true);
         } else {
           setTimeout(() => check(retries - 1), 1000);
         }

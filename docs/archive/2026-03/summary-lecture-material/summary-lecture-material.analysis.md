@@ -1,6 +1,6 @@
 # Gap Analysis Report: summary-lecture-material
 
-> **Feature**: 로컬 AI PDF 요약기
+> **Feature**: 로컬 AI PDF 분석기
 > **Analysis Date**: 2026-03-30
 > **Design Document**: `docs/archive/2026-03/pdf-lecture-summary/pdf-lecture-summary.design.md`
 > **QA Cycle**: 8th (v0.9.1 → v0.9.2)

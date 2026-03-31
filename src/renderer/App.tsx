@@ -151,7 +151,7 @@ export default function App() {
       <header className="flex items-center justify-between px-4 py-3 border-b dark:border-gray-700">
         <h1 className="flex items-center gap-2 text-lg font-bold text-gray-800 dark:text-white">
           <img src={logoImg} alt="로고" className="w-6 h-6 rounded" />
-          PDF 자료 요약기
+          PDF 자료 분석기
         </h1>
         <div className="flex items-center gap-2">
           <button

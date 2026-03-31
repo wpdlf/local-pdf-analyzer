@@ -92,6 +92,8 @@ export function useQa() {
   const qaMessages = useAppStore((s) => s.qaMessages);
   const qaStream = useAppStore((s) => s.qaStream);
   const clientRef = useRef<AiClient | null>(null);
+  // abort/완료 레이스 컨디션 방지: 양쪽 경로에서 동시에 addQaMessage 호출되지 않도록 보호
+  const abortedRef = useRef(false);
 
   // 언마운트 시 정리
   useEffect(() => {
@@ -102,6 +104,7 @@ export function useQa() {
   }, []);
 
   const handleQaAbort = useCallback(() => {
+    abortedRef.current = true;
     const reqId = useAppStore.getState().qaRequestId;
     if (reqId) window.electronAPI.ai.abort(reqId);
     clientRef.current = null;
@@ -117,6 +120,7 @@ export function useQa() {
     store.setQaRequestId(null);
   }, []);
 
+  // deps=[] 의도적: 모든 상태를 useAppStore.getState()로 명령적 읽기하므로 클로저 캡처 불필요
   const handleAsk = useCallback(async (question: string) => {
     const trimmed = question.trim();
     if (!trimmed || trimmed.length > MAX_QUESTION_LENGTH) return;
@@ -128,6 +132,7 @@ export function useQa() {
     const doc = state.document;
 
     // 질문 메시지 추가
+    abortedRef.current = false;
     state.addQaMessage({ role: 'user', content: trimmed });
     state.setIsQaGenerating(true);
     state.clearQaStream();
@@ -164,7 +169,7 @@ export function useQa() {
       }
 
       // abort되지 않은 경우에만 완성된 답변 추가 (abort 시 handleQaAbort에서 partial 추가됨)
-      if (useAppStore.getState().isQaGenerating) {
+      if (useAppStore.getState().isQaGenerating && !abortedRef.current) {
         state.flushQaStream();
         if (answer) {
           state.addQaMessage({ role: 'assistant', content: answer });
@@ -178,6 +183,8 @@ export function useQa() {
       });
     } finally {
       clientRef.current = null;
+      // flushQaStream → clearQaStream 순서로 호출하여 pending flush 타이머에 의한 ghost text 방지
+      useAppStore.getState().flushQaStream();
       useAppStore.getState().clearQaStream();
       useAppStore.getState().setIsQaGenerating(false);
       useAppStore.getState().setQaRequestId(null);

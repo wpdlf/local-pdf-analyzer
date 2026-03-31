@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-PDF 자료 요약 데스크톱 앱 (Electron + React + TypeScript)
+PDF 자료 분석 데스크톱 앱 (Electron + React + TypeScript)
 Ollama/Claude/OpenAI를 통한 AI 요약, PDF 이미지 Vision 분석 지원
 
 ## Build & Package

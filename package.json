@@ -1,7 +1,7 @@
 {
   "name": "summary-lecture-material",
-  "version": "0.10.0",
-  "description": "PDF 자료 요약 데스크톱 앱",
+  "version": "0.10.1",
+  "description": "PDF 자료 분석 데스크톱 앱",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -36,7 +36,7 @@
   },
   "build": {
     "appId": "com.jjw.summary-lecture-material",
-    "productName": "PDF 자료 요약기",
+    "productName": "PDF 자료 분석기",
     "files": [
       "out/**/*"
     ],
@@ -56,7 +56,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PDF 자료 요약기"
+      "shortcutName": "PDF 자료 분석기"
     },
     "forceCodeSigning": false,
     "mac": {

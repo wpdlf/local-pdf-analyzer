@@ -40,6 +40,17 @@ const qaStreamState = {
   },
 };
 
+// HMR 시 이전 모듈의 타이머 정리 (고스트 토큰 방지)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _meta = import.meta as any;
+if (_meta.hot) {
+  _meta.hot.dispose(() => {
+    streamState.reset();
+    qaStreamState.reset();
+    if (settingsSaveTimer) { clearTimeout(settingsSaveTimer); settingsSaveTimer = null; }
+  });
+}
+
 interface AppState {
   // PDF
   document: PdfDocument | null;
@@ -220,7 +231,7 @@ export const useAppStore = create<AppState>((set) => ({
     settingsSaveTimer = setTimeout(() => {
       settingsSaveTimer = null;
       window.electronAPI.settings.set(newSettings as unknown as Record<string, unknown>).catch(() => {
-        set({ error: { code: 'EXPORT_FAIL' as const, message: '설정 저장에 실패했습니다. 다시 시도해주세요.' } });
+        set({ error: { code: 'SETTINGS_SAVE_FAIL' as const, message: '설정 저장에 실패했습니다. 다시 시도해주세요.' } });
       });
     }, 300);
   },

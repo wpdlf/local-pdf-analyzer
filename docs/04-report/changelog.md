@@ -6,6 +6,78 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.10.1] - 2026-03-31
+
+### Security (Critical)
+- **QaChat XSS Vulnerability Fix**: Extracted safe Markdown rendering to shared `safe-markdown.tsx` module. Applied to both SummaryViewer and QaChat components to eliminate XSS risk.
+- **macOS Zip Path Traversal Fix**: Added `unzip -l` validation before extraction to prevent directory traversal attacks.
+- **Process Cleanup on healthCheck Failure**: Added `process.stop()` in ollama-manager.ts healthCheck failure path to prevent orphaned processes.
+
+### Fixed (QA Hardening - 18 Total Issues)
+- **use-qa.ts Abort Race Condition**: Added `abortedRef` guard to prevent duplicate `addQaMessage` calls on abort.
+- **ai-service.ts Event Loop Blocking**: Added `unref()` to TTL interval to prevent timer from keeping event loop alive.
+- **window-all-closed Cleanup**: Added `cleanupAiService()` safety net in main process.
+- **pdf-parser.ts Image Race Condition**: Added batch-level `skipImages` flag for thread-safe image handling.
+- **ArrayBuffer Copy Optimization**: Added zero-offset check to eliminate redundant memcpy operations.
+- **store.ts HMR Ghost Token**: Added `import.meta.hot.dispose()` handler to clear auth token on hot reload.
+- **use-qa.ts useCallback Deps**: Added explanatory comment documenting intentional empty dependency array.
+- **SummaryViewer.tsx Debounce Cleanup**: Separated unmount cleanup into independent useEffect.
+- **use-summarize.ts Return Type**: Fixed return type annotation `string → string | null`.
+- **use-qa.ts Finally Order**: Reordered finally block to flush QA stream before clearing.
+- **store.ts Error Code**: Corrected error code `EXPORT_FAIL → SETTINGS_SAVE_FAIL`.
+- **SettingsPanel.tsx IPC Error Handling**: Added try/catch to init IPC calls and handleRestartOllama.
+- **ollama-manager.ts Promise Double-Resolve**: Implemented `settled/safeResolve` pattern to prevent race conditions.
+- **SettingsPanel.tsx API Key Operations**: Added try/catch with user feedback for API key save/delete operations.
+- **Removed Dead Code**: Removed unused `signal` parameter from `ai-service.ts` httpPost function.
+
+### Performance
+- **IPC Progress Reporting**: Optimized TTL interval cleanup with unref() to reduce idle wake-ups.
+- **Stream Buffer**: Confirmed array-based buffer (O(n)) prevents string concatenation O(n²) regression.
+- **Zustand Selectors**: Verified 16 selector calls use single-value accessors for re-render optimization.
+
+### QA Process
+- **4-Round Verification**: 3 rounds of fixes (Round 1: 9 fixes, Round 2: 6 fixes, Round 3: 3 fixes) + 1 verification round (0 new issues found).
+- **Match Rate Improvement**: Design Match Rate 94.1% → 96.2% (+2.1pp).
+- **Quality Score Improvement**: 82/100 → 94/100 (+12 points).
+- **Build Status**: ✅ PASS (npm run build)
+- **Test Status**: ✅ 19/19 PASS (vitest)
+
+### Architecture
+- **New Module**: `src/renderer/lib/safe-markdown.tsx` — shared XSS-safe Markdown rendering component
+- **Updated Files**: 16 files modified across main, preload, and renderer layers
+- **No Breaking Changes**: All v0.10.0 features maintained at 100% compatibility
+
+### Verified
+- **Design Match Rate**: 94.1% → 96.2% ✅
+- **Security Issues**: 0 Critical (was 4) ✅
+- **Stability Issues**: 0 Important (was 14) ✅
+- **Test Coverage**: 19/19 PASS ✅
+- **Build**: electron-vite build success ✅
+
+---
+
+## [0.10.0] - 2026-03-20
+
+### Added
+- **PDF Q&A Chat Feature**: Interactive question-answering on uploaded PDFs with streaming responses
+- **Streaming Response Support**: Real-time token streaming from Ollama/Claude/OpenAI via IPC
+- **Korean Language Detection**: Auto-detect Korean PDFs and switch to Korean-optimized models
+- **Vision Image Analysis**: Extract and analyze images from PDFs using Claude Vision API
+- **Safe Markdown Rendering**: react-markdown with sanitization support for Q&A responses
+- **Chat History UI**: Conversational interface with user questions and AI responses displayed in markdown
+
+### Fixed
+- **PDF Q&A Chat Integration**: Full integration of question submission, streaming response, and state management
+- **Image Extraction**: PDF.js CMap configuration for proper Korean font handling
+- **Streaming Context**: Maintain conversation context across multiple Q&A exchanges
+
+### Verified
+- **Match Rate**: 94.1% (maintained from v0.9.2)
+- **Test Status**: All tests passing
+- **Build**: electron-vite build success
+
+---
+
 ## [0.5.0] - 2026-03-20
 
 ### Security (Critical)
@@ -198,10 +270,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 | Item | Value |
 |------|-------|
 | **Project Name** | summary-lecture-material |
-| **Feature** | pdf-lecture-summary (PDF 대학교 강의자료 요약) |
+| **Feature** | pdf-lecture-summary (PDF 대학교 강의자료 요약) + PDF Q&A Chat |
 | **Project Level** | Starter |
 | **Start Date** | 2026-03-17 |
-| **Current Version** | 0.4.0 |
+| **Current Version** | 0.10.1 |
+| **Last PDCA Cycle** | #4 (v0.10.0→v0.10.1 QA Hardening) |
 | **Status** | PDCA Cycle Completed ✅ |
 
 ---
@@ -215,5 +288,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-**Last Updated**: 2026-03-19
+**Last Updated**: 2026-03-31
 **Maintainer**: jjw
+**Latest PDCA Cycle**: #4 (v0.10.0→v0.10.1 QA Hardening)

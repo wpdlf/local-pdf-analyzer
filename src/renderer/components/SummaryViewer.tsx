@@ -1,26 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import ReactMarkdown from 'react-markdown';
 import { useAppStore } from '../lib/store';
+import { REMARK_PLUGINS, safeComponents } from '../lib/safe-markdown';
 import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
-
-// 모듈 스코프 상수 — 매 렌더 새 참조 생성 방지
-const REMARK_PLUGINS = [remarkGfm];
-
-// javascript:/data:/http: URL 차단 — https only
-const safeComponents: Components = {
-  a: ({ href, children, ...props }) => {
-    const isSafe = href && (href.startsWith('https://') || href.startsWith('#'));
-    return isSafe
-      ? <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
-      : <span {...props}>{children}</span>;
-  },
-  img: ({ alt }) => {
-    // PDF 요약 결과에 외부 이미지 로드 불필요 — 트래킹 픽셀/데이터 유출 방지
-    return <span>{alt || '[이미지]'}</span>;
-  },
-};
 
 interface SummaryViewerProps {
   onAbort?: () => void;
@@ -37,6 +20,11 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const contentRef = useRef<HTMLDivElement>(null);
+
+  // 언마운트 시 타이머 확실히 정리 (deps 변경과 독립적)
+  useEffect(() => {
+    return () => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = undefined; } };
+  }, []);
 
   useEffect(() => {
     if (!isGenerating) {

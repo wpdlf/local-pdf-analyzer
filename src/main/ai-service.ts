@@ -25,6 +25,7 @@ const ttlCleanupInterval = setInterval(() => {
     }
   }
 }, 60000);
+ttlCleanupInterval.unref(); // Node.js 이벤트루프 블로킹 방지
 
 /** 앱 종료 시 TTL 정리 타이머 해제 */
 export function cleanupAiService(): void {
@@ -521,17 +522,11 @@ export async function analyzeImage(
   }
 }
 
-function httpPost(url: string, headers: Record<string, string>, body: string, timeoutMs: number, signal?: { aborted: boolean }): Promise<string> {
+function httpPost(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const safeResolve = (value: string) => { if (!settled) { settled = true; resolve(value); } };
     const safeReject = (err: Error) => { if (!settled) { settled = true; reject(err); } };
-
-    // 이미 취소된 경우 즉시 거부
-    if (signal?.aborted) {
-      safeReject(new Error('요청이 취소되었습니다.'));
-      return;
-    }
 
     const parsedUrl = new URL(url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
@@ -543,7 +538,6 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       method: 'POST',
       headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
     }, (res) => {
-      if (signal?.aborted) { res.destroy(); safeReject(new Error('요청이 취소되었습니다.')); return; }
       if (res.statusCode && res.statusCode >= 400) {
         const errChunks: Buffer[] = [];
         res.on('data', (c: Buffer) => { if (errChunks.length < 8) errChunks.push(c); });
@@ -558,7 +552,6 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       const chunks: Buffer[] = [];
       let totalBytes = 0;
       res.on('data', (chunk: Buffer) => {
-        if (signal?.aborted) { res.destroy(); safeReject(new Error('요청이 취소되었습니다.')); return; }
         totalBytes += chunk.length;
         if (totalBytes > 10 * 1024 * 1024) { res.destroy(); safeReject(new Error('응답이 너무 큽니다.')); return; }
         chunks.push(chunk);

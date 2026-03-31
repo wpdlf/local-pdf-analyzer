@@ -10,6 +10,7 @@ export function SettingsPanel() {
   const ollamaStatus = useAppStore((s) => s.ollamaStatus);
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
   const setView = useAppStore((s) => s.setView);
+  const setError = useAppStore((s) => s.setError);
 
   const [draft, setDraft] = useState<AppSettings>({ ...settings });
   const [ollamaModels, setOllamaModels] = useState<string[]>(ollamaStatus.models);
@@ -44,10 +45,10 @@ export function SettingsPanel() {
   );
 
   useEffect(() => {
-    window.electronAPI.ollama.listModels().then(setOllamaModels);
+    window.electronAPI.ollama.listModels().then(setOllamaModels).catch(() => {});
     // 저장된 API 키 존재 여부 확인 (키 자체는 반환하지 않음)
-    window.electronAPI.apiKey.has('claude').then(setClaudeKeyStored);
-    window.electronAPI.apiKey.has('openai').then(setOpenaiKeyStored);
+    window.electronAPI.apiKey.has('claude').then(setClaudeKeyStored).catch(() => {});
+    window.electronAPI.apiKey.has('openai').then(setOpenaiKeyStored).catch(() => {});
   }, []);
 
   // 테마 미리보기
@@ -79,28 +80,35 @@ export function SettingsPanel() {
   const handleSaveApiKey = async (provider: 'claude' | 'openai') => {
     const key = provider === 'claude' ? claudeKey : openaiKey;
     if (!key.trim()) return;
-    await window.electronAPI.apiKey.save(provider, key.trim());
-    if (provider === 'claude') {
-      setClaudeKeyStored(true);
-      setClaudeKey('');
-    } else {
-      setOpenaiKeyStored(true);
-      setOpenaiKey('');
+    try {
+      await window.electronAPI.apiKey.save(provider, key.trim());
+      if (provider === 'claude') {
+        setClaudeKeyStored(true);
+        setClaudeKey('');
+      } else {
+        setOpenaiKeyStored(true);
+        setOpenaiKey('');
+      }
+      setKeyMessage(`${provider === 'claude' ? 'Claude' : 'OpenAI'} API 키가 저장되었습니다.`);
+    } catch {
+      setKeyMessage('API 키 저장에 실패했습니다. 다시 시도해주세요.');
     }
-    setKeyMessage(`${provider === 'claude' ? 'Claude' : 'OpenAI'} API 키가 저장되었습니다.`);
   };
 
   const handleDeleteApiKey = async (provider: 'claude' | 'openai') => {
-    await window.electronAPI.apiKey.delete(provider);
-    if (provider === 'claude') {
-      setClaudeKeyStored(false);
-      // provider가 claude였으면 ollama로 전환
-      if (draft.provider === 'claude') updateDraft({ provider: 'ollama' });
-    } else {
-      setOpenaiKeyStored(false);
-      if (draft.provider === 'openai') updateDraft({ provider: 'ollama' });
+    try {
+      await window.electronAPI.apiKey.delete(provider);
+      if (provider === 'claude') {
+        setClaudeKeyStored(false);
+        if (draft.provider === 'claude') updateDraft({ provider: 'ollama' });
+      } else {
+        setOpenaiKeyStored(false);
+        if (draft.provider === 'openai') updateDraft({ provider: 'ollama' });
+      }
+      setKeyMessage('API 키가 삭제되었습니다.');
+    } catch {
+      setKeyMessage('API 키 삭제에 실패했습니다. 다시 시도해주세요.');
     }
-    setKeyMessage('API 키가 삭제되었습니다.');
   };
 
   const handleSave = async () => {
@@ -148,10 +156,14 @@ export function SettingsPanel() {
   };
 
   const handleRestartOllama = async () => {
-    await window.electronAPI.ollama.stop();
-    await window.electronAPI.ollama.start();
-    const status = await window.electronAPI.ollama.getStatus();
-    setOllamaStatus(status);
+    try {
+      await window.electronAPI.ollama.stop();
+      await window.electronAPI.ollama.start();
+      const status = await window.electronAPI.ollama.getStatus();
+      setOllamaStatus(status);
+    } catch {
+      setError({ code: 'OLLAMA_NOT_RUNNING', message: 'Ollama 재시작에 실패했습니다. 수동으로 시작해주세요.' });
+    }
   };
 
   // 현재 provider에 맞는 모델 목록

@@ -35,7 +35,7 @@ function stripConversationalText(text: string): string {
 
 async function analyzeDocumentImages(
   doc: PdfDocument,
-  client: { analyzeImage: (base64: string) => Promise<string> },
+  client: { analyzeImage: (base64: string) => Promise<string | null> },
   setProgress: (p: number) => void,
   isAborted: () => boolean,
 ): Promise<Map<number, string[]>> {

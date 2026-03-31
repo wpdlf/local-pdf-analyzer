@@ -28,15 +28,15 @@ export async function parsePdf(
   const allImages: PageImage[] = [];
 
   for (let batchStart = 0; batchStart < pageCount; batchStart += BATCH_SIZE) {
-    // 이미지 상한 도달 시 추가 추출 불필요
-    if (allImages.length >= MAX_TOTAL_IMAGES) break;
+    // 이미지 상한 도달 여부를 배치 시작 시점에 캡처 (레이스 컨디션 방지)
+    const skipImages = allImages.length >= MAX_TOTAL_IMAGES;
     const batchEnd = Math.min(batchStart + BATCH_SIZE, pageCount);
     const promises = [];
     for (let i = batchStart; i < batchEnd; i++) {
       promises.push(
         pdf.getPage(i + 1).then(async (page) => {
-          // 이미지 추출 (텍스트와 병렬, 상한 도달 시 스킵)
-          const imagePromise = allImages.length < MAX_TOTAL_IMAGES
+          // 이미지 추출 (배치 단위로 상한 체크 — 병렬 Promise 내 레이스 방지)
+          const imagePromise = !skipImages
             ? extractPageImages(page, i).catch(() => [] as PageImage[])
             : Promise.resolve([] as PageImage[]);
 

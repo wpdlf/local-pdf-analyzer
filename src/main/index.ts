@@ -103,10 +103,14 @@ function createWindow(): BrowserWindow {
           }
           const data = await fsp.readFile(filePath, { signal: ac.signal });
           if (!win.isDestroyed()) {
+            // byteOffset === 0 이면 불필요한 복사 회피 (100MB PDF → 200MB 방지)
+            const arrayBuf = data.byteOffset === 0 && data.byteLength === data.buffer.byteLength
+              ? data.buffer
+              : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
             win.webContents.send('file:dropped', {
               path: filePath,
               name: path.basename(filePath),
-              data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+              data: arrayBuf,
             });
           }
         } catch (err) {
@@ -146,6 +150,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  cleanupAiService(); // safety net: before-quit 미호출 시 대비
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -473,10 +478,13 @@ function registerIpcHandlers(): void {
         return { error: 'PDF 파일이 너무 큽니다 (최대 100MB).' };
       }
       const buffer = await fsp.readFile(filePaths[0]);
+      const arrayBuf = buffer.byteOffset === 0 && buffer.byteLength === buffer.buffer.byteLength
+        ? buffer.buffer
+        : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
       return {
         path: filePaths[0],
         name: path.basename(filePaths[0]),
-        data: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
+        data: arrayBuf,
       };
     }
     return null;

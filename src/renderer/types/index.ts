@@ -101,7 +101,8 @@ export type AppErrorCode =
   | 'GENERATE_TIMEOUT'
   | 'EXPORT_FAIL'
   | 'API_KEY_MISSING'
-  | 'API_KEY_INVALID';
+  | 'API_KEY_INVALID'
+  | 'SETTINGS_SAVE_FAIL';
 
 export interface AppError {
   code: AppErrorCode;
