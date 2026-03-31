@@ -8,3 +8,4 @@ dist/
 .env.local
 .bkit/
 .claude/
+CLAUDE.md
