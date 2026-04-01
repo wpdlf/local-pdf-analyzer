@@ -18,8 +18,10 @@ let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 const streamState = {
   buffer: '',
   flushTimer: null as ReturnType<typeof setTimeout> | null,
+  cleared: false,
   reset() {
     this.buffer = '';
+    this.cleared = true;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
@@ -31,8 +33,10 @@ const streamState = {
 const qaStreamState = {
   buffer: '',
   flushTimer: null as ReturnType<typeof setTimeout> | null,
+  cleared: false,
   reset() {
     this.buffer = '';
+    this.cleared = true;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
@@ -120,9 +124,11 @@ export const useAppStore = create<AppState>((set) => ({
   progress: 0,
   setSummary: (summary) => set({ summary }),
   appendStream: (token) => {
+    streamState.cleared = false;
     streamState.buffer += token;
     if (!streamState.flushTimer) {
       streamState.flushTimer = setTimeout(() => {
+        if (streamState.cleared) { streamState.flushTimer = null; return; }
         const buffered = streamState.buffer;
         streamState.buffer = '';
         streamState.flushTimer = null;
@@ -186,9 +192,11 @@ export const useAppStore = create<AppState>((set) => ({
     return { qaMessages: msgs };
   }),
   appendQaStream: (token) => {
+    qaStreamState.cleared = false;
     qaStreamState.buffer += token;
     if (!qaStreamState.flushTimer) {
       qaStreamState.flushTimer = setTimeout(() => {
+        if (qaStreamState.cleared) { qaStreamState.flushTimer = null; return; }
         const buffered = qaStreamState.buffer;
         qaStreamState.buffer = '';
         qaStreamState.flushTimer = null;

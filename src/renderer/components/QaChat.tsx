@@ -14,14 +14,19 @@ export function QaChat() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [qaMessages.length, qaStream]);
 
+  const MAX_QUESTION_LENGTH = 1000;
+
   const handleSubmit = () => {
     const trimmed = input.trim();
     if (!trimmed || isQaGenerating) return;
+    if (trimmed.length > MAX_QUESTION_LENGTH) return;
     setInput('');
     // 높이 리셋
     if (inputRef.current) inputRef.current.style.height = 'auto';
     handleAsk(trimmed);
   };
+
+  const isOverLimit = input.trim().length > MAX_QUESTION_LENGTH;
 
   // textarea 자동 높이 조절 (최대 6줄)
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -95,6 +100,13 @@ export function QaChat() {
         </div>
       )}
 
+      {/* 글자 수 초과 경고 */}
+      {isOverLimit && (
+        <div className="px-4 py-1 text-xs text-red-500">
+          질문은 {MAX_QUESTION_LENGTH}자까지 입력 가능합니다 ({input.trim().length}/{MAX_QUESTION_LENGTH})
+        </div>
+      )}
+
       {/* 입력 영역 */}
       <div className="flex items-end gap-2 px-4 py-3">
         <textarea
@@ -119,7 +131,7 @@ export function QaChat() {
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!input.trim()}
+            disabled={!input.trim() || isOverLimit}
             className="px-3 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
             aria-label="질문 전송"
           >

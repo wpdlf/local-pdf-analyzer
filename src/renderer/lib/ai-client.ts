@@ -84,11 +84,11 @@ export class AiClient {
 
     try {
       resetIpcTimer();
-      while (!done || tokenQueue.length > 0) {
+      while (tokenQueue.length > 0 || !done) {
         if (tokenQueue.length > 0) {
           resetIpcTimer();
           yield tokenQueue.shift()!;
-        } else if (!done) {
+        } else {
           await new Promise<void>((r) => {
             resolver = r;
             // resolver 할당 후 상태 재확인 — done/token이 할당 직전에 변경된 경우 즉시 해제
@@ -97,6 +97,8 @@ export class AiClient {
           resolver = null;
         }
       }
+      // done=true 후 큐에 남은 토큰 소진
+      while (tokenQueue.length > 0) yield tokenQueue.shift()!;
 
       if (error) throw error;
     } finally {

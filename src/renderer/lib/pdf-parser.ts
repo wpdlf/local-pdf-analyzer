@@ -111,8 +111,9 @@ export async function parsePdf(
 
 function detectChapters(pages: string[]): Chapter[] {
   const chapters: Chapter[] = [];
-  // 헤딩 패턴: "제1장", "Chapter 1", "1장", "1. " (1~99번만, 번호 목록 오탐 방지)
-  const headingPattern = /^(제?\d+[장절]|chapter\s*\d+|[1-9]\d?\.\s)/i;
+  // 헤딩 패턴: "제1장", "Chapter 1", "1장" (명시적 챕터 마커만 매칭)
+  // "1. " 패턴 제거 — 본문 번호 목록 오탐 방지
+  const headingPattern = /^(제?\d+[장절]|chapter\s*\d+|\d+장)/i;
 
   let currentChapter: Chapter | null = null;
   let chapterIndex = 0;
@@ -219,7 +220,10 @@ async function extractPageImages(
 
     if (!imgData || imgData.width < MIN_IMAGE_SIZE || imgData.height < MIN_IMAGE_SIZE) continue;
     if (!imgData.data || imgData.data.length === 0) continue;
-    if (imgData.width * imgData.height > MAX_IMAGE_PIXELS) continue; // OOM 방지
+    const pixels = imgData.width * imgData.height;
+    if (pixels > MAX_IMAGE_PIXELS) continue; // OOM 방지
+    // RGBA 변환 출력 크기 체크 (CMYK 등 배치 병렬 처리 시 메모리 보호)
+    if (pixels * 4 > 16 * 1024 * 1024) continue; // 16MB per image
 
     try {
       const base64 = await imageDataToBase64(imgData.width, imgData.height, imgData.data);

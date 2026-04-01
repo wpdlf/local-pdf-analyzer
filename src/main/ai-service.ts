@@ -326,8 +326,7 @@ function streamRequest(
             return;
           }
 
-          totalBytes += chunk.length;
-          if (totalBytes > MAX_RESPONSE_SIZE) {
+          if (totalBytes + chunk.length > MAX_RESPONSE_SIZE) {
             streamAborted = true;
             clearIdleTimer();
             activeRequests.delete(requestId);
@@ -335,6 +334,7 @@ function streamRequest(
             safeReject(new Error('AI 응답이 너무 큽니다 (50MB 초과).'));
             return;
           }
+          totalBytes += chunk.length;
 
           buffer += decoder.write(chunk);
           const lines = buffer.split('\n');

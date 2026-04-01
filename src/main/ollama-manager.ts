@@ -310,54 +310,55 @@ export class OllamaManager {
     this.isStarting = true;
     const ollamaPath = this.getOllamaPath();
 
-    // 기존 프로세스가 남아있으면 먼저 정리
-    if (this.process) {
-      await this.stop();
-    }
+    try {
+      // 기존 프로세스가 남아있으면 먼저 정리
+      if (this.process) {
+        await this.stop();
+      }
 
-    return new Promise((resolve) => {
-      let settled = false;
-      const safeResolve = (value: boolean) => {
-        if (!settled) { settled = true; resolve(value); }
-      };
+      return await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const safeResolve = (value: boolean) => {
+          if (!settled) { settled = true; resolve(value); }
+        };
 
-      this.process = spawn(ollamaPath, ['serve'], {
-        detached: true,
-        stdio: 'ignore',
-      });
+        this.process = spawn(ollamaPath, ['serve'], {
+          detached: true,
+          stdio: 'ignore',
+        });
 
-      this.process.on('error', () => {
-        this.process = null;
-        this.isStarting = false;
-        safeResolve(false);
-      });
-
-      // 프로세스가 예기치 않게 종료되면 참조 정리
-      this.process.on('close', () => {
-        this.process = null;
-      });
-
-      this.process.unref();
-
-      const check = async (retries: number) => {
-        if (settled) return; // error 이벤트로 이미 resolve된 경우 중단
-        if (retries <= 0) {
-          this.isStarting = false;
-          // healthCheck 실패 시 spawned 프로세스 정리 (백그라운드 누수 방지)
-          await this.stop();
+        this.process.on('error', () => {
+          this.process = null;
           safeResolve(false);
-          return;
-        }
-        const ok = await this.healthCheck();
-        if (ok) {
-          this.isStarting = false;
-          safeResolve(true);
-        } else {
-          setTimeout(() => check(retries - 1), 1000);
-        }
-      };
-      check(15);
-    });
+        });
+
+        // 프로세스가 예기치 않게 종료되면 참조 정리
+        this.process.on('close', () => {
+          this.process = null;
+        });
+
+        this.process.unref();
+
+        const check = async (retries: number) => {
+          if (settled) return; // error 이벤트로 이미 resolve된 경우 중단
+          if (retries <= 0) {
+            // healthCheck 실패 시 spawned 프로세스 정리 (백그라운드 누수 방지)
+            await this.stop();
+            safeResolve(false);
+            return;
+          }
+          const ok = await this.healthCheck();
+          if (ok) {
+            safeResolve(true);
+          } else {
+            setTimeout(() => check(retries - 1), 1000);
+          }
+        };
+        check(15);
+      });
+    } finally {
+      this.isStarting = false;
+    }
   }
 
   async stop(): Promise<void> {

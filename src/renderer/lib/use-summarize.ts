@@ -236,6 +236,8 @@ export function useSummarize() {
       const trackSummarize = (text: string, type: SummaryType) => {
         const requestId = client.prepareSummarize();
         useAppStore.getState().setCurrentRequestId(requestId);
+        // clientRef 비교로 stale closure 방지: abort 후 재요약 시 이전 client 토큰 무시
+        if (clientRef.current !== client) return (async function*(): AsyncGenerator<string> {})();
         return client.summarize(text, type, requestId);
       };
 
@@ -285,10 +287,16 @@ export function useSummarize() {
 
       const docWithImages = { ...doc, extractedText: textForSummary };
       if (enrichedPagesRef) {
-        docWithImages.chapters = doc.chapters.map((ch) => ({
-          ...ch,
-          text: enrichedPagesRef!.slice(ch.startPage - 1, ch.endPage).join('\n\n'),
-        }));
+        docWithImages.chapters = doc.chapters.map((ch) => {
+          const enrichedText = enrichedPagesRef!.slice(ch.startPage - 1, ch.endPage).join('\n\n');
+          // 원본 chapter.text에만 존재하는 pre-chapter 텍스트 보존
+          const originalPrefix = ch.text.split('\n')[0] || '';
+          const enrichedFirst = enrichedText.split('\n')[0] || '';
+          if (originalPrefix !== enrichedFirst && !enrichedText.startsWith(originalPrefix)) {
+            return { ...ch, text: originalPrefix + '\n\n' + enrichedText };
+          }
+          return { ...ch, text: enrichedText };
+        });
       }
 
       const isCancelled = () => timedOut || !useAppStore.getState().isGenerating;

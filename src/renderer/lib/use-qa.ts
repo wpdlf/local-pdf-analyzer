@@ -169,7 +169,8 @@ export function useQa() {
       }
 
       // abort되지 않은 경우에만 완성된 답변 추가 (abort 시 handleQaAbort에서 partial 추가됨)
-      if (useAppStore.getState().isQaGenerating && !abortedRef.current) {
+      // abortedRef를 단일 가드로 사용하여 TOCTOU 레이스 방지
+      if (!abortedRef.current) {
         state.flushQaStream();
         if (answer) {
           state.addQaMessage({ role: 'assistant', content: answer });
