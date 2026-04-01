@@ -14,9 +14,9 @@
 
 ## 다운로드 및 설치
 
-> **[최신 버전 다운로드](https://github.com/wpdlf/summarize_PDF_files_locally/releases/latest)**
+> **[최신 버전 다운로드](https://github.com/wpdlf/local-pdf-analyzer/releases/latest)**
 
-1. 위 링크에서 `PDF.자료.요약기.Setup.x.x.x.exe`를 다운로드합니다
+1. 위 링크에서 `PDF.Setup.x.x.x.exe`를 다운로드합니다
 2. 다운로드한 파일을 실행하여 설치합니다
 3. 바탕화면 바로가기 또는 시작 메뉴에서 앱을 실행합니다
 4. 첫 실행 시 AI 엔진(Ollama)과 한국어 특화 모델(gemma3, exaone3.5)이 자동 설치됩니다 — 안내를 따라 진행해주세요
@@ -27,7 +27,8 @@
 
 ### 1. PDF 업로드
 - 앱 화면에 PDF 파일을 **드래그앤드롭**하거나
-- **파일 선택** 버튼을 클릭하여 PDF를 선택합니다
+- **파일 선택** 버튼을 클릭하거나
+- **Ctrl+O** 단축키로 파일 다이얼로그를 열어 PDF를 선택합니다
 
 ### 2. 요약 유형 선택
 
@@ -225,7 +226,7 @@ PDF 파일
 │    │   └── RGB/RGBA/Grayscale → JPEG base64 변환      │
 │    │       → 최대 1024px 리사이즈, 4M 픽셀 초과 스킵  │
 │    └── 챕터 자동 감지                                 │
-│        └── "제1장", "Chapter 1", "1." 패턴 매칭       │
+│        └── "제1장", "Chapter 1", "1장" 패턴 매칭      │
 │            → 미감지 시 10페이지 단위 분할              │
 │                                                      │
 │    배치 처리: 10페이지씩 병렬, 이미지 최대 50장       │
@@ -317,7 +318,7 @@ PDF 파일
 | PDF 드롭 경로 조작 | `will-navigate` 차단, `file://` + `.pdf` 확장자만 허용 |
 | IPC 입력값 조작 | 모든 IPC 핸들러에서 타입/범위/길이 검증 |
 | 외부 URL 열기 | 허용 도메인 화이트리스트 (ollama.com, anthropic.com, openai.com, github.com) |
-| Markdown XSS | `javascript:`, `data:` URL 차단, 외부 이미지만 허용 |
+| Markdown XSS | `javascript:`, `data:` URL 차단, 외부 이미지 차단 |
 | 응답 크기 폭주 | 스트리밍 50MB, Vision 10MB, 모델 목록 1MB 제한 |
 | Q&A 프롬프트 인젝션 | `splitPrompt`가 첫 번째 구분자만 사용, 사용자 질문은 user 영역에 격리 |
 | Q&A 대화 이력 과다 | 이력 4000자 제한 + 10턴 FIFO, 질문 1000자 상한 |
