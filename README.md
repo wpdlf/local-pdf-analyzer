@@ -325,4 +325,4 @@ PDF 파일
 
 ## 라이선스
 
-copyright 2026. JJW. All rights reserved.
+MIT License. See [LICENSE](LICENSE) for details.
