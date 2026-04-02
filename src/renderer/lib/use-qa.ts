@@ -151,29 +151,30 @@ export function useQa() {
       contextParts.push(`[원문 관련 부분]\n${relevantChunks}`);
       const context = contextParts.join('\n\n');
 
-      // 대화 이력 포맷 (컨텍스트 윈도우 보호를 위해 4000자 제한)
-      const history = formatHistory(state.qaMessages).slice(0, 4000);
+      // 대화 이력: async 경계 이후 최신 상태에서 읽어 stale 참조 방지
+      const freshMessages = useAppStore.getState().qaMessages;
+      const history = formatHistory(freshMessages).slice(0, 4000);
 
       // 프롬프트 조립: 컨텍스트 + 이력 + 질문
       const promptText = `${context}${history}\n[질문]\n${trimmed}`;
 
       // AI 생성 요청
       const requestId = client.prepareSummarize();
-      state.setQaRequestId(requestId);
+      useAppStore.getState().setQaRequestId(requestId);
 
       let answer = '';
       for await (const token of client.summarize(promptText, 'qa', requestId)) {
         if (!useAppStore.getState().isQaGenerating) break;
-        state.appendQaStream(token);
+        useAppStore.getState().appendQaStream(token);
         answer += token;
       }
 
       // abort되지 않은 경우에만 완성된 답변 추가 (abort 시 handleQaAbort에서 partial 추가됨)
       // abortedRef를 단일 가드로 사용하여 TOCTOU 레이스 방지
       if (!abortedRef.current) {
-        state.flushQaStream();
+        useAppStore.getState().flushQaStream();
         if (answer) {
-          state.addQaMessage({ role: 'assistant', content: answer });
+          useAppStore.getState().addQaMessage({ role: 'assistant', content: answer });
         }
       }
     } catch (err) {

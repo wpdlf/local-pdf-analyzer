@@ -148,7 +148,8 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
   clearStream: () => {
-    // 먼저 pending flush를 비우고 나서 상태 초기화 (ghost text 방지)
+    // cleared 플래그로 이미 dequeue된 flush 타이머 콜백의 실행 방지 (ghost text 방지)
+    streamState.cleared = true;
     streamState.buffer = '';
     if (streamState.flushTimer) {
       clearTimeout(streamState.flushTimer);
@@ -216,6 +217,7 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
   clearQaStream: () => {
+    qaStreamState.cleared = true;
     qaStreamState.buffer = '';
     if (qaStreamState.flushTimer) {
       clearTimeout(qaStreamState.flushTimer);

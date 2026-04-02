@@ -21,7 +21,7 @@ export function chunkText(
   maxChunkSize: number = 4000,
 ): string[] {
   const charsPerToken = estimateCharsPerToken(text);
-  const maxChars = Math.floor(maxChunkSize * charsPerToken);
+  const maxChars = Math.max(1, Math.floor(maxChunkSize * charsPerToken));
 
   if (text.length <= maxChars) {
     return [text];

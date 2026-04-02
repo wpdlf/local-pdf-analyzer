@@ -496,7 +496,7 @@ export class OllamaManager {
   /** renderer에 진행 상태 전송 */
   private sendProgress(message: string): void {
     const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
+    if (win && !win.isDestroyed()) {
       win.webContents.send('setup:progress', message);
     }
   }

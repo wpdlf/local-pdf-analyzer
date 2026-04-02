@@ -105,6 +105,9 @@ export default function App() {
     };
     const handleDrop = async (e: DragEvent) => {
       e.preventDefault();
+      // 동기적으로 store 상태를 직접 읽어 경합 조건 방지 (setState 전파 대기 불필요)
+      const { isParsing: parsing, isGenerating: generating } = useAppStore.getState();
+      if (parsing || generating) return;
       const file = e.dataTransfer?.files[0];
       if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
         const buffer = await file.arrayBuffer();

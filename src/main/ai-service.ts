@@ -68,6 +68,13 @@ export async function generate(
   apiKey: string | undefined,
   win: BrowserWindow,
 ): Promise<void> {
+  // 중복 requestId 방어: 이전 요청의 abort controller 덮어쓰기로 인한 리소스 누수 방지
+  if (activeRequests.has(requestId)) {
+    const prev = activeRequests.get(requestId)!;
+    prev.abort();
+    activeRequests.delete(requestId);
+  }
+
   const prompt = buildPrompt(request.text, request.type);
 
   switch (request.provider) {

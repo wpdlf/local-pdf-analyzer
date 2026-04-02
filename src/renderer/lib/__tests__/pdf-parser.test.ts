@@ -13,7 +13,9 @@ import * as pdfjsLib from 'pdfjs-dist';
 // parsePdf를 직접 테스트하기 어려우므로, detectChapters 로직을 검증
 // pdf-parser.ts의 내부 로직과 동일한 패턴 테스트
 describe('PDF Parser - Chapter Detection Logic', () => {
-  const headingPattern = /^(제?\d+[장절]|chapter\s*\d+|\d+\.\s)/i;
+  // pdf-parser.ts:116 프로덕션 코드와 동일한 패턴 사용
+  // "1. " 패턴 제거됨 — 본문 번호 목록 오탐 방지
+  const headingPattern = /^(제?\d+[장절]|chapter\s*\d+|\d+장)/i;
 
   it('"제1장" 패턴을 챕터 헤딩으로 감지한다', () => {
     expect(headingPattern.test('제1장 서론')).toBe(true);
@@ -25,13 +27,13 @@ describe('PDF Parser - Chapter Detection Logic', () => {
     expect(headingPattern.test('Chapter 10 Conclusion')).toBe(true);
   });
 
-  it('"1. " 숫자+점 패턴을 챕터 헤딩으로 감지한다', () => {
-    expect(headingPattern.test('1. 개요')).toBe(true);
-    expect(headingPattern.test('3. 결론')).toBe(true);
-  });
-
   it('"1장" 패턴을 챕터 헤딩으로 감지한다', () => {
     expect(headingPattern.test('1장 운영체제 개요')).toBe(true);
+  });
+
+  it('"1. " 숫자+점 패턴은 챕터 헤딩으로 감지하지 않는다 (본문 오탐 방지)', () => {
+    expect(headingPattern.test('1. 개요')).toBe(false);
+    expect(headingPattern.test('3. 결론')).toBe(false);
   });
 
   it('일반 텍스트는 챕터 헤딩으로 감지하지 않는다', () => {

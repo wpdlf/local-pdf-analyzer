@@ -6,6 +6,15 @@ import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
 import { generate, abortGenerate, checkAvailability, analyzeImage, cleanupAiService } from './ai-service';
 
+// 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
+process.on('unhandledRejection', (reason) => {
+  console.error('[Main] Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[Main] Uncaught Exception:', error);
+});
+
 const ollamaManager = new OllamaManager();
 
 // electron-store는 ESM 전용이므로 JSON 파일로 직접 관리
@@ -448,6 +457,11 @@ function registerIpcHandlers(): void {
       ],
     });
     if (filePath) {
+      // 방어: 다이얼로그 필터 우회 시 허용 확장자만 저장
+      const ext = path.extname(filePath).toLowerCase();
+      if (!['.md', '.txt'].includes(ext)) {
+        return null;
+      }
       await fsp.writeFile(filePath, content, 'utf-8');
       return filePath;
     }
