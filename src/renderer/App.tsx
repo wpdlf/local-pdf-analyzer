@@ -263,6 +263,11 @@ export default function App() {
             <div className="w-full flex items-center justify-between px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-lg">
               <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
                 📎 {document.fileName} ({document.pageCount}p)
+                {document.isOcr && (
+                  <span className="ml-2 px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded">
+                    OCR
+                  </span>
+                )}
               </span>
               <button
                 onClick={() => {

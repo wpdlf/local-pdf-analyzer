@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
-import { generate, abortGenerate, checkAvailability, analyzeImage, cleanupAiService } from './ai-service';
+import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, cleanupAiService } from './ai-service';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -28,10 +28,11 @@ const defaultSettings = {
   defaultSummaryType: 'full',
   maxChunkSize: 4000,
   enableImageAnalysis: true,
+  enableOcrFallback: true,
 } as const;
 
 const VALID_SETTINGS_KEYS_SET = new Set([
-  'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis',
+  'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback',
 ]);
 
 async function loadSettings(): Promise<Record<string, unknown>> {
@@ -218,7 +219,7 @@ function registerIpcHandlers(): void {
   const VALID_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
   const VALID_SETTINGS_KEYS = [
     'provider', 'model', 'ollamaBaseUrl', 'theme',
-    'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis',
+    'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback',
   ] as const;
 
   ipcMain.handle('apikey:save', (_event, provider: string, key: string) => {
@@ -286,6 +287,9 @@ function registerIpcHandlers(): void {
           if (typeof val === 'number' && val >= 1000 && val <= 16000) filtered[key] = val;
           break;
         case 'enableImageAnalysis':
+          if (typeof val === 'boolean') filtered[key] = val;
+          break;
+        case 'enableOcrFallback':
           if (typeof val === 'boolean') filtered[key] = val;
           break;
       }
@@ -408,33 +412,57 @@ function registerIpcHandlers(): void {
     return checkAvailability(provider as 'ollama' | 'claude' | 'openai', ollamaBaseUrl, apiKey);
   });
 
+  // ─── Vision 공통: Ollama Vision 모델 자동 선택 ───
+
+  const OLLAMA_VISION_MODELS = ['llava', 'llama3.2-vision', 'bakllava', 'moondream'];
+
+  async function resolveVisionModel(errorPrefix: string) {
+    const settings = await loadSettings();
+    const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
+    const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
+    let model = (settings.model as string) || '';
+    if (provider === 'ollama' && !OLLAMA_VISION_MODELS.some((v) => model.startsWith(v))) {
+      const installed = await ollamaManager.listModels();
+      const available = installed.filter((m: string) => OLLAMA_VISION_MODELS.some((v) => m.startsWith(v)));
+      if (available.length === 0) {
+        throw new Error(`${errorPrefix} Vision 모델이 필요합니다. 설정에서 llava 모델을 설치해주세요.`);
+      }
+      model = available[0];
+    }
+    const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
+    return { provider, model, ollamaBaseUrl, apiKey };
+  }
+
+  function validateImageBase64(imageBase64: unknown): imageBase64 is string {
+    return typeof imageBase64 === 'string' && imageBase64.length > 0
+      && imageBase64.length <= 10 * 1024 * 1024 && /^[A-Za-z0-9+/\n]+=*$/.test(imageBase64);
+  }
+
   ipcMain.handle('ai:analyze-image', async (_event, imageBase64: string) => {
-    if (typeof imageBase64 !== 'string' || imageBase64.length === 0 || imageBase64.length > 10 * 1024 * 1024
-      || !/^[A-Za-z0-9+/\n]+=*$/.test(imageBase64)) {
+    if (!validateImageBase64(imageBase64)) {
       return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
     }
     try {
-      const settings = await loadSettings();
-      const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
-      const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
-      // Ollama: Vision 모델 자동 선택 (텍스트 모델은 Vision 미지원)
-      const OLLAMA_VISION_MODELS = ['llava', 'llama3.2-vision', 'bakllava', 'moondream'];
-      const configuredModel = (settings.model as string) || '';
-      let model = configuredModel;
-      if (provider === 'ollama' && !OLLAMA_VISION_MODELS.some((v) => configuredModel.startsWith(v))) {
-        // 설치된 Vision 모델 탐색
-        const installed = await ollamaManager.listModels();
-        const availableVision = installed.filter((m: string) => OLLAMA_VISION_MODELS.some((v) => m.startsWith(v)));
-        if (availableVision.length === 0) {
-          return { success: false, error: '이미지 분석을 위해 Vision 모델이 필요합니다. 설정에서 llava 모델을 설치해주세요.' };
-        }
-        model = availableVision[0];
-      }
-      const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
+      const { provider, model, ollamaBaseUrl, apiKey } = await resolveVisionModel('이미지 분석을 위해');
       const description = await analyzeImage(imageBase64, provider, model, ollamaBaseUrl, apiKey);
       return { success: true, description };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'Vision 분석 실패' };
+    }
+  });
+
+  // ─── OCR (스캔 PDF 텍스트 추출) ───
+
+  ipcMain.handle('ai:ocr-page', async (_event, imageBase64: string) => {
+    if (!validateImageBase64(imageBase64)) {
+      return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
+    }
+    try {
+      const { provider, model, ollamaBaseUrl, apiKey } = await resolveVisionModel('OCR을 위해');
+      const text = await analyzeImageForOcr(imageBase64, provider, model, ollamaBaseUrl, apiKey);
+      return { success: true, text };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'OCR 실패' };
     }
   });
 

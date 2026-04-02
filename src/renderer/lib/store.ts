@@ -97,6 +97,10 @@ interface AppState {
   updateSettings: (settings: AppSettings) => void;
   loadSettings: () => Promise<void>;
 
+  // OCR
+  ocrProgress: { current: number; total: number } | null;
+  setOcrProgress: (p: { current: number; total: number } | null) => void;
+
   // Ollama 상태
   ollamaStatus: OllamaStatus;
   setOllamaStatus: (status: OllamaStatus) => void;
@@ -175,6 +179,7 @@ export const useAppStore = create<AppState>((set) => ({
       qaStream: '',
       isQaGenerating: false,
       qaRequestId: null,
+      ocrProgress: null,
     });
   },
 
@@ -261,6 +266,10 @@ export const useAppStore = create<AppState>((set) => ({
       // 저장된 설정 없으면 기본값 유지
     }
   },
+
+  // OCR
+  ocrProgress: null,
+  setOcrProgress: (ocrProgress) => set({ ocrProgress }),
 
   // Ollama 상태
   ollamaStatus: { installed: false, running: false, models: [] },

@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkAvailable: (provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) =>
       ipcRenderer.invoke('ai:check-available', provider, ollamaBaseUrl),
     analyzeImage: (imageBase64: string) => ipcRenderer.invoke('ai:analyze-image', imageBase64),
+    ocrPage: (imageBase64: string) => ipcRenderer.invoke('ai:ocr-page', imageBase64),
     onToken: (callback: (requestId: string, token: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, requestId: string, token: string) =>
         callback(requestId, token);
@@ -87,6 +88,7 @@ export type ElectronAPI = {
     }) => Promise<{ success: boolean; error?: string; code?: string }>;
     abort: (requestId: string) => Promise<{ success: boolean }>;
     analyzeImage: (imageBase64: string) => Promise<{ success: boolean; description?: string; error?: string }>;
+    ocrPage: (imageBase64: string) => Promise<{ success: boolean; text?: string; error?: string }>;
     checkAvailable: (provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) => Promise<boolean>;
     onToken: (callback: (requestId: string, token: string) => void) => () => void;
     onDone: (callback: (requestId: string) => void) => () => void;

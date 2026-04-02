@@ -26,6 +26,7 @@ export interface PdfDocument {
   chapters: Chapter[];
   images: PageImage[];
   createdAt: Date;
+  isOcr?: boolean;
 }
 
 // 챕터 (페이지 기반 분할)
@@ -64,6 +65,7 @@ export interface AppSettings {
   defaultSummaryType: SummaryType;
   maxChunkSize: number;
   enableImageAnalysis: boolean;
+  enableOcrFallback: boolean;
 }
 
 // Provider별 대표 모델
@@ -100,6 +102,7 @@ export type AppErrorCode =
   | 'GENERATE_FAIL'
   | 'GENERATE_TIMEOUT'
   | 'EXPORT_FAIL'
+  | 'OCR_FAIL'
   | 'API_KEY_MISSING'
   | 'API_KEY_INVALID'
   | 'SETTINGS_SAVE_FAIL';
@@ -125,4 +128,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultSummaryType: 'full',
   maxChunkSize: 4000,
   enableImageAnalysis: true,
+  enableOcrFallback: true,
 };

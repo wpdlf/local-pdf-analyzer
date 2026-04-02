@@ -9,10 +9,16 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
+export interface ParsePdfOptions {
+  enableOcrFallback?: boolean;
+  onOcrProgress?: (current: number, total: number) => void;
+}
+
 export async function parsePdf(
   data: ArrayBuffer,
   fileName: string,
   filePath: string,
+  options?: ParsePdfOptions,
 ): Promise<PdfDocument> {
   const pdf = await pdfjsLib.getDocument({
     data,
@@ -88,10 +94,44 @@ export async function parsePdf(
 
   const extractedText = pages.join('\n\n');
 
-  if (extractedText.trim().length < 50) {
-    throw Object.assign(new Error('PDF에서 텍스트를 추출할 수 없습니다. 이미지 기반 PDF는 지원하지 않습니다.'), {
-      code: 'PDF_NO_TEXT',
+  // 공백 제거 후 실제 텍스트 길이로 OCR 진입 판정 (watermark 등 공백 패딩 우회 방지)
+  if (extractedText.replace(/\s+/g, '').length < 50) {
+    if (!options?.enableOcrFallback) {
+      throw Object.assign(new Error('PDF에서 텍스트를 추출할 수 없습니다. 설정에서 "스캔 PDF OCR"을 활성화하면 이미지 기반 PDF를 분석할 수 있습니다.'), {
+        code: 'PDF_NO_TEXT',
+      });
+    }
+    // OCR fallback: 페이지를 이미지로 렌더링 → Vision 모델로 텍스트 추출
+    // abort 메커니즘: isParsing이 false로 전환되면 배치 루프 중단
+    const abortSignal = { aborted: false };
+    const unsubscribe = useAppStore.subscribe((state) => {
+      if (!state.isParsing) abortSignal.aborted = true;
     });
+    let ocrPages: string[];
+    try {
+      ocrPages = await ocrFallback(pdf, pageCount, options.onOcrProgress ?? (() => {}), abortSignal);
+    } finally {
+      unsubscribe();
+    }
+    const ocrText = ocrPages.join('\n\n');
+    if (ocrText.trim().length < 50) {
+      throw Object.assign(new Error('OCR로도 텍스트를 추출할 수 없습니다. PDF 품질을 확인해주세요.'), {
+        code: 'OCR_FAIL',
+      });
+    }
+    const chapters = detectChapters(ocrPages);
+    return {
+      id: crypto.randomUUID(),
+      fileName,
+      filePath,
+      pageCount,
+      extractedText: ocrText,
+      pageTexts: ocrPages,
+      chapters,
+      images: [],
+      createdAt: new Date(),
+      isOcr: true,
+    };
   }
 
   const chapters = detectChapters(pages);
@@ -107,6 +147,73 @@ export async function parsePdf(
     images: allImages.slice(0, MAX_TOTAL_IMAGES),
     createdAt: new Date(),
   };
+}
+
+// ─── OCR Fallback ───
+
+const MAX_OCR_PAGE_EDGE = 3000;
+
+async function renderPageToImage(
+  pdf: pdfjsLib.PDFDocumentProxy,
+  pageNum: number,
+  scale = 2.0,
+): Promise<string> {
+  const page = await pdf.getPage(pageNum);
+  const viewport = page.getViewport({ scale });
+  // 최대 해상도 가드: 긴 변 3000px 초과 시 scale 자동 축소
+  let finalScale = scale;
+  if (Math.max(viewport.width, viewport.height) > MAX_OCR_PAGE_EDGE) {
+    finalScale = scale * (MAX_OCR_PAGE_EDGE / Math.max(viewport.width, viewport.height));
+  }
+  const finalViewport = finalScale !== scale ? page.getViewport({ scale: finalScale }) : viewport;
+  const canvas = new OffscreenCanvas(Math.round(finalViewport.width), Math.round(finalViewport.height));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas context 생성 실패');
+  await page.render({ canvasContext: ctx as unknown as CanvasRenderingContext2D, viewport: finalViewport }).promise;
+  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+  // GPU 메모리 즉시 해제 (대용량 PDF에서 OOM 방지)
+  canvas.width = 0;
+  canvas.height = 0;
+  page.cleanup();
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 8192;
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length))));
+  }
+  return btoa(parts.join(''));
+}
+
+async function ocrFallback(
+  pdf: pdfjsLib.PDFDocumentProxy,
+  pageCount: number,
+  onProgress: (current: number, total: number) => void,
+  signal?: { aborted: boolean },
+): Promise<string[]> {
+  const pages: string[] = [];
+  const BATCH_SIZE = 3;
+  // 대용량 PDF: 50+ 페이지 시 scale 자동 축소
+  const scale = pageCount > 100 ? 1.0 : pageCount > 50 ? 1.5 : 2.0;
+
+  for (let i = 0; i < pageCount; i += BATCH_SIZE) {
+    if (signal?.aborted) break;
+    const batch: Promise<string>[] = [];
+    for (let j = i; j < Math.min(i + BATCH_SIZE, pageCount); j++) {
+      const pageIdx = j;
+      batch.push(
+        renderPageToImage(pdf, pageIdx + 1, scale).then(async (base64) => {
+          if (signal?.aborted) return '';
+          const result = await window.electronAPI.ai.ocrPage(base64);
+          return (result.success && result.text) ? result.text : '';
+        }).catch(() => ''),
+      );
+    }
+    const results = await Promise.all(batch);
+    pages.push(...results);
+    onProgress(Math.min(i + BATCH_SIZE, pageCount), pageCount);
+  }
+  return pages;
 }
 
 function detectChapters(pages: string[]): Chapter[] {
@@ -344,7 +451,12 @@ export async function handlePdfData(
   }
   store.setIsParsing(true);
   try {
-    const doc = await parsePdf(data, name, filePath);
+    const doc = await parsePdf(data, name, filePath, {
+      enableOcrFallback: store.settings.enableOcrFallback,
+      onOcrProgress: (current, total) => {
+        store.setOcrProgress({ current, total });
+      },
+    });
     store.setDocument(doc);
     store.setError(null);
   } catch (err) {
@@ -355,5 +467,6 @@ export async function handlePdfData(
     } as AppError);
   } finally {
     store.setIsParsing(false);
+    store.setOcrProgress(null);
   }
 }

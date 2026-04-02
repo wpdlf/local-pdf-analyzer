@@ -5,6 +5,7 @@ import { handlePdfData } from '../lib/pdf-parser';
 export function PdfUploader() {
   const setError = useAppStore((s) => s.setError);
   const isParsing = useAppStore((s) => s.isParsing);
+  const ocrProgress = useAppStore((s) => s.ocrProgress);
   const [isDragging, setIsDragging] = useState(false);
 
   const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
@@ -87,12 +88,37 @@ export function PdfUploader() {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
-            PDF를 읽고 있습니다...
-          </p>
-          <p className="text-sm text-gray-400 dark:text-gray-500">
-            잠시만 기다려주세요
-          </p>
+          {ocrProgress ? (
+            <>
+              <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
+                스캔 PDF 텍스트 인식 중...
+              </p>
+              <div className="w-full max-w-xs">
+                <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500 mb-1">
+                  <span>OCR 진행</span>
+                  <span>{ocrProgress.current} / {ocrProgress.total} 페이지</span>
+                </div>
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                  <div
+                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${ocrProgress.total > 0 ? (ocrProgress.current / ocrProgress.total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">
+                Vision 모델로 텍스트를 추출하고 있습니다
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
+                PDF를 읽고 있습니다...
+              </p>
+              <p className="text-sm text-gray-400 dark:text-gray-500">
+                잠시만 기다려주세요
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <>

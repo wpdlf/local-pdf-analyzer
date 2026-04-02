@@ -441,6 +441,26 @@ export function SettingsPanel() {
         </label>
       </section>
 
+      {/* 스캔 PDF OCR */}
+      <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">스캔 PDF OCR</h3>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={draft.enableOcrFallback}
+            onChange={(e) => updateDraft({ enableOcrFallback: e.target.checked })}
+            className="w-4 h-4 rounded"
+          />
+          <div>
+            <span className="text-sm text-gray-700 dark:text-gray-200">스캔 PDF 자동 텍스트 인식 (OCR)</span>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              텍스트를 추출할 수 없는 스캔 PDF에서 Vision 모델로 텍스트를 인식합니다.
+              페이지 수에 따라 시간과 API 비용이 증가할 수 있습니다.
+            </p>
+          </div>
+        </label>
+      </section>
+
       {/* 저장 버튼 */}
       <div className="flex items-center gap-3">
         <button
