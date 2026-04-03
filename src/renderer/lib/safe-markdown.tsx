@@ -10,11 +10,12 @@ export const REMARK_PLUGINS = [remarkGfm];
  * - <img>: 외부 이미지 로드 차단 (트래킹 픽셀/데이터 유출 방지)
  */
 export const safeComponents: Components = {
-  a: ({ href, children, ...props }) => {
+  // props spread 제거: remark 플러그인 경유 위험 속성(dangerouslySetInnerHTML 등) 전파 방지
+  a: ({ href, children }) => {
     const isSafe = href && (href.startsWith('https://') || href.startsWith('#'));
     return isSafe
-      ? <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
-      : <span {...props}>{children}</span>;
+      ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+      : <span>{children}</span>;
   },
   img: ({ alt }) => {
     return <span>{alt || '[이미지]'}</span>;

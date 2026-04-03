@@ -584,6 +584,7 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
 
     const parsedUrl = new URL(url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
+    let responseStream: import('http').IncomingMessage | null = null;
 
     const req = client.request({
       hostname: parsedUrl.hostname,
@@ -592,6 +593,7 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       method: 'POST',
       headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
     }, (res) => {
+      responseStream = res;
       if (res.statusCode && res.statusCode >= 400) {
         const errChunks: Buffer[] = [];
         res.on('data', (c: Buffer) => { if (errChunks.length < 8) errChunks.push(c); });
@@ -615,7 +617,11 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
     });
 
     req.on('error', (err) => safeReject(err));
-    req.setTimeout(timeoutMs, () => { req.destroy(); safeReject(new Error('Vision API 타임아웃')); });
+    req.setTimeout(timeoutMs, () => {
+      if (responseStream && !responseStream.destroyed) responseStream.destroy();
+      req.destroy();
+      safeReject(new Error('Vision API 타임아웃'));
+    });
     req.write(body);
     req.end();
   });

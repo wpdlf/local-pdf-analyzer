@@ -98,6 +98,8 @@ function createWindow(): BrowserWindow {
   win.webContents.on('will-navigate', (event, url) => {
     event.preventDefault();
     if (url.startsWith('file://') && url.toLowerCase().endsWith('.pdf')) {
+      // UNC 경로 차단: file://remote-server/share/file.pdf 등 네트워크 읽기 방지
+      try { if (new URL(url).hostname !== '') return; } catch { return; }
       const filePath = fileURLToPath(url);
       const MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
       // 이전 드롭 읽기 취소
