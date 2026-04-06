@@ -265,7 +265,8 @@ export class OllamaManager {
               if (downloaded > MAX_SIZE) {
                 aborted = true;
                 response.destroy();
-                file.end(() => safeReject(new Error('다운로드 크기가 500MB를 초과했습니다.')));
+                file.destroy();
+                safeReject(new Error('다운로드 크기가 500MB를 초과했습니다.'));
                 return;
               }
               file.write(chunk);
@@ -277,19 +278,22 @@ export class OllamaManager {
             response.on('error', (err) => {
               if (aborted) return;
               aborted = true;
-              file.end(() => safeReject(err));
+              file.destroy();
+              safeReject(err);
             });
             file.on('error', (err) => {
               if (aborted) return;
               aborted = true;
               response.destroy();
+              file.destroy();
               safeReject(err);
             });
             // 타임아웃 등으로 소켓이 파괴될 때 WriteStream 정리 (파일 디스크립터 누수 방지)
             response.on('close', () => {
               if (!aborted && !response.complete) {
                 aborted = true;
-                file.end(() => safeReject(new Error('다운로드 연결이 끊어졌습니다.')));
+                file.destroy();
+                safeReject(new Error('다운로드 연결이 끊어졌습니다.'));
               }
             });
           } else {

@@ -47,9 +47,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (settings: Record<string, unknown>) => ipcRenderer.invoke('settings:set', settings),
   },
   apiKey: {
-    save: (provider: string, key: string) => ipcRenderer.invoke('apikey:save', provider, key),
-    has: (provider: string) => ipcRenderer.invoke('apikey:has', provider),
-    delete: (provider: string) => ipcRenderer.invoke('apikey:delete', provider),
+    save: (provider: 'ollama' | 'claude' | 'openai', key: string) => ipcRenderer.invoke('apikey:save', provider, key),
+    has: (provider: 'ollama' | 'claude' | 'openai') => ipcRenderer.invoke('apikey:has', provider),
+    delete: (provider: 'ollama' | 'claude' | 'openai') => ipcRenderer.invoke('apikey:delete', provider),
   },
   openExternal: (url: string) => {
     if (typeof url !== 'string' || !url.startsWith('https://')) return Promise.resolve();
@@ -107,9 +107,9 @@ export type ElectronAPI = {
     set: (settings: Record<string, unknown>) => Promise<Record<string, unknown>>;
   };
   apiKey: {
-    save: (provider: string, key: string) => Promise<{ success: boolean }>;
-    has: (provider: string) => Promise<boolean>;
-    delete: (provider: string) => Promise<{ success: boolean }>;
+    save: (provider: 'ollama' | 'claude' | 'openai', key: string) => Promise<{ success: boolean }>;
+    has: (provider: 'ollama' | 'claude' | 'openai') => Promise<boolean>;
+    delete: (provider: 'ollama' | 'claude' | 'openai') => Promise<{ success: boolean }>;
   };
   openExternal: (url: string) => Promise<void>;
   onSetupProgress: (callback: (message: string) => void) => () => void;

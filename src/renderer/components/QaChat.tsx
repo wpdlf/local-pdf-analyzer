@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useQa } from '../lib/use-qa';
-import { REMARK_PLUGINS, safeComponents } from '../lib/safe-markdown';
+import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
 
 export function QaChat() {
   const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating } = useQa();
@@ -80,7 +80,9 @@ export function QaChat() {
                 {msg.role === 'user' ? (
                   msg.content
                 ) : (
-                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{msg.content}</ReactMarkdown>
+                  <MarkdownErrorBoundary fallbackText={msg.content}>
+                    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{msg.content}</ReactMarkdown>
+                  </MarkdownErrorBoundary>
                 )}
               </div>
             </div>
@@ -90,7 +92,9 @@ export function QaChat() {
           {qaStream && (
             <div className="flex justify-start">
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none">
-                <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{qaStream}</ReactMarkdown>
+                <MarkdownErrorBoundary fallbackText={qaStream}>
+                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{qaStream}</ReactMarkdown>
+                </MarkdownErrorBoundary>
               </div>
             </div>
           )}

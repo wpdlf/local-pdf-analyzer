@@ -55,8 +55,13 @@ async function loadSettings(): Promise<Record<string, unknown>> {
 
 async function saveSettings(settings: Record<string, unknown>): Promise<void> {
   const tmpPath = settingsPath + '.tmp';
-  await fsp.writeFile(tmpPath, JSON.stringify(settings, null, 2), 'utf-8');
-  await fsp.rename(tmpPath, settingsPath);
+  try {
+    await fsp.writeFile(tmpPath, JSON.stringify(settings, null, 2), 'utf-8');
+    await fsp.rename(tmpPath, settingsPath);
+  } catch (err) {
+    try { await fsp.unlink(tmpPath); } catch { /* 이미 삭제됨 */ }
+    throw err;
+  }
 }
 
 function createWindow(): BrowserWindow {
@@ -198,8 +203,14 @@ function writeApiKeys(keys: Record<string, string>): void {
   }
   const tmpPath = apiKeysPath + '.tmp';
   const encrypted = safeStorage.encryptString(JSON.stringify(keys));
-  fs.writeFileSync(tmpPath, encrypted);
-  fs.renameSync(tmpPath, apiKeysPath);
+  try {
+    fs.writeFileSync(tmpPath, encrypted);
+    fs.renameSync(tmpPath, apiKeysPath);
+  } catch (err) {
+    // rename 실패 시 tmp 파일 정리하여 디스크 누수 방지
+    try { fs.unlinkSync(tmpPath); } catch { /* 이미 삭제됨 */ }
+    throw err;
+  }
 }
 
 function saveApiKey(provider: string, key: string): void {

@@ -617,7 +617,10 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       if (settled) { res.destroy(); return; }
       if (res.statusCode && res.statusCode >= 400) {
         const errChunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => { if (errChunks.length < 8) errChunks.push(c); });
+        res.on('data', (c: Buffer) => {
+          if (errChunks.length < 8) errChunks.push(c);
+          else { res.destroy(); } // 8청크 초과 시 소켓 즉시 해제
+        });
         res.on('end', () => {
           const errBody = Buffer.concat(errChunks).toString('utf-8').slice(0, 500);
           console.error(`Vision API error: HTTP ${res.statusCode}`, errBody);

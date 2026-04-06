@@ -1,5 +1,21 @@
+import { Component, type ReactNode } from 'react';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+/** ReactMarkdown 파싱 실패 시 원본 텍스트를 fallback으로 표시하는 Error Boundary */
+export class MarkdownErrorBoundary extends Component<
+  { children: ReactNode; fallbackText?: string },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() {
+    if (this.state.hasError) {
+      return <pre className="whitespace-pre-wrap text-sm">{this.props.fallbackText ?? '렌더링 오류가 발생했습니다.'}</pre>;
+    }
+    return this.props.children;
+  }
+}
 
 /** remark 플러그인 — 모듈 스코프 상수로 매 렌더 새 참조 생성 방지 */
 export const REMARK_PLUGINS = [remarkGfm];
