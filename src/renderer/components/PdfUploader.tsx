@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { handlePdfData } from '../lib/pdf-parser';
 
@@ -7,6 +7,7 @@ export function PdfUploader() {
   const isParsing = useAppStore((s) => s.isParsing);
   const ocrProgress = useAppStore((s) => s.ocrProgress);
   const [isDragging, setIsDragging] = useState(false);
+  const dialogOpenRef = useRef(false);
 
   const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
   const handleFile = useCallback(
@@ -38,6 +39,8 @@ export function PdfUploader() {
   );
 
   const handleFileSelect = useCallback(async () => {
+    if (dialogOpenRef.current) return; // 더블클릭 시 다이얼로그 2회 오픈 방지
+    dialogOpenRef.current = true;
     try {
       const result = await window.electronAPI.file.openPdf();
       if (!result) return;
@@ -50,6 +53,8 @@ export function PdfUploader() {
     } catch (err) {
       const error = err as Error & { code?: string };
       setError({ code: (error.code as 'PDF_PARSE_FAIL') || 'PDF_PARSE_FAIL', message: error.message || 'PDF를 읽을 수 없습니다.' });
+    } finally {
+      dialogOpenRef.current = false;
     }
   }, [setError]);
 

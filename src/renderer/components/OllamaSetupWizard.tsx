@@ -48,6 +48,8 @@ export function OllamaSetupWizard() {
   };
 
   const startSetup = async () => {
+    // 이전 성공 타이머가 남아있으면 정리 (재시도 시 자동 네비게이션 방지)
+    if (doneTimerRef.current) { clearTimeout(doneTimerRef.current); doneTimerRef.current = undefined; }
     setStep('progress');
     setErrorCode(null);
     setErrorMsg('');

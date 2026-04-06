@@ -9,9 +9,17 @@ export function QaChat() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // 새 메시지/스트리밍 시 자동 스크롤
+  // 새 ��시지/스트리밍 시 자동 스크롤 (near-bottom 가드 + rAF로 jank 방지)
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!chatEndRef.current) return;
+    const container = chatEndRef.current.parentElement;
+    if (!container) return;
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    if (!isNearBottom) return;
+    const id = requestAnimationFrame(() => {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(id);
   }, [qaMessages.length, qaStream]);
 
   const MAX_QUESTION_LENGTH = 1000;

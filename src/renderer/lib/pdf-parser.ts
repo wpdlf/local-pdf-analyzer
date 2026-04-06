@@ -407,6 +407,11 @@ async function imageDataToBase64(
     ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
 
     const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+    // GPU 메모리 즉시 해제 (GC 대기 없이 backing store 반환)
+    srcCanvas.width = 0;
+    srcCanvas.height = 0;
+    canvas.width = 0;
+    canvas.height = 0;
     const buffer = await blob.arrayBuffer();
     const bytes = new Uint8Array(buffer);
     // 청크 단위 바이너리→문자열 변환 (8KB 청크는 콜스택 안전 + 고성능)

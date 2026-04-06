@@ -50,7 +50,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     has: (provider: string) => ipcRenderer.invoke('apikey:has', provider),
     delete: (provider: string) => ipcRenderer.invoke('apikey:delete', provider),
   },
-  openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+  openExternal: (url: string) => {
+    if (typeof url !== 'string' || !url.startsWith('https://')) return Promise.resolve();
+    return ipcRenderer.invoke('shell:open-external', url);
+  },
   onSetupProgress: (callback: (message: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
     ipcRenderer.on('setup:progress', handler);

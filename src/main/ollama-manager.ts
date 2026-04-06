@@ -16,7 +16,7 @@ interface OllamaStatusResult {
 export class OllamaManager {
   private process: ChildProcess | null = null;
   private baseUrl = 'http://localhost:11434';
-  private isStarting = false; // 중복 start() 호출 방지
+  private startPromise: Promise<boolean> | null = null; // 동시 start() 호출 시 동일 Promise 반환
 
   // Ollama 실행 파일 경로 (설치 직후 PATH 반영 안 될 수 있으므로 직접 지정)
   private getOllamaPath(): string {
@@ -285,6 +285,13 @@ export class OllamaManager {
               response.destroy();
               safeReject(err);
             });
+            // 타임아웃 등으로 소켓이 파괴될 때 WriteStream 정리 (파일 디스크립터 누수 방지)
+            response.on('close', () => {
+              if (!aborted && !response.complete) {
+                aborted = true;
+                file.end(() => safeReject(new Error('다운로드 연결이 끊어졌습니다.')));
+              }
+            });
           } else {
             response.resume();
             safeReject(new Error(`다운로드 실패: HTTP ${response.statusCode}`));
@@ -301,87 +308,106 @@ export class OllamaManager {
   }
 
   async start(): Promise<boolean> {
-    if (this.isStarting) return false; // 중복 start() 호출 방지
+    // 동시 호출 시 동일 Promise 반환하여 이중 spawn 방지
+    if (this.startPromise) return this.startPromise;
+    this.startPromise = this._startInternal();
+    try {
+      return await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  private async _startInternal(): Promise<boolean> {
     if (await this.healthCheck()) return true;
 
     const installed = await this.isInstalled();
     if (!installed) return false;
 
-    this.isStarting = true;
     const ollamaPath = this.getOllamaPath();
 
-    try {
-      // 기존 프로세스가 남아있으면 먼저 정리
-      if (this.process) {
-        await this.stop();
-      }
-
-      return await new Promise<boolean>((resolve) => {
-        let settled = false;
-        const safeResolve = (value: boolean) => {
-          if (!settled) { settled = true; resolve(value); }
-        };
-
-        this.process = spawn(ollamaPath, ['serve'], {
-          detached: true,
-          stdio: 'ignore',
-        });
-
-        this.process.on('error', () => {
-          this.process = null;
-          safeResolve(false);
-        });
-
-        // 프로세스가 예기치 않게 종료되면 참조 정리
-        this.process.on('close', () => {
-          this.process = null;
-        });
-
-        this.process.unref();
-
-        const check = async (retries: number) => {
-          if (settled) return; // error 이벤트로 이미 resolve된 경우 중단
-          if (retries <= 0) {
-            // healthCheck 실패 시 spawned 프로세스 정리 (백그라운드 누수 방지)
-            await this.stop();
-            safeResolve(false);
-            return;
-          }
-          const ok = await this.healthCheck();
-          if (ok) {
-            safeResolve(true);
-          } else {
-            setTimeout(() => check(retries - 1), 1000);
-          }
-        };
-        check(15);
-      });
-    } finally {
-      this.isStarting = false;
+    // 기존 프로세스가 남아있으면 먼저 정리
+    if (this.process) {
+      await this.stop();
     }
+
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const safeResolve = (value: boolean) => {
+        if (!settled) { settled = true; resolve(value); }
+      };
+
+      this.process = spawn(ollamaPath, ['serve'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+
+      this.process.on('error', () => {
+        this.process = null;
+        safeResolve(false);
+      });
+
+      // 프로세스가 예기치 않게 종료되면 참조 정리
+      this.process.on('close', () => {
+        this.process = null;
+      });
+
+      this.process.unref();
+
+      const check = async (retries: number) => {
+        if (settled) return; // error 이벤트로 이미 resolve된 경우 중단
+        // 프로세스가 이미 종료된 경우 retry 중단
+        if (!this.process) {
+          safeResolve(false);
+          return;
+        }
+        if (retries <= 0) {
+          // healthCheck 실패 시 spawned 프로세스 정리 (백그라운드 누수 방지)
+          await this.stop();
+          safeResolve(false);
+          return;
+        }
+        const ok = await this.healthCheck();
+        if (ok) {
+          safeResolve(true);
+        } else {
+          setTimeout(() => check(retries - 1), 1000);
+        }
+      };
+      check(15);
+    });
   }
 
   async stop(): Promise<void> {
-    if (this.process) {
-      const pid = this.process.pid;
-      if (process.platform === 'win32' && pid) {
-        // Windows: detached 프로세스 트리 전체 종료
-        try {
-          await new Promise<void>((resolve) => {
-            execFile('taskkill', ['/F', '/T', '/PID', String(pid)], () => resolve());
-          });
-        } catch { /* taskkill 실패 시 무시 */ }
-      } else {
-        try { this.process.kill('SIGTERM'); } catch { /* 이미 종료된 프로세스 */ }
-      }
-      this.process = null;
+    if (!this.process) return;
+    const proc = this.process;
+    this.process = null;
+
+    // 프로세스 종료 대기 Promise (최대 5초)
+    const waitForExit = new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 5000);
+      proc.on('close', () => { clearTimeout(timeout); resolve(); });
+    });
+
+    if (process.platform === 'win32' && proc.pid) {
+      // Windows: detached 프로세스 트리 전체 종료
+      try {
+        await new Promise<void>((resolve) => {
+          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], () => resolve());
+        });
+      } catch { /* taskkill 실패 시 무시 */ }
+    } else {
+      try { proc.kill('SIGTERM'); } catch { /* 이미 종료된 프로세스 */ }
     }
+
+    await waitForExit;
   }
 
   async healthCheck(): Promise<boolean> {
     const url = new URL(this.baseUrl);
     return new Promise((resolve) => {
       const req = http.get({ hostname: url.hostname, port: url.port || 11434, path: '/', timeout: 5000 }, (res) => {
+        res.on('error', () => {}); // 응답 drain 중 연결 끊김 시 unhandled error 방지
         res.resume();
         resolve(res.statusCode === 200);
       });
@@ -394,24 +420,27 @@ export class OllamaManager {
     const url = new URL(this.baseUrl);
     return new Promise((resolve) => {
       const MAX_RESPONSE = 1024 * 1024; // 1MB
+      let resolved = false;
+      const safeResolve = (val: string[]) => { if (!resolved) { resolved = true; resolve(val); } };
       const req = http.get({ hostname: url.hostname, port: url.port || 11434, path: '/api/tags', timeout: 5000 }, (res) => {
         let data = '';
         res.on('data', (chunk) => {
           data += chunk;
-          if (data.length > MAX_RESPONSE) { res.destroy(); resolve([]); return; }
+          if (data.length > MAX_RESPONSE) { res.destroy(); safeResolve([]); return; }
         });
         res.on('end', () => {
           try {
             const parsed = JSON.parse(data);
             const models = (parsed.models || []).map((m: { name: string }) => m.name);
-            resolve(models);
+            safeResolve(models);
           } catch {
-            resolve([]);
+            safeResolve([]);
           }
         });
+        res.on('error', () => safeResolve([]));
       });
-      req.on('error', () => resolve([]));
-      req.on('timeout', () => { req.destroy(); resolve([]); });
+      req.on('error', () => safeResolve([]));
+      req.on('timeout', () => { req.destroy(); safeResolve([]); });
     });
   }
 

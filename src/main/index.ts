@@ -168,9 +168,14 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+let isQuitting = false;
+app.on('before-quit', (e) => {
   cleanupAiService();
-  ollamaManager.stop();
+  if (!isQuitting) {
+    isQuitting = true;
+    e.preventDefault();
+    ollamaManager.stop().finally(() => app.quit());
+  }
 });
 
 const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');

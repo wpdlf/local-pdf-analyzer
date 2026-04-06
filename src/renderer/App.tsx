@@ -48,6 +48,11 @@ export default function App() {
         const result = await window.electronAPI.ollama.pullModel(model);
         if (aborted) return;
         if (!result.success) {
+          // 이전 모델이 성공적으로 설치되었을 수 있으므로 store 갱신
+          try {
+            const partialStatus = await window.electronAPI.ollama.getStatus();
+            if (!aborted) setOllamaStatus(partialStatus);
+          } catch { /* 무시 */ }
           setBgModelSync(`모델 다운로드 실패: ${model} — ${result.error || '네트워크를 확인해주세요'}`);
           setTimeout(() => { if (!aborted) setBgModelSync(null); }, 5000);
           return;

@@ -137,6 +137,7 @@ export function useQa() {
     state.setIsQaGenerating(true);
     state.clearQaStream();
 
+    let completed = false;
     try {
       const client = new AiClient(settings);
       clientRef.current = client;
@@ -152,8 +153,9 @@ export function useQa() {
       const context = contextParts.join('\n\n');
 
       // 대화 이력: async 경계 이후 최신 상태에서 읽어 stale 참조 방지
+      // 마지막 항목(방금 추가한 현재 질문)은 제외 — [질문] 섹션에서 별도 포함됨
       const freshMessages = useAppStore.getState().qaMessages;
-      const history = formatHistory(freshMessages).slice(0, 4000);
+      const history = formatHistory(freshMessages.slice(0, -1)).slice(0, 4000);
 
       // 프롬프트 조립: 컨텍스트 + 이력 + 질문
       const promptText = `${context}${history}\n[질문]\n${trimmed}`;
@@ -173,9 +175,11 @@ export function useQa() {
       // abortedRef를 단일 가드로 사용하여 TOCTOU 레이스 방지
       if (!abortedRef.current) {
         useAppStore.getState().flushQaStream();
+        useAppStore.getState().clearQaStream();
         if (answer) {
           useAppStore.getState().addQaMessage({ role: 'assistant', content: answer });
         }
+        completed = true;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -185,9 +189,11 @@ export function useQa() {
       });
     } finally {
       clientRef.current = null;
-      // flushQaStream → clearQaStream 순서로 호출하여 pending flush 타이머에 의한 ghost text 방지
-      useAppStore.getState().flushQaStream();
-      useAppStore.getState().clearQaStream();
+      // 성공/abort 경로에서 이미 처리된 경우 중복 flush 방지
+      if (!completed && !abortedRef.current) {
+        useAppStore.getState().flushQaStream();
+        useAppStore.getState().clearQaStream();
+      }
       useAppStore.getState().setIsQaGenerating(false);
       useAppStore.getState().setQaRequestId(null);
     }

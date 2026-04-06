@@ -17,6 +17,8 @@ export function SettingsPanel() {
   const [pullModelName, setPullModelName] = useState('');
   const [isPulling, setIsPulling] = useState(false);
   const [pullProgress, setPullProgress] = useState('');
+  const pullUnsubRef = useRef<(() => void) | null>(null);
+  const mountedRef = useRef(true);
   const [saved, setSaved] = useState(false);
 
   // API 키 관련 상태
@@ -43,6 +45,14 @@ export function SettingsPanel() {
   const hasChanges = (Object.keys(draft) as (keyof AppSettings)[]).some(
     (key) => draft[key] !== settings[key],
   );
+
+  // unmount 시 진행 중인 pull 리스너 정리
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      pullUnsubRef.current?.();
+    };
+  }, []);
 
   useEffect(() => {
     window.electronAPI.ollama.listModels().then(setOllamaModels).catch(() => {});
@@ -128,7 +138,9 @@ export function SettingsPanel() {
   };
 
   const handleCancel = () => {
-    applyTheme(settings.theme);
+    // draft 테마를 원래 설정으로 되돌림 → useEffect cleanup이 리스너 정리 담당
+    // applyTheme을 직접 호출하면 반환된 cleanup이 버려져 MediaQueryList 리스너 누수 발생
+    setDraft((d) => ({ ...d, theme: settings.theme }));
     setView('main');
   };
 
@@ -137,13 +149,20 @@ export function SettingsPanel() {
     setIsPulling(true);
     setPullProgress('다운로드 준비 중...');
     const unsubscribe = window.electronAPI.onSetupProgress((message) => {
-      setPullProgress(message);
+      if (mountedRef.current) setPullProgress(message);
     });
+    pullUnsubRef.current = unsubscribe;
     try {
       const result = await window.electronAPI.ollama.pullModel(pullModelName.trim());
+      if (!mountedRef.current) return;
       if (result.success) {
         const updated = await window.electronAPI.ollama.listModels();
+        if (!mountedRef.current) return;
         setOllamaModels(updated);
+        // 글로벌 store도 갱신하여 StatusBar 등에서 즉시 반영
+        const status = await window.electronAPI.ollama.getStatus();
+        if (!mountedRef.current) return;
+        setOllamaStatus(status);
         setPullModelName('');
         setPullProgress('');
       } else {
@@ -151,7 +170,8 @@ export function SettingsPanel() {
       }
     } finally {
       unsubscribe();
-      setIsPulling(false);
+      pullUnsubRef.current = null;
+      if (mountedRef.current) setIsPulling(false);
     }
   };
 

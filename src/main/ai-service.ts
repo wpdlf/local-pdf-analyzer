@@ -12,14 +12,15 @@ interface GenerateRequest {
   temperature?: number;
 }
 
-const activeRequests = new Map<string, { abort: () => void; createdAt: number }>();
+const activeRequests = new Map<string, { abort: () => void; createdAt: number; startedAt: number }>();
+let nextRequestSeq = 0; // 단조 증가 카운터 — 같은 requestId 구별용
 
 // activeRequests TTL 정리 (10분 초과 항목 자동 제거)
 const ACTIVE_REQUEST_TTL_MS = 600000;
 const ttlCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [id, entry] of activeRequests) {
-    if (now - entry.createdAt > ACTIVE_REQUEST_TTL_MS) {
+    if (now - entry.startedAt > ACTIVE_REQUEST_TTL_MS) {
       entry.abort();
       activeRequests.delete(id);
     }
@@ -104,7 +105,7 @@ export async function checkAvailability(
       const parsed = new URL(ollamaBaseUrl);
       const client = parsed.protocol === 'https:' ? https : http;
       return new Promise((resolve) => {
-        const req = client.get({ hostname: parsed.hostname, port: parsed.port, path: '/', timeout: 5000 }, (res) => { res.resume(); resolve(res.statusCode === 200); });
+        const req = client.get({ hostname: parsed.hostname, port: parsed.port, path: '/', timeout: 5000 }, (res) => { res.on('error', () => {}); res.resume(); resolve(res.statusCode === 200); });
         req.on('error', () => resolve(false));
         req.on('timeout', () => { req.destroy(); resolve(false); });
       });
@@ -261,6 +262,18 @@ function streamRequest(
     let responseStream: import('http').IncomingMessage | null = null;
     // abort 콜백에서도 접근 가능하도록 Promise 스코프에 배치
     let streamAborted = false;
+    // abort 시 idle timer 정리용 — 응답 콜백 내부에서 설정됨
+    let clearIdleTimerFn: (() => void) | null = null;
+    // 이 요청의 고유 시퀀스 번호 — 같은 requestId로 새 요청이 등록된 경우 구별용
+    const myCreatedAt = ++nextRequestSeq;
+
+    /** activeRequests에서 이 요청의 항목만 안전하게 삭제 (새 요청 보호) */
+    const safeDeleteRequest = () => {
+      const current = activeRequests.get(requestId);
+      if (current && current.createdAt === myCreatedAt) {
+        activeRequests.delete(requestId);
+      }
+    };
 
     const req = client.request(
       {
@@ -275,20 +288,23 @@ function streamRequest(
       },
       (res) => {
         responseStream = res;
+        // 타임아웃/abort로 이미 종료된 경우 응답 무시 (idle timer 생성 방지)
+        if (streamAborted) { res.destroy(); return; }
         if (config.checkAuthError?.(res.statusCode || 0)) {
-          activeRequests.delete(requestId);
+          safeDeleteRequest();
           safeReject(Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID' }));
           res.destroy();
           return;
         }
 
         if (res.statusCode && res.statusCode >= 400) {
-          activeRequests.delete(requestId);
+          safeDeleteRequest();
           safeReject(new Error(`API 요청 실패: HTTP ${res.statusCode}`));
           res.destroy();
           return;
         }
 
+        // idle timer를 상태코드 검증 이후에 생성하여, 에러 early return 시 타이머 누수 방지
         const MAX_RESPONSE_SIZE = 50 * 1024 * 1024; // 50MB
         const IDLE_TIMEOUT_MS = 60000; // 60초 idle timeout — 데이터 수신 중단 감지
         let totalBytes = 0;
@@ -296,29 +312,26 @@ function streamRequest(
         let buffer = '';
         const decoder = new StringDecoder('utf8');
 
-        // idle timeout: 마지막 data 이벤트 이후 60초간 데이터 없으면 스트림 종료
-        let idleTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+        const createIdleTimeout = () => setTimeout(() => {
           if (!streamAborted) {
             streamAborted = true;
-            activeRequests.delete(requestId);
+            safeDeleteRequest();
             res.destroy();
             safeReject(new Error('AI 서버 응답이 중단되었습니다 (60초 무응답).'));
           }
         }, IDLE_TIMEOUT_MS);
+
+        // idle timeout: 마지막 data 이벤트 이후 60초간 데이터 없으면 스트림 종료
+        let idleTimer: ReturnType<typeof setTimeout> | null = createIdleTimeout();
         const resetIdleTimer = () => {
           if (idleTimer) clearTimeout(idleTimer);
-          idleTimer = setTimeout(() => {
-            if (!streamAborted) {
-              streamAborted = true;
-              activeRequests.delete(requestId);
-              res.destroy();
-              safeReject(new Error('AI 서버 응답이 중단되었습니다 (60초 무응답).'));
-            }
-          }, IDLE_TIMEOUT_MS);
+          idleTimer = createIdleTimeout();
         };
         const clearIdleTimer = () => {
           if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
         };
+        // abort 클로저에서 idle timer를 정리할 수 있도록 Promise 스코프에 노출
+        clearIdleTimerFn = clearIdleTimer;
 
         res.on('data', (chunk: Buffer) => {
           if (streamAborted) return;
@@ -327,7 +340,7 @@ function streamRequest(
           if (win.isDestroyed()) {
             streamAborted = true;
             clearIdleTimer();
-            activeRequests.delete(requestId);
+            safeDeleteRequest();
             res.destroy();
             safeResolve();
             return;
@@ -336,7 +349,7 @@ function streamRequest(
           if (totalBytes + chunk.length > MAX_RESPONSE_SIZE) {
             streamAborted = true;
             clearIdleTimer();
-            activeRequests.delete(requestId);
+            safeDeleteRequest();
             res.destroy();
             safeReject(new Error('AI 응답이 너무 큽니다 (50MB 초과).'));
             return;
@@ -399,7 +412,7 @@ function streamRequest(
               } catch { /* 파싱 실패 무시 */ }
             }
           }
-          activeRequests.delete(requestId);
+          safeDeleteRequest();
           if (!win.isDestroyed()) {
             win.webContents.send('ai:done', requestId);
           }
@@ -408,19 +421,20 @@ function streamRequest(
 
         res.on('error', (err) => {
           clearIdleTimer();
-          activeRequests.delete(requestId);
+          safeDeleteRequest();
           safeReject(err);
         });
       },
     );
 
     req.on('error', (err) => {
-      activeRequests.delete(requestId);
+      safeDeleteRequest();
       safeReject(err);
     });
 
     req.setTimeout(300000, () => {
-      activeRequests.delete(requestId);
+      streamAborted = true; // 타임아웃 후 응답 콜백 도착 시 idle timer 생성/데이터 처리 차단
+      safeDeleteRequest();
       req.destroy();
       safeReject(new Error('AI 서버 응답 타임아웃 (5분)'));
     });
@@ -430,11 +444,15 @@ function streamRequest(
     activeRequests.set(requestId, {
       abort: () => {
         streamAborted = true;
-        activeRequests.delete(requestId);
+        if (clearIdleTimerFn) clearIdleTimerFn();
+        safeDeleteRequest();
         if (responseStream && !responseStream.destroyed) responseStream.destroy();
         if (!req.destroyed) req.destroy();
+        // destroy()가 error 이벤트를 미발생시킬 수 있으므로 직접 settle하여 Promise 누수 방지
+        safeReject(Object.assign(new Error('요청이 중단되었습니다.'), { code: 'ABORTED' }));
       },
-      createdAt: Date.now(),
+      createdAt: myCreatedAt,
+      startedAt: Date.now(),
     });
 
     req.write(config.body);
@@ -594,6 +612,8 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       headers: { ...headers, 'Content-Length': Buffer.byteLength(body) },
     }, (res) => {
       responseStream = res;
+      // 타임아웃으로 이미 settled된 경우 응답 무시 (데이터 축적 방지)
+      if (settled) { res.destroy(); return; }
       if (res.statusCode && res.statusCode >= 400) {
         const errChunks: Buffer[] = [];
         res.on('data', (c: Buffer) => { if (errChunks.length < 8) errChunks.push(c); });
@@ -613,7 +633,7 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
         chunks.push(chunk);
       });
       res.on('end', () => safeResolve(Buffer.concat(chunks).toString('utf-8')));
-      res.on('error', (err) => safeReject(err));
+      res.on('error', (err) => { if (!req.destroyed) req.destroy(); safeReject(err); });
     });
 
     req.on('error', (err) => safeReject(err));
