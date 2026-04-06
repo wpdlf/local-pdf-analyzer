@@ -218,23 +218,18 @@ async function generateOpenAi(
   }, win);
 }
 
-// ─── Provider별 스트리밍 응답 타입 ───
+// ─── 스트리밍 응답 타입 (JSON.parse 결과 — provider별 속성을 단일 인터페이스로 통합) ───
 
-interface OllamaStreamChunk {
+interface StreamChunk {
+  // Ollama
   response?: string;
   done?: boolean;
-}
-
-interface ClaudeStreamEvent {
+  // Claude
   type?: string;
   delta?: { text?: string };
-}
-
-interface OpenAiStreamChunk {
+  // OpenAI
   choices?: { delta?: { content?: string } }[];
 }
-
-type StreamChunk = OllamaStreamChunk | ClaudeStreamEvent | OpenAiStreamChunk;
 
 // ─── 공통 스트리밍 요청 ───
 
