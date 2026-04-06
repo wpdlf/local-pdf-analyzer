@@ -29,10 +29,11 @@ const defaultSettings = {
   maxChunkSize: 4000,
   enableImageAnalysis: true,
   enableOcrFallback: true,
+  summaryLanguage: 'ko',
 } as const;
 
 const VALID_SETTINGS_KEYS_SET = new Set([
-  'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback',
+  'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage',
 ]);
 
 async function loadSettings(): Promise<Record<string, unknown>> {
@@ -226,7 +227,7 @@ function registerIpcHandlers(): void {
   const VALID_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
   const VALID_SETTINGS_KEYS = [
     'provider', 'model', 'ollamaBaseUrl', 'theme',
-    'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback',
+    'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage',
   ] as const;
 
   ipcMain.handle('apikey:save', (_event, provider: string, key: string) => {
@@ -299,6 +300,9 @@ function registerIpcHandlers(): void {
         case 'enableOcrFallback':
           if (typeof val === 'boolean') filtered[key] = val;
           break;
+        case 'summaryLanguage':
+          if (['ko', 'en', 'ja', 'zh', 'auto'].includes(val as string)) filtered[key] = val;
+          break;
       }
     }
     const updated = { ...current, ...filtered };
@@ -342,6 +346,7 @@ function registerIpcHandlers(): void {
     model: string;
     ollamaBaseUrl: string;
     temperature?: number;
+    language?: string;
   }) => {
     // 입력값 검증
     if (typeof requestId !== 'string' || !requestId) {

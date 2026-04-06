@@ -49,6 +49,7 @@ export class AiClient {
       model: this.settings.model,
       ollamaBaseUrl: this.settings.ollamaBaseUrl,
       temperature: 0.3,
+      language: this.settings.summaryLanguage || 'ko',
     });
 
     // 에러 감지를 위해 비동기로 결과 확인

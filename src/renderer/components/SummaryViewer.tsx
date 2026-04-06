@@ -14,6 +14,7 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const summaryStream = useAppStore((s) => s.summaryStream);
   const isGenerating = useAppStore((s) => s.isGenerating);
   const progress = useAppStore((s) => s.progress);
+  const progressInfo = useAppStore((s) => s.progressInfo);
   const setError = useAppStore((s) => s.setError);
 
   // 스트리밍 중 Markdown 렌더링 debounce (150ms, useRef 기반 — GC 부하 감소)
@@ -55,11 +56,14 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
 
   const handleClose = () => {
     const store = useAppStore.getState();
-    // 요약 중이면 AI 요청 중단 + 생성 상태 해제
-    if (store.currentRequestId) {
-      window.electronAPI.ai.abort(store.currentRequestId);
-    }
-    if (store.isGenerating) {
+    // 요약 중이면 useSummarize의 handleAbort를 통해 중단 (타임아웃 타이머 정리 포함)
+    if (store.isGenerating && onAbort) {
+      onAbort();
+    } else if (store.isGenerating) {
+      // onAbort가 없을 경우 fallback (타임아웃 타이머는 정리되지 않음)
+      if (store.currentRequestId) {
+        window.electronAPI.ai.abort(store.currentRequestId);
+      }
       store.flushStream();
       store.setIsGenerating(false);
     }
@@ -131,7 +135,7 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
       {isGenerating && (
         <div className="flex items-center gap-2 px-4 py-2 border-t dark:border-gray-700">
           <div className="flex-1">
-            <ProgressBar progress={progress} />
+            <ProgressBar progress={progress} progressInfo={progressInfo} />
           </div>
           {onAbort && (
             <button

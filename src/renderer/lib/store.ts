@@ -7,6 +7,7 @@ import type {
   OllamaStatus,
   AppError,
   QaMessage,
+  ProgressInfo,
 } from '../types';
 import { DEFAULT_SETTINGS } from '../types';
 
@@ -69,6 +70,7 @@ interface AppState {
   isGenerating: boolean;
   currentRequestId: string | null;
   progress: number;
+  progressInfo: ProgressInfo | null;
   setSummary: (summary: Summary | null) => void;
   appendStream: (token: string) => void;
   flushStream: () => void;
@@ -77,6 +79,7 @@ interface AppState {
   setIsGenerating: (v: boolean) => void;
   setCurrentRequestId: (id: string | null) => void;
   setProgress: (p: number) => void;
+  setProgressInfo: (info: ProgressInfo | null) => void;
   resetSummaryState: () => void;
 
   // Q&A
@@ -126,6 +129,7 @@ export const useAppStore = create<AppState>((set) => ({
   isGenerating: false,
   currentRequestId: null,
   progress: 0,
+  progressInfo: null,
   setSummary: (summary) => set({ summary }),
   appendStream: (token) => {
     streamState.cleared = false;
@@ -165,6 +169,7 @@ export const useAppStore = create<AppState>((set) => ({
   setIsGenerating: (isGenerating) => set({ isGenerating }),
   setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
   setProgress: (progress) => set({ progress }),
+  setProgressInfo: (progressInfo) => set({ progressInfo }),
   resetSummaryState: () => {
     streamState.reset();
     qaStreamState.reset();
@@ -173,6 +178,7 @@ export const useAppStore = create<AppState>((set) => ({
       summaryStream: '',
       isGenerating: false,
       progress: 0,
+      progressInfo: null,
       summary: null,
       currentRequestId: null,
       qaMessages: [],

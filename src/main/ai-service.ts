@@ -10,6 +10,7 @@ interface GenerateRequest {
   model: string;
   ollamaBaseUrl: string;
   temperature?: number;
+  language?: string;
 }
 
 const activeRequests = new Map<string, { abort: () => void; createdAt: number; startedAt: number }>();
@@ -76,7 +77,7 @@ export async function generate(
     activeRequests.delete(requestId);
   }
 
-  const prompt = buildPrompt(request.text, request.type);
+  const prompt = buildPrompt(request.text, request.type, request.language);
 
   switch (request.provider) {
     case 'ollama':
@@ -662,10 +663,16 @@ function splitPrompt(prompt: string): { system: string; user: string } {
 
 // ─── 프롬프트 빌더 (Main 프로세스용) ───
 
-function buildPrompt(text: string, type: 'full' | 'chapter' | 'keywords' | 'qa'): string {
-  switch (type) {
-    case 'full':
-      return `당신은 PDF 문서 분석 및 요약 전문가입니다.
+// 언어별 완전한 프롬프트 템플릿 — 프롬프트 전체가 해당 언어로 작성되어야 로컬 모델이 올바른 언어로 출력함
+interface LangPrompts {
+  full: (text: string) => string;
+  chapter: (text: string) => string;
+  keywords: (text: string) => string;
+  qa: (text: string) => string;
+}
+
+const PROMPTS_KO: LangPrompts = {
+  full: (text) => `당신은 PDF 문서 분석 및 요약 전문가입니다.
 반드시 한국어로 답변하세요. 원문이 영어라도 한국어로 요약합니다.
 
 다음 문서를 분석하여 구조적으로 요약해주세요.
@@ -690,9 +697,8 @@ function buildPrompt(text: string, type: 'full' | 'chapter' | 'keywords' | 'qa')
 
 ---
 
-${text}`;
-    case 'chapter':
-      return `당신은 PDF 문서 분석 및 요약 전문가입니다.
+${text}`,
+  chapter: (text) => `당신은 PDF 문서 분석 및 요약 전문가입니다.
 반드시 한국어로 답변하세요. 원문이 영어라도 한국어로 요약합니다.
 
 다음 문서의 이 섹션을 요약해주세요.
@@ -712,9 +718,8 @@ ${text}`;
 
 ---
 
-${text}`;
-    case 'keywords':
-      return `다음 문서에서 핵심 키워드를 추출하고 각각 간단히 설명해주세요.
+${text}`,
+  keywords: (text) => `다음 문서에서 핵심 키워드를 추출하고 각각 간단히 설명해주세요.
 반드시 한국어로 답변하세요. 전문 용어는 원어를 병기합니다.
 
 ## 출력 형식
@@ -729,9 +734,8 @@ ${text}`;
 
 ---
 
-${text}`;
-    case 'qa':
-      return `당신은 PDF 문서 Q&A 도우미입니다.
+${text}`,
+  qa: (text) => `당신은 PDF 문서 Q&A 도우미입니다.
 반드시 한국어로 답변하세요.
 
 ## 규칙
@@ -743,6 +747,314 @@ ${text}`;
 
 ---
 
-${text}`;
-  }
+${text}`,
+};
+
+const PROMPTS_EN: LangPrompts = {
+  full: (text) => `You are an expert PDF document analyst and summarizer.
+You MUST write your ENTIRE response in English. Even if the source document is in Korean or another language, ALL output must be in English.
+
+Analyze and structurally summarize the following document.
+
+## Summary rules
+1. **Key concepts**: List main concepts and definitions (include original terms in parentheses for technical vocabulary)
+2. **Main content**: Concisely summarize the core content of each section
+3. **Formulas**: Include important formulas as-is from the original
+4. **Examples**: Briefly include key examples if present
+5. **Key points**: Highlight particularly important content
+
+## Strictly prohibited
+- No greetings, compliments, conversational remarks, or introductory/closing statements
+- Start directly with the summary content from the very first line
+
+## Output format
+Use markdown format.
+
+---
+
+${text}`,
+  chapter: (text) => `You are an expert PDF document analyst and summarizer.
+You MUST write your ENTIRE response in English. Even if the source is in another language, ALL output must be in English.
+
+Summarize this section of the document.
+
+## Summary rules
+1. Identify **key concepts** and **definitions** (include original terms in parentheses)
+2. Include important **formulas** as-is from the original
+3. Briefly include key **examples** if present
+4. Organize into 3-5 **key points**
+
+## Strictly prohibited
+- No greetings, compliments, conversational remarks, or introductory/closing statements
+- Start directly with the summary content
+
+## Output format
+Use markdown format.
+
+---
+
+${text}`,
+  keywords: (text) => `Extract key terms from the following document and briefly explain each.
+You MUST write your ENTIRE response in English. Include original terms in parentheses for technical vocabulary.
+
+## Output format
+Use the following markdown table format:
+
+| Keyword | Description | Importance |
+|---------|-------------|------------|
+| Term | One-line explanation | High/Medium/Low |
+
+Extract at least 10 and at most 30 keywords.
+Output only the table — no greetings, compliments, or conversational remarks.
+
+---
+
+${text}`,
+  qa: (text) => `You are a PDF document Q&A assistant.
+You MUST write your ENTIRE response in English. Even if the document or question is in another language, answer in English.
+
+## Rules
+1. Answer based only on the following document content
+2. If the information is not in the document, say "The requested information was not found in the document"
+3. Quote formulas as-is from the original
+4. Write concise, accurate answers in markdown format
+5. No greetings or compliments — answer only
+
+---
+
+${text}`,
+};
+
+const PROMPTS_JA: LangPrompts = {
+  full: (text) => `あなたはPDF文書の分析・要約の専門家です。
+回答は必ず全て日本語で書いてください。原文が韓国語や英語であっても、全ての出力は日本語でなければなりません。
+
+以下の文書を分析し、構造的に要約してください。
+
+## 要約ルール
+1. **核心概念**: 主要な概念と定義をリストで整理（専門用語は原語を併記）
+2. **主な内容**: 各セクションの核心内容を簡潔に要約
+3. **数式・公式**: 重要な数式があれば原文のまま含める
+4. **例題**: 核心的な例題があれば簡略に含める
+5. **キーポイント**: 特に重要な内容を別途表示
+
+## 禁止事項
+- 挨拶、感想、会話的コメント、導入部・締めのコメントは一切禁止
+- 最初の行から直接要約内容を出力すること
+
+## 出力形式
+マークダウン形式で出力してください。
+
+---
+
+${text}`,
+  chapter: (text) => `あなたはPDF文書の分析・要約の専門家です。
+回答は必ず全て日本語で書いてください。原文が他の言語であっても日本語で出力してください。
+
+このセクションを要約してください。
+
+## 要約ルール
+1. **核心概念**と**定義**を整理（専門用語は原語を併記）
+2. 重要な**数式・公式**は原文のまま含める
+3. **例題**があれば核心のみ簡略に含める
+4. 3〜5個の**キーポイント**で整理
+
+## 禁止事項
+- 挨拶、感想、会話的コメントは一切禁止
+- 最初の行から直接要約内容のみ出力
+
+## 出力形式
+マークダウン形式で出力してください。
+
+---
+
+${text}`,
+  keywords: (text) => `以下の文書から核心キーワードを抽出し、それぞれ簡単に説明してください。
+回答は必ず全て日本語で書いてください。専門用語は原語を併記します。
+
+## 出力形式
+以下のマークダウンテーブル形式で出力してください:
+
+| キーワード | 説明 | 重要度 |
+|-----------|------|--------|
+| 用語名 | 一行説明 | 高/中/低 |
+
+キーワードは最低10個、最大30個抽出してください。
+テーブルのみ出力してください。挨拶や感想は不要です。
+
+---
+
+${text}`,
+  qa: (text) => `あなたはPDF文書のQ&Aアシスタントです。
+回答は必ず全て日本語で書いてください。
+
+## ルール
+1. 以下の文書内容のみを参考に回答してください
+2. 文書にない内容は「文書に該当する内容が見つかりません」と答えてください
+3. 数式・公式は原文のまま引用してください
+4. 簡潔で正確な回答をマークダウン形式で作成してください
+5. 挨拶や感想なしに回答のみ出力してください
+
+---
+
+${text}`,
+};
+
+const PROMPTS_ZH: LangPrompts = {
+  full: (text) => `你是PDF文档分析和总结的专家。
+你必须用中文撰写全部回答。即使原文是韩语、英语或其他语言，所有输出必须100%使用中文。
+
+请分析并结构化总结以下文档。
+
+## 总结规则
+1. **核心概念**: 列出主要概念和定义（专业术语附注原文）
+2. **主要内容**: 简洁总结各部分的核心内容
+3. **公式**: 包含重要公式的原文
+4. **示例**: 简要包含关键示例
+5. **关键要点**: 特别标注重要内容
+
+## 严禁事项
+- 禁止问候语、评论、对话式表达、开场白或结束语
+- 从第一行直接开始输出总结内容
+
+## 输出格式
+使用Markdown格式输出。
+
+---
+
+${text}`,
+  chapter: (text) => `你是PDF文档分析和总结的专家。
+你必须用中文撰写全部回答。即使原文是其他语言，也请用中文输出。
+
+请总结文档的这一部分。
+
+## 总结规则
+1. 整理**核心概念**和**定义**（专业术语附注原文）
+2. 包含重要**公式**的原文
+3. 简要包含关键**示例**
+4. 用3-5个**关键要点**整理
+
+## 严禁事项
+- 禁止问候语、评论、对话式表达
+- 从第一行直接输出总结内容
+
+## 输出格式
+使用Markdown格式输出。
+
+---
+
+${text}`,
+  keywords: (text) => `请从以下文档中提取关键词并简要说明。
+你必须用中文撰写全部回答。专业术语请附注原文。
+
+## 输出格式
+使用以下Markdown表格格式输出:
+
+| 关键词 | 说明 | 重要度 |
+|--------|------|--------|
+| 术语名 | 一行说明 | 高/中/低 |
+
+提取至少10个、最多30个关键词。
+仅输出表格，不要问候语或评论。
+
+---
+
+${text}`,
+  qa: (text) => `你是PDF文档Q&A助手。
+你必须用中文撰写全部回答。
+
+## 规则
+1. 仅根据以下文档内容回答
+2. 如果文档中没有相关内容，请回答"文档中未找到相关内容"
+3. 公式请原文引用
+4. 用Markdown格式撰写简洁准确的回答
+5. 不要问候语或评论，仅输出回答
+
+---
+
+${text}`,
+};
+
+const PROMPTS_AUTO: LangPrompts = {
+  full: (text) => `You are an expert PDF document analyst and summarizer.
+Respond in the same language as the source document below.
+
+Analyze and structurally summarize the following document.
+
+## Rules
+1. List key concepts and definitions (include original terms for technical vocabulary)
+2. Concisely summarize the core content of each section
+3. Include important formulas as-is
+4. Briefly include key examples if present
+5. Highlight key points
+
+## Prohibited
+- No greetings, compliments, conversational remarks, or introductory/closing statements
+- Start directly with the summary content
+
+## Format
+Use markdown format.
+
+---
+
+${text}`,
+  chapter: (text) => `You are an expert PDF document analyst and summarizer.
+Respond in the same language as the source document below.
+
+Summarize this section.
+
+## Rules
+1. Identify key concepts and definitions
+2. Include important formulas as-is
+3. Briefly include key examples
+4. Organize into 3-5 key points
+
+## Prohibited
+- No greetings, compliments, conversational remarks
+- Start directly with the summary
+
+## Format
+Use markdown format.
+
+---
+
+${text}`,
+  keywords: (text) => `Extract key terms from the following document and briefly explain each.
+Respond in the same language as the source document.
+
+## Format
+| Keyword | Description | Importance |
+|---------|-------------|------------|
+| Term | One-line explanation | High/Medium/Low |
+
+Extract 10-30 keywords. Output only the table.
+
+---
+
+${text}`,
+  qa: (text) => `You are a PDF document Q&A assistant.
+Respond in the same language as the source document.
+
+## Rules
+1. Answer based only on the document content below
+2. If not found, say so
+3. Quote formulas as-is
+4. Concise markdown answers only — no greetings
+
+---
+
+${text}`,
+};
+
+const LANG_PROMPTS: Record<string, LangPrompts> = {
+  ko: PROMPTS_KO,
+  en: PROMPTS_EN,
+  ja: PROMPTS_JA,
+  zh: PROMPTS_ZH,
+  auto: PROMPTS_AUTO,
+};
+
+function buildPrompt(text: string, type: 'full' | 'chapter' | 'keywords' | 'qa', language?: string): string {
+  const prompts = LANG_PROMPTS[language || 'ko'] || LANG_PROMPTS['ko'];
+  return prompts[type](text);
 }

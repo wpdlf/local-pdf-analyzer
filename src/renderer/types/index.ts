@@ -50,8 +50,29 @@ export interface Summary {
   durationMs: number;
 }
 
+// 요약 진행 상세 정보
+export interface ProgressInfo {
+  percent: number;             // 0-100
+  phase: 'image' | 'summarize' | 'integrate'; // 현재 단계
+  current: number;             // 현재 처리 중인 항목 번호
+  total: number;               // 전체 항목 수
+  chapterName?: string;        // 챕터 모드 시 현재 챕터명
+  elapsedMs: number;           // 경과 시간 (ms)
+  estimatedRemainingMs?: number; // 예상 남은 시간 (ms)
+}
+
 // 요약 유형
 export type SummaryType = 'full' | 'chapter' | 'keywords' | 'qa';
+
+// 요약 출력 언어
+export type SummaryLanguage = 'ko' | 'en' | 'ja' | 'zh' | 'auto';
+export const SUMMARY_LANGUAGES: { value: SummaryLanguage; label: string }[] = [
+  { value: 'ko', label: '한국어' },
+  { value: 'en', label: 'English' },
+  { value: 'ja', label: '日本語' },
+  { value: 'zh', label: '中文' },
+  { value: 'auto', label: '원문 유지' },
+];
 
 // AI 제공자
 export type AiProviderType = 'ollama' | 'claude' | 'openai';
@@ -66,6 +87,7 @@ export interface AppSettings {
   maxChunkSize: number;
   enableImageAnalysis: boolean;
   enableOcrFallback: boolean;
+  summaryLanguage: SummaryLanguage;
 }
 
 // Provider별 대표 모델
@@ -129,4 +151,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   maxChunkSize: 4000,
   enableImageAnalysis: true,
   enableOcrFallback: true,
+  summaryLanguage: 'ko' as SummaryLanguage,
 };

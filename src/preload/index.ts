@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       model: string;
       ollamaBaseUrl: string;
       temperature?: number;
+      language?: string;
     }) => ipcRenderer.invoke('ai:generate', requestId, request),
     abort: (requestId: string) => ipcRenderer.invoke('ai:abort', requestId),
     checkAvailable: (provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) =>
@@ -88,6 +89,7 @@ export type ElectronAPI = {
       model: string;
       ollamaBaseUrl: string;
       temperature?: number;
+      language?: string;
     }) => Promise<{ success: boolean; error?: string; code?: string }>;
     abort: (requestId: string) => Promise<{ success: boolean }>;
     analyzeImage: (imageBase64: string) => Promise<{ success: boolean; description?: string; error?: string }>;
