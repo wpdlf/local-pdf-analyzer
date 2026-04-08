@@ -106,7 +106,7 @@ export async function checkAvailability(
       const parsed = new URL(ollamaBaseUrl);
       const client = parsed.protocol === 'https:' ? https : http;
       return new Promise((resolve) => {
-        const req = client.get({ hostname: parsed.hostname, port: parsed.port, path: '/', timeout: 5000 }, (res) => { res.on('error', () => {}); res.resume(); resolve(res.statusCode === 200); });
+        const req = client.get({ hostname: parsed.hostname, port: parsed.port || 11434, path: '/', timeout: 5000 }, (res) => { res.on('error', () => {}); res.resume(); resolve(res.statusCode === 200); });
         req.on('error', () => resolve(false));
         req.on('timeout', () => { req.destroy(); resolve(false); });
       });

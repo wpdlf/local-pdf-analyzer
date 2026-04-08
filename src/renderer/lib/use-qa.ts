@@ -7,6 +7,20 @@ import type { QaMessage } from '../types';
 const MAX_QUESTION_LENGTH = 1000;
 const MAX_QA_CONTEXT_CHARS = 8000;
 
+/**
+ * 프롬프트 구분자 인젝션 방어: 사용자 입력에서 splitPrompt 구분자(---\n\n)와
+ * 프롬프트 구조 마커([질문], [이전 대화] 등)를 이스케이프하여
+ * system/user 분리 및 컨텍스트 구조가 오염되지 않도록 보호
+ */
+function sanitizePromptInput(text: string): string {
+  return text
+    .replace(/^---$/gm, '\\-\\-\\-')
+    .replace(/^\[질문\]/gm, '\\[질문\\]')
+    .replace(/^\[이전 대화\]/gm, '\\[이전 대화\\]')
+    .replace(/^\[요약 내용\]/gm, '\\[요약 내용\\]')
+    .replace(/^\[원문 관련 부분\]/gm, '\\[원문 관련 부분\\]');
+}
+
 // 한국어 불용어 (키워드 매칭에서 제외)
 const STOPWORDS = new Set([
   '은', '는', '이', '가', '을', '를', '의', '에', '에서', '로', '으로',
@@ -78,11 +92,11 @@ function selectRelevantChunks(
   return selected.map((s) => s.chunk).join('\n\n');
 }
 
-/** 대화 이력을 프롬프트 텍스트로 변환 */
+/** 대화 이력을 프롬프트 텍스트로 변환 (사용자 입력은 구분자 이스케이프 적용) */
 function formatHistory(messages: QaMessage[]): string {
   if (messages.length === 0) return '';
   const lines = messages.map((m) =>
-    m.role === 'user' ? `Q: ${m.content}` : `A: ${m.content}`,
+    m.role === 'user' ? `Q: ${sanitizePromptInput(m.content)}` : `A: ${m.content}`,
   );
   return `\n[이전 대화]\n${lines.join('\n')}\n`;
 }
@@ -157,8 +171,8 @@ export function useQa() {
       const freshMessages = useAppStore.getState().qaMessages;
       const history = formatHistory(freshMessages.slice(0, -1)).slice(0, 4000);
 
-      // 프롬프트 조립: 컨텍스트 + 이력 + 질문
-      const promptText = `${context}${history}\n[질문]\n${trimmed}`;
+      // 프롬프트 조립: 컨텍스트 + 이력 + 질문 (사용자 입력 구분자 이스케이프)
+      const promptText = `${context}${history}\n[질문]\n${sanitizePromptInput(trimmed)}`;
 
       // AI 생성 요청
       const requestId = client.prepareSummarize();

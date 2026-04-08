@@ -348,7 +348,7 @@ export function useSummarize() {
           openai: 'OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
         };
         setError({ code: currentSettings.provider === 'ollama' ? 'OLLAMA_NOT_RUNNING' : 'API_KEY_MISSING', message: providerMessages[currentSettings.provider] });
-        setIsGenerating(false);
+        // 중복 cleanup 제거 — outer finally에서 setIsGenerating, flushStream 일괄 처리
         return;
       }
 
@@ -369,8 +369,7 @@ export function useSummarize() {
           enrichedPagesRef = enriched.enrichedPages;
         } catch (imgErr) {
           setError({ code: 'GENERATE_FAIL', message: (imgErr as Error).message });
-          setIsGenerating(false);
-          if (timeoutTimerRef.current) { clearTimeout(timeoutTimerRef.current); timeoutTimerRef.current = null; };
+          // 중복 cleanup 제거 — outer finally에서 flushStream, setIsGenerating, timeout 정리 일괄 처리
           return;
         }
       }
