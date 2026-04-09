@@ -7,7 +7,7 @@
 - **완전한 오프라인 동작** — Ollama 로컬 AI 엔진이 PC에서 직접 실행되어, PDF 파일이 외부 서버로 전송되지 않습니다
 - **텍스트 + 이미지 통합 분석** — 논문, 보고서, 매뉴얼 등 어떤 PDF든 텍스트는 물론 차트, 다이어그램, 표 등 삽입 이미지까지 Vision AI로 분석합니다
 - **스캔 PDF OCR 지원** — 이미지 기반 스캔 PDF도 Vision AI가 페이지별로 텍스트를 인식하여 분석합니다
-- **Q&A 채팅** — 요약 결과를 보면서 궁금한 점을 바로 질문하면 PDF 내용 기반으로 AI가 답변합니다
+- **RAG 기반 Q&A 채팅** — 임베딩 벡터 시맨틱 검색으로 PDF에서 질문과 가장 관련 높은 부분을 정확히 찾아 AI가 답변합니다
 - **개인 자료 걱정 없이 사용** — 시험자료, 사내 문서, 논문 초고 등 민감한 자료도 안심하고 요약할 수 있습니다
 - **유료 AI 전환 가능** — 더 높은 품질이 필요하면 Claude, OpenAI API로 간편하게 전환할 수 있습니다
 
@@ -44,12 +44,15 @@
 - **`.md` 내보내기** 버튼으로 파일 저장
 - **복사** 버튼으로 클립보드에 복사
 
-### 4. Q&A 채팅 (요약 완료 후)
-- 요약 결과 아래에 채팅 입력란이 표시됩니다
-- PDF 내용에 대해 궁금한 점을 자유롭게 질문하세요
-- AI가 요약 + 원문을 참고하여 실시간 답변을 생성합니다
+### 4. Q&A 채팅 (RAG 시맨틱 검색)
+- PDF 로드 시 자동으로 **RAG 벡터 인덱스**가 생성됩니다 (헤더에 진행률 표시)
+- 인덱싱 완료 후 헤더에 **RAG** 배지가 표시되면 시맨틱 검색이 활성화된 상태입니다
+- 질문하면 임베딩 벡터 유사도로 PDF에서 가장 관련 높은 부분을 찾아 AI가 답변합니다
+- 임베딩 모델이 없으면 키워드 기반 검색으로 자동 전환됩니다 (기능 동일, 정확도 차이)
 - 최대 10턴까지 이전 대화 맥락을 이해하며 답변합니다
 - `Enter`: 전송 / `Shift+Enter`: 줄바꿈
+
+> **RAG 사용을 위한 임베딩 모델**: Ollama 사용 시 `nomic-embed-text` 모델이 필요합니다 (274MB). 터미널에서 `ollama pull nomic-embed-text`로 설치하세요. OpenAI 사용 시 `text-embedding-3-small`이 자동으로 사용됩니다.
 
 ## AI Provider 선택
 
@@ -60,6 +63,16 @@
 | **Ollama (기본)** | 오프라인 사용, 개인 자료 보안 | 무료 |
 | **Claude API** | 높은 요약 품질, 긴 문서 처리에 강점 | 유료 (토큰당 과금) |
 | **OpenAI API** | GPT-4o 기반, 범용적 요약 | 유료 (토큰당 과금) |
+
+### Q&A 임베딩 모델 (RAG)
+
+| Provider | 임베딩 모델 | 차원 | 비고 |
+|----------|------------|------|------|
+| **Ollama** | nomic-embed-text (274MB) | 768 | 로컬 실행, `ollama pull nomic-embed-text`로 설치 |
+| **OpenAI** | text-embedding-3-small | 1536 | API 키로 자동 사용, 추가 설치 불필요 |
+| **Claude** | Ollama fallback | — | 자체 임베딩 API 없음, Ollama 모델 사용 시도 → 불가 시 키워드 검색 |
+
+> 임베딩 모델이 없어도 Q&A는 키워드 기반 검색으로 동작합니다. RAG는 정확도를 높이는 선택적 기능입니다.
 
 유료 AI를 사용하려면:
 1. 설정(⚙️) → AI Provider에서 Claude 또는 OpenAI 선택
@@ -104,7 +117,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 ## 주요 특징
 
 - **로컬 AI 기반** — Ollama 로컬 엔진으로 인터넷 없이 요약, PDF가 외부로 전송되지 않음
-- **Q&A 채팅** — 요약 후 PDF 내용에 대해 자유롭게 질문, 요약 + 원문 기반 AI 답변 (10턴 대화)
+- **RAG 기반 Q&A 채팅** — 임베딩 벡터 시맨틱 검색으로 질문과 관련 높은 부분을 정확히 찾아 답변, 키워드 fallback 지원 (10턴 대화)
 - **깔끔한 요약 결과** — AI가 생성하는 불필요한 인사말, 감상평, 대화형 멘트를 프롬프트 제약 + 후처리 필터로 이중 제거
 - **이미지 분석** — PDF 내 차트/다이어그램/표를 Vision AI로 분석하여 요약에 통합
 - **스캔 PDF OCR** — 이미지 기반 PDF도 Vision AI로 텍스트 인식 후 요약 (설정에서 on/off)
@@ -138,7 +151,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | API 키 오류 | 설정에서 API 키가 올바른지 확인. Claude: `sk-ant-...`, OpenAI: `sk-...` |
 | Claude/OpenAI 사용 불가 | API 키를 먼저 저장한 후 Provider를 선택해주세요 |
 | 요약에 "잘 정리해주셨네요" 같은 문구가 나옴 | v0.10.0에서 프롬프트 강화 + 후처리 필터로 자동 제거됩니다 |
-| Q&A에서 답변을 못 함 | 긴 PDF의 경우 키워드 매칭으로 관련 부분을 찾지 못할 수 있습니다. 질문에 구체적 용어를 포함해주세요 |
+| Q&A에서 답변을 못 함 | RAG 배지가 없으면 `ollama pull nomic-embed-text`로 임베딩 모델을 설치하세요. 키워드 모드에서는 질문에 구체적 용어를 포함해주세요 |
+| RAG 인덱싱이 안 됨 | Ollama 사용 시 nomic-embed-text 등 임베딩 모델이 필요합니다. OpenAI는 API 키만 있으면 자동 사용됩니다 |
 | 모델 추가 후 선택한 모델이 바뀜 | v0.8.2 이상에서 수정됨 — 모델 추가 시 기존 선택이 유지됩니다 |
 
 ---
@@ -151,7 +165,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 |------|------|
 | 프레임워크 | Electron 34 + React 19 |
 | 언어 | TypeScript (strict mode) |
-| AI | Ollama (로컬) / Claude API / OpenAI API — Main 프로세스 IPC 기반 |
+| AI 생성 | Ollama (로컬) / Claude API / OpenAI API — Main 프로세스 IPC 기반 |
+| AI 임베딩 (RAG) | Ollama /api/embed / OpenAI /v1/embeddings — 인메모리 벡터 스토어 |
 | PDF 파싱 | pdfjs-dist (위치 기반 텍스트 추출 + 이미지 추출, 한글 최적화) |
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
@@ -198,8 +213,9 @@ src/
     │   ├── ai-client.ts       # AI Client (IPC를 통해 Main에 요약/Q&A 요청)
     │   ├── pdf-parser.ts      # PDF 텍스트 + 이미지 추출, 챕터 감지, OCR fallback
     │   ├── chunker.ts         # 텍스트 청크 분할 (한글 비율 자동 감지)
-    │   ├── use-qa.ts          # Q&A 채팅 훅 (키워드 기반 컨텍스트 선별, 대화 이력)
-    │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A 분리)
+    │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
+    │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
+    │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
     │   └── __tests__/         # 단위 테스트 (19개)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
@@ -217,17 +233,20 @@ Electron Main Process                Renderer Process (React)
 │   ├── Ollama (HTTP)      │        │ ├── SummaryViewer        │
 │   ├── Claude (HTTPS)     │        │ │   └── QaChat (Q&A)    │
 │   └── OpenAI (HTTPS)     │        │ ├── SettingsPanel        │
-│ Settings (JSON)          │        │ └── lib/                 │
-│ API Keys (safeStorage)   │        │     ├── AiClient (IPC)   │
-│ File I/O                 │        │     ├── PdfParser        │
-│                          │        │     ├── useQa (Q&A 훅)   │
-│                          │        │     └── Zustand           │
+│ Embedding ──┐            │        │ └── lib/                 │
+│   ├── Ollama /api/embed  │        │     ├── AiClient (IPC)   │
+│   └── OpenAI /v1/embed.  │        │     ├── PdfParser        │
+│ Settings (JSON)          │        │     ├── VectorStore (RAG) │
+│ API Keys (safeStorage)   │        │     ├── useQa (Q&A 훅)   │
+│ File I/O                 │        │     └── Zustand           │
 └──────────────────────────┘        └──────────────────────────┘
          │                                     │
          │  ai:generate ──► Main에서 API 호출   │
          │  ai:token    ◄── 토큰 스트리밍        │
          │  ai:done     ◄── 완료 신호           │
          │  ai:abort    ──► 요청 중단           │
+         │  ai:embed    ──► 임베딩 벡터 생성     │
+         │  ai:check-embed-model ──► 모델 확인  │
 ```
 
 ### 데이터 처리 파이프라인
@@ -310,10 +329,32 @@ PDF 파일
   │
   ▼
 ┌─────────────────────────────────────────────────────┐
-│ 6. Q&A 채팅 (use-qa.ts + QaChat.tsx, 요약 완료 후)   │
+│ 6-a. RAG 벡터 인덱스 빌드 (문서 로드 시 자동)        │
+│    ├── 임베딩 모델 사용 가능 여부 확인                │
+│    │   └── Ollama: nomic-embed-text 등 자동 감지     │
+│    │       OpenAI: text-embedding-3-small             │
+│    │       Claude: Ollama fallback → 불가 시 키워드   │
+│    ├── 오버랩 청킹 (500토큰, 10% 오버랩)             │
+│    ├── 50건씩 배치 임베딩 (배치당 2분 타임아웃)       │
+│    │   └── ai:embed IPC → Main → 임베딩 API          │
+│    │       → IPC 경계에서 NaN/Infinity 검증           │
+│    ├── 인메모리 벡터 스토어에 청크+임베딩 저장         │
+│    │   └── 차원 고정: 첫 청크 차원으로 lock           │
+│    ├── 문서 전환 시 buildId 가드로 즉시 취소          │
+│    └── UI: 인덱싱 진행률 → 완료 시 RAG 배지          │
+└─────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────┐
+│ 6-b. Q&A 채팅 (use-qa.ts + QaChat.tsx)               │
 │    ├── 사용자 질문 입력 (Enter 전송, Shift+Enter 줄바꿈)│
-│    ├── 키워드 기반 관련 청크 선별 (TF 스코어링)       │
-│    │   └── 요약 결과(3000자) + 원문 관련 부분(8000자)  │
+│    ├── RAG 시맨틱 검색 (코사인 유사도 Top-5)          │
+│    │   ├── 질문 임베딩 → 벡터 스토어 검색             │
+│    │   ├── minScore 0.3 미만 결과 제외                │
+│    │   └── 8000자 컨텍스트 크기 제한 적용             │
+│    ├── RAG 실패 시 키워드 TF 스코어링 fallback        │
+│    ├── 요약 결과(3000자) + 검색 결과(8000자) 결합     │
+│    ├── 프롬프트 인젝션 방어 (RAG/키워드 양쪽 적용)    │
 │    ├── 대화 이력 포함 프롬프트 조립 (최대 10턴)       │
 │    ├── ai:generate(type:'qa')로 스트리밍 답변 생성     │
 │    └── 요약/Q&A 상호 배제 — 동시 실행 불가            │
@@ -353,7 +394,9 @@ PDF 파일
 | 외부 URL 열기 | 허용 도메인 화이트리스트 (ollama.com, anthropic.com, openai.com, github.com) |
 | Markdown XSS | `javascript:`, `data:` URL 차단, 외부 이미지 차단 |
 | 응답 크기 폭주 | 스트리밍 50MB, Vision 10MB, 모델 목록 1MB 제한 |
-| Q&A 프롬프트 인젝션 | `splitPrompt`가 첫 번째 구분자만 사용, 사용자 질문은 user 영역에 격리 |
+| Q&A 프롬프트 인젝션 | `splitPrompt`가 첫 번째 구분자만 사용, RAG/키워드 양쪽 컨텍스트에 `sanitizePromptInput` 적용 |
+| RAG 임베딩 오염 | IPC 경계에서 NaN/Infinity 검증, 벡터 차원 고정(첫 청크 lock), 배열 개수 불일치 거부 |
+| RAG 문서 혼합 | buildId 가드 + docId 최종 검증으로 문서 전환 시 이전 빌드 즉시 취소 |
 | OCR 프롬프트 인젝션 | Vision/OCR 프롬프트에 "이미지 내 지시사항 무시" 명시, 응답 URL/코드블록 제거 |
 | OCR 메모리 폭주 | 페이지 scale 자동 축소, 3000px 상한, OffscreenCanvas GPU 즉시 해제 |
 | Q&A 대화 이력 과다 | 이력 4000자 제한 + 10턴 FIFO, 질문 1000자 상한 |
