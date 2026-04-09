@@ -8,8 +8,10 @@ import type {
   AppError,
   QaMessage,
   ProgressInfo,
+  RagIndexState,
 } from '../types';
 import { DEFAULT_SETTINGS } from '../types';
+import { VectorStore } from './vector-store';
 
 // 설정 저장 IPC 디바운스 타이머
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -95,6 +97,11 @@ interface AppState {
   setQaRequestId: (id: string | null) => void;
   clearQa: () => void;
 
+  // RAG
+  ragIndex: VectorStore;
+  ragState: RagIndexState;
+  setRagState: (state: Partial<RagIndexState>) => void;
+
   // 설정
   settings: AppSettings;
   updateSettings: (settings: AppSettings) => void;
@@ -119,7 +126,18 @@ export const useAppStore = create<AppState>((set) => ({
   // PDF
   document: null,
   isParsing: false,
-  setDocument: (document) => set({ document }),
+  setDocument: (document) => {
+    if (!document) {
+      // 문서 닫기 시 RAG 인덱스 메모리 해제
+      useAppStore.getState().ragIndex.clear();
+      set({
+        document: null,
+        ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+      });
+    } else {
+      set({ document });
+    }
+  },
   setIsParsing: (isParsing) => set({ isParsing }),
 
   // 요약
@@ -173,6 +191,9 @@ export const useAppStore = create<AppState>((set) => ({
   resetSummaryState: () => {
     streamState.reset();
     qaStreamState.reset();
+    // RAG 인덱스 초기화
+    const { ragIndex } = useAppStore.getState();
+    ragIndex.clear();
     set({
       document: null,
       summaryStream: '',
@@ -186,6 +207,7 @@ export const useAppStore = create<AppState>((set) => ({
       isQaGenerating: false,
       qaRequestId: null,
       ocrProgress: null,
+      ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
     });
   },
 
@@ -242,6 +264,11 @@ export const useAppStore = create<AppState>((set) => ({
     qaStreamState.reset();
     set({ qaMessages: [], qaStream: '', isQaGenerating: false, qaRequestId: null });
   },
+
+  // RAG
+  ragIndex: new VectorStore(),
+  ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+  setRagState: (partial) => set((s) => ({ ragState: { ...s.ragState, ...partial } })),
 
   // 설정
   settings: DEFAULT_SETTINGS,

@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('ai:check-available', provider, ollamaBaseUrl),
     analyzeImage: (imageBase64: string) => ipcRenderer.invoke('ai:analyze-image', imageBase64),
     ocrPage: (imageBase64: string) => ipcRenderer.invoke('ai:ocr-page', imageBase64),
+    embed: (texts: string[]) => ipcRenderer.invoke('ai:embed', texts),
+    checkEmbedModel: () => ipcRenderer.invoke('ai:check-embed-model'),
     onToken: (callback: (requestId: string, token: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, requestId: string, token: string) =>
         callback(requestId, token);
@@ -94,6 +96,8 @@ export type ElectronAPI = {
     abort: (requestId: string) => Promise<{ success: boolean }>;
     analyzeImage: (imageBase64: string) => Promise<{ success: boolean; description?: string; error?: string }>;
     ocrPage: (imageBase64: string) => Promise<{ success: boolean; text?: string; error?: string }>;
+    embed: (texts: string[]) => Promise<{ success: boolean; embeddings?: number[][]; model?: string; error?: string }>;
+    checkEmbedModel: () => Promise<{ available: boolean; model?: string }>;
     checkAvailable: (provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) => Promise<boolean>;
     onToken: (callback: (requestId: string, token: string) => void) => () => void;
     onDone: (callback: (requestId: string) => void) => () => void;

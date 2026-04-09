@@ -54,6 +54,56 @@ export function chunkText(
 }
 
 /**
+ * RAG용 오버랩 청크 분할
+ * 작은 청크 + 10% 오버랩으로 검색 정확도 향상
+ */
+export function chunkTextWithOverlap(
+  text: string,
+  maxChunkSize: number = 500,
+  overlapRatio: number = 0.1,
+): string[] {
+  const charsPerToken = estimateCharsPerToken(text);
+  const maxChars = Math.max(200, Math.floor(maxChunkSize * charsPerToken));
+  const overlapChars = Math.floor(maxChars * overlapRatio);
+  // 오버랩을 포함한 실제 청크 한도 — 오버랩 추가로 인한 초과 방지
+  const effectiveMax = maxChars + overlapChars;
+
+  if (text.length <= maxChars) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  const paragraphs = text.split(/\n\n+/);
+  let current = '';
+  let prevTail = '';
+
+  for (const para of paragraphs) {
+    const candidate = current ? current + '\n\n' + para : para;
+
+    if (candidate.length > effectiveMax && current.length > 0) {
+      chunks.push(current.trim());
+      // overlapChars가 0이면 오버랩 없음 (slice(-0)은 전체 문자열을 반환하므로 방어)
+      prevTail = overlapChars > 0 ? current.slice(-overlapChars) : '';
+      current = prevTail ? prevTail + '\n\n' + para : para;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current.trim()) {
+    chunks.push(current.trim());
+  }
+
+  // 단일 단락이 effectiveMax를 초과하는 경우 강제 분할
+  const overflowRegex = new RegExp(`.{1,${effectiveMax}}`, 'gs');
+  return chunks.flatMap((chunk) =>
+    chunk.length > effectiveMax
+      ? (chunk.match(overflowRegex) || [chunk])
+      : [chunk],
+  );
+}
+
+/**
  * 챕터 배열을 청크로 분할
  */
 export function chunkChapters(

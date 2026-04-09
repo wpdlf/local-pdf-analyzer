@@ -112,6 +112,15 @@ export interface OllamaStatus {
   selectedModel?: string;
 }
 
+// RAG 인덱싱 상태
+export interface RagIndexState {
+  isIndexing: boolean;
+  progress: { current: number; total: number } | null;
+  isAvailable: boolean;  // 임베딩 모델 사용 가능 여부
+  model: string | null;  // 사용 중인 임베딩 모델
+  chunkCount: number;     // 인덱싱된 청크 수
+}
+
 // 에러 코드
 export type AppErrorCode =
   | 'PDF_PARSE_FAIL'

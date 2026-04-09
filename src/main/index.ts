@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
-import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, cleanupAiService } from './ai-service';
+import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService } from './ai-service';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -486,6 +486,61 @@ function registerIpcHandlers(): void {
       return { success: true, text };
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : 'OCR 실패' };
+    }
+  });
+
+  // ─── 임베딩 (RAG용) ───
+
+  ipcMain.handle('ai:embed', async (_event, texts: unknown) => {
+    if (!Array.isArray(texts) || texts.length === 0 || texts.length > 200) {
+      return { success: false, error: 'Invalid texts array (1-200 items)' };
+    }
+    for (const t of texts) {
+      if (typeof t !== 'string' || t.length === 0 || t.length > 32000) {
+        return { success: false, error: 'Each text must be 1-32000 chars' };
+      }
+    }
+    try {
+      const settings = await loadSettings();
+      const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
+      const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
+      const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
+      const result = await generateEmbeddings(texts, provider, ollamaBaseUrl, apiKey);
+      if (!result) {
+        return { success: false, error: '임베딩 생성 불가 (해당 프로바이더 미지원)' };
+      }
+      // IPC 경계에서 NaN/Infinity 검증 — 벡터 스토어 오염 방지
+      for (const emb of result.embeddings) {
+        if (!Array.isArray(emb) || emb.length === 0) {
+          return { success: false, error: '빈 임베딩 벡터' };
+        }
+        for (let k = 0; k < emb.length; k++) {
+          if (!Number.isFinite(emb[k])) {
+            return { success: false, error: '임베딩에 유효하지 않은 값 포함 (NaN/Infinity)' };
+          }
+        }
+      }
+      return { success: true, embeddings: result.embeddings, model: result.model };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : '임베딩 생성 실패' };
+    }
+  });
+
+  ipcMain.handle('ai:check-embed-model', async () => {
+    try {
+      const settings = await loadSettings();
+      const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
+      if (provider === 'openai') {
+        const apiKey = loadApiKey('openai');
+        return { available: !!apiKey, model: 'text-embedding-3-small' };
+      }
+      // Ollama or Claude (Ollama fallback)
+      const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
+      const installed = await ollamaManager.listModels();
+      const model = await checkEmbeddingAvailability(ollamaBaseUrl, installed);
+      return { available: !!model, model: model || undefined };
+    } catch {
+      return { available: false };
     }
   });
 

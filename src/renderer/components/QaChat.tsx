@@ -4,12 +4,12 @@ import { useQa } from '../lib/use-qa';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
 
 export function QaChat() {
-  const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating } = useQa();
+  const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, ragState } = useQa();
   const [input, setInput] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // 새 ��시지/스트리밍 시 자동 스크롤 (near-bottom 가드 + rAF로 jank 방지)
+  // 새 메시지/스트리밍 시 자동 스크롤 (near-bottom 가드 + rAF로 jank 방지)
   useEffect(() => {
     if (!chatEndRef.current) return;
     const container = chatEndRef.current.parentElement;
@@ -54,16 +54,28 @@ export function QaChat() {
   return (
     <div className="flex flex-col h-full border-t dark:border-gray-700">
       {/* 헤더 */}
-      <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b dark:border-gray-700">
+      <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b dark:border-gray-700 flex items-center justify-between">
         <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
           문서에 대해 질문하세요
         </span>
+        {ragState.isIndexing ? (
+          <span className="text-xs text-amber-500 flex items-center gap-1">
+            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            RAG 인덱싱{ragState.progress ? ` ${ragState.progress.current}/${ragState.progress.total}` : '...'}
+          </span>
+        ) : ragState.chunkCount > 0 ? (
+          <span className="text-xs text-green-500" title={`임베딩 모델: ${ragState.model || '?'} | ${ragState.chunkCount}개 청크`}>
+            RAG
+          </span>
+        ) : null}
       </div>
 
       {/* 빈 상태 안내 */}
       {qaMessages.length === 0 && !qaStream && (
         <div className="px-4 py-3 text-center text-sm text-gray-400 dark:text-gray-500">
-          요약된 내용이나 원문에 대해 궁금한 점을 질문해보세요
+          {ragState.chunkCount > 0
+            ? 'RAG 시맨틱 검색이 활성화되었습니다. 문서에 대해 질문해보세요.'
+            : '요약된 내용이나 원문에 대해 궁금한 점을 질문해보세요'}
         </div>
       )}
 

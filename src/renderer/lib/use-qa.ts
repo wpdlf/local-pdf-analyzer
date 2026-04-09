@@ -1,11 +1,16 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { AiClient } from './ai-client';
-import { chunkText } from './chunker';
+import { chunkText, chunkTextWithOverlap } from './chunker';
 import type { QaMessage } from '../types';
 
 const MAX_QUESTION_LENGTH = 1000;
 const MAX_QA_CONTEXT_CHARS = 8000;
+const RAG_CHUNK_SIZE = 500;       // RAG 청크 토큰 수 (작은 청크)
+const RAG_BATCH_SIZE = 50;        // 임베딩 배치 크기
+const RAG_TOP_K = 5;              // 검색 상위 K개 청크
+const RAG_MIN_SCORE = 0.3;        // 최소 유사도 점수
+const RAG_BATCH_TIMEOUT_MS = 120000; // 배치당 타임아웃 2분
 
 /**
  * 프롬프트 구분자 인젝션 방어: 사용자 입력에서 splitPrompt 구분자(---\n\n)와
@@ -42,7 +47,7 @@ function extractKeywords(question: string): string[] {
     .filter((w) => w.length >= 2 && !STOPWORDS.has(w));
 }
 
-/** 질문 키워드 기반 관련 청크 선별 (TF 스코어링) */
+/** 질문 키워드 기반 관련 청크 선별 (TF 스코어링) — RAG fallback용 */
 function selectRelevantChunks(
   question: string,
   fullText: string,
@@ -57,11 +62,9 @@ function selectRelevantChunks(
 
   const keywords = extractKeywords(question);
   if (keywords.length === 0) {
-    // 키워드 없으면 첫 + 마지막 청크 (서론 + 결론)
     return [chunks[0], chunks[chunks.length - 1]].join('\n\n').slice(0, MAX_QA_CONTEXT_CHARS);
   }
 
-  // 각 청크별 키워드 출현 빈도 합산 (split 카운팅 — RegExp 불필요)
   const scored = chunks.map((chunk, idx) => {
     const lower = chunk.toLowerCase();
     const score = keywords.reduce((sum, kw) =>
@@ -69,10 +72,8 @@ function selectRelevantChunks(
     return { chunk, score, idx };
   });
 
-  // 스코어 높은 순 정렬
   scored.sort((a, b) => b.score - a.score);
 
-  // maxChars 이내까지 청크 추가 (원본 순서 유지)
   const selected: { chunk: string; idx: number }[] = [];
   let totalLen = 0;
   for (const item of scored) {
@@ -82,12 +83,10 @@ function selectRelevantChunks(
     totalLen += item.chunk.length;
   }
 
-  // 매칭 없으면 fallback
   if (selected.length === 0) {
     return [chunks[0], chunks[chunks.length - 1]].join('\n\n').slice(0, MAX_QA_CONTEXT_CHARS);
   }
 
-  // 원본 순서로 정렬하여 문맥 유지
   selected.sort((a, b) => a.idx - b.idx);
   return selected.map((s) => s.chunk).join('\n\n');
 }
@@ -101,21 +100,187 @@ function formatHistory(messages: QaMessage[]): string {
   return `\n[이전 대화]\n${lines.join('\n')}\n`;
 }
 
+// ─── RAG 인덱스 빌드 ───
+
+// 동시 빌드 방지용 — 새 빌드 시작 시 이전 빌드를 무효화
+let activeBuildId: string | null = null;
+
+/** 배치 임베딩 호출 + 타임아웃 래퍼 */
+function embedWithTimeout(texts: string[]): Promise<{
+  success: boolean;
+  embeddings?: number[][];
+  model?: string;
+  error?: string;
+}> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({ success: false, error: 'RAG 임베딩 배치 타임아웃' });
+    }, RAG_BATCH_TIMEOUT_MS);
+
+    window.electronAPI.ai.embed(texts).then((result) => {
+      clearTimeout(timer);
+      resolve(result);
+    }).catch(() => {
+      clearTimeout(timer);
+      resolve({ success: false, error: '임베딩 요청 실패' });
+    });
+  });
+}
+
+/**
+ * 문서의 벡터 인덱스를 빌드.
+ * 임베딩 불가 시 false 반환 (keyword fallback 사용).
+ * docId를 통해 문서 전환 시 이전 빌드를 즉시 취소.
+ */
+async function buildRagIndex(extractedText: string, docId: string): Promise<boolean> {
+  const buildId = crypto.randomUUID();
+  activeBuildId = buildId;
+
+  const store = useAppStore.getState();
+
+  // 임베딩 모델 사용 가능 여부 확인
+  const embedCheck = await window.electronAPI.ai.checkEmbedModel();
+  if (!embedCheck.available) {
+    store.setRagState({ isAvailable: false, model: null });
+    return false;
+  }
+  // 빌드 도중 문서 전환 체크
+  if (activeBuildId !== buildId) return false;
+
+  // 오버랩 청킹
+  const chunks = chunkTextWithOverlap(extractedText, RAG_CHUNK_SIZE);
+  const total = chunks.length;
+
+  store.setRagState({
+    isIndexing: true,
+    isAvailable: true,
+    model: embedCheck.model || null,
+    progress: { current: 0, total },
+    chunkCount: 0,
+  });
+
+  const ragIndex = store.ragIndex;
+  ragIndex.clear();
+  if (embedCheck.model) ragIndex.setModel(embedCheck.model);
+
+  try {
+    // 배치 임베딩
+    for (let i = 0; i < chunks.length; i += RAG_BATCH_SIZE) {
+      // 문서 전환 체크 — 이전 빌드 즉시 중단
+      if (activeBuildId !== buildId) {
+        ragIndex.clear();
+        return false;
+      }
+
+      const batch = chunks.slice(i, i + RAG_BATCH_SIZE);
+      const result = await embedWithTimeout(batch);
+
+      // 빌드 도중 문서 전환 재확인
+      if (activeBuildId !== buildId) {
+        ragIndex.clear();
+        return false;
+      }
+
+      if (!result.success || !result.embeddings) {
+        ragIndex.clear();
+        store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null });
+        return false;
+      }
+
+      // 임베딩 개수 검증 — API가 부분 결과를 반환한 경우 방어
+      if (result.embeddings.length !== batch.length) {
+        ragIndex.clear();
+        store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null });
+        return false;
+      }
+
+      for (let j = 0; j < result.embeddings.length; j++) {
+        ragIndex.addChunk(batch[j], result.embeddings[j], i + j);
+      }
+
+      store.setRagState({ progress: { current: Math.min(i + RAG_BATCH_SIZE, total), total } });
+    }
+
+    // 최종 문서 일치 확인
+    if (activeBuildId !== buildId || useAppStore.getState().document?.id !== docId) {
+      ragIndex.clear();
+      return false;
+    }
+
+    store.setRagState({
+      isIndexing: false,
+      chunkCount: ragIndex.size,
+      progress: null,
+    });
+    return true;
+  } catch {
+    ragIndex.clear();
+    store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null });
+    return false;
+  }
+}
+
+/**
+ * RAG 시맨틱 검색으로 관련 컨텍스트 추출.
+ * 질문을 임베딩하고 벡터 스토어에서 유사 청크 검색.
+ */
+async function ragSearch(question: string): Promise<string | null> {
+  const ragIndex = useAppStore.getState().ragIndex;
+  if (ragIndex.size === 0) return null;
+
+  try {
+    const result = await window.electronAPI.ai.embed([question]);
+    if (!result.success || !result.embeddings || result.embeddings.length === 0) {
+      return null;
+    }
+
+    const queryEmbedding = result.embeddings[0];
+    const results = ragIndex.search(queryEmbedding, RAG_TOP_K, RAG_MIN_SCORE);
+
+    if (results.length === 0) return null;
+
+    // 원본 순서로 정렬하여 문맥 흐름 유지
+    results.sort((a, b) => a.index - b.index);
+    return results.map((r) => r.text).join('\n\n');
+  } catch {
+    return null;
+  }
+}
+
+// ─── Hook ───
+
 export function useQa() {
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
   const qaMessages = useAppStore((s) => s.qaMessages);
   const qaStream = useAppStore((s) => s.qaStream);
+  const ragState = useAppStore((s) => s.ragState);
   const clientRef = useRef<AiClient | null>(null);
-  // abort/완료 레이스 컨디션 방지: 양쪽 경로에서 동시에 addQaMessage 호출되지 않도록 보호
   const abortedRef = useRef(false);
 
-  // 언마운트 시 정리
   useEffect(() => {
     return () => {
       const reqId = useAppStore.getState().qaRequestId;
       if (reqId) window.electronAPI.ai.abort(reqId);
     };
   }, []);
+
+  // 문서 로드 시 RAG 인덱스 자동 빌드
+  const document = useAppStore((s) => s.document);
+  const prevDocIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!document || document.id === prevDocIdRef.current) return;
+    prevDocIdRef.current = document.id;
+    const docId = document.id;
+
+    // 이전 인덱스 즉시 초기화 (다른 문서의 인덱스가 남아있지 않도록)
+    const store = useAppStore.getState();
+    store.ragIndex.clear();
+    store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, model: null });
+
+    // 비동기로 인덱스 빌드 (UI 블로킹 없음)
+    buildRagIndex(document.extractedText, docId);
+  }, [document]);
 
   const handleQaAbort = useCallback(() => {
     abortedRef.current = true;
@@ -124,7 +289,6 @@ export function useQa() {
     clientRef.current = null;
     const store = useAppStore.getState();
     store.flushQaStream();
-    // 스트리밍 중이던 답변을 메시지에 추가
     const partial = useAppStore.getState().qaStream;
     if (partial) {
       store.addQaMessage({ role: 'assistant', content: partial });
@@ -134,7 +298,6 @@ export function useQa() {
     store.setQaRequestId(null);
   }, []);
 
-  // deps=[] 의도적: 모든 상태를 useAppStore.getState()로 명령적 읽기하므로 클로저 캡처 불필요
   const handleAsk = useCallback(async (question: string) => {
     const trimmed = question.trim();
     if (!trimmed || trimmed.length > MAX_QUESTION_LENGTH) return;
@@ -145,7 +308,6 @@ export function useQa() {
     const settings = state.settings;
     const doc = state.document;
 
-    // 질문 메시지 추가
     abortedRef.current = false;
     state.addQaMessage({ role: 'user', content: trimmed });
     state.setIsQaGenerating(true);
@@ -156,25 +318,30 @@ export function useQa() {
       const client = new AiClient(settings);
       clientRef.current = client;
 
-      // 요약 결과를 우선 컨텍스트로 포함 — stale 방지를 위해 최신 상태에서 읽기
+      // 요약 결과를 우선 컨텍스트로 포함
       const summaryText = useAppStore.getState().summaryStream || '';
-      // 원본 PDF에서 관련 청크 추가 선별
-      const relevantChunks = selectRelevantChunks(trimmed, doc.extractedText, settings.maxChunkSize);
-      // 요약 + 원본 관련 부분 결합 (중복은 AI가 자연스럽게 처리)
+
+      // RAG 시맨틱 검색 시도 → 실패 시 키워드 기반 fallback
+      let relevantChunks: string;
+      const ragResult = await ragSearch(trimmed);
+      if (ragResult) {
+        relevantChunks = ragResult;
+      } else {
+        relevantChunks = selectRelevantChunks(trimmed, doc.extractedText, settings.maxChunkSize);
+      }
+      // PDF 원문 컨텍스트에 프롬프트 인젝션 방어 적용 (RAG/키워드 양쪽 모두)
+      relevantChunks = sanitizePromptInput(relevantChunks);
+
       const contextParts = [];
       if (summaryText) contextParts.push(`[요약 내용]\n${summaryText.slice(0, 3000)}`);
       contextParts.push(`[원문 관련 부분]\n${relevantChunks}`);
       const context = contextParts.join('\n\n');
 
-      // 대화 이력: async 경계 이후 최신 상태에서 읽어 stale 참조 방지
-      // 마지막 항목(방금 추가한 현재 질문)은 제외 — [질문] 섹션에서 별도 포함됨
       const freshMessages = useAppStore.getState().qaMessages;
       const history = formatHistory(freshMessages.slice(0, -1)).slice(0, 4000);
 
-      // 프롬프트 조립: 컨텍스트 + 이력 + 질문 (사용자 입력 구분자 이스케이프)
       const promptText = `${context}${history}\n[질문]\n${sanitizePromptInput(trimmed)}`;
 
-      // AI 생성 요청
       const requestId = client.prepareSummarize();
       useAppStore.getState().setQaRequestId(requestId);
 
@@ -185,8 +352,6 @@ export function useQa() {
         answer += token;
       }
 
-      // abort되지 않은 경우에만 완성된 답변 추가 (abort 시 handleQaAbort에서 partial 추가됨)
-      // abortedRef를 단일 가드로 사용하여 TOCTOU 레이스 방지
       if (!abortedRef.current) {
         useAppStore.getState().flushQaStream();
         useAppStore.getState().clearQaStream();
@@ -203,7 +368,6 @@ export function useQa() {
       });
     } finally {
       clientRef.current = null;
-      // 성공/abort 경로에서 이미 처리된 경우 중복 flush 방지
       if (!completed && !abortedRef.current) {
         useAppStore.getState().flushQaStream();
         useAppStore.getState().clearQaStream();
@@ -213,5 +377,5 @@ export function useQa() {
     }
   }, []);
 
-  return { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating };
+  return { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, ragState };
 }

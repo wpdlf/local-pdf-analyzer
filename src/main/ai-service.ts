@@ -646,6 +646,108 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
   });
 }
 
+// ─── 임베딩 생성 (RAG용) ───
+
+/** Ollama 임베딩 모델 목록 (우선순위순) */
+const OLLAMA_EMBED_MODELS = ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm', 'snowflake-arctic-embed'];
+
+export interface EmbeddingResult {
+  embeddings: number[][];
+  model: string;
+  provider: 'ollama' | 'openai';
+}
+
+/**
+ * 텍스트 배열의 임베딩 벡터 생성.
+ * Claude는 임베딩 API가 없으므로 Ollama fallback → 불가 시 null 반환.
+ */
+export async function generateEmbeddings(
+  texts: string[],
+  provider: 'ollama' | 'claude' | 'openai',
+  ollamaBaseUrl: string,
+  apiKey: string | undefined,
+  embeddingModel?: string,
+): Promise<EmbeddingResult | null> {
+  // Claude → Ollama fallback 시도
+  if (provider === 'claude') {
+    try {
+      return await embedOllama(texts, ollamaBaseUrl, embeddingModel);
+    } catch {
+      return null; // Ollama도 불가 → keyword fallback
+    }
+  }
+
+  if (provider === 'ollama') {
+    return embedOllama(texts, ollamaBaseUrl, embeddingModel);
+  }
+
+  if (provider === 'openai') {
+    if (!apiKey) return null;
+    return embedOpenAi(texts, apiKey, embeddingModel);
+  }
+
+  return null;
+}
+
+async function embedOllama(
+  texts: string[],
+  ollamaBaseUrl: string,
+  model?: string,
+): Promise<EmbeddingResult> {
+  validateOllamaUrl(ollamaBaseUrl);
+  const url = new URL('/api/embed', ollamaBaseUrl);
+  const useModel = model || OLLAMA_EMBED_MODELS[0];
+  const body = JSON.stringify({ model: useModel, input: texts });
+  const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, 120000);
+  const parsed = JSON.parse(result);
+  if (!parsed.embeddings || !Array.isArray(parsed.embeddings)) {
+    throw new Error('Ollama 임베딩 응답 형식 오류');
+  }
+  if (parsed.embeddings.length !== texts.length) {
+    throw new Error(`Ollama 임베딩 개수 불일치: expected ${texts.length}, got ${parsed.embeddings.length}`);
+  }
+  return { embeddings: parsed.embeddings, model: useModel, provider: 'ollama' };
+}
+
+async function embedOpenAi(
+  texts: string[],
+  apiKey: string,
+  model?: string,
+): Promise<EmbeddingResult> {
+  const useModel = model || 'text-embedding-3-small';
+  const body = JSON.stringify({ model: useModel, input: texts });
+  const result = await httpPost('https://api.openai.com/v1/embeddings', {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`,
+  }, body, 60000);
+  const parsed = JSON.parse(result);
+  if (!parsed.data || !Array.isArray(parsed.data)) {
+    throw new Error('OpenAI 임베딩 응답 형식 오류');
+  }
+  if (parsed.data.length !== texts.length) {
+    throw new Error(`OpenAI 임베딩 개수 불일치: expected ${texts.length}, got ${parsed.data.length}`);
+  }
+  // index 순서대로 정렬
+  const sorted = parsed.data.sort((a: { index: number }, b: { index: number }) => a.index - b.index);
+  return {
+    embeddings: sorted.map((d: { embedding: number[] }) => d.embedding),
+    model: useModel,
+    provider: 'openai',
+  };
+}
+
+/** 사용 가능한 임베딩 모델 확인 (Ollama 전용) */
+export async function checkEmbeddingAvailability(
+  _ollamaBaseUrl: string,
+  installedModels: string[],
+): Promise<string | null> {
+  for (const model of OLLAMA_EMBED_MODELS) {
+    const found = installedModels.find((m) => m.startsWith(model));
+    if (found) return found;
+  }
+  return null;
+}
+
 // ─── 프롬프트 분리 (시스템 지시 / 사용자 입력) ───
 
 function splitPrompt(prompt: string): { system: string; user: string } {
