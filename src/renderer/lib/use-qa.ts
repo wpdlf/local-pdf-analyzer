@@ -241,7 +241,16 @@ async function ragSearch(question: string): Promise<string | null> {
 
     // 원본 순서로 정렬하여 문맥 흐름 유지
     results.sort((a, b) => a.index - b.index);
-    return results.map((r) => r.text).join('\n\n');
+
+    // 키워드 경로와 동일한 컨텍스트 크기 제한 적용
+    const parts: string[] = [];
+    let totalLen = 0;
+    for (const r of results) {
+      if (totalLen + r.text.length > MAX_QA_CONTEXT_CHARS) break;
+      parts.push(r.text);
+      totalLen += r.text.length;
+    }
+    return parts.join('\n\n');
   } catch {
     return null;
   }
