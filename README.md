@@ -1,3 +1,5 @@
+🌐 **한국어** | [English](README.en.md)
+
 # 📄 로컬 AI PDF 분석기 (Local AI PDF Analyzer)
 
 **개인 PC에서 직접 실행되는 로컬 AI 기반 PDF 요약 도구입니다.**
