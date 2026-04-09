@@ -148,7 +148,7 @@ export interface AppError {
 export const KOREAN_RECOMMENDED_MODELS = ['gemma3', 'qwen2.5', 'exaone3.5'];
 
 // 초기 설치 시 함께 다운로드할 모델 (한국어 PDF 요약 특화)
-export const INITIAL_INSTALL_MODELS = ['gemma3', 'exaone3.5'] as const;
+export const INITIAL_INSTALL_MODELS = ['gemma3', 'exaone3.5', 'nomic-embed-text'] as const;
 
 // 기본 설정값
 export const DEFAULT_SETTINGS: AppSettings = {

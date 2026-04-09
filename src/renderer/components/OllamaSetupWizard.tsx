@@ -22,7 +22,10 @@ export function OllamaSetupWizard() {
   const [items, setItems] = useState<SetupItem[]>([
     { label: 'Ollama 설치 확인', status: 'pending' },
     { label: 'Ollama 서비스 시작', status: 'pending' },
-    ...INITIAL_INSTALL_MODELS.map((m) => ({ label: `한국어 AI 모델 다운로드 (${m})`, status: 'pending' as const })),
+    ...INITIAL_INSTALL_MODELS.map((m) => ({
+      label: m === 'nomic-embed-text' ? `RAG 임베딩 모델 다운로드 (${m})` : `한국어 AI 모델 다운로드 (${m})`,
+      status: 'pending' as const,
+    })),
   ]);
 
   // main process에서 보내는 진행 상태 수신
