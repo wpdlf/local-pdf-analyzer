@@ -64,6 +64,13 @@ export interface ProgressInfo {
 // 요약 유형
 export type SummaryType = 'full' | 'chapter' | 'keywords' | 'qa';
 
+// 앱 UI 언어
+export type UiLanguage = 'ko' | 'en';
+export const UI_LANGUAGES: { value: UiLanguage; label: string }[] = [
+  { value: 'ko', label: '한국어' },
+  { value: 'en', label: 'English' },
+];
+
 // 요약 출력 언어
 export type SummaryLanguage = 'ko' | 'en' | 'ja' | 'zh' | 'auto';
 export const SUMMARY_LANGUAGES: { value: SummaryLanguage; label: string }[] = [
@@ -83,6 +90,7 @@ export interface AppSettings {
   model: string;
   ollamaBaseUrl: string;
   theme: 'light' | 'dark' | 'system';
+  uiLanguage: UiLanguage;
   defaultSummaryType: SummaryType;
   maxChunkSize: number;
   enableImageAnalysis: boolean;
@@ -156,6 +164,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   model: 'gemma3',
   ollamaBaseUrl: 'http://localhost:11434',
   theme: 'system',
+  uiLanguage: 'ko',
   defaultSummaryType: 'full',
   maxChunkSize: 4000,
   enableImageAnalysis: true,

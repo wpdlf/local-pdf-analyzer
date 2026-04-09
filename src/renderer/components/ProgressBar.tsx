@@ -1,4 +1,5 @@
 import type { ProgressInfo } from '../types';
+import { t } from '../lib/i18n';
 
 interface ProgressBarProps {
   progress: number;
@@ -8,36 +9,38 @@ interface ProgressBarProps {
 
 function formatTime(ms: number): string {
   const seconds = Math.ceil(ms / 1000);
-  if (seconds < 60) return `${seconds}초`;
+  if (seconds < 60) return t('progress.seconds', { s: seconds });
   const minutes = Math.floor(seconds / 60);
   const remaining = seconds % 60;
-  return remaining > 0 ? `${minutes}분 ${remaining}초` : `${minutes}분`;
+  return remaining > 0
+    ? t('progress.minutes', { m: minutes, s: remaining })
+    : t('progress.minutesOnly', { m: minutes });
 }
 
 function getPhaseLabel(info: ProgressInfo): string {
   switch (info.phase) {
     case 'image':
-      return '이미지 분석 중';
+      return t('progress.imagePhase');
     case 'integrate':
-      return '통합 요약 생성 중';
+      return t('progress.integratePhase');
     case 'summarize':
       if (info.chapterName) {
-        return `${info.current}/${info.total} 섹션 — ${info.chapterName}`;
+        return t('progress.chapterPhase', { current: info.current, total: info.total, name: info.chapterName });
       }
       return info.total > 1
-        ? `${info.current}/${info.total} 섹션 처리 중`
-        : '요약 생성 중';
+        ? t('progress.sectionPhase', { current: info.current, total: info.total })
+        : t('progress.summarizing');
   }
 }
 
 export function ProgressBar({ progress, progressInfo, label }: ProgressBarProps) {
   const safeProgress = Math.min(100, Math.max(0, progress || 0));
 
-  const displayLabel = label || (progressInfo ? getPhaseLabel(progressInfo) : `${Math.round(safeProgress)}% 처리 중...`);
+  const displayLabel = label || (progressInfo ? getPhaseLabel(progressInfo) : t('progress.processing', { percent: Math.round(safeProgress) }));
   const timeLabel = progressInfo?.estimatedRemainingMs && progressInfo.estimatedRemainingMs > 2000
-    ? `약 ${formatTime(progressInfo.estimatedRemainingMs)} 남음`
+    ? t('progress.remaining', { time: formatTime(progressInfo.estimatedRemainingMs) })
     : progressInfo && progressInfo.elapsedMs > 3000
-      ? `${formatTime(progressInfo.elapsedMs)} 경과`
+      ? t('progress.elapsed', { time: formatTime(progressInfo.elapsedMs) })
       : null;
 
   return (

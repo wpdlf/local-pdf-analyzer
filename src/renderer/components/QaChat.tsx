@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useQa } from '../lib/use-qa';
+import { useT } from '../lib/i18n';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
 
 export function QaChat() {
   const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, ragState } = useQa();
+  const t = useT();
   const [input, setInput] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -29,19 +31,17 @@ export function QaChat() {
     if (!trimmed || isQaGenerating) return;
     if (trimmed.length > MAX_QUESTION_LENGTH) return;
     setInput('');
-    // 높이 리셋
     if (inputRef.current) inputRef.current.style.height = 'auto';
     handleAsk(trimmed);
   };
 
   const isOverLimit = input.trim().length > MAX_QUESTION_LENGTH;
 
-  // textarea 자동 높이 조절 (최대 6줄)
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     const el = e.target;
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 144) + 'px'; // 144px ≈ 6줄
+    el.style.height = Math.min(el.scrollHeight, 144) + 'px';
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -56,15 +56,15 @@ export function QaChat() {
       {/* 헤더 */}
       <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b dark:border-gray-700 flex items-center justify-between">
         <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
-          문서에 대해 질문하세요
+          {t('qa.header')}
         </span>
         {ragState.isIndexing ? (
           <span className="text-xs text-amber-500 flex items-center gap-1">
             <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-            RAG 인덱싱{ragState.progress ? ` ${ragState.progress.current}/${ragState.progress.total}` : '...'}
+            {t('qa.indexing')}{ragState.progress ? ` ${ragState.progress.current}/${ragState.progress.total}` : '...'}
           </span>
         ) : ragState.chunkCount > 0 ? (
-          <span className="text-xs text-green-500" title={`임베딩 모델: ${ragState.model || '?'} | ${ragState.chunkCount}개 청크`}>
+          <span className="text-xs text-green-500" title={t('qa.chunkTooltip', { model: ragState.model || '?', count: ragState.chunkCount })}>
             RAG
           </span>
         ) : null}
@@ -73,13 +73,11 @@ export function QaChat() {
       {/* 빈 상태 안내 */}
       {qaMessages.length === 0 && !qaStream && (
         <div className="px-4 py-3 text-center text-sm text-gray-400 dark:text-gray-500">
-          {ragState.chunkCount > 0
-            ? 'RAG 시맨틱 검색이 활성화되었습니다. 문서에 대해 질문해보세요.'
-            : '요약된 내용이나 원문에 대해 궁금한 점을 질문해보세요'}
+          {ragState.chunkCount > 0 ? t('qa.ragActive') : t('qa.emptyHint')}
         </div>
       )}
 
-      {/* 대화 목록 — flex-1로 남은 공간 차지, 스크롤 */}
+      {/* 대화 목록 */}
       {(qaMessages.length > 0 || qaStream) && (
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-3">
           {qaMessages.map((msg) => (
@@ -100,7 +98,6 @@ export function QaChat() {
             </div>
           ))}
 
-          {/* 스트리밍 중인 답변 */}
           {qaStream && (
             <div className="flex justify-start">
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none">
@@ -111,11 +108,10 @@ export function QaChat() {
             </div>
           )}
 
-          {/* 생성 중 로딩 표시 */}
           {isQaGenerating && !qaStream && (
             <div className="flex justify-start">
               <div className="rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-400">
-                답변 생성 중...
+                {t('qa.generating')}
               </div>
             </div>
           )}
@@ -124,10 +120,9 @@ export function QaChat() {
         </div>
       )}
 
-      {/* 글자 수 초과 경고 */}
       {isOverLimit && (
         <div className="px-4 py-1 text-xs text-red-500">
-          질문은 {MAX_QUESTION_LENGTH}자까지 입력 가능합니다 ({input.trim().length}/{MAX_QUESTION_LENGTH})
+          {t('qa.charLimit', { max: MAX_QUESTION_LENGTH, current: input.trim().length })}
         </div>
       )}
 
@@ -138,28 +133,28 @@ export function QaChat() {
           value={input}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="질문을 입력하세요... (Enter: 전송, Shift+Enter: 줄바꿈)"
+          placeholder={t('qa.placeholder')}
           disabled={isQaGenerating}
           rows={1}
           className="flex-1 resize-none rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 placeholder:text-gray-400"
-          aria-label="질문 입력"
+          aria-label={t('qa.inputAria')}
         />
         {isQaGenerating ? (
           <button
             onClick={handleQaAbort}
             className="px-3 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shrink-0"
-            aria-label="답변 중지"
+            aria-label={t('qa.stopAria')}
           >
-            ■ 중지
+            {t('viewer.stopBtn')}
           </button>
         ) : (
           <button
             onClick={handleSubmit}
             disabled={!input.trim() || isOverLimit}
             className="px-3 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-            aria-label="질문 전송"
+            aria-label={t('qa.sendAria')}
           >
-            전송
+            {t('common.send')}
           </button>
         )}
       </div>

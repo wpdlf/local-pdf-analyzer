@@ -1,11 +1,13 @@
 import { useCallback, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
+import { useT } from '../lib/i18n';
 import { handlePdfData } from '../lib/pdf-parser';
 
 export function PdfUploader() {
   const setError = useAppStore((s) => s.setError);
   const isParsing = useAppStore((s) => s.isParsing);
   const ocrProgress = useAppStore((s) => s.ocrProgress);
+  const t = useT();
   const [isDragging, setIsDragging] = useState(false);
   const dialogOpenRef = useRef(false);
 
@@ -15,14 +17,14 @@ export function PdfUploader() {
       if (file.size > MAX_FILE_SIZE) {
         setError({
           code: 'PDF_PARSE_FAIL',
-          message: `파일이 너무 큽니다 (${Math.round(file.size / 1024 / 1024)}MB). 최대 100MB까지 지원합니다.`,
+          message: t('uploader.fileTooLarge', { size: Math.round(file.size / 1024 / 1024) }),
         });
         return;
       }
       const buffer = await file.arrayBuffer();
       await handlePdfData(buffer, file.name, file.name);
     },
-    [setError],
+    [setError, t],
   );
 
   const handleDrop = useCallback(
@@ -39,7 +41,7 @@ export function PdfUploader() {
   );
 
   const handleFileSelect = useCallback(async () => {
-    if (dialogOpenRef.current) return; // 더블클릭 시 다이얼로그 2회 오픈 방지
+    if (dialogOpenRef.current) return;
     dialogOpenRef.current = true;
     try {
       const result = await window.electronAPI.file.openPdf();
@@ -48,21 +50,20 @@ export function PdfUploader() {
         setError({ code: 'PDF_PARSE_FAIL', message: (result as { error: string }).error });
         return;
       }
-      // handlePdfData가 isParsing 상태를 관리
       await handlePdfData(result.data, result.name, result.path);
     } catch (err) {
       const error = err as Error & { code?: string };
-      setError({ code: (error.code as 'PDF_PARSE_FAIL') || 'PDF_PARSE_FAIL', message: error.message || 'PDF를 읽을 수 없습니다.' });
+      setError({ code: (error.code as 'PDF_PARSE_FAIL') || 'PDF_PARSE_FAIL', message: error.message || t('uploader.cannotRead') });
     } finally {
       dialogOpenRef.current = false;
     }
-  }, [setError]);
+  }, [setError, t]);
 
   return (
     <div
       role="button"
       tabIndex={0}
-      aria-label="PDF 파일 업로드"
+      aria-label={t('uploader.ariaLabel')}
       onDrop={handleDrop}
       onDragOver={(e) => {
         e.preventDefault();
@@ -96,12 +97,12 @@ export function PdfUploader() {
           {ocrProgress ? (
             <>
               <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
-                스캔 PDF 텍스트 인식 중...
+                {t('uploader.ocrProgress')}
               </p>
               <div className="w-full max-w-xs">
                 <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500 mb-1">
-                  <span>OCR 진행</span>
-                  <span>{ocrProgress.current} / {ocrProgress.total} 페이지</span>
+                  <span>{t('uploader.ocrLabel')}</span>
+                  <span>{ocrProgress.current} / {ocrProgress.total}</span>
                 </div>
                 <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                   <div
@@ -111,16 +112,16 @@ export function PdfUploader() {
                 </div>
               </div>
               <p className="text-xs text-gray-400 dark:text-gray-500">
-                Vision 모델로 텍스트를 추출하고 있습니다
+                {t('uploader.ocrDesc')}
               </p>
             </>
           ) : (
             <>
               <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
-                PDF를 읽고 있습니다...
+                {t('uploader.reading')}
               </p>
               <p className="text-sm text-gray-400 dark:text-gray-500">
-                잠시만 기다려주세요
+                {t('uploader.wait')}
               </p>
             </>
           )}
@@ -129,9 +130,9 @@ export function PdfUploader() {
         <>
           <div className="text-4xl mb-4">📄</div>
           <p className="text-lg font-medium text-gray-700 dark:text-gray-200">
-            PDF 파일을 여기에 드래그하거나
+            {t('uploader.dragDrop')}
           </p>
-          <p className="text-gray-500 dark:text-gray-400 mb-4">클릭하여 선택</p>
+          <p className="text-gray-500 dark:text-gray-400 mb-4">{t('uploader.clickSelect')}</p>
           <button
             type="button"
             className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
@@ -140,7 +141,7 @@ export function PdfUploader() {
               handleFileSelect();
             }}
           >
-            파일 선택
+            {t('uploader.selectFile')}
           </button>
         </>
       )}

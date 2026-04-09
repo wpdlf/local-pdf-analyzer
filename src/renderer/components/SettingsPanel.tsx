@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
+import { useT } from '../lib/i18n';
 import type { AppSettings, AiProviderType } from '../types';
-import { PROVIDER_MODELS } from '../types';
+import { PROVIDER_MODELS, UI_LANGUAGES } from '../types';
 import { applyTheme } from '../lib/theme';
 
 export function SettingsPanel() {
@@ -11,6 +12,7 @@ export function SettingsPanel() {
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
   const setView = useAppStore((s) => s.setView);
   const setError = useAppStore((s) => s.setError);
+  const t = useT();
 
   const [draft, setDraft] = useState<AppSettings>({ ...settings });
   const [ollamaModels, setOllamaModels] = useState<string[]>(ollamaStatus.models);
@@ -21,21 +23,18 @@ export function SettingsPanel() {
   const mountedRef = useRef(true);
   const [saved, setSaved] = useState(false);
 
-  // API 키 관련 상태
   const [claudeKey, setClaudeKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
   const [claudeKeyStored, setClaudeKeyStored] = useState(false);
   const [openaiKeyStored, setOpenaiKeyStored] = useState(false);
   const [keyMessage, setKeyMessage] = useState('');
 
-  // keyMessage 자동 해제 (cleanup 포함)
   useEffect(() => {
     if (!keyMessage) return;
     const timer = setTimeout(() => setKeyMessage(''), 2000);
     return () => clearTimeout(timer);
   }, [keyMessage]);
 
-  // saved 자동 해제 (cleanup 포함)
   useEffect(() => {
     if (!saved) return;
     const timer = setTimeout(() => setSaved(false), 2000);
@@ -46,7 +45,6 @@ export function SettingsPanel() {
     (key) => draft[key] !== settings[key],
   );
 
-  // unmount 시 진행 중인 pull 리스너 정리
   useEffect(() => {
     return () => {
       mountedRef.current = false;
@@ -56,17 +54,14 @@ export function SettingsPanel() {
 
   useEffect(() => {
     window.electronAPI.ollama.listModels().then(setOllamaModels).catch(() => {});
-    // 저장된 API 키 존재 여부 확인 (키 자체는 반환하지 않음)
     window.electronAPI.apiKey.has('claude').then(setClaudeKeyStored).catch(() => {});
     window.electronAPI.apiKey.has('openai').then(setOpenaiKeyStored).catch(() => {});
   }, []);
 
-  // 테마 미리보기
   useEffect(() => {
     return applyTheme(draft.theme);
   }, [draft.theme]);
 
-  // Provider 변경 시 모델 자동 선택 (ollamaModels 변경 시에는 리셋하지 않음)
   const prevProviderRef = useRef(draft.provider);
   useEffect(() => {
     const providerChanged = prevProviderRef.current !== draft.provider;
@@ -99,9 +94,9 @@ export function SettingsPanel() {
         setOpenaiKeyStored(true);
         setOpenaiKey('');
       }
-      setKeyMessage(`${provider === 'claude' ? 'Claude' : 'OpenAI'} API 키가 저장되었습니다.`);
+      setKeyMessage(t('settings.keySaved', { provider: provider === 'claude' ? 'Claude' : 'OpenAI' }));
     } catch {
-      setKeyMessage('API 키 저장에 실패했습니다. 다시 시도해주세요.');
+      setKeyMessage(t('settings.keySaveFail'));
     }
   };
 
@@ -115,31 +110,26 @@ export function SettingsPanel() {
         setOpenaiKeyStored(false);
         if (draft.provider === 'openai') updateDraft({ provider: 'ollama' });
       }
-      setKeyMessage('API 키가 삭제되었습니다.');
+      setKeyMessage(t('settings.keyDeleted'));
     } catch {
-      setKeyMessage('API 키 삭제에 실패했습니다. 다시 시도해주세요.');
+      setKeyMessage(t('settings.keyDeleteFail'));
     }
   };
 
   const handleSave = async () => {
-    // provider가 API 키 필요한 경우 키 존재 확인
     if (draft.provider === 'claude' && !claudeKeyStored) {
-      setKeyMessage('Claude API 키를 먼저 저장해주세요.');
+      setKeyMessage(t('settings.saveKeyFirst', { provider: 'Claude' }));
       return;
     }
     if (draft.provider === 'openai' && !openaiKeyStored) {
-      setKeyMessage('OpenAI API 키를 먼저 저장해주세요.');
+      setKeyMessage(t('settings.saveKeyFirst', { provider: 'OpenAI' }));
       return;
     }
-
-    // API 키는 Main 프로세스에서만 관리 — store에는 provider/model 등만 저장
     updateSettings(draft);
     setSaved(true);
   };
 
   const handleCancel = () => {
-    // draft 테마를 원래 설정으로 되돌림 → useEffect cleanup이 리스너 정리 담당
-    // applyTheme을 직접 호출하면 반환된 cleanup이 버려져 MediaQueryList 리스너 누수 발생
     setDraft((d) => ({ ...d, theme: settings.theme }));
     setView('main');
   };
@@ -147,7 +137,7 @@ export function SettingsPanel() {
   const handlePullModel = async () => {
     if (!pullModelName.trim()) return;
     setIsPulling(true);
-    setPullProgress('다운로드 준비 중...');
+    setPullProgress(t('setup.downloadReady'));
     const unsubscribe = window.electronAPI.onSetupProgress((message) => {
       if (mountedRef.current) setPullProgress(message);
     });
@@ -159,14 +149,13 @@ export function SettingsPanel() {
         const updated = await window.electronAPI.ollama.listModels();
         if (!mountedRef.current) return;
         setOllamaModels(updated);
-        // 글로벌 store도 갱신하여 StatusBar 등에서 즉시 반영
         const status = await window.electronAPI.ollama.getStatus();
         if (!mountedRef.current) return;
         setOllamaStatus(status);
         setPullModelName('');
         setPullProgress('');
       } else {
-        setPullProgress(result.error || '다운로드 실패');
+        setPullProgress(result.error || t('setup.modelDownloadFail', { model: pullModelName }));
       }
     } finally {
       unsubscribe();
@@ -182,17 +171,15 @@ export function SettingsPanel() {
       const status = await window.electronAPI.ollama.getStatus();
       setOllamaStatus(status);
     } catch {
-      setError({ code: 'OLLAMA_NOT_RUNNING', message: 'Ollama 재시작에 실패했습니다. 수동으로 시작해주세요.' });
+      setError({ code: 'OLLAMA_NOT_RUNNING', message: t('settings.restartFail') });
     }
   };
 
-  // 현재 provider에 맞는 모델 목록
   const modelOptions = (() => {
     if (draft.provider !== 'ollama') return PROVIDER_MODELS[draft.provider];
     const models = ollamaModels.map((m) => ({ label: m, value: m }));
-    // 현재 선택된 모델이 목록에 없으면 추가
     if (draft.model && !ollamaModels.includes(draft.model)) {
-      models.unshift({ label: `${draft.model} (미설치)`, value: draft.model });
+      models.unshift({ label: `${draft.model} (${t('settings.notInstalled')})`, value: draft.model });
     }
     return models;
   })();
@@ -200,27 +187,26 @@ export function SettingsPanel() {
   return (
     <div className="p-6 max-w-lg mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold text-gray-800 dark:text-white">설정</h2>
+        <h2 className="text-xl font-bold text-gray-800 dark:text-white">{t('settings.title')}</h2>
         <button onClick={handleCancel} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-          ✕ 닫기
+          ✕ {t('common.close')}
         </button>
       </div>
 
-      {/* 메시지 */}
       {keyMessage && (
         <div className="mb-4 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-sm text-blue-700 dark:text-blue-400 text-center">
           {keyMessage}
         </div>
       )}
 
-      {/* AI Provider 선택 */}
+      {/* AI Provider */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">AI Provider</h3>
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.provider')}</h3>
         <div className="space-y-2">
           {([
-            { value: 'ollama' as AiProviderType, label: 'Ollama (로컬, 무료)', desc: '인터넷 불필요, 개인 자료 보안' },
-            { value: 'claude' as AiProviderType, label: 'Claude API', desc: '높은 요약 품질, API 키 필요 (유료)' },
-            { value: 'openai' as AiProviderType, label: 'OpenAI API', desc: 'GPT-4o 기반 요약, API 키 필요 (유료)' },
+            { value: 'ollama' as AiProviderType, label: t('settings.ollamaLabel'), desc: t('settings.ollamaDesc') },
+            { value: 'claude' as AiProviderType, label: t('settings.claudeLabel'), desc: t('settings.claudeDesc') },
+            { value: 'openai' as AiProviderType, label: t('settings.openaiLabel'), desc: t('settings.openaiDesc') },
           ]).map((opt) => {
             const needsKey = opt.value !== 'ollama';
             const hasKey = opt.value === 'claude' ? claudeKeyStored : opt.value === 'openai' ? openaiKeyStored : true;
@@ -230,21 +216,11 @@ export function SettingsPanel() {
                   ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                   : 'border-transparent hover:bg-gray-100 dark:hover:bg-gray-700'
               }`}>
-                <input
-                  type="radio"
-                  name="provider"
-                  checked={draft.provider === opt.value}
-                  onChange={() => updateDraft({ provider: opt.value })}
-                  className="accent-blue-500 mt-0.5"
-                />
+                <input type="radio" name="provider" checked={draft.provider === opt.value} onChange={() => updateDraft({ provider: opt.value })} className="accent-blue-500 mt-0.5" />
                 <div>
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{opt.label}</span>
-                  {needsKey && !hasKey && (
-                    <span className="ml-2 text-xs text-orange-500">아래에서 API 키를 입력하세요</span>
-                  )}
-                  {needsKey && hasKey && (
-                    <span className="ml-2 text-xs text-green-500">키 등록됨</span>
-                  )}
+                  {needsKey && !hasKey && <span className="ml-2 text-xs text-orange-500">{t('settings.enterApiKey')}</span>}
+                  {needsKey && hasKey && <span className="ml-2 text-xs text-green-500">{t('settings.keyRegistered')}</span>}
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{opt.desc}</p>
                 </div>
               </label>
@@ -253,110 +229,70 @@ export function SettingsPanel() {
         </div>
       </section>
 
-      {/* 모델 선택 */}
+      {/* 모델 */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">모델</h3>
-        <select
-          value={draft.model}
-          onChange={(e) => updateDraft({ model: e.target.value })}
-          className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-        >
-          {modelOptions.map((m) => (
-            <option key={m.value} value={m.value}>{m.label}</option>
-          ))}
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.model')}</h3>
+        <select value={draft.model} onChange={(e) => updateDraft({ model: e.target.value })} className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+          {modelOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
-        {draft.provider !== 'ollama' && (
-          <p className="text-xs text-gray-500 mt-2">
-            API 사용량에 따라 요금이 부과됩니다.
-          </p>
-        )}
-        {draft.provider === 'ollama' && ollamaModels.length === 0 && (
-          <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-            Ollama에 설치된 모델이 없습니다. 아래에서 모델을 추가해주세요.
-          </p>
-        )}
-        {draft.provider === 'ollama' && ollamaModels.length > 0 && (
-          <p className="text-xs text-gray-500 mt-2">
-            한국어 요약에는 gemma3, qwen2.5 모델을 권장합니다.
-          </p>
-        )}
+        {draft.provider !== 'ollama' && <p className="text-xs text-gray-500 mt-2">{t('settings.apiBilling')}</p>}
+        {draft.provider === 'ollama' && ollamaModels.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">{t('settings.noModels')}</p>}
+        {draft.provider === 'ollama' && ollamaModels.length > 0 && <p className="text-xs text-gray-500 mt-2">{t('settings.modelRecommend')}</p>}
       </section>
 
       {/* API 키 관리 */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">API 키 관리</h3>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">API 키는 암호화되어 로컬에 저장됩니다.</p>
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.apiKeyMgmt')}</h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">{t('settings.apiKeyEncrypted')}</p>
 
-        {/* Claude API Key */}
         <div className="mb-4">
           <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
-            Claude API 키 {claudeKeyStored && <span className="text-green-500 ml-1">저장됨</span>}
+            Claude API {claudeKeyStored && <span className="text-green-500 ml-1">{t('common.saved')}</span>}
           </label>
           <div className="flex gap-2">
-            <input
-              type="password"
-              placeholder={claudeKeyStored ? '••••••••••••' : 'sk-ant-...'}
-              value={claudeKey}
-              onChange={(e) => setClaudeKey(e.target.value)}
-              className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-            />
+            <input type="password" placeholder={claudeKeyStored ? '••••••••••••' : 'sk-ant-...'} value={claudeKey} onChange={(e) => setClaudeKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
             {claudeKey ? (
-              <button onClick={() => handleSaveApiKey('claude')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">
-                저장
-              </button>
+              <button onClick={() => handleSaveApiKey('claude')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">{t('common.save')}</button>
             ) : claudeKeyStored ? (
-              <button onClick={() => handleDeleteApiKey('claude')} className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors">
-                삭제
-              </button>
+              <button onClick={() => handleDeleteApiKey('claude')} className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors">{t('common.delete')}</button>
             ) : null}
           </div>
         </div>
 
-        {/* OpenAI API Key */}
         <div>
           <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
-            OpenAI API 키 {openaiKeyStored && <span className="text-green-500 ml-1">저장됨</span>}
+            OpenAI API {openaiKeyStored && <span className="text-green-500 ml-1">{t('common.saved')}</span>}
           </label>
           <div className="flex gap-2">
-            <input
-              type="password"
-              placeholder={openaiKeyStored ? '••••••••••••' : 'sk-...'}
-              value={openaiKey}
-              onChange={(e) => setOpenaiKey(e.target.value)}
-              className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-            />
+            <input type="password" placeholder={openaiKeyStored ? '••••••••••••' : 'sk-...'} value={openaiKey} onChange={(e) => setOpenaiKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
             {openaiKey ? (
-              <button onClick={() => handleSaveApiKey('openai')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">
-                저장
-              </button>
+              <button onClick={() => handleSaveApiKey('openai')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">{t('common.save')}</button>
             ) : openaiKeyStored ? (
-              <button onClick={() => handleDeleteApiKey('openai')} className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors">
-                삭제
-              </button>
+              <button onClick={() => handleDeleteApiKey('openai')} className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors">{t('common.delete')}</button>
             ) : null}
           </div>
         </div>
       </section>
 
-      {/* Ollama 관리 (Ollama 선택 시에만) */}
+      {/* Ollama 관리 */}
       {draft.provider === 'ollama' && (
         <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">Ollama 관리</h3>
+          <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.ollamaMgmt')}</h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-            상태: {ollamaStatus.running ? '✅ Running' : '⚠️ 중지됨'}
+            {t('settings.ollamaStatus')}: {ollamaStatus.running ? t('settings.ollamaRunning') : t('settings.ollamaStopped')}
             {ollamaStatus.version && ` (${ollamaStatus.version})`}
           </p>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
-            설치된 모델: {ollamaModels.join(', ') || '없음'}
+            {t('settings.installedModels')}: {ollamaModels.join(', ') || t('common.none')}
           </p>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">추천 모델 (클릭하여 설치):</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('settings.recommendedModels')}</p>
           <div className="flex flex-wrap gap-1.5 mb-3">
             {[
-              { name: 'gemma3', desc: '한국어 우수' },
-              { name: 'qwen2.5', desc: '다국어 강점' },
-              { name: 'exaone3.5', desc: '한국어 특화' },
-              { name: 'llama3.2', desc: '범용 경량' },
-              { name: 'phi3', desc: '초경량' },
+              { name: 'gemma3', desc: t('settings.koreanGood') },
+              { name: 'qwen2.5', desc: t('settings.multilingual') },
+              { name: 'exaone3.5', desc: t('settings.koreanSpecial') },
+              { name: 'llama3.2', desc: t('settings.generalLight') },
+              { name: 'phi3', desc: t('settings.ultraLight') },
             ].filter((m) => !ollamaModels.some((om) => om.startsWith(m.name))).map((m) => (
               <button
                 key={m.name}
@@ -369,19 +305,9 @@ export function SettingsPanel() {
             ))}
           </div>
           <div className="flex gap-2 mb-3">
-            <input
-              type="text"
-              placeholder="모델명 (예: gemma3)"
-              value={pullModelName}
-              onChange={(e) => setPullModelName(e.target.value)}
-              className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-            />
-            <button
-              onClick={handlePullModel}
-              disabled={isPulling || !pullModelName.trim()}
-              className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 transition-colors"
-            >
-              {isPulling ? '다운로드 중...' : '모델 추가'}
+            <input type="text" placeholder={t('settings.modelPlaceholder')} value={pullModelName} onChange={(e) => setPullModelName(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+            <button onClick={handlePullModel} disabled={isPulling || !pullModelName.trim()} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 transition-colors">
+              {isPulling ? t('settings.downloading') : t('settings.addModel')}
             </button>
           </div>
           {isPulling && pullProgress && (
@@ -397,31 +323,39 @@ export function SettingsPanel() {
           )}
           <div className="flex gap-2">
             <button onClick={handleRestartOllama} className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
-              Ollama 재시작
+              {t('settings.restartOllama')}
             </button>
           </div>
           <div className="mt-3">
             <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Ollama URL</label>
-            <input
-              type="text"
-              value={draft.ollamaBaseUrl}
-              onChange={(e) => updateDraft({ ollamaBaseUrl: e.target.value })}
-              className="w-full px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-            />
+            <input type="text" value={draft.ollamaBaseUrl} onChange={(e) => updateDraft({ ollamaBaseUrl: e.target.value })} className="w-full px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
           </div>
         </section>
       )}
 
       {/* 테마 */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">테마</h3>
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.theme')}</h3>
         <div className="flex gap-4">
           {(['light', 'dark', 'system'] as const).map((theme) => (
             <label key={theme} className="flex items-center gap-1.5 cursor-pointer">
               <input type="radio" name="theme" checked={draft.theme === theme} onChange={() => updateDraft({ theme })} className="accent-blue-500" />
               <span className="text-sm text-gray-700 dark:text-gray-200">
-                {theme === 'light' ? '라이트' : theme === 'dark' ? '다크' : '시스템'}
+                {theme === 'light' ? t('settings.themeLight') : theme === 'dark' ? t('settings.themeDark') : t('settings.themeSystem')}
               </span>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      {/* 언어 */}
+      <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.language')}</h3>
+        <div className="flex gap-4">
+          {UI_LANGUAGES.map((lang) => (
+            <label key={lang.value} className="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" name="uiLanguage" checked={draft.uiLanguage === lang.value} onChange={() => updateDraft({ uiLanguage: lang.value })} className="accent-blue-500" />
+              <span className="text-sm text-gray-700 dark:text-gray-200">{lang.label}</span>
             </label>
           ))}
         </div>
@@ -429,59 +363,38 @@ export function SettingsPanel() {
 
       {/* 청크 크기 */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">청크 크기</h3>
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.chunkSize')}</h3>
         <div className="flex items-center gap-2">
-          <input
-            type="number"
-            value={draft.maxChunkSize}
-            onChange={(e) => { const v = Number(e.target.value); if (!isNaN(v) && v >= 1000 && v <= 16000) updateDraft({ maxChunkSize: v }); }}
-            min={1000} max={16000} step={500}
-            className="w-24 px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-          />
+          <input type="number" value={draft.maxChunkSize} onChange={(e) => { const v = Number(e.target.value); if (!isNaN(v) && v >= 1000 && v <= 16000) updateDraft({ maxChunkSize: v }); }} min={1000} max={16000} step={500} className="w-24 px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
           <span className="text-sm text-gray-500">tokens</span>
         </div>
       </section>
 
       {/* 이미지 분석 */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">이미지 분석</h3>
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.imageAnalysis')}</h3>
         <label className="flex items-center gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={draft.enableImageAnalysis}
-            onChange={(e) => updateDraft({ enableImageAnalysis: e.target.checked })}
-            className="w-4 h-4 rounded"
-          />
+          <input type="checkbox" checked={draft.enableImageAnalysis} onChange={(e) => updateDraft({ enableImageAnalysis: e.target.checked })} className="w-4 h-4 rounded" />
           <div>
-            <span className="text-sm text-gray-700 dark:text-gray-200">PDF 이미지 자동 분석</span>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-              Vision 지원 모델 필요 (llava, Claude, GPT-4o 등)
-            </p>
+            <span className="text-sm text-gray-700 dark:text-gray-200">{t('settings.imageAnalysisLabel')}</span>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('settings.imageAnalysisDesc')}</p>
           </div>
         </label>
       </section>
 
       {/* 스캔 PDF OCR */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">스캔 PDF OCR</h3>
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.ocrTitle')}</h3>
         <label className="flex items-center gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={draft.enableOcrFallback}
-            onChange={(e) => updateDraft({ enableOcrFallback: e.target.checked })}
-            className="w-4 h-4 rounded"
-          />
+          <input type="checkbox" checked={draft.enableOcrFallback} onChange={(e) => updateDraft({ enableOcrFallback: e.target.checked })} className="w-4 h-4 rounded" />
           <div>
-            <span className="text-sm text-gray-700 dark:text-gray-200">스캔 PDF 자동 텍스트 인식 (OCR)</span>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-              텍스트를 추출할 수 없는 스캔 PDF에서 Vision 모델로 텍스트를 인식합니다.
-              페이지 수에 따라 시간과 API 비용이 증가할 수 있습니다.
-            </p>
+            <span className="text-sm text-gray-700 dark:text-gray-200">{t('settings.ocrLabel')}</span>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('settings.ocrDesc')}</p>
           </div>
         </label>
       </section>
 
-      {/* 저장 버튼 */}
+      {/* 저장 */}
       <div className="flex items-center gap-3">
         <button
           onClick={handleSave}
@@ -492,7 +405,7 @@ export function SettingsPanel() {
               : 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
           }`}
         >
-          {saved ? '✅ 저장되었습니다' : hasChanges ? '설정 저장' : '변경 사항 없음'}
+          {saved ? t('settings.savedBtn') : hasChanges ? t('settings.saveBtn') : t('settings.noChanges')}
         </button>
       </div>
     </div>

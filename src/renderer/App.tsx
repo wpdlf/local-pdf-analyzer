@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from './lib/store';
 import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS } from './types';
+import { t } from './lib/i18n';
 import { PdfUploader } from './components/PdfUploader';
 import { SummaryViewer } from './components/SummaryViewer';
 import { SummaryTypeSelector } from './components/SummaryTypeSelector';
@@ -44,7 +45,7 @@ export default function App() {
 
       for (const model of missing) {
         if (aborted) return;
-        setBgModelSync(`기본 모델 다운로드 중: ${model}`);
+        setBgModelSync(t('app.downloadingModel', { model }));
         const result = await window.electronAPI.ollama.pullModel(model);
         if (aborted) return;
         if (!result.success) {
@@ -53,7 +54,7 @@ export default function App() {
             const partialStatus = await window.electronAPI.ollama.getStatus();
             if (!aborted) setOllamaStatus(partialStatus);
           } catch { /* 무시 */ }
-          setBgModelSync(`모델 다운로드 실패: ${model} — ${result.error || '네트워크를 확인해주세요'}`);
+          setBgModelSync(t('app.modelDownloadFail', { model, error: result.error || t('app.modelDownloadFailDefault') }));
           setTimeout(() => { if (!aborted) setBgModelSync(null); }, 5000);
           return;
         }
@@ -62,7 +63,7 @@ export default function App() {
       const updatedStatus = await window.electronAPI.ollama.getStatus();
       if (aborted) return;
       setOllamaStatus(updatedStatus);
-      setBgModelSync('기본 모델 설치 완료');
+      setBgModelSync(t('app.modelInstallDone'));
       setTimeout(() => { if (!aborted) setBgModelSync(null); }, 3000);
     };
 
@@ -167,7 +168,7 @@ export default function App() {
       );
       if (!isKoreanModel) {
         setModelHint(
-          `현재 모델(${settings.model})은 한국어 성능이 제한적일 수 있습니다. 설정에서 ${KOREAN_RECOMMENDED_MODELS.join(', ')} 등의 모델로 변경하면 요약 품질이 향상됩니다.`,
+          t('app.modelHint', { model: settings.model, recommended: KOREAN_RECOMMENDED_MODELS.join(', ') }),
         );
       } else {
         setModelHint(null);
@@ -198,16 +199,16 @@ export default function App() {
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b dark:border-gray-700">
         <h1 className="flex items-center gap-2 text-lg font-bold text-gray-800 dark:text-white">
-          <img src={logoImg} alt="로고" className="w-6 h-6 rounded" />
-          PDF 자료 분석기
+          <img src={logoImg} alt={t('app.logo')} className="w-6 h-6 rounded" />
+          {t('app.title')}
         </h1>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setView('settings')}
             disabled={isGenerating || isParsing}
             className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title={isGenerating ? '요약 중에는 설정을 열 수 없습니다' : '설정'}
-            aria-label="설정"
+            title={isGenerating ? t('app.settingsBlocked') : t('app.settings')}
+            aria-label={t('app.settings')}
           >
             ⚙️
           </button>
@@ -236,7 +237,7 @@ export default function App() {
             <button
               onClick={() => setError(null)}
               className="text-red-400 hover:text-red-600 dark:hover:text-red-300 ml-2 shrink-0"
-              aria-label="에러 닫기"
+              aria-label={t('app.closeError')}
             >
               ✕
             </button>
@@ -255,7 +256,7 @@ export default function App() {
             <button
               onClick={() => setModelHint(null)}
               className="text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 ml-2 shrink-0"
-              aria-label="닫기"
+              aria-label={t('common.close')}
             >
               ✕
             </button>
@@ -282,9 +283,9 @@ export default function App() {
                   setProgress(0);
                 }}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm"
-                aria-label="현재 파일 제거"
+                aria-label={t('app.removeFile')}
               >
-                ✕ 다른 파일
+                {t('app.otherFile')}
               </button>
             </div>
             <SummaryTypeSelector />
@@ -292,7 +293,7 @@ export default function App() {
               onClick={handleSummarize}
               className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-lg font-medium transition-colors"
             >
-              📝 요약 시작
+              {t('app.startSummary')}
             </button>
           </div>
         )}

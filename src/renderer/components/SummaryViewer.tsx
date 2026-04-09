@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useAppStore } from '../lib/store';
+import { useT } from '../lib/i18n';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
 import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
@@ -16,13 +17,12 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const progress = useAppStore((s) => s.progress);
   const progressInfo = useAppStore((s) => s.progressInfo);
   const setError = useAppStore((s) => s.setError);
+  const t = useT();
 
-  // 스트리밍 중 Markdown 렌더링 debounce (150ms, useRef 기반 — GC 부하 감소)
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const contentRef = useRef<HTMLDivElement>(null);
 
-  // 언마운트 시 타이머 확실히 정리 (deps 변경과 독립적)
   useEffect(() => {
     return () => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = undefined; } };
   }, []);
@@ -43,7 +43,6 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
     };
   }, [summaryStream, isGenerating]);
 
-  // 스트리밍 중 자동 스크롤 (사용자가 위로 스크롤한 경우 강제 이동하지 않음)
   useEffect(() => {
     if (isGenerating && contentRef.current) {
       const el = contentRef.current;
@@ -56,33 +55,30 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
 
   const handleClose = () => {
     const store = useAppStore.getState();
-    // 요약 중이면 useSummarize의 handleAbort를 통해 중단 (타임아웃 타이머 정리 포함)
     if (store.isGenerating && onAbort) {
       onAbort();
     } else if (store.isGenerating) {
-      // onAbort가 없을 경우 fallback (타임아웃 타이머는 정리되지 않음)
       if (store.currentRequestId) {
         window.electronAPI.ai.abort(store.currentRequestId);
       }
       store.flushStream();
       store.setIsGenerating(false);
     }
-    // Q&A 중이면 함께 중단
     if (store.qaRequestId) {
       window.electronAPI.ai.abort(store.qaRequestId);
     }
-    store.resetSummaryState(); // Q&A 상태도 함께 초기화됨
+    store.resetSummaryState();
   };
 
   const handleExport = async () => {
     if (!summaryStream) return;
     const defaultName = document
-      ? document.fileName.replace('.pdf', '_요약.md')
-      : '요약.md';
+      ? document.fileName.replace('.pdf', `_${t('viewer.defaultFilename').replace('.md', '')}.md`)
+      : t('viewer.defaultFilename');
     try {
       await window.electronAPI.file.save(summaryStream, defaultName);
     } catch {
-      setError({ code: 'EXPORT_FAIL', message: '파일 저장에 실패했습니다. 다른 경로를 선택해주세요.' });
+      setError({ code: 'EXPORT_FAIL', message: t('viewer.saveFail') });
     }
   };
 
@@ -91,27 +87,25 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
     try {
       await navigator.clipboard.writeText(summaryStream);
     } catch {
-      setError({ code: 'EXPORT_FAIL', message: '클립보드에 복사할 수 없습니다.' });
+      setError({ code: 'EXPORT_FAIL', message: t('viewer.copyFail') });
     }
   };
 
   return (
     <div className="flex flex-col h-full">
-      {/* 문서 정보 + 닫기 */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-t-lg">
         <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
-          {document ? `📎 ${document.fileName} (${document.pageCount}p)` : '📎 요약 결과'}
+          {document ? `📎 ${document.fileName} (${document.pageCount}p)` : t('viewer.result')}
         </span>
         <button
           onClick={handleClose}
           className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-          aria-label="닫기"
+          aria-label={t('common.close')}
         >
-          ✕ 닫기
+          ✕ {t('common.close')}
         </button>
       </div>
 
-      {/* 요약 내용 — 요약 전용 스크롤 영역 */}
       <div ref={contentRef} className="flex-1 basis-1/2 min-h-0 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none">
         {isGenerating && !debouncedContent ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
@@ -120,10 +114,10 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
             <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
-              AI가 자료를 분석하고 있습니다...
+              {t('viewer.analyzing')}
             </p>
             <p className="text-sm text-gray-400 dark:text-gray-500">
-              잠시만 기다려주세요
+              {t('viewer.pleaseWait')}
             </p>
           </div>
         ) : debouncedContent ? (
@@ -133,7 +127,6 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
         ) : null}
       </div>
 
-      {/* 진행률 + 중지 버튼 */}
       {isGenerating && (
         <div className="flex items-center gap-2 px-4 py-2 border-t dark:border-gray-700">
           <div className="flex-1">
@@ -143,35 +136,33 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
             <button
               onClick={onAbort}
               className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors shrink-0"
-              aria-label="요약 중지"
+              aria-label={t('viewer.stopSummary')}
             >
-              ■ 중지
+              {t('viewer.stopBtn')}
             </button>
           )}
         </div>
       )}
 
-      {/* 액션 버튼 */}
       {summaryStream && !isGenerating && (
         <div className="flex items-center gap-2 px-4 py-3 border-t dark:border-gray-700">
           <button
             onClick={handleExport}
             className="px-3 py-1.5 text-sm bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
-            aria-label="마크다운 파일로 내보내기"
+            aria-label={t('viewer.exportAria')}
           >
-            💾 .md 내보내기
+            {t('viewer.export')}
           </button>
           <button
             onClick={handleCopy}
             className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-            aria-label="클립보드에 복사"
+            aria-label={t('viewer.copyAria')}
           >
-            📋 복사
+            {t('viewer.copy')}
           </button>
         </div>
       )}
 
-      {/* Q&A 채팅 — 요약과 동일 비율로 공간 분배 */}
       {summaryStream && !isGenerating && (
         <div className="flex-1 basis-1/2 min-h-0 flex flex-col overflow-hidden">
           <QaChat />

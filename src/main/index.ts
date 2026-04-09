@@ -25,6 +25,7 @@ const defaultSettings = {
   model: 'gemma3',
   ollamaBaseUrl: 'http://localhost:11434',
   theme: 'system',
+  uiLanguage: 'ko',
   defaultSummaryType: 'full',
   maxChunkSize: 4000,
   enableImageAnalysis: true,
@@ -33,7 +34,7 @@ const defaultSettings = {
 } as const;
 
 const VALID_SETTINGS_KEYS_SET = new Set([
-  'provider', 'model', 'ollamaBaseUrl', 'theme', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage',
+  'provider', 'model', 'ollamaBaseUrl', 'theme', 'uiLanguage', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage',
 ]);
 
 async function loadSettings(): Promise<Record<string, unknown>> {
@@ -237,7 +238,7 @@ function registerIpcHandlers(): void {
 
   const VALID_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
   const VALID_SETTINGS_KEYS = [
-    'provider', 'model', 'ollamaBaseUrl', 'theme',
+    'provider', 'model', 'ollamaBaseUrl', 'theme', 'uiLanguage',
     'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage',
   ] as const;
 
@@ -269,6 +270,7 @@ function registerIpcHandlers(): void {
   });
 
   const VALID_THEMES = ['light', 'dark', 'system'] as const;
+  const VALID_UI_LANGUAGES = ['ko', 'en'] as const;
   const VALID_SUMMARY_TYPES = ['full', 'chapter', 'keywords'] as const;
 
   ipcMain.handle('settings:set', async (_event, partial: Record<string, unknown>) => {
@@ -298,6 +300,9 @@ function registerIpcHandlers(): void {
           break;
         case 'theme':
           if (VALID_THEMES.includes(val as typeof VALID_THEMES[number])) filtered[key] = val;
+          break;
+        case 'uiLanguage':
+          if (VALID_UI_LANGUAGES.includes(val as typeof VALID_UI_LANGUAGES[number])) filtered[key] = val;
           break;
         case 'defaultSummaryType':
           if (VALID_SUMMARY_TYPES.includes(val as typeof VALID_SUMMARY_TYPES[number])) filtered[key] = val;

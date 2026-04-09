@@ -1,12 +1,7 @@
 import { useAppStore } from '../lib/store';
+import { useT } from '../lib/i18n';
 import type { SummaryType } from '../types';
 import { SUMMARY_LANGUAGES } from '../types';
-
-const options: { value: SummaryType; label: string }[] = [
-  { value: 'full', label: '전체 요약' },
-  { value: 'chapter', label: '챕터별' },
-  { value: 'keywords', label: '키워드 추출' },
-];
 
 // 한국어 특화 모델 — 다른 언어 출력 시 품질이 낮을 수 있음
 const KOREAN_ONLY_MODELS = ['exaone'];
@@ -16,6 +11,13 @@ export function SummaryTypeSelector() {
   const setSummaryType = useAppStore((s) => s.setSummaryType);
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const t = useT();
+
+  const options: { value: SummaryType; label: string }[] = [
+    { value: 'full', label: t('selector.full') },
+    { value: 'chapter', label: t('selector.chapter') },
+    { value: 'keywords', label: t('selector.keywords') },
+  ];
 
   const lang = settings.summaryLanguage || 'ko';
   const modelBase = settings.model.split(':')[0];
@@ -26,7 +28,7 @@ export function SummaryTypeSelector() {
   return (
     <div className="inline-flex flex-col items-start gap-3">
       <div className="flex items-center gap-4">
-        <span className="w-16 shrink-0 text-sm font-medium text-gray-600 dark:text-gray-300">요약 유형</span>
+        <span className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.summaryType')}</span>
         <div className="flex gap-3">
           {options.map((opt) => (
             <label key={opt.value} className="flex items-center gap-1.5 cursor-pointer">
@@ -44,7 +46,7 @@ export function SummaryTypeSelector() {
         </div>
       </div>
       <div className="flex items-center gap-4">
-        <span className="w-16 shrink-0 text-sm font-medium text-gray-600 dark:text-gray-300">요약 언어</span>
+        <span className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.summaryLang')}</span>
         <select
           value={lang}
           onChange={(e) => updateSettings({ ...settings, summaryLanguage: e.target.value as typeof settings.summaryLanguage })}
@@ -57,8 +59,7 @@ export function SummaryTypeSelector() {
       </div>
       {showModelWarning && (
         <div className="max-w-sm px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-700 dark:text-amber-400">
-          {settings.model}은 한국어 특화 모델이라 다른 언어 출력이 제한적입니다.
-          설정에서 gemma3 또는 qwen2.5로 변경하면 더 나은 결과를 얻을 수 있습니다.
+          {t('selector.modelWarning', { model: settings.model })}
         </div>
       )}
     </div>
