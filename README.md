@@ -20,7 +20,7 @@
 1. 위 링크에서 `PDF.Setup.x.x.x.exe`를 다운로드합니다
 2. 다운로드한 파일을 실행하여 설치합니다
 3. 바탕화면 바로가기 또는 시작 메뉴에서 앱을 실행합니다
-4. 첫 실행 시 AI 엔진(Ollama)과 한국어 특화 모델(gemma3, exaone3.5)이 자동 설치됩니다 — 안내를 따라 진행해주세요
+4. 첫 실행 시 AI 엔진(Ollama)과 한국어 특화 모델(gemma3, exaone3.5) + RAG 임베딩 모델(nomic-embed-text)이 자동 설치됩니다 — 안내를 따라 진행해주세요
 
 > **참고**: AI 모델 다운로드에 약 8GB의 디스크 공간과 수 분의 시간이 필요합니다.
 
@@ -52,7 +52,7 @@
 - 최대 10턴까지 이전 대화 맥락을 이해하며 답변합니다
 - `Enter`: 전송 / `Shift+Enter`: 줄바꿈
 
-> **RAG 사용을 위한 임베딩 모델**: Ollama 사용 시 `nomic-embed-text` 모델이 필요합니다 (274MB). 터미널에서 `ollama pull nomic-embed-text`로 설치하세요. OpenAI 사용 시 `text-embedding-3-small`이 자동으로 사용됩니다.
+> **임베딩 모델**: 첫 실행 셋업 시 `nomic-embed-text`(274MB)가 자동 설치됩니다. OpenAI 사용 시 `text-embedding-3-small`이 자동으로 사용됩니다.
 
 ## AI Provider 선택
 
@@ -68,7 +68,7 @@
 
 | Provider | 임베딩 모델 | 차원 | 비고 |
 |----------|------------|------|------|
-| **Ollama** | nomic-embed-text (274MB) | 768 | 로컬 실행, `ollama pull nomic-embed-text`로 설치 |
+| **Ollama** | nomic-embed-text (274MB) | 768 | 로컬 실행, 첫 실행 셋업 시 자동 설치 |
 | **OpenAI** | text-embedding-3-small | 1536 | API 키로 자동 사용, 추가 설치 불필요 |
 | **Claude** | Ollama fallback | — | 자체 임베딩 API 없음, Ollama 모델 사용 시도 → 불가 시 키워드 검색 |
 
@@ -122,7 +122,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - **이미지 분석** — PDF 내 차트/다이어그램/표를 Vision AI로 분석하여 요약에 통합
 - **스캔 PDF OCR** — 이미지 기반 PDF도 Vision AI로 텍스트 인식 후 요약 (설정에서 on/off)
 - **한국어 최적화** — 한글 PDF 텍스트 추출 품질 개선, 한글 비율에 따른 청크 자동 조절
-- **한국어 모델 자동 설치** — 첫 실행 시 gemma3, exaone3.5 한국어 특화 모델 자동 다운로드
+- **모델 자동 설치** — 첫 실행 시 gemma3, exaone3.5 한국어 특화 모델 + nomic-embed-text RAG 임베딩 모델 자동 다운로드
 - **유료 AI 지원** — Claude API, OpenAI API로 고품질 요약 가능 (Ollama 없이 바로 사용 가능)
 - **API 키 보안** — OS 키체인 암호화 + Main 프로세스에서만 복호화 (Renderer에 노출되지 않음)
 - **개인 자료 보안** — Ollama 사용 시 PDF가 외부 서버로 전송되지 않음
@@ -152,7 +152,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | Claude/OpenAI 사용 불가 | API 키를 먼저 저장한 후 Provider를 선택해주세요 |
 | 요약에 "잘 정리해주셨네요" 같은 문구가 나옴 | v0.10.0에서 프롬프트 강화 + 후처리 필터로 자동 제거됩니다 |
 | Q&A에서 답변을 못 함 | RAG 배지가 없으면 `ollama pull nomic-embed-text`로 임베딩 모델을 설치하세요. 키워드 모드에서는 질문에 구체적 용어를 포함해주세요 |
-| RAG 인덱싱이 안 됨 | Ollama 사용 시 nomic-embed-text 등 임베딩 모델이 필요합니다. OpenAI는 API 키만 있으면 자동 사용됩니다 |
+| RAG 인덱싱이 안 됨 | 첫 실행 셋업을 완료했는지 확인하세요 (nomic-embed-text 자동 설치). 수동 설치: `ollama pull nomic-embed-text` |
 | 모델 추가 후 선택한 모델이 바뀜 | v0.8.2 이상에서 수정됨 — 모델 추가 시 기존 선택이 유지됩니다 |
 
 ---
