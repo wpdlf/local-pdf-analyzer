@@ -103,7 +103,8 @@ export function OllamaSetupWizard() {
           continue;
         }
 
-        setProgressMessage(`한국어 AI 모델(${modelName})을 다운로드하고 있습니다. 모델 크기에 따라 수 분이 소요됩니다...`);
+        const modelLabel = modelName === 'nomic-embed-text' ? `RAG 임베딩 모델(${modelName})` : `한국어 AI 모델(${modelName})`;
+        setProgressMessage(`${modelLabel}을 다운로드하고 있습니다. 모델 크기에 따라 수 분이 소요됩니다...`);
         const pullResult = await window.electronAPI.ollama.pullModel(modelName);
         if (!pullResult.success) {
           updateItem(itemIndex, 'error');
