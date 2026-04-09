@@ -12,9 +12,12 @@ function stripConversationalText(text: string): string {
   const patterns = [
     // 한국어
     /도움이\s*되[길었]?\s*(바랍|되었|되셨)/,
-    /궁금한\s*점이?\s*있으시면/,
-    /추가\s*질문이?\s*있으시면/,
-    /언제든지?\s*물어보세요/,
+    /궁금한\s*(점|사항|것|내용)이?\s*(있으시면|있으면)/,
+    /추가(로|적인)?\s*(궁금|질문|문의)/,
+    /언제든지?\s*(물어|말씀|문의|연락)/,
+    /말씀해\s*주세요/,
+    /필요하시면\s*(언제|말씀|연락)/,
+    /자세한\s*정보가?\s*필요하시면/,
     /요약해\s*드리겠습니다/,
     /설명해\s*드리겠습니다/,
     /정리해\s*드리겠습니다/,
@@ -24,6 +27,8 @@ function stripConversationalText(text: string): string {
     /이상으로\s*.*(마치|끝|정리)/,
     /좋은\s*자료입니다/,
     /잘\s*정리되어/,
+    /강점을\s*잘\s*보여/,
+    /도움이\s*되(었으면|길)\s*좋겠/,
     // English
     /^(I\s+)?hope\s+this\s+helps/i,
     /feel\s+free\s+to\s+ask/i,
