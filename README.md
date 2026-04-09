@@ -231,140 +231,121 @@ src/
 
 API 키 보안을 위해 AI API 호출은 Main 프로세스에서 수행됩니다. Renderer는 IPC를 통해 요약을 요청하고 토큰 스트림을 수신합니다.
 
+```mermaid
+graph LR
+  subgraph Main["Electron Main Process"]
+    OM[OllamaManager]
+    AI[AiService]
+    EMB[Embedding]
+    SET[Settings JSON]
+    KEY[API Keys<br/>safeStorage]
+    AI --> |HTTP| OL[Ollama]
+    AI --> |HTTPS| CL[Claude]
+    AI --> |HTTPS| OA[OpenAI]
+    EMB --> |/api/embed| OL
+    EMB --> |/v1/embeddings| OA
+  end
+
+  subgraph Renderer["Renderer Process - React"]
+    APP[App.tsx]
+    PU[PdfUploader]
+    SV[SummaryViewer]
+    QA[QaChat]
+    SP[SettingsPanel]
+    LIB[lib/]
+    AC[AiClient]
+    PP[PdfParser]
+    VS[VectorStore]
+    UQ[useQa]
+    ZU[Zustand]
+    APP --> PU & SV & SP
+    SV --> QA
+    LIB --> AC & PP & VS & UQ & ZU
+  end
+
+  Main <--> |IPC| Renderer
 ```
-Electron Main Process                Renderer Process (React)
-┌──────────────────────────┐        ┌──────────────────────────┐
-│ OllamaManager            │        │ App.tsx                  │
-│ AiService ──┐            │◄─IPC─►│ ├── PdfUploader          │
-│   ├── Ollama (HTTP)      │        │ ├── SummaryViewer        │
-│   ├── Claude (HTTPS)     │        │ │   └── QaChat (Q&A)    │
-│   └── OpenAI (HTTPS)     │        │ ├── SettingsPanel        │
-│ Embedding ──┐            │        │ └── lib/                 │
-│   ├── Ollama /api/embed  │        │     ├── AiClient (IPC)   │
-│   └── OpenAI /v1/embed.  │        │     ├── PdfParser        │
-│ Settings (JSON)          │        │     ├── VectorStore (RAG) │
-│ API Keys (safeStorage)   │        │     ├── useQa (Q&A 훅)   │
-│ File I/O                 │        │     └── Zustand           │
-└──────────────────────────┘        └──────────────────────────┘
-         │                                     │
-         │  ai:generate ──► Main에서 API 호출   │
-         │  ai:token    ◄── 토큰 스트리밍        │
-         │  ai:done     ◄── 완료 신호           │
-         │  ai:abort    ──► 요청 중단           │
-         │  ai:embed    ──► 임베딩 벡터 생성     │
-         │  ai:check-embed-model ──► 모델 확인  │
+
+#### IPC 채널
+
+```mermaid
+sequenceDiagram
+  participant R as Renderer
+  participant M as Main Process
+
+  R->>M: ai:generate (텍스트+provider+model)
+  M-->>R: ai:token (토큰 스트리밍)
+  M-->>R: ai:done (완료 신호)
+  R->>M: ai:abort (요청 중단)
+  R->>M: ai:embed (임베딩 벡터 생성)
+  R->>M: ai:check-embed-model (모델 확인)
 ```
 
 ### 데이터 처리 파이프라인
 
 PDF 파일이 요약 결과로 변환되는 전체 과정입니다.
 
-```
-PDF 파일
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 1. PDF 파싱 (pdf-parser.ts)                          │
-│    ├── pdfjs-dist로 페이지별 텍스트 추출              │
-│    │   └── 위치 기반(x,y,fontSize) 공백/줄바꿈 삽입   │
-│    │       → 한글 글자 단위 분할 대응                  │
-│    ├── 페이지별 이미지 추출 (paintImageXObject)        │
-│    │   └── RGB/RGBA/Grayscale → JPEG base64 변환      │
-│    │       → 최대 1024px 리사이즈, 4M 픽셀 초과 스킵  │
-│    └── 챕터 자동 감지                                 │
-│        └── "제1장", "Chapter 1", "1장" 패턴 매칭      │
-│            → 미감지 시 10페이지 단위 분할              │
-│                                                      │
-│    배치 처리: 10페이지씩 병렬, 이미지 최대 50장       │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼ (텍스트 50자 미만 + OCR 활성화 시)
-┌─────────────────────────────────────────────────────┐
-│ 1-b. OCR Fallback (pdf-parser.ts, 스캔 PDF 전용)     │
-│    ├── 각 페이지를 OffscreenCanvas로 JPEG 렌더링     │
-│    │   └── scale 자동 조정 (50p+: 1.5, 100p+: 1.0)  │
-│    │       → 최대 3000px, GPU 메모리 즉시 해제        │
-│    ├── 3페이지씩 배치 병렬로 Vision OCR 요청          │
-│    │   └── ai:ocr-page IPC → Main → Vision API       │
-│    ├── abort 메커니즘: isParsing 구독으로 취소 지원   │
-│    └── 추출된 텍스트로 정상 파이프라인에 합류          │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 2. 이미지 분석 (선택적, enableImageAnalysis=true)     │
-│    ├── 첫 이미지로 Vision 모델 사전 확인 (preflight)  │
-│    ├── 나머지 이미지 3장씩 배치 병렬 분석             │
-│    └── 분석 결과를 해당 페이지 텍스트에 삽입           │
-│        → "[이미지 분석: 차트는 매출 상승을...]"        │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 3. 텍스트 청크 분할 (chunker.ts)                      │
-│    ├── 한글 비율 자동 감지 (처음 2000자 샘플링)        │
-│    │   └── 100% 한글: 1.5 chars/token                │
-│    │       0% 한글:   4.0 chars/token                │
-│    ├── maxChunkSize(기본 4000 토큰) × chars/token     │
-│    │   → 실제 문자 수 기준 분할                       │
-│    └── 문단(\n\n) 경계에서만 분할 (문장 중간 절단 방지)│
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 4. AI 요약 생성 (ai-service.ts)                       │
-│    ├── 프롬프트 구성: 시스템 지시 + 금지 사항 + 본문   │
-│    ├── IPC: Renderer → Main (ai:generate)             │
-│    ├── Main에서 API 키 복호화 후 HTTP 스트리밍 요청    │
-│    │   ├── Ollama:  /api/generate (NDJSON)            │
-│    │   ├── Claude:  /v1/messages  (SSE)               │
-│    │   └── OpenAI:  /v1/chat/completions (SSE)        │
-│    ├── 토큰 스트리밍: Main → Renderer (ai:token)       │
-│    └── 다중 청크 시 개별 요약 후 통합 요약 추가 생성   │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 5. Renderer 표시 (SummaryViewer.tsx + store.ts)       │
-│    ├── 토큰 버퍼링 (50ms 간격 배치 flush)             │
-│    ├── Markdown 렌더링 debounce (150ms)               │
-│    ├── 자동 스크롤 (하단 100px 이내일 때만)            │
-│    ├── stripConversationalText 후처리 (대화형 멘트 제거)│
-│    └── .md 내보내기 / 클립보드 복사                    │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 6-a. RAG 벡터 인덱스 빌드 (문서 로드 시 자동)        │
-│    ├── 임베딩 모델 사용 가능 여부 확인                │
-│    │   └── Ollama: nomic-embed-text 등 자동 감지     │
-│    │       OpenAI: text-embedding-3-small             │
-│    │       Claude: Ollama fallback → 불가 시 키워드   │
-│    ├── 오버랩 청킹 (500토큰, 10% 오버랩)             │
-│    ├── 50건씩 배치 임베딩 (배치당 2분 타임아웃)       │
-│    │   └── ai:embed IPC → Main → 임베딩 API          │
-│    │       → IPC 경계에서 NaN/Infinity 검증           │
-│    ├── 인메모리 벡터 스토어에 청크+임베딩 저장         │
-│    │   └── 차원 고정: 첫 청크 차원으로 lock           │
-│    ├── 문서 전환 시 buildId 가드로 즉시 취소          │
-│    └── UI: 인덱싱 진행률 → 완료 시 RAG 배지          │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 6-b. Q&A 채팅 (use-qa.ts + QaChat.tsx)               │
-│    ├── 사용자 질문 입력 (Enter 전송, Shift+Enter 줄바꿈)│
-│    ├── RAG 시맨틱 검색 (코사인 유사도 Top-5)          │
-│    │   ├── 질문 임베딩 → 벡터 스토어 검색             │
-│    │   ├── minScore 0.3 미만 결과 제외                │
-│    │   └── 8000자 컨텍스트 크기 제한 적용             │
-│    ├── RAG 실패 시 키워드 TF 스코어링 fallback        │
-│    ├── 요약 결과(3000자) + 검색 결과(8000자) 결합     │
-│    ├── 프롬프트 인젝션 방어 (RAG/키워드 양쪽 적용)    │
-│    ├── 대화 이력 포함 프롬프트 조립 (최대 10턴)       │
-│    ├── ai:generate(type:'qa')로 스트리밍 답변 생성     │
-│    └── 요약/Q&A 상호 배제 — 동시 실행 불가            │
-└─────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  PDF[/"📄 PDF 파일"/]
+
+  subgraph S1["1. PDF 파싱"]
+    P1["pdfjs-dist 텍스트 추출<br/>위치 기반 공백/줄바꿈 삽입"]
+    P2["이미지 추출<br/>JPEG base64, 최대 1024px"]
+    P3["챕터 자동 감지<br/>제1장 / Chapter 1 패턴"]
+  end
+
+  subgraph S1B["1-b. OCR Fallback (스캔 PDF)"]
+    O1["페이지 → JPEG 렌더링<br/>scale 자동 조정, 최대 3000px"]
+    O2["3페이지씩 배치 Vision OCR"]
+  end
+
+  subgraph S2["2. 이미지 분석 (선택)"]
+    I1["Vision 모델 preflight 확인"]
+    I2["3장씩 배치 분석 → 텍스트 삽입"]
+  end
+
+  subgraph S3["3. 텍스트 청킹"]
+    C1["한글 비율 감지<br/>100% 한글: 1.5 chars/token<br/>0% 한글: 4.0 chars/token"]
+    C2["문단 경계에서 분할"]
+  end
+
+  subgraph S4["4. AI 요약 생성"]
+    A1["프롬프트 구성<br/>시스템 지시 + 금지 사항"]
+    A2["Ollama / Claude / OpenAI<br/>HTTP 스트리밍"]
+    A3["다중 청크 → 통합 요약"]
+  end
+
+  subgraph S5["5. 결과 표시"]
+    R1["토큰 버퍼링 50ms"]
+    R2["Markdown 렌더링"]
+    R3["대화형 멘트 자동 제거"]
+    R4[".md 내보내기 / 복사"]
+  end
+
+  subgraph S6A["6-a. RAG 인덱스 빌드"]
+    RA1["임베딩 모델 감지<br/>nomic-embed-text / OpenAI"]
+    RA2["오버랩 청킹 500토큰"]
+    RA3["50건 배치 임베딩<br/>NaN/Infinity 검증"]
+    RA4["벡터 스토어 저장<br/>차원 고정"]
+  end
+
+  subgraph S6B["6-b. Q&A 채팅"]
+    QB1["질문 임베딩"]
+    QB2["코사인 유사도 Top-5 검색"]
+    QB3["RAG 실패 → 키워드 fallback"]
+    QB4["프롬프트 조립 + 스트리밍 답변"]
+  end
+
+  PDF --> S1
+  S1 -->|"텍스트 50자 미만"| S1B
+  S1 --> S2
+  S1B --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  PDF -.->|"문서 로드 시"| S6A
+  S6A --> S6B
 ```
 
 ### AI 요약 프롬프트 설계

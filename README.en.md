@@ -230,142 +230,121 @@ src/
 
 AI API calls are made from the Main process for API key security. The Renderer requests summaries via IPC and receives token streams.
 
+```mermaid
+graph LR
+  subgraph Main["Electron Main Process"]
+    OM[OllamaManager]
+    AI[AiService]
+    EMB[Embedding]
+    SET[Settings JSON]
+    KEY[API Keys<br/>safeStorage]
+    AI --> |HTTP| OL[Ollama]
+    AI --> |HTTPS| CL[Claude]
+    AI --> |HTTPS| OA[OpenAI]
+    EMB --> |/api/embed| OL
+    EMB --> |/v1/embeddings| OA
+  end
+
+  subgraph Renderer["Renderer Process - React"]
+    APP[App.tsx]
+    PU[PdfUploader]
+    SV[SummaryViewer]
+    QA[QaChat]
+    SP[SettingsPanel]
+    LIB[lib/]
+    AC[AiClient]
+    PP[PdfParser]
+    VS[VectorStore]
+    UQ[useQa]
+    ZU[Zustand]
+    APP --> PU & SV & SP
+    SV --> QA
+    LIB --> AC & PP & VS & UQ & ZU
+  end
+
+  Main <--> |IPC| Renderer
 ```
-Electron Main Process                Renderer Process (React)
-┌──────────────────────────┐        ┌──────────────────────────┐
-│ OllamaManager            │        │ App.tsx                  │
-│ AiService ──┐            │◄─IPC─►│ ├── PdfUploader          │
-│   ├── Ollama (HTTP)      │        │ ├── SummaryViewer        │
-│   ├── Claude (HTTPS)     │        │ │   └── QaChat (Q&A)    │
-│   └── OpenAI (HTTPS)     │        │ ├── SettingsPanel        │
-│ Embedding ──┐            │        │ └── lib/                 │
-│   ├── Ollama /api/embed  │        │     ├── AiClient (IPC)   │
-│   └── OpenAI /v1/embed.  │        │     ├── PdfParser        │
-│ Settings (JSON)          │        │     ├── VectorStore (RAG) │
-│ API Keys (safeStorage)   │        │     ├── useQa (Q&A hook) │
-│ File I/O                 │        │     └── Zustand           │
-└──────────────────────────┘        └──────────────────────────┘
-         │                                     │
-         │  ai:generate ──► API call in Main   │
-         │  ai:token    ◄── Token streaming     │
-         │  ai:done     ◄── Completion signal   │
-         │  ai:abort    ──► Cancel request      │
-         │  ai:embed    ──► Generate embeddings │
-         │  ai:check-embed-model ──► Check model│
+
+#### IPC Channels
+
+```mermaid
+sequenceDiagram
+  participant R as Renderer
+  participant M as Main Process
+
+  R->>M: ai:generate (text+provider+model)
+  M-->>R: ai:token (token streaming)
+  M-->>R: ai:done (completion signal)
+  R->>M: ai:abort (cancel request)
+  R->>M: ai:embed (generate embeddings)
+  R->>M: ai:check-embed-model (check model)
 ```
 
 ### Data Processing Pipeline
 
 The full pipeline from PDF file to summary output:
 
-```
-PDF File
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 1. PDF Parsing (pdf-parser.ts)                       │
-│    ├── Page-by-page text extraction via pdfjs-dist   │
-│    │   └── Position-based (x,y,fontSize) spacing     │
-│    │       → Korean character-level splitting         │
-│    ├── Per-page image extraction (paintImageXObject)  │
-│    │   └── RGB/RGBA/Grayscale → JPEG base64           │
-│    │       → Max 1024px resize, skip >4M pixels       │
-│    └── Auto chapter detection                         │
-│        └── Patterns: "Chapter 1", "제1장", "1장"      │
-│            → Fallback: 10-page chunks                 │
-│                                                      │
-│    Batch: 10 pages parallel, max 50 images            │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼ (< 50 chars extracted + OCR enabled)
-┌─────────────────────────────────────────────────────┐
-│ 1-b. OCR Fallback (scanned PDFs only)                │
-│    ├── Render each page to JPEG via OffscreenCanvas  │
-│    │   └── Auto scale (50p+: 1.5, 100p+: 1.0)       │
-│    │       → Max 3000px, immediate GPU memory release │
-│    ├── Batch 3 pages → Vision OCR requests            │
-│    │   └── ai:ocr-page IPC → Main → Vision API       │
-│    ├── Abort via isParsing subscription               │
-│    └── Extracted text joins normal pipeline            │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 2. Image Analysis (optional, enableImageAnalysis)    │
-│    ├── Preflight check with first image               │
-│    ├── Remaining images: batch 3, parallel analysis   │
-│    └── Results inserted into page text                │
-│        → "[Image: chart shows revenue growth...]"     │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 3. Text Chunking (chunker.ts)                        │
-│    ├── Auto Korean ratio detection (first 2000 chars)│
-│    │   └── 100% Korean: 1.5 chars/token              │
-│    │       0% Korean:   4.0 chars/token              │
-│    ├── maxChunkSize (default 4000 tokens) × ratio    │
-│    │   → Split by actual character count              │
-│    └── Split only at paragraph (\n\n) boundaries     │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 4. AI Summary Generation (ai-service.ts)             │
-│    ├── Prompt: system instructions + rules + text    │
-│    ├── IPC: Renderer → Main (ai:generate)            │
-│    ├── Main decrypts API key, makes HTTP streaming   │
-│    │   ├── Ollama:  /api/generate (NDJSON)           │
-│    │   ├── Claude:  /v1/messages  (SSE)              │
-│    │   └── OpenAI:  /v1/chat/completions (SSE)       │
-│    ├── Token streaming: Main → Renderer (ai:token)   │
-│    └── Multi-chunk: individual summaries + integration│
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 5. Renderer Display (SummaryViewer.tsx + store.ts)    │
-│    ├── Token buffering (50ms batch flush)             │
-│    ├── Markdown rendering debounce (150ms)            │
-│    ├── Auto-scroll (only when near bottom 100px)      │
-│    ├── stripConversationalText post-processing        │
-│    └── Export .md / Copy to clipboard                 │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 6-a. RAG Vector Index Build (auto on document load)  │
-│    ├── Check embedding model availability             │
-│    │   └── Ollama: nomic-embed-text auto-detect      │
-│    │       OpenAI: text-embedding-3-small             │
-│    │       Claude: Ollama fallback → keyword search   │
-│    ├── Overlap chunking (500 tokens, 10% overlap)    │
-│    ├── Batch embed 50 at a time (2min timeout/batch) │
-│    │   └── ai:embed IPC → Main → Embedding API       │
-│    │       → NaN/Infinity validation at IPC boundary  │
-│    ├── Store chunks + embeddings in-memory            │
-│    │   └── Dimension lock: fixed at first chunk dim   │
-│    ├── buildId guard: cancel on document switch       │
-│    └── UI: indexing progress → RAG badge on complete  │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 6-b. Q&A Chat (use-qa.ts + QaChat.tsx)               │
-│    ├── User question input (Enter/Shift+Enter)       │
-│    ├── RAG semantic search (cosine similarity Top-5)  │
-│    │   ├── Embed question → search vector store      │
-│    │   ├── Filter results below minScore 0.3          │
-│    │   └── 8000 char context size limit               │
-│    ├── Keyword TF scoring fallback if RAG fails      │
-│    ├── Combine summary (3000) + search results (8000)│
-│    ├── Prompt injection defense (both RAG/keyword)    │
-│    ├── Conversation history in prompt (max 10 turns)  │
-│    ├── ai:generate(type:'qa') streaming response     │
-│    └── Summary/Q&A mutually exclusive                 │
-└─────────────────────────────────────────────────────┘
-```
+```mermaid
+flowchart TD
+  PDF[/"📄 PDF File"/]
 
+  subgraph S1["1. PDF Parsing"]
+    P1["pdfjs-dist text extraction<br/>Position-based spacing"]
+    P2["Image extraction<br/>JPEG base64, max 1024px"]
+    P3["Auto chapter detection<br/>Chapter 1 / 제1장 patterns"]
+  end
+
+  subgraph S1B["1-b. OCR Fallback (scanned PDFs)"]
+    O1["Page → JPEG rendering<br/>Auto scale, max 3000px"]
+    O2["Batch 3 pages Vision OCR"]
+  end
+
+  subgraph S2["2. Image Analysis (optional)"]
+    I1["Vision model preflight check"]
+    I2["Batch 3 images → text insertion"]
+  end
+
+  subgraph S3["3. Text Chunking"]
+    C1["Korean ratio detection<br/>100% Korean: 1.5 chars/token<br/>0% Korean: 4.0 chars/token"]
+    C2["Split at paragraph boundaries"]
+  end
+
+  subgraph S4["4. AI Summary Generation"]
+    A1["Prompt: system instructions + rules"]
+    A2["Ollama / Claude / OpenAI<br/>HTTP streaming"]
+    A3["Multi-chunk → integrated summary"]
+  end
+
+  subgraph S5["5. Result Display"]
+    R1["Token buffering 50ms"]
+    R2["Markdown rendering"]
+    R3["Conversational text auto-removal"]
+    R4["Export .md / Copy"]
+  end
+
+  subgraph S6A["6-a. RAG Index Build"]
+    RA1["Detect embedding model<br/>nomic-embed-text / OpenAI"]
+    RA2["Overlap chunking 500 tokens"]
+    RA3["Batch embed 50 at a time<br/>NaN/Infinity validation"]
+    RA4["Vector store<br/>Dimension lock"]
+  end
+
+  subgraph S6B["6-b. Q&A Chat"]
+    QB1["Embed question"]
+    QB2["Cosine similarity Top-5 search"]
+    QB3["RAG fail → keyword fallback"]
+    QB4["Prompt assembly + streaming answer"]
+  end
+
+  PDF --> S1
+  S1 -->|"< 50 chars extracted"| S1B
+  S1 --> S2
+  S1B --> S2
+  S2 --> S3
+  S3 --> S4
+  S4 --> S5
+  PDF -.->|"On document load"| S6A
+  S6A --> S6B
 ### Security Design
 
 | Threat | Mitigation |
