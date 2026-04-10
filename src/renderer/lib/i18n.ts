@@ -78,6 +78,7 @@ const translations = {
   'qa.ragActive': { ko: 'RAG 시맨틱 검색이 활성화되었습니다. 문서에 대해 질문해보세요.', en: 'RAG semantic search is active. Ask a question about the document.' },
   'qa.emptyHint': { ko: '요약된 내용이나 원문에 대해 궁금한 점을 질문해보세요', en: 'Ask questions about the summary or original document' },
   'qa.generating': { ko: '답변 생성 중...', en: 'Generating answer...' },
+  'qa.waitIndexing': { ko: 'RAG 인덱싱 중입니다. 잠시 후 다시 시도해주세요.', en: 'RAG is indexing. Please wait a moment and try again.' },
   'qa.charLimit': { ko: '질문은 {max}자까지 입력 가능합니다 ({current}/{max})', en: 'Question limited to {max} characters ({current}/{max})' },
   'qa.placeholder': { ko: '질문을 입력하세요... (Enter: 전송, Shift+Enter: 줄바꿈)', en: 'Type your question... (Enter: send, Shift+Enter: newline)' },
   'qa.inputAria': { ko: '질문 입력', en: 'Question input' },

@@ -86,7 +86,12 @@ export function SettingsPanel() {
     const key = provider === 'claude' ? claudeKey : openaiKey;
     if (!key.trim()) return;
     try {
-      await window.electronAPI.apiKey.save(provider, key.trim());
+      const result = await window.electronAPI.apiKey.save(provider, key.trim());
+      if (!result.success) {
+        // Main이 구조화된 에러 반환 (예: safeStorage 불가)
+        setKeyMessage(result.error || t('settings.keySaveFail'));
+        return;
+      }
       if (provider === 'claude') {
         setClaudeKeyStored(true);
         setClaudeKey('');
@@ -102,7 +107,11 @@ export function SettingsPanel() {
 
   const handleDeleteApiKey = async (provider: 'claude' | 'openai') => {
     try {
-      await window.electronAPI.apiKey.delete(provider);
+      const result = await window.electronAPI.apiKey.delete(provider);
+      if (!result.success) {
+        setKeyMessage(result.error || t('settings.keyDeleteFail'));
+        return;
+      }
       if (provider === 'claude') {
         setClaudeKeyStored(false);
         if (draft.provider === 'claude') updateDraft({ provider: 'ollama' });
@@ -130,7 +139,12 @@ export function SettingsPanel() {
   };
 
   const handleCancel = () => {
-    setDraft((d) => ({ ...d, theme: settings.theme }));
+    // draft.theme가 settings.theme와 다르면 동기적으로 저장된 테마를 직접 적용.
+    // setDraft + setView('main')으로는 언마운트 중 새 useEffect가 실행되지 않아
+    // 프리뷰 테마가 DOM에 남는 문제 방지.
+    if (draft.theme !== settings.theme) {
+      applyTheme(settings.theme);
+    }
     setView('main');
   };
 

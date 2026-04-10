@@ -167,19 +167,14 @@ async function buildRagIndex(extractedText: string, docId: string): Promise<bool
     // 배치 임베딩
     for (let i = 0; i < chunks.length; i += RAG_BATCH_SIZE) {
       // 문서 전환 체크 — 이전 빌드 즉시 중단
-      if (activeBuildId !== buildId) {
-        ragIndex.clear();
-        return false;
-      }
+      // stale 분기에서는 인덱스/state를 건드리지 않음 (새 build가 소유)
+      if (activeBuildId !== buildId) return false;
 
       const batch = chunks.slice(i, i + RAG_BATCH_SIZE);
       const result = await embedWithTimeout(batch);
 
       // 빌드 도중 문서 전환 재확인
-      if (activeBuildId !== buildId) {
-        ragIndex.clear();
-        return false;
-      }
+      if (activeBuildId !== buildId) return false;
 
       if (!result.success || !result.embeddings) {
         ragIndex.clear();
@@ -201,9 +196,8 @@ async function buildRagIndex(extractedText: string, docId: string): Promise<bool
       store.setRagState({ progress: { current: Math.min(i + RAG_BATCH_SIZE, total), total } });
     }
 
-    // 최종 문서 일치 확인
+    // 최종 문서 일치 확인 — stale이면 새 build가 소유하므로 건드리지 않음
     if (activeBuildId !== buildId || useAppStore.getState().document?.id !== docId) {
-      ragIndex.clear();
       return false;
     }
 
@@ -214,8 +208,11 @@ async function buildRagIndex(extractedText: string, docId: string): Promise<bool
     });
     return true;
   } catch {
-    ragIndex.clear();
-    store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null });
+    // 자신이 아직 active한 경우에만 정리 — 새 build의 상태를 덮어쓰지 않음
+    if (activeBuildId === buildId) {
+      ragIndex.clear();
+      store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null });
+    }
     return false;
   }
 }
@@ -256,7 +253,50 @@ async function ragSearch(question: string): Promise<string | null> {
   }
 }
 
-// ─── Hook ───
+// ─── Hooks ───
+
+/**
+ * 문서 로드 시 / provider 변경 시 RAG 인덱스 자동 빌드.
+ * App.tsx 최상위에서 호출하여 **요약과 병렬로** RAG 빌드를 시작 →
+ * 사용자 대기 시간 단축 (이전에는 QaChat 마운트 후에야 빌드 시작).
+ *
+ * provider가 바뀌면 임베딩 모델 차원이 달라질 수 있으므로 재빌드 필요.
+ * (예: Ollama nomic-embed-text 768차원 → OpenAI text-embedding-3-small 1536차원)
+ *
+ * 언마운트/deps 변경 시 cleanup이 activeBuildId를 무효화하여
+ * 진행 중이던 빌드가 다음 stale check에서 조기 종료됨 (OpenAI 비용 절감).
+ */
+export function useRagBuilder(): void {
+  const document = useAppStore((s) => s.document);
+  const provider = useAppStore((s) => s.settings.provider);
+  const prevKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!document) {
+      // 문서 unload 시 prevKey 초기화 — 같은 문서 재로드 시 올바르게 rebuild 트리거
+      prevKeyRef.current = null;
+      return;
+    }
+    const key = `${document.id}:${provider}`;
+    if (key === prevKeyRef.current) return;
+    prevKeyRef.current = key;
+    const docId = document.id;
+
+    // 이전 인덱스 즉시 초기화 (다른 문서/모델의 인덱스가 남아있지 않도록)
+    const store = useAppStore.getState();
+    store.ragIndex.clear();
+    store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, model: null });
+
+    // 비동기로 인덱스 빌드 (UI 블로킹 없음, 요약과 병렬 실행)
+    buildRagIndex(document.extractedText, docId);
+
+    // Cleanup: deps 변경/언마운트 시 진행 중인 빌드 무효화.
+    // 이미 전송된 IPC 임베딩 배치는 취소 불가이지만, 다음 stale check에서 return함.
+    return () => {
+      activeBuildId = null;
+    };
+  }, [document, provider]);
+}
 
 export function useQa() {
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
@@ -272,24 +312,6 @@ export function useQa() {
       if (reqId) window.electronAPI.ai.abort(reqId);
     };
   }, []);
-
-  // 문서 로드 시 RAG 인덱스 자동 빌드
-  const document = useAppStore((s) => s.document);
-  const prevDocIdRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!document || document.id === prevDocIdRef.current) return;
-    prevDocIdRef.current = document.id;
-    const docId = document.id;
-
-    // 이전 인덱스 즉시 초기화 (다른 문서의 인덱스가 남아있지 않도록)
-    const store = useAppStore.getState();
-    store.ragIndex.clear();
-    store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, model: null });
-
-    // 비동기로 인덱스 빌드 (UI 블로킹 없음)
-    buildRagIndex(document.extractedText, docId);
-  }, [document]);
 
   const handleQaAbort = useCallback(() => {
     abortedRef.current = true;
@@ -313,6 +335,9 @@ export function useQa() {
 
     const state = useAppStore.getState();
     if (state.isGenerating || state.isQaGenerating || !state.document) return;
+    // RAG 인덱싱 중에는 질문 차단 — 부분 인덱스로 답변해 정확도가 떨어지는 문제 방지
+    // (RAG가 unavailable인 경우에는 isIndexing=false이므로 keyword fallback은 허용됨)
+    if (state.ragState.isIndexing) return;
 
     const settings = state.settings;
     const doc = state.document;
@@ -370,11 +395,15 @@ export function useQa() {
         completed = true;
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      useAppStore.getState().setError({
-        code: 'GENERATE_FAIL',
-        message: message || 'Q&A 답변 생성에 실패했습니다.',
-      });
+      const code = (err instanceof Error && 'code' in err ? (err as Error & { code?: string }).code : undefined);
+      // 사용자 의도적 abort는 에러로 표시하지 않음
+      if (code !== 'ABORTED' && !abortedRef.current) {
+        const message = err instanceof Error ? err.message : String(err);
+        useAppStore.getState().setError({
+          code: 'GENERATE_FAIL',
+          message: message || 'Q&A 답변 생성에 실패했습니다.',
+        });
+      }
     } finally {
       clientRef.current = null;
       if (!completed && !abortedRef.current) {

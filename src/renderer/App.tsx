@@ -11,6 +11,7 @@ import { OllamaSetupWizard } from './components/OllamaSetupWizard';
 import { handlePdfData } from './lib/pdf-parser';
 import { applyTheme } from './lib/theme';
 import { useSummarize } from './lib/use-summarize';
+import { useRagBuilder } from './lib/use-qa';
 import logoImg from './assets/logo.png';
 
 export default function App() {
@@ -28,10 +29,17 @@ export default function App() {
   const error = useAppStore((s) => s.error);
   const setError = useAppStore((s) => s.setError);
   const isParsing = useAppStore((s) => s.isParsing);
+  const isQaGenerating = useAppStore((s) => s.isQaGenerating);
   const [modelHint, setModelHint] = useState<string | null>(null);
   const [bgModelSync, setBgModelSync] = useState<string | null>(null);
+  const [bgModelLoading, setBgModelLoading] = useState(false);
 
   const { handleSummarize, handleAbort } = useSummarize();
+
+  // 문서 로드 시 RAG 인덱스를 요약과 병렬로 빌드 (요약 완료까지 기다리지 않음).
+  // 이전에는 QaChat이 마운트되는 시점(요약 완료 후)에야 빌드가 시작되어,
+  // 사용자가 Q&A를 할 수 있을 때까지 "요약 시간 + 인덱싱 시간"을 모두 대기해야 했음.
+  useRagBuilder();
 
   // 초기화: 설정 로드 + Ollama 상태 확인
   useEffect(() => {
@@ -43,12 +51,14 @@ export default function App() {
       );
       if (missing.length === 0) return;
 
+      setBgModelLoading(true);
       for (const model of missing) {
         if (aborted) return;
         setBgModelSync(t('app.downloadingModel', { model }));
         const result = await window.electronAPI.ollama.pullModel(model);
         if (aborted) return;
         if (!result.success) {
+          setBgModelLoading(false);
           // 이전 모델이 성공적으로 설치되었을 수 있으므로 store 갱신
           try {
             const partialStatus = await window.electronAPI.ollama.getStatus();
@@ -60,6 +70,7 @@ export default function App() {
         }
       }
       if (aborted) return;
+      setBgModelLoading(false);
       const updatedStatus = await window.electronAPI.ollama.getStatus();
       if (aborted) return;
       setOllamaStatus(updatedStatus);
@@ -112,8 +123,8 @@ export default function App() {
     const handleDrop = async (e: DragEvent) => {
       e.preventDefault();
       // 동기적으로 store 상태를 직접 읽어 경합 조건 방지 (setState 전파 대기 불필요)
-      const { isParsing: parsing, isGenerating: generating } = useAppStore.getState();
-      if (parsing || generating) return;
+      const { isParsing: parsing, isGenerating: generating, isQaGenerating: qaGenerating } = useAppStore.getState();
+      if (parsing || generating || qaGenerating) return;
       const file = e.dataTransfer?.files[0];
       if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
         const buffer = await file.arrayBuffer();
@@ -150,6 +161,14 @@ export default function App() {
   useEffect(() => {
     return applyTheme(settings.theme);
   }, [settings.theme]);
+
+  // <html lang>과 document.title을 UI 언어에 동기화.
+  // 접근성(스크린 리더), 브라우저 번역/맞춤법 검사, 창 제목/Alt-Tab 일관성 확보.
+  // App.tsx 내에서 store의 `document`가 전역 document를 섀도잉하므로 window.document 사용.
+  useEffect(() => {
+    window.document.documentElement.lang = settings.uiLanguage;
+    window.document.title = t('app.title');
+  }, [settings.uiLanguage]);
 
   // PDF 업로드 후 한국어 감지 → 모델 추천
   useEffect(() => {
@@ -205,9 +224,9 @@ export default function App() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setView('settings')}
-            disabled={isGenerating || isParsing}
+            disabled={isGenerating || isParsing || isQaGenerating}
             className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title={isGenerating ? t('app.settingsBlocked') : t('app.settings')}
+            title={(isGenerating || isQaGenerating) ? t('app.settingsBlocked') : t('app.settings')}
             aria-label={t('app.settings')}
           >
             ⚙️
@@ -218,7 +237,7 @@ export default function App() {
       {/* 백그라운드 모델 다운로드 알림 */}
       {bgModelSync && (
         <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-400">
-          {!bgModelSync.includes('완료') && (
+          {bgModelLoading && (
             <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />

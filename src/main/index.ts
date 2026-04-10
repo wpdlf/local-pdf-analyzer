@@ -199,8 +199,12 @@ function readApiKeys(): Record<string, string> {
 
 function writeApiKeys(keys: Record<string, string>): void {
   if (!safeStorage.isEncryptionAvailable()) {
-    console.warn('[API Keys] OS 키체인을 사용할 수 없어 API 키를 저장할 수 없습니다.');
-    return;
+    // silent return 금지: 호출자가 실패를 감지할 수 있도록 throw
+    // (이전 버그: silent fail 시 UI가 "저장됨"이라고 보고한 뒤 실제 사용 시에야 실패 발견)
+    throw Object.assign(
+      new Error('OS 키체인을 사용할 수 없어 API 키를 저장할 수 없습니다. OS 설정을 확인해주세요.'),
+      { code: 'KEYCHAIN_UNAVAILABLE' },
+    );
   }
   const tmpPath = apiKeysPath + '.tmp';
   const encrypted = safeStorage.encryptString(JSON.stringify(keys));
@@ -249,8 +253,15 @@ function registerIpcHandlers(): void {
     if (typeof key !== 'string' || key.trim().length === 0 || key.length > 512) {
       return { success: false, error: 'Invalid API key' };
     }
-    saveApiKey(provider, key.trim());
-    return { success: true };
+    try {
+      saveApiKey(provider, key.trim());
+      return { success: true };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'API 키 저장 실패',
+      };
+    }
   });
 
   ipcMain.handle('apikey:has', (_event, provider: string) => {
@@ -265,8 +276,15 @@ function registerIpcHandlers(): void {
     if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {
       return { success: false, error: 'Invalid provider' };
     }
-    deleteApiKey(provider);
-    return { success: true };
+    try {
+      deleteApiKey(provider);
+      return { success: true };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'API 키 삭제 실패',
+      };
+    }
   });
 
   const VALID_THEMES = ['light', 'dark', 'system'] as const;

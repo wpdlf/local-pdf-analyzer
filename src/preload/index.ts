@@ -111,9 +111,9 @@ export type ElectronAPI = {
     set: (settings: Record<string, unknown>) => Promise<Record<string, unknown>>;
   };
   apiKey: {
-    save: (provider: 'ollama' | 'claude' | 'openai', key: string) => Promise<{ success: boolean }>;
+    save: (provider: 'ollama' | 'claude' | 'openai', key: string) => Promise<{ success: boolean; error?: string }>;
     has: (provider: 'ollama' | 'claude' | 'openai') => Promise<boolean>;
-    delete: (provider: 'ollama' | 'claude' | 'openai') => Promise<{ success: boolean }>;
+    delete: (provider: 'ollama' | 'claude' | 'openai') => Promise<{ success: boolean; error?: string }>;
   };
   openExternal: (url: string) => Promise<void>;
   onSetupProgress: (callback: (message: string) => void) => () => void;

@@ -30,6 +30,8 @@ export function QaChat() {
     const trimmed = input.trim();
     if (!trimmed || isQaGenerating) return;
     if (trimmed.length > MAX_QUESTION_LENGTH) return;
+    // RAG 인덱싱 중에는 전송 차단 — 부분 인덱스로 답변해 정확도가 떨어지는 문제 방지
+    if (ragState.isIndexing) return;
     setInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
     handleAsk(trimmed);
@@ -45,7 +47,8 @@ export function QaChat() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // IME 조합 중(한글/일본어/중국어)의 Enter는 조합 확정용이므로 제출 차단
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit();
     }
@@ -126,6 +129,12 @@ export function QaChat() {
         </div>
       )}
 
+      {ragState.isIndexing && (
+        <div className="px-4 py-1 text-xs text-amber-600 dark:text-amber-400">
+          {t('qa.waitIndexing')}
+        </div>
+      )}
+
       {/* 입력 영역 */}
       <div className="flex items-end gap-2 px-4 py-3">
         <textarea
@@ -134,7 +143,7 @@ export function QaChat() {
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           placeholder={t('qa.placeholder')}
-          disabled={isQaGenerating}
+          disabled={isQaGenerating || ragState.isIndexing}
           rows={1}
           className="flex-1 resize-none rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 placeholder:text-gray-400"
           aria-label={t('qa.inputAria')}
@@ -150,7 +159,7 @@ export function QaChat() {
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!input.trim() || isOverLimit}
+            disabled={!input.trim() || isOverLimit || ragState.isIndexing}
             className="px-3 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
             aria-label={t('qa.sendAria')}
           >

@@ -435,9 +435,10 @@ export function useSummarize() {
         });
       }
     } catch (err) {
-      if (!timedOut && useAppStore.getState().document) {
+      const code = (err instanceof Error && 'code' in err ? (err as Error & { code?: string }).code : undefined) || 'GENERATE_FAIL';
+      // 사용자 의도적 abort는 에러로 표시하지 않음 (timeout은 별도 메시지 이미 표시됨)
+      if (code !== 'ABORTED' && !timedOut && useAppStore.getState().document) {
         const message = err instanceof Error ? err.message : String(err);
-        const code = (err instanceof Error && 'code' in err ? (err as Error & { code?: string }).code : undefined) || 'GENERATE_FAIL';
         setError({
           code: code as 'GENERATE_FAIL',
           message: message || '요약 생성에 실패했습니다.',

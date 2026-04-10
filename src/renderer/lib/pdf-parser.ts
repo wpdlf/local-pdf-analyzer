@@ -102,17 +102,7 @@ export async function parsePdf(
       });
     }
     // OCR fallback: 페이지를 이미지로 렌더링 → Vision 모델로 텍스트 추출
-    // abort 메커니즘: isParsing이 false로 전환되면 배치 루프 중단
-    const abortSignal = { aborted: false };
-    const unsubscribe = useAppStore.subscribe((state) => {
-      if (!state.isParsing) abortSignal.aborted = true;
-    });
-    let ocrPages: string[];
-    try {
-      ocrPages = await ocrFallback(pdf, pageCount, options.onOcrProgress ?? (() => {}), abortSignal);
-    } finally {
-      unsubscribe();
-    }
+    const ocrPages = await ocrFallback(pdf, pageCount, options.onOcrProgress ?? (() => {}));
     const ocrText = ocrPages.join('\n\n');
     if (ocrText.trim().length < 50) {
       throw Object.assign(new Error('OCR로도 텍스트를 추출할 수 없습니다. PDF 품질을 확인해주세요.'), {
@@ -189,7 +179,6 @@ async function ocrFallback(
   pdf: pdfjsLib.PDFDocumentProxy,
   pageCount: number,
   onProgress: (current: number, total: number) => void,
-  signal?: { aborted: boolean },
 ): Promise<string[]> {
   const pages: string[] = [];
   const BATCH_SIZE = 3;
@@ -197,13 +186,11 @@ async function ocrFallback(
   const scale = pageCount > 100 ? 1.0 : pageCount > 50 ? 1.5 : 2.0;
 
   for (let i = 0; i < pageCount; i += BATCH_SIZE) {
-    if (signal?.aborted) break;
     const batch: Promise<string>[] = [];
     for (let j = i; j < Math.min(i + BATCH_SIZE, pageCount); j++) {
       const pageIdx = j;
       batch.push(
         renderPageToImage(pdf, pageIdx + 1, scale).then(async (base64) => {
-          if (signal?.aborted) return '';
           const result = await window.electronAPI.ai.ocrPage(base64);
           return (result.success && result.text) ? result.text : '';
         }).catch(() => ''),
@@ -444,6 +431,13 @@ export async function handlePdfData(
     } as AppError);
     return;
   }
+  if (store.isQaGenerating) {
+    store.setError({
+      code: 'PDF_PARSE_FAIL',
+      message: 'Q&A 답변 생성 중에는 새 파일을 열 수 없습니다.',
+    } as AppError);
+    return;
+  }
   if (store.isParsing) {
     return; // 이미 파싱 진행 중 — 중복 실행 방지
   }
@@ -462,6 +456,14 @@ export async function handlePdfData(
         store.setOcrProgress({ current, total });
       },
     });
+    // 새 문서로 교체되므로 이전 문서의 요약/Q&A/진행률 상태를 모두 초기화
+    // (드롭/Ctrl+O로 덮어쓸 때 이전 문서의 summaryStream·qaMessages가 새 문서의 헤더와
+    // 섞여 표시되는 버그 방지)
+    store.clearStream();
+    store.setSummary(null);
+    store.setProgress(0);
+    store.setProgressInfo(null);
+    store.clearQa();
     store.setDocument(doc);
     store.setError(null);
   } catch (err) {
