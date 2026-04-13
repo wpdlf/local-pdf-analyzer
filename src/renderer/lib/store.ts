@@ -290,7 +290,13 @@ export const useAppStore = create<AppState>((set) => ({
     settingsSaveTimer = setTimeout(() => {
       settingsSaveTimer = null;
       window.electronAPI.settings.set(newSettings as unknown as Record<string, unknown>).catch(() => {
-        set({ error: { code: 'SETTINGS_SAVE_FAIL' as const, message: '설정 저장에 실패했습니다. 다시 시도해주세요.' } });
+        // store 에서 i18n 모듈을 직접 import 하면 circular dependency 발생 (i18n → store).
+        // 대신 store 자체에서 현재 uiLanguage 를 읽어 최소 번역을 inline 으로 수행.
+        const lang = useAppStore.getState().settings.uiLanguage;
+        const message = lang === 'en'
+          ? 'Failed to save settings. Please try again.'
+          : '설정 저장에 실패했습니다. 다시 시도해주세요.';
+        set({ error: { code: 'SETTINGS_SAVE_FAIL' as const, message } });
       });
     }, 300);
   },

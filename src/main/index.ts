@@ -699,16 +699,16 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('file:open-pdf', async () => {
     const MAX_PDF_SIZE = MAX_PDF_SIZE_BYTES;
-    const { filePaths } = await dialog.showOpenDialog({
-      filters: [{ name: 'PDF', extensions: ['pdf'] }],
-      properties: ['openFile'],
-    });
-    if (filePaths.length === 0) return null;
-    const filePath = filePaths[0];
     // IPC 계약: 성공 시 {path, name, data}, 선택 취소 시 null, 그 외 모든 에러는 {error}.
-    // try/catch 로 fs 에러(ENOENT/EPERM 등) 를 rejection 대신 구조화된 error 로 변환하여
-    // 호출자(App.tsx Ctrl+O 핸들러, PdfUploader) 가 unhandled rejection 없이 처리 가능.
+    // try/catch 가 dialog.showOpenDialog 까지 포함해야 display server 에러 등 드문 예외도
+    // rejection 대신 구조화된 error 로 변환됨 (호출자가 unhandled rejection 없이 처리 가능).
     try {
+      const { filePaths } = await dialog.showOpenDialog({
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        properties: ['openFile'],
+      });
+      if (filePaths.length === 0) return null;
+      const filePath = filePaths[0];
       // drop 핸들러와 동일한 방어 — 심볼릭 링크/비정규 파일 거부.
       const lstat = await fsp.lstat(filePath);
       if (lstat.isSymbolicLink()) {
