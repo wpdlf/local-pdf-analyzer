@@ -224,7 +224,7 @@ src/
     │   ├── ai-client.ts       # AI Client (IPC requests to Main for summary/Q&A)
     │   ├── pdf-parser.ts      # PDF text + image extraction, chapter detection, OCR fallback
     │   ├── chunker.ts         # Text chunk splitting (auto Korean ratio detection)
-    │   ├── i18n.ts            # Internationalization (180+ keys, t() function, useT() hook)
+    │   ├── i18n.ts            # Internationalization (172+ keys, t() function, useT() hook)
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, conversation history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity search, dimension validation)
     │   ├── store.ts           # Zustand state management (summary + Q&A + RAG index)

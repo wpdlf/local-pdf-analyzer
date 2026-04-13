@@ -180,7 +180,12 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  cleanupAiService(); // safety net: before-quit 미호출 시 대비
+  // macOS 에서는 창이 모두 닫혀도 앱이 계속 실행됨(dock 재활성화 가능). 이때 cleanupAiService
+  // 를 호출하면 모듈 레벨 setInterval(ttlCleanupInterval) 이 파괴되어 다시 창을 열었을 때
+  // TTL 스윕이 영구 정지되고, 진행 중이던 요약/Q&A 요청까지 abort 됨.
+  // 비-darwin 에서는 `app.quit()` 이 `before-quit` 핸들러를 반드시 발화시키고, 거기서
+  // `cleanupAiService()` 가 호출되므로 여기서 중복 호출하지 않는다. 과거엔 "safety net"
+  // 의도였으나 실제로 before-quit 이 생략되는 경로가 없어 불필요.
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -325,57 +330,67 @@ function registerIpcHandlers(): void {
   const VALID_UI_LANGUAGES = ['ko', 'en'] as const;
   const VALID_SUMMARY_TYPES = ['full', 'chapter', 'keywords'] as const;
 
+  // settings:set 직렬화 mutex — 연속 호출 시 load→save 간 race 로 인한 lost update 방지.
+  // store 의 300ms debounce 로 대부분 흡수되지만, 수동 외부 호출이나 burst 상황에도 견고하게.
+  let settingsWriteChain: Promise<Record<string, unknown>> = Promise.resolve({});
+
   ipcMain.handle('settings:set', async (_event, partial: Record<string, unknown>) => {
-    const current = await loadSettings();
-    const filtered: Record<string, unknown> = {};
-    for (const key of VALID_SETTINGS_KEYS) {
-      if (!(key in partial)) continue;
-      const val = partial[key];
-      // 값 타입 검증
-      switch (key) {
-        case 'provider':
-          if (VALID_PROVIDERS.includes(val as typeof VALID_PROVIDERS[number])) filtered[key] = val;
-          break;
-        case 'model':
-          if (typeof val === 'string' && val.length > 0 && val.length <= 100) filtered[key] = val;
-          break;
-        case 'ollamaBaseUrl':
-          if (typeof val === 'string') {
-            try {
-              const parsed = new URL(val);
-              const allowedHosts = ['localhost', '127.0.0.1', '::1'];
-              if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && allowedHosts.includes(parsed.hostname)) {
-                filtered[key] = val;
-              }
-            } catch { /* 유효하지 않은 URL 무시 */ }
-          }
-          break;
-        case 'theme':
-          if (VALID_THEMES.includes(val as typeof VALID_THEMES[number])) filtered[key] = val;
-          break;
-        case 'uiLanguage':
-          if (VALID_UI_LANGUAGES.includes(val as typeof VALID_UI_LANGUAGES[number])) filtered[key] = val;
-          break;
-        case 'defaultSummaryType':
-          if (VALID_SUMMARY_TYPES.includes(val as typeof VALID_SUMMARY_TYPES[number])) filtered[key] = val;
-          break;
-        case 'maxChunkSize':
-          if (typeof val === 'number' && val >= 1000 && val <= 16000) filtered[key] = val;
-          break;
-        case 'enableImageAnalysis':
-          if (typeof val === 'boolean') filtered[key] = val;
-          break;
-        case 'enableOcrFallback':
-          if (typeof val === 'boolean') filtered[key] = val;
-          break;
-        case 'summaryLanguage':
-          if (['ko', 'en', 'ja', 'zh', 'auto'].includes(val as string)) filtered[key] = val;
-          break;
+    const task = async (): Promise<Record<string, unknown>> => {
+      const current = await loadSettings();
+      const filtered: Record<string, unknown> = {};
+      for (const key of VALID_SETTINGS_KEYS) {
+        if (!(key in partial)) continue;
+        const val = partial[key];
+        // 값 타입 검증
+        switch (key) {
+          case 'provider':
+            if (VALID_PROVIDERS.includes(val as typeof VALID_PROVIDERS[number])) filtered[key] = val;
+            break;
+          case 'model':
+            if (typeof val === 'string' && val.length > 0 && val.length <= 100) filtered[key] = val;
+            break;
+          case 'ollamaBaseUrl':
+            if (typeof val === 'string') {
+              try {
+                const parsed = new URL(val);
+                const allowedHosts = ['localhost', '127.0.0.1', '::1'];
+                if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && allowedHosts.includes(parsed.hostname)) {
+                  filtered[key] = val;
+                }
+              } catch { /* 유효하지 않은 URL 무시 */ }
+            }
+            break;
+          case 'theme':
+            if (VALID_THEMES.includes(val as typeof VALID_THEMES[number])) filtered[key] = val;
+            break;
+          case 'uiLanguage':
+            if (VALID_UI_LANGUAGES.includes(val as typeof VALID_UI_LANGUAGES[number])) filtered[key] = val;
+            break;
+          case 'defaultSummaryType':
+            if (VALID_SUMMARY_TYPES.includes(val as typeof VALID_SUMMARY_TYPES[number])) filtered[key] = val;
+            break;
+          case 'maxChunkSize':
+            if (typeof val === 'number' && val >= 1000 && val <= 16000) filtered[key] = val;
+            break;
+          case 'enableImageAnalysis':
+            if (typeof val === 'boolean') filtered[key] = val;
+            break;
+          case 'enableOcrFallback':
+            if (typeof val === 'boolean') filtered[key] = val;
+            break;
+          case 'summaryLanguage':
+            if (['ko', 'en', 'ja', 'zh', 'auto'].includes(val as string)) filtered[key] = val;
+            break;
+        }
       }
-    }
-    const updated = { ...current, ...filtered };
-    await saveSettings(updated);
-    return updated;
+      const updated = { ...current, ...filtered };
+      await saveSettings(updated);
+      return updated;
+    };
+    // 이전 작업의 결과는 버리고 chain 연결만 — 실패 시에도 다음 task 실행되도록 catch 로 복구
+    const next = settingsWriteChain.then(task, task);
+    settingsWriteChain = next.catch(() => ({}));
+    return next;
   });
 
   ipcMain.handle('ollama:status', async () => {
@@ -406,7 +421,9 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('ollama:stop', async () => {
     try {
-      return await ollamaManager.stop();
+      // ollamaManager.stop() 은 void 반환 → 성공 시 명시적으로 true 전달해 preload 타입과 일치
+      await ollamaManager.stop();
+      return true;
     } catch (err) {
       console.error('[ollama:stop] failed:', err);
       return false;
@@ -470,11 +487,20 @@ function registerIpcHandlers(): void {
     if (!VALID_PROVIDERS.includes(request.provider as typeof VALID_PROVIDERS[number])) {
       return { success: false, error: 'Invalid provider' };
     }
-    if (typeof request.model !== 'string' || !request.model) {
+    // model 검증: 길이 상한 + 안전 문자집합. ollama:pull-model 과 동일한 regex 를 공유해
+    // ai:generate 와 ollama:pull-model 입력 표면이 일관되게 보호됨.
+    // renderer compromise 시 10MB model 필드로 body 폭주를 막기 위한 방어 심화.
+    if (typeof request.model !== 'string' || request.model.length === 0 || request.model.length > 128
+        || !/^[a-zA-Z0-9]([a-zA-Z0-9._:\/-]*[a-zA-Z0-9])?$/.test(request.model)) {
       return { success: false, error: 'Invalid model' };
     }
     if (request.temperature !== undefined && (typeof request.temperature !== 'number' || Number.isNaN(request.temperature) || request.temperature < 0 || request.temperature > 2)) {
       return { success: false, error: 'Invalid temperature' };
+    }
+    // language 화이트리스트 — settings:set 의 summaryLanguage 검증과 동일한 집합.
+    // 향후 새 언어 추가 시 양쪽을 동시에 업데이트해야 drift 가 발생하지 않는다.
+    if (request.language !== undefined && !['ko', 'en', 'ja', 'zh', 'auto'].includes(request.language)) {
+      return { success: false, error: 'Invalid language' };
     }
 
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -677,21 +703,40 @@ function registerIpcHandlers(): void {
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
       properties: ['openFile'],
     });
-    if (filePaths.length > 0) {
-      const stat = await fsp.stat(filePaths[0]);
+    if (filePaths.length === 0) return null;
+    const filePath = filePaths[0];
+    // IPC 계약: 성공 시 {path, name, data}, 선택 취소 시 null, 그 외 모든 에러는 {error}.
+    // try/catch 로 fs 에러(ENOENT/EPERM 등) 를 rejection 대신 구조화된 error 로 변환하여
+    // 호출자(App.tsx Ctrl+O 핸들러, PdfUploader) 가 unhandled rejection 없이 처리 가능.
+    try {
+      // drop 핸들러와 동일한 방어 — 심볼릭 링크/비정규 파일 거부.
+      const lstat = await fsp.lstat(filePath);
+      if (lstat.isSymbolicLink()) {
+        return { error: '심볼릭 링크는 열 수 없습니다.' };
+      }
+      const stat = await fsp.stat(filePath);
+      if (!stat.isFile()) {
+        return { error: '일반 파일이 아닙니다.' };
+      }
       if (stat.size > MAX_PDF_SIZE) {
         return { error: 'PDF 파일이 너무 큽니다 (최대 100MB).' };
       }
-      const buffer = await fsp.readFile(filePaths[0]);
+      const buffer = await fsp.readFile(filePath);
       const arrayBuf = buffer.byteOffset === 0 && buffer.byteLength === buffer.buffer.byteLength
         ? buffer.buffer
         : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
       return {
-        path: filePaths[0],
-        name: path.basename(filePaths[0]),
+        path: filePath,
+        name: path.basename(filePath),
         data: arrayBuf,
       };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const friendly = code === 'ENOENT' ? '파일을 찾을 수 없습니다.'
+        : code === 'EPERM' || code === 'EACCES' ? '파일에 접근할 수 없습니다.'
+        : 'PDF 파일을 열 수 없습니다.';
+      console.error('[file:open-pdf] failed:', err);
+      return { error: friendly };
     }
-    return null;
   });
 }

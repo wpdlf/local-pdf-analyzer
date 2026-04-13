@@ -225,7 +225,7 @@ src/
     │   ├── ai-client.ts       # AI Client (IPC를 통해 Main에 요약/Q&A 요청)
     │   ├── pdf-parser.ts      # PDF 텍스트 + 이미지 추출, 챕터 감지, OCR fallback
     │   ├── chunker.ts         # 텍스트 청크 분할 (한글 비율 자동 감지)
-    │   ├── i18n.ts             # 다국어 번역 (180+ 키, t() 함수, useT() 훅)
+    │   ├── i18n.ts             # 다국어 번역 (172+ 키, t() 함수, useT() 훅)
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)

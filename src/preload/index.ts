@@ -78,8 +78,8 @@ export type ElectronAPI = {
       models: string[];
     }>;
     install: () => Promise<{ success: boolean; error?: string }>;
-    start: () => Promise<void>;
-    stop: () => Promise<void>;
+    start: () => Promise<boolean>;
+    stop: () => Promise<boolean>;
     pullModel: (model: string) => Promise<{ success: boolean; error?: string }>;
     listModels: () => Promise<string[]>;
   };

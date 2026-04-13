@@ -436,6 +436,20 @@ function streamRequest(
           safeDeleteRequest();
           safeReject(err);
         });
+
+        // httpPost 와 동일한 패턴으로 'close' 리스너 추가.
+        // 정상 경로에서는 end → safeResolve → close 순서로 settled 상태라 영향 없음.
+        // 비정상 경로(서버가 clean FIN 없이 소켓 close, 또는 end 미발화로 응답 잘림)에서
+        // idle timer(60초) 발화 전에 즉시 에러로 전파하여 UX 개선.
+        res.on('close', () => {
+          if (streamAborted || settled) return;
+          if (!res.complete) {
+            streamAborted = true;
+            clearIdleTimer();
+            safeDeleteRequest();
+            safeReject(new Error('AI 스트림 연결이 끊어졌습니다.'));
+          }
+        });
       },
     );
 
@@ -779,10 +793,19 @@ async function embedOpenAi(
   if (parsed.data.length !== texts.length) {
     throw new Error(`OpenAI 임베딩 개수 불일치: expected ${texts.length}, got ${parsed.data.length}`);
   }
-  // index 순서대로 정렬
-  const sorted = parsed.data.sort((a: { index: number }, b: { index: number }) => a.index - b.index);
+  // 각 항목의 index 가 유효한 정수 범위 [0, length) 임을 검증한 뒤 정렬.
+  // 조작된 응답(-Infinity/NaN/문자열 등) 이 sort 순서를 뒤섞어
+  // 임베딩이 잘못된 원본 청크에 매핑되는 데이터 무결성 오염을 차단.
+  for (const d of parsed.data as { index: unknown }[]) {
+    if (!Number.isInteger(d.index) || (d.index as number) < 0 || (d.index as number) >= texts.length) {
+      throw new Error('OpenAI 임베딩 index 값이 유효하지 않습니다.');
+    }
+  }
+  const sorted = (parsed.data as { index: number; embedding: number[] }[])
+    .slice()
+    .sort((a, b) => a.index - b.index);
   return {
-    embeddings: sorted.map((d: { embedding: number[] }) => d.embedding),
+    embeddings: sorted.map((d) => d.embedding),
     model: useModel,
     provider: 'openai',
   };
@@ -915,8 +938,12 @@ Analyze and structurally summarize the following document.
 4. **Examples**: Briefly include key examples if present
 5. **Key points**: Highlight particularly important content
 
-## Strictly prohibited
-- No greetings, compliments, conversational remarks, or introductory/closing statements
+## Strictly prohibited (must follow)
+- No greetings: never write "Hello", "Hi", "Greetings"
+- No compliments: never write "Great document", "Well-organized material"
+- No conversational remarks: never write "Here's a summary of...", "Let me summarize...", "I hope this helps", "If you have any questions", "Feel free to ask"
+- No introductory statements: never write "This document is about...", "The following is a summary of..."
+- No closing statements: never write "In conclusion", "To summarize", "That concludes"
 - Start directly with the summary content from the very first line
 
 ## Output format
@@ -984,14 +1011,18 @@ const PROMPTS_JA: LangPrompts = {
 以下の文書を分析し、構造的に要約してください。
 
 ## 要約ルール
-1. **核心概念**: 主要な概念と定義をリストで整理（専門用語は原語を併記）
-2. **主な内容**: 各セクションの核心内容を簡潔に要約
+1. **主要な概念**: 主要な概念と定義をリストで整理（専門用語は原語を併記）
+2. **主な内容**: 各セクションの中核となる内容を簡潔に要約
 3. **数式・公式**: 重要な数式があれば原文のまま含める
-4. **例題**: 核心的な例題があれば簡略に含める
+4. **重要な例**: 主な例があれば簡略に含める
 5. **キーポイント**: 特に重要な内容を別途表示
 
-## 禁止事項
-- 挨拶、感想、会話的コメント、導入部・締めのコメントは一切禁止
+## 絶対禁止事項(必ず守ること)
+- 挨拶禁止: 「こんにちは」「よろしくお願いします」などを絶対に書かない
+- 感想禁止: 「良い資料です」「よく整理されています」などを絶対に書かない
+- 会話的コメント禁止: 「要約いたします」「ご不明な点があれば」「お役に立てれば幸いです」「お気軽にお問い合わせください」などを絶対に書かない
+- 導入部禁止: 「~について要約します」「以下は~の主な内容です」などを書かない
+- 締めのコメント禁止: 「以上です」「以上で終わります」などを書かない
 - 最初の行から直接要約内容を出力すること
 
 ## 出力形式
@@ -1006,13 +1037,14 @@ ${text}`,
 このセクションを要約してください。
 
 ## 要約ルール
-1. **核心概念**と**定義**を整理（専門用語は原語を併記）
+1. **主要な概念**と**定義**を整理（専門用語は原語を併記）
 2. 重要な**数式・公式**は原文のまま含める
-3. **例題**があれば核心のみ簡略に含める
+3. **重要な例**があれば要点のみ簡略に含める
 4. 3〜5個の**キーポイント**で整理
 
 ## 禁止事項
 - 挨拶、感想、会話的コメントは一切禁止
+- 「このセクションは~について説明しています」のような導入部も禁止
 - 最初の行から直接要約内容のみ出力
 
 ## 出力形式
@@ -1021,7 +1053,7 @@ ${text}`,
 ---
 
 ${text}`,
-  keywords: (text) => `以下の文書から核心キーワードを抽出し、それぞれ簡単に説明してください。
+  keywords: (text) => `以下の文書から主要なキーワードを抽出し、それぞれ簡単に説明してください。
 回答は必ず全て日本語で書いてください。専門用語は原語を併記します。
 
 ## 出力形式
@@ -1065,8 +1097,12 @@ const PROMPTS_ZH: LangPrompts = {
 4. **示例**: 简要包含关键示例
 5. **关键要点**: 特别标注重要内容
 
-## 严禁事项
-- 禁止问候语、评论、对话式表达、开场白或结束语
+## 严禁事项(必须遵守)
+- 禁止问候语: 不要写"你好"、"您好"等
+- 禁止评价: 不要写"这是一份好文档"、"内容整理得很好"等
+- 禁止对话式表达: 不要写"希望对您有帮助"、"如有疑问请随时告知"、"让我为您总结"、"以下是总结"等
+- 禁止开场白: 不要写"以下是关于~的总结"、"本文档介绍了~"等
+- 禁止结束语: 不要写"总而言之"、"以上就是全部内容"、"希望有所帮助"等
 - 从第一行直接开始输出总结内容
 
 ## 输出格式
@@ -1189,7 +1225,7 @@ Respond in the same language as the source document.
 
 ## Rules
 1. Answer based only on the document content below
-2. If not found, say so
+2. If the information is not in the document, respond explicitly: in the source language, state that the requested information was not found in the document. Do not fabricate content.
 3. Quote formulas as-is
 4. Concise markdown answers only — no greetings
 
