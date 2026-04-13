@@ -38,11 +38,11 @@ export interface Chapter {
   text: string;
 }
 
-// 요약 결과
+// 요약 결과 — Q&A는 대화 메시지에 저장되므로 Summary의 type은 DefaultSummaryType만 가능
 export interface Summary {
   id: string;
   documentId: string;
-  type: SummaryType;
+  type: DefaultSummaryType;
   content: string;
   model: string;
   provider: AiProviderType;
@@ -61,8 +61,11 @@ export interface ProgressInfo {
   estimatedRemainingMs?: number; // 예상 남은 시간 (ms)
 }
 
-// 요약 유형
+// 요약 유형 (런타임 요청 타입) — 'qa' 는 Q&A 채팅 전용이며 설정으로 저장되지 않음
 export type SummaryType = 'full' | 'chapter' | 'keywords' | 'qa';
+
+// 설정에 저장 가능한 기본 요약 유형 — 'qa'는 대화형 요청이므로 기본값으로 지정 불가
+export type DefaultSummaryType = 'full' | 'chapter' | 'keywords';
 
 // 앱 UI 언어
 export type UiLanguage = 'ko' | 'en';
@@ -91,7 +94,7 @@ export interface AppSettings {
   ollamaBaseUrl: string;
   theme: 'light' | 'dark' | 'system';
   uiLanguage: UiLanguage;
-  defaultSummaryType: SummaryType;
+  defaultSummaryType: DefaultSummaryType;
   maxChunkSize: number;
   enableImageAnalysis: boolean;
   enableOcrFallback: boolean;
@@ -133,6 +136,7 @@ export interface RagIndexState {
 export type AppErrorCode =
   | 'PDF_PARSE_FAIL'
   | 'PDF_NO_TEXT'
+  | 'PDF_TOO_MANY_PAGES'
   | 'OLLAMA_NOT_FOUND'
   | 'OLLAMA_NOT_RUNNING'
   | 'OLLAMA_INSTALL_FAIL'

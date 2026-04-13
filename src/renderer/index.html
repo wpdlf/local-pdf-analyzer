@@ -3,8 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'">
+    <!--
+      CSP 주석:
+      - script-src 'unsafe-inline' 은 아래 FOUC 방지용 초기화 스크립트 1건만을 위해 허용.
+        Electron 로컬 앱이므로 외부 스크립트 주입 경로가 없고, 렌더되는 마크다운은
+        react-markdown + safeComponents 로 이미 살균됨. 위험은 이론적으로만 존재.
+      - hash 기반 CSP(sha256-...)가 더 안전하지만 빌드 파이프라인이 복잡해져 trade-off 선택.
+      - frame-src/child-src 'none': iframe 임베딩 차단 (마크다운/의존성 침해 시 탈출 경로 제거)
+      - base-uri 'none': <base href="..."> 주입으로 상대 경로 탈취 차단
+      - form-action 'none': 폼 submit 으로 외부 origin 데이터 전송 차단
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; child-src 'none'; base-uri 'none'; form-action 'none'">
     <title>PDF 자료 분석기</title>
+    <script>
+      // FOUC 방지: React 마운트 전에 동기적으로 테마 클래스 적용.
+      // 테마는 localStorage('theme')에 캐시되며, 실제 저장소는 main의 settings.json.
+      // 캐시 없을 때는 OS prefers-color-scheme 사용(시스템 기본값과 일치).
+      (function () {
+        try {
+          var t = localStorage.getItem('theme') || 'system';
+          var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (e) { /* localStorage 접근 실패는 무시 (first run 등) */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

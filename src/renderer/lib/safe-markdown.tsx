@@ -1,6 +1,7 @@
 import { Component, type ReactNode } from 'react';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { t } from './i18n';
 
 /** ReactMarkdown 파싱 실패 시 원본 텍스트를 fallback으로 표시하는 Error Boundary */
 export class MarkdownErrorBoundary extends Component<
@@ -11,7 +12,8 @@ export class MarkdownErrorBoundary extends Component<
   static getDerivedStateFromError() { return { hasError: true }; }
   render() {
     if (this.state.hasError) {
-      return <pre className="whitespace-pre-wrap text-sm">{this.props.fallbackText ?? '렌더링 오류가 발생했습니다.'}</pre>;
+      // t()는 store에서 현재 uiLanguage를 읽음 — 렌더 시점 언어로 표시됨
+      return <pre className="whitespace-pre-wrap text-sm">{this.props.fallbackText ?? t('common.renderError')}</pre>;
     }
     return this.props.children;
   }
@@ -34,6 +36,6 @@ export const safeComponents: Components = {
       : <span>{children}</span>;
   },
   img: ({ alt }) => {
-    return <span>{alt || '[이미지]'}</span>;
+    return <span>{alt || t('common.imagePlaceholder')}</span>;
   },
 };

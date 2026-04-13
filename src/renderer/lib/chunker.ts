@@ -3,8 +3,11 @@ import type { Chapter } from '../types';
 /**
  * 한글 비율에 따라 토큰당 문자 수를 동적으로 계산
  * 영어: ~4 chars/token, 한글: ~1.5 chars/token
+ *
+ * export 이유: use-summarize.ts의 통합 요약 단계에서도 동일한 추정식이 필요.
+ * 한쪽만 수정 시 불일치가 발생하지 않도록 단일 구현을 공유.
  */
-function estimateCharsPerToken(text: string): number {
+export function estimateCharsPerToken(text: string): number {
   const sample = text.slice(0, 2000);
   const koreanChars = (sample.match(/[\uAC00-\uD7AF\u3130-\u318F\u1100-\u11FF]/g) || []).length;
   const koreanRatio = koreanChars / Math.max(sample.length, 1);
@@ -20,6 +23,9 @@ export function chunkText(
   text: string,
   maxChunkSize: number = 4000,
 ): string[] {
+  // 빈/공백 문자열 가드 — 빈 청크로 벡터 스토어가 오염되는 것 방지
+  if (!text || !text.trim()) return [];
+
   const charsPerToken = estimateCharsPerToken(text);
   const maxChars = Math.max(1, Math.floor(maxChunkSize * charsPerToken));
 
@@ -62,6 +68,7 @@ export function chunkTextWithOverlap(
   maxChunkSize: number = 500,
   overlapRatio: number = 0.1,
 ): string[] {
+  if (!text || !text.trim()) return [];
   const charsPerToken = estimateCharsPerToken(text);
   const maxChars = Math.max(200, Math.floor(maxChunkSize * charsPerToken));
   const overlapChars = Math.floor(maxChars * overlapRatio);

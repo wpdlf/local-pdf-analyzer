@@ -6,6 +6,11 @@ import { useAppStore } from './store';
 const translations = {
   // ─── 공통 ───
   'common.close': { ko: '닫기', en: 'Close' },
+  'common.renderError': { ko: '렌더링 오류가 발생했습니다.', en: 'A rendering error occurred.' },
+  'common.imagePlaceholder': { ko: '[이미지]', en: '[image]' },
+  'ai.generateFail': { ko: '요약 생성에 실패했습니다.', en: 'Failed to generate summary.' },
+  'ai.requestFail': { ko: '요약 요청에 실패했습니다.', en: 'Failed to send summary request.' },
+  'ai.streamInterrupted': { ko: 'AI 응답 수신이 중단되었습니다. 네트워크 연결과 AI 서비스 상태를 확인해주세요.', en: 'AI response stream interrupted. Please check your network connection and AI service status.' },
   'common.save': { ko: '저장', en: 'Save' },
   'common.delete': { ko: '삭제', en: 'Delete' },
   'common.cancel': { ko: '취소', en: 'Cancel' },
@@ -36,6 +41,11 @@ const translations = {
   // ─── PdfUploader ───
   'uploader.fileTooLarge': { ko: '파일이 너무 큽니다 ({size}MB). 최대 100MB까지 지원합니다.', en: 'File too large ({size}MB). Maximum 100MB supported.' },
   'uploader.cannotRead': { ko: 'PDF를 읽을 수 없습니다.', en: 'Cannot read PDF.' },
+  'uploader.multipleFiles': { ko: '한 번에 하나의 PDF만 처리할 수 있습니다. 첫 번째 파일({name})만 열었습니다.', en: 'Only one PDF can be processed at a time. Opening the first file ({name}) only.' },
+  'uploader.notPdf': { ko: 'PDF 파일만 지원됩니다.', en: 'Only PDF files are supported.' },
+  'uploader.tooManyPages': { ko: '페이지 수가 너무 많습니다 ({pages}p). 최대 {max}페이지까지 지원합니다. 문서를 분할해주세요.', en: 'Too many pages ({pages}p). Maximum {max} pages supported. Please split the document.' },
+  'uploader.cancelParse': { ko: 'PDF 처리 취소', en: 'Cancel PDF processing' },
+  'uploader.cancelBtn': { ko: '■ 취소', en: '■ Cancel' },
   'uploader.ariaLabel': { ko: 'PDF 파일 업로드', en: 'Upload PDF file' },
   'uploader.ocrProgress': { ko: '스캔 PDF 텍스트 인식 중...', en: 'Recognizing scanned PDF text...' },
   'uploader.ocrLabel': { ko: 'OCR 진행', en: 'OCR progress' },
@@ -119,11 +129,14 @@ const translations = {
   'settings.modelRecommend': { ko: '한국어 요약에는 gemma3, qwen2.5 모델을 권장합니다.', en: 'gemma3 and qwen2.5 are recommended for Korean summaries.' },
   'settings.apiKeyMgmt': { ko: 'API 키 관리', en: 'API Key Management' },
   'settings.apiKeyEncrypted': { ko: 'API 키는 암호화되어 로컬에 저장됩니다.', en: 'API keys are encrypted and stored locally.' },
+  'settings.apiKeyPlaceholder': { ko: 'API 키를 입력하세요', en: 'Enter API key' },
+  'settings.apiKeyMasked': { ko: '••••••••••••', en: '••••••••••••' },
   'settings.keySaved': { ko: '{provider} API 키가 저장되었습니다.', en: '{provider} API key saved.' },
   'settings.keySaveFail': { ko: 'API 키 저장에 실패했습니다. 다시 시도해주세요.', en: 'Failed to save API key. Please try again.' },
   'settings.keyDeleted': { ko: 'API 키가 삭제되었습니다.', en: 'API key deleted.' },
   'settings.keyDeleteFail': { ko: 'API 키 삭제에 실패했습니다. 다시 시도해주세요.', en: 'Failed to delete API key. Please try again.' },
   'settings.saveKeyFirst': { ko: '{provider} API 키를 먼저 저장해주세요.', en: 'Please save {provider} API key first.' },
+  'settings.keyEmpty': { ko: 'API 키를 입력해주세요.', en: 'Please enter an API key.' },
   'settings.ollamaMgmt': { ko: 'Ollama 관리', en: 'Ollama Management' },
   'settings.ollamaStatus': { ko: '상태', en: 'Status' },
   'settings.ollamaRunning': { ko: '✅ Running', en: '✅ Running' },
@@ -189,6 +202,8 @@ const translations = {
   'setup.hint.pullFail': { ko: '모델 다운로드 실패. 디스크 공간(최소 4GB)과 네트워크를 확인하세요.', en: 'Model download failed. Check disk space (min 4GB) and network.' },
   'setup.downloadReady': { ko: '다운로드 준비 중...', en: 'Preparing download...' },
   'setup.manualInstall': { ko: '수동 설치:', en: 'Manual install:' },
+  'setup.cancel': { ko: '취소하고 다른 Provider 사용', en: 'Cancel and use another provider' },
+  'setup.cancelling': { ko: '취소 중... 진행 중인 작업은 백그라운드에서 완료됩니다.', en: 'Cancelling... ongoing operations will finish in the background.' },
 } as const;
 
 type TranslationKey = keyof typeof translations;

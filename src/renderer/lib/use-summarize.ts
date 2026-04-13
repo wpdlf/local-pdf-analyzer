@@ -1,10 +1,12 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { AiClient } from './ai-client';
-import { chunkText, chunkChapters } from './chunker';
-import type { PdfDocument, SummaryType, AppSettings, ProgressInfo } from '../types';
+import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
+import type { PdfDocument, DefaultSummaryType, AppSettings, ProgressInfo, AppError } from '../types';
 
-type TrackFn = (text: string, type: SummaryType) => AsyncGenerator<string>;
+// TrackFn은 요약 파이프라인 내부에서만 사용되며 'qa' 타입은 호출되지 않음.
+// 'qa'는 use-qa.ts 의 handleAsk 에서 ai-client.summarize 를 직접 호출하는 별도 경로.
+type TrackFn = (text: string, type: DefaultSummaryType) => AsyncGenerator<string>;
 
 /** 로컬 LLM이 생성한 대화형 멘트를 후처리로 제거 */
 function stripConversationalText(text: string): string {
@@ -134,6 +136,14 @@ async function summarizeByChapter(
   const progressRange = 100 - progressOffset; // 요약 단계에서 사용할 진행률 범위
   const chaptersData = chunkChapters(doc.chapters, settings.maxChunkSize);
   const total = chaptersData.reduce((sum, c) => sum + c.chunks.length, 0);
+  // 모든 챕터의 청크가 비어있는 경우 → chunkText가 [] 반환(공백뿐인 텍스트)
+  // 사용자에게 무음 실패 대신 명시적 에러 surface
+  if (total === 0) {
+    throw Object.assign(
+      new Error('요약할 내용이 없습니다. PDF에서 유의미한 텍스트를 추출하지 못했습니다.'),
+      { code: 'PDF_NO_TEXT' },
+    );
+  }
   let processed = 0;
   let chapterIdx = 0;
   for (const { chapter, chunks } of chaptersData) {
@@ -187,7 +197,7 @@ async function summarizeByChapter(
 }
 
 async function summarizeFull(
-  doc: PdfDocument, summaryType: SummaryType, settings: AppSettings, track: TrackFn,
+  doc: PdfDocument, summaryType: DefaultSummaryType, settings: AppSettings, track: TrackFn,
   checkTimeout: () => boolean, isTimedOut: () => boolean,
   append: (s: string) => void, setProgress: (p: number) => void,
   setProgressInfo: (info: ProgressInfo) => void, startTime: number,
@@ -195,6 +205,14 @@ async function summarizeFull(
 ) {
   const progressRange = 100 - progressOffset;
   const chunks = chunkText(doc.extractedText, settings.maxChunkSize);
+  // chunkText는 공백/빈 입력 시 []를 반환. 빈 배열로 진입하면 루프 스킵 →
+  // 사용자는 스피너가 사라지지만 content/에러가 없는 무음 실패를 겪음.
+  if (chunks.length === 0) {
+    throw Object.assign(
+      new Error('요약할 내용이 없습니다. PDF에서 유의미한 텍스트를 추출하지 못했습니다.'),
+      { code: 'PDF_NO_TEXT' },
+    );
+  }
   const chunkSummaries: string[] = [];
   for (let i = 0; i < chunks.length; i++) {
     if (isTimedOut()) break;
@@ -241,7 +259,8 @@ async function summarizeFull(
     const labels = integrationLabels[lang] || integrationLabels['ko'];
     append(`\n\n---\n\n## ${labels.heading}\n\n`);
     const combined = chunkSummaries.join('\n\n');
-    const charsPerToken = Math.max(1.5, 4 - ((combined.match(/[\uAC00-\uD7AF]/g) || []).length / Math.max(combined.length, 1)) * 2.5);
+    // chunker.ts 와 동일한 추정식을 재사용 — 중복 구현 제거 (유지보수 일관성)
+    const charsPerToken = estimateCharsPerToken(combined);
     const maxCombinedChars = Math.floor(settings.maxChunkSize * charsPerToken);
     const safeCombined = combined.length > maxCombinedChars
       ? combined.slice(0, maxCombinedChars) + `\n\n${labels.truncated}`
@@ -337,11 +356,13 @@ export function useSummarize() {
       const client = new AiClient(currentSettings);
       clientRef.current = client;
 
-      const trackSummarize = (text: string, type: SummaryType) => {
+      const trackSummarize = (text: string, type: DefaultSummaryType) => {
+        // clientRef 비교로 stale closure 방지: abort 후 재요약 시 이전 client 토큰 무시.
+        // stale 체크를 prepareSummarize / setCurrentRequestId 이전에 수행해야
+        // stale 빌드가 store에 고아 requestId를 남기지 않음.
+        if (clientRef.current !== client) return (async function*(): AsyncGenerator<string> {})();
         const requestId = client.prepareSummarize();
         useAppStore.getState().setCurrentRequestId(requestId);
-        // clientRef 비교로 stale closure 방지: abort 후 재요약 시 이전 client 토큰 무시
-        if (clientRef.current !== client) return (async function*(): AsyncGenerator<string> {})();
         return client.summarize(text, type, requestId);
       };
 
@@ -420,7 +441,7 @@ export function useSummarize() {
       // 후처리: 로컬 LLM이 프롬프트 금지 사항을 무시한 대화형 멘트 제거
       const finalContent = stripConversationalText(rawContent);
       if (finalContent !== rawContent) {
-        useAppStore.setState({ summaryStream: finalContent });
+        useAppStore.getState().replaceSummaryStream(finalContent);
       }
       if (!timedOut && finalContent) {
         setSummary({
@@ -435,12 +456,15 @@ export function useSummarize() {
         });
       }
     } catch (err) {
-      const code = (err instanceof Error && 'code' in err ? (err as Error & { code?: string }).code : undefined) || 'GENERATE_FAIL';
+      const rawCode = (err instanceof Error && 'code' in err ? (err as Error & { code?: string }).code : undefined);
       // 사용자 의도적 abort는 에러로 표시하지 않음 (timeout은 별도 메시지 이미 표시됨)
-      if (code !== 'ABORTED' && !timedOut && useAppStore.getState().document) {
+      if (rawCode !== 'ABORTED' && !timedOut && useAppStore.getState().document) {
+        // 유효한 AppErrorCode만 허용, 그 외는 GENERATE_FAIL로 매핑
+        const validCodes = new Set(['PDF_NO_TEXT', 'GENERATE_TIMEOUT', 'API_KEY_MISSING', 'API_KEY_INVALID', 'OLLAMA_NOT_RUNNING']);
+        const code = (rawCode && validCodes.has(rawCode) ? rawCode : 'GENERATE_FAIL') as AppError['code'];
         const message = err instanceof Error ? err.message : String(err);
         setError({
-          code: code as 'GENERATE_FAIL',
+          code,
           message: message || '요약 생성에 실패했습니다.',
         });
       }

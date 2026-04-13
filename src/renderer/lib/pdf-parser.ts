@@ -2,16 +2,32 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { OPS } from 'pdfjs-dist';
 import type { PdfDocument, Chapter, PageImage, AppError } from '../types';
 import { useAppStore } from './store';
+import { MAX_PDF_SIZE_BYTES } from '../../shared/constants';
+// Vite의 ?url 쿼리를 사용해 worker 파일을 정적 에셋으로 번들링.
+// bare specifier + import.meta.url 패턴은 Vite에서 dev/build 동작이 다를 수 있어
+// 패키지된 Electron(ASAR)에서 worker 로드 실패 위험이 있음. ?url은 명시적 에셋 처리.
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 // PDF.js worker 설정
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 export interface ParsePdfOptions {
   enableOcrFallback?: boolean;
   onOcrProgress?: (current: number, total: number) => void;
+  /** 사용자 취소 지원. aborted 시 다음 배치/OCR 페이지 진입 직전에 ABORTED 에러로 조기 종료. */
+  signal?: AbortSignal;
+}
+
+// 페이지 수 상한 — 대용량 PDF의 자원 폭주 방지.
+// 텍스트/이미지 추출 + 선택적 OCR 파이프라인이 페이지 수에 선형/병렬로 확장되므로
+// 수천 페이지 문서는 메모리/시간 모두 비현실적. 사용자에게 분할을 안내.
+export const MAX_PAGE_COUNT = 500;
+
+/** AbortSignal aborted 시 ABORTED 코드가 붙은 에러를 throw */
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw Object.assign(new Error('PDF 처리가 취소되었습니다.'), { code: 'ABORTED' });
+  }
 }
 
 export async function parsePdf(
@@ -20,12 +36,26 @@ export async function parsePdf(
   filePath: string,
   options?: ParsePdfOptions,
 ): Promise<PdfDocument> {
+  const signal = options?.signal;
+  throwIfAborted(signal);
+
   const pdf = await pdfjsLib.getDocument({
     data,
     cMapUrl: './cmaps/',
     cMapPacked: true,
   }).promise;
+  throwIfAborted(signal);
   const pageCount = pdf.numPages;
+
+  if (pageCount === 0) {
+    throw Object.assign(new Error('PDF에 페이지가 없습니다.'), { code: 'PDF_NO_TEXT' });
+  }
+  if (pageCount > MAX_PAGE_COUNT) {
+    throw Object.assign(
+      new Error(`페이지 수가 너무 많습니다 (${pageCount}p). 최대 ${MAX_PAGE_COUNT}페이지까지 지원합니다. 문서를 분할해주세요.`),
+      { code: 'PDF_TOO_MANY_PAGES' },
+    );
+  }
 
   // 배치 병렬 처리 (한 번에 10페이지씩)
   const BATCH_SIZE = 10;
@@ -33,110 +63,124 @@ export async function parsePdf(
   const pages: string[] = new Array(pageCount).fill('');
   const allImages: PageImage[] = [];
 
-  for (let batchStart = 0; batchStart < pageCount; batchStart += BATCH_SIZE) {
-    // 이미지 상한 도달 여부를 배치 시작 시점에 캡처 (레이스 컨디션 방지)
-    const skipImages = allImages.length >= MAX_TOTAL_IMAGES;
-    const batchEnd = Math.min(batchStart + BATCH_SIZE, pageCount);
-    const promises = [];
-    for (let i = batchStart; i < batchEnd; i++) {
-      promises.push(
-        pdf.getPage(i + 1).then(async (page) => {
-          // 이미지 추출 (배치 단위로 상한 체크 — 병렬 Promise 내 레이스 방지)
-          const imagePromise = !skipImages
-            ? extractPageImages(page, i).catch(() => [] as PageImage[])
-            : Promise.resolve([] as PageImage[]);
+  try {
+    for (let batchStart = 0; batchStart < pageCount; batchStart += BATCH_SIZE) {
+      // 취소 체크 — 배치 사이에 조기 종료
+      throwIfAborted(signal);
+      // 이미지 상한 도달 여부를 배치 시작 시점에 캡처 (레이스 컨디션 방지)
+      const skipImages = allImages.length >= MAX_TOTAL_IMAGES;
+      const batchEnd = Math.min(batchStart + BATCH_SIZE, pageCount);
+      const promises = [];
+      for (let i = batchStart; i < batchEnd; i++) {
+        promises.push(
+          pdf.getPage(i + 1).then(async (page) => {
+            // 이미지 추출 (배치 단위로 상한 체크 — 병렬 Promise 내 레이스 방지)
+            const imagePromise = !skipImages
+              ? extractPageImages(page, i).catch(() => [] as PageImage[])
+              : Promise.resolve([] as PageImage[]);
 
-          const textContent = await page.getTextContent();
-          // 텍스트 아이템 간 위치 기반 공백/줄바꿈 삽입 (한글 깨짐 방지)
-          let lastY: number | null = null;
-          let lastEndX = 0;
-          const parts: string[] = [];
+            const textContent = await page.getTextContent();
+            // 텍스트 아이템 간 위치 기반 공백/줄바꿈 삽입 (한글 깨짐 방지)
+            let lastY: number | null = null;
+            let lastEndX = 0;
+            const parts: string[] = [];
 
-          for (const item of textContent.items) {
-            if (!('str' in item) || !item.str) continue;
-            const tx = ('transform' in item) ? item.transform : null;
-            if (!tx) {
-              // transform이 없으면 공백 연결 fallback
-              if (parts.length > 0) parts.push(' ');
-              parts.push(item.str);
-              continue;
-            }
-            const x = tx[4];
-            const y = tx[5];
-            const fontSize = Math.abs(tx[0]) || Math.abs(tx[3]) || 12;
-
-            if (lastY !== null) {
-              const yDiff = Math.abs(y - lastY);
-              if (yDiff > fontSize * 0.5) {
-                // 줄이 바뀜
-                parts.push('\n');
-              } else if (x > lastEndX + fontSize * 0.3) {
-                // 같은 줄에서 간격이 있으면 공백
-                parts.push(' ');
+            for (const item of textContent.items) {
+              if (!('str' in item) || !item.str) continue;
+              const tx = ('transform' in item) ? item.transform : null;
+              if (!tx) {
+                // transform이 없으면 공백 연결 fallback
+                if (parts.length > 0) parts.push(' ');
+                parts.push(item.str);
+                continue;
               }
-              // 한글 글자 단위 분할: 간격이 매우 좁으면 공백 없이 연결
+              const x = tx[4];
+              const y = tx[5];
+              const fontSize = Math.abs(tx[0]) || Math.abs(tx[3]) || 12;
+
+              if (lastY !== null) {
+                const yDiff = Math.abs(y - lastY);
+                if (yDiff > fontSize * 0.5) {
+                  // 줄이 바뀜
+                  parts.push('\n');
+                } else if (x > lastEndX + fontSize * 0.3) {
+                  // 같은 줄에서 간격이 있으면 공백
+                  parts.push(' ');
+                }
+                // 한글 글자 단위 분할: 간격이 매우 좁으면 공백 없이 연결
+              }
+
+              parts.push(item.str);
+              lastY = y;
+              lastEndX = x + (item.width ?? item.str.length * fontSize * 0.5);
             }
 
-            parts.push(item.str);
-            lastY = y;
-            lastEndX = x + (item.width ?? item.str.length * fontSize * 0.5);
-          }
+            pages[i] = parts.join('');
 
-          pages[i] = parts.join('');
+            const pageImages = await imagePromise;
+            allImages.push(...pageImages);
 
-          const pageImages = await imagePromise;
-          allImages.push(...pageImages);
-        }),
-      );
+            // 페이지 내부 리소스 해제 — 대용량 PDF에서 누적 메모리 상승 방지
+            // (텍스트/이미지 추출이 모두 끝난 시점에 호출해야 안전)
+            try { page.cleanup(); } catch (err) {
+              console.warn(`[pdf-parser] page.cleanup() 실패 (page ${i + 1}):`, err);
+            }
+          }),
+        );
+      }
+      await Promise.all(promises);
     }
-    await Promise.all(promises);
-  }
 
-  const extractedText = pages.join('\n\n');
+    const extractedText = pages.join('\n\n');
 
-  // 공백 제거 후 실제 텍스트 길이로 OCR 진입 판정 (watermark 등 공백 패딩 우회 방지)
-  if (extractedText.replace(/\s+/g, '').length < 50) {
-    if (!options?.enableOcrFallback) {
-      throw Object.assign(new Error('PDF에서 텍스트를 추출할 수 없습니다. 설정에서 "스캔 PDF OCR"을 활성화하면 이미지 기반 PDF를 분석할 수 있습니다.'), {
-        code: 'PDF_NO_TEXT',
-      });
+    // 공백 제거 후 실제 텍스트 길이로 OCR 진입 판정 (watermark 등 공백 패딩 우회 방지)
+    if (extractedText.replace(/\s+/g, '').length < 50) {
+      if (!options?.enableOcrFallback) {
+        throw Object.assign(new Error('PDF에서 텍스트를 추출할 수 없습니다. 설정에서 "스캔 PDF OCR"을 활성화하면 이미지 기반 PDF를 분석할 수 있습니다.'), {
+          code: 'PDF_NO_TEXT',
+        });
+      }
+      // OCR fallback: 페이지를 이미지로 렌더링 → Vision 모델로 텍스트 추출
+      throwIfAborted(signal);
+      const ocrPages = await ocrFallback(pdf, pageCount, options.onOcrProgress ?? (() => {}), signal);
+      const ocrText = ocrPages.join('\n\n');
+      if (ocrText.trim().length < 50) {
+        throw Object.assign(new Error('OCR로도 텍스트를 추출할 수 없습니다. PDF 품질을 확인해주세요.'), {
+          code: 'OCR_FAIL',
+        });
+      }
+      const chapters = detectChapters(ocrPages);
+      return {
+        id: crypto.randomUUID(),
+        fileName,
+        filePath,
+        pageCount,
+        extractedText: ocrText,
+        pageTexts: ocrPages,
+        chapters,
+        images: [],
+        createdAt: new Date(),
+        isOcr: true,
+      };
     }
-    // OCR fallback: 페이지를 이미지로 렌더링 → Vision 모델로 텍스트 추출
-    const ocrPages = await ocrFallback(pdf, pageCount, options.onOcrProgress ?? (() => {}));
-    const ocrText = ocrPages.join('\n\n');
-    if (ocrText.trim().length < 50) {
-      throw Object.assign(new Error('OCR로도 텍스트를 추출할 수 없습니다. PDF 품질을 확인해주세요.'), {
-        code: 'OCR_FAIL',
-      });
-    }
-    const chapters = detectChapters(ocrPages);
+
+    const chapters = detectChapters(pages);
+
     return {
       id: crypto.randomUUID(),
       fileName,
       filePath,
       pageCount,
-      extractedText: ocrText,
-      pageTexts: ocrPages,
+      extractedText,
+      pageTexts: [...pages],
       chapters,
-      images: [],
+      images: allImages.slice(0, MAX_TOTAL_IMAGES),
       createdAt: new Date(),
-      isOcr: true,
     };
+  } finally {
+    // 파싱 종료 시 PDF 문서 내부 리소스 해제 — 정상/취소/에러 모두 동일
+    try { await pdf.destroy(); } catch { /* destroy 실패 무시 */ }
   }
-
-  const chapters = detectChapters(pages);
-
-  return {
-    id: crypto.randomUUID(),
-    fileName,
-    filePath,
-    pageCount,
-    extractedText,
-    pageTexts: [...pages],
-    chapters,
-    images: allImages.slice(0, MAX_TOTAL_IMAGES),
-    createdAt: new Date(),
-  };
 }
 
 // ─── OCR Fallback ───
@@ -164,7 +208,9 @@ async function renderPageToImage(
   // GPU 메모리 즉시 해제 (대용량 PDF에서 OOM 방지)
   canvas.width = 0;
   canvas.height = 0;
-  page.cleanup();
+  try { page.cleanup(); } catch (err) {
+    console.warn(`[pdf-parser] OCR page.cleanup() 실패 (page ${pageNum}):`, err);
+  }
   const buffer = await blob.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   const CHUNK = 8192;
@@ -179,24 +225,44 @@ async function ocrFallback(
   pdf: pdfjsLib.PDFDocumentProxy,
   pageCount: number,
   onProgress: (current: number, total: number) => void,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   const pages: string[] = [];
-  const BATCH_SIZE = 3;
+  // Provider-aware 배치 크기. 클라우드 API(Claude/OpenAI)는 네트워크 레이턴시 지배적이어서
+  // 큰 배치가 throughput에 유리. 로컬 Ollama는 단일 GPU/CPU에 제한되므로 작게 유지.
+  // 읽기 시점에 store에서 provider를 조회 — 파싱 중 provider가 바뀔 일은 없음.
+  const provider = useAppStore.getState().settings.provider;
+  const BATCH_SIZE = provider === 'ollama' ? 3 : 8;
   // 대용량 PDF: 50+ 페이지 시 scale 자동 축소
   const scale = pageCount > 100 ? 1.0 : pageCount > 50 ? 1.5 : 2.0;
 
   for (let i = 0; i < pageCount; i += BATCH_SIZE) {
+    // 취소 체크 — 배치 사이에 조기 종료 (in-flight IPC 는 취소 불가하지만 다음 배치 진입 차단)
+    throwIfAborted(signal);
     const batch: Promise<string>[] = [];
     for (let j = i; j < Math.min(i + BATCH_SIZE, pageCount); j++) {
       const pageIdx = j;
       batch.push(
         renderPageToImage(pdf, pageIdx + 1, scale).then(async (base64) => {
+          // IPC 전에 한 번 더 체크 — 렌더링이 끝났으나 취소된 경우 API 비용 절감
+          throwIfAborted(signal);
           const result = await window.electronAPI.ai.ocrPage(base64);
+          throwIfAborted(signal);
           return (result.success && result.text) ? result.text : '';
-        }).catch(() => ''),
+        }).catch((err: unknown) => {
+          // 방어적 re-throw: ABORTED 는 상위로 전파되어 parsePdf finally의 정리 경로를 탐.
+          // 다른 에러(렌더링 실패, IPC 실패)는 페이지 단위로 무음 처리하여 나머지 페이지를
+          // 계속 OCR 하도록 허용.
+          if ((err as { code?: string })?.code === 'ABORTED') throw err;
+          return '';
+        }),
       );
     }
-    const results = await Promise.all(batch);
+    const results = await Promise.all(batch).catch((err: unknown) => {
+      // Promise.all 은 첫 rejection 을 전파 — ABORTED 면 상위로 throw, 그 외는 빈 배열
+      if ((err as { code?: string })?.code === 'ABORTED') throw err;
+      return [] as string[];
+    });
     pages.push(...results);
     onProgress(Math.min(i + BATCH_SIZE, pageCount), pageCount);
   }
@@ -416,7 +482,16 @@ async function imageDataToBase64(
 
 // ─── 공용 PDF 처리 함수 (PdfUploader + App file drop 공통) ───
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+const MAX_FILE_SIZE = MAX_PDF_SIZE_BYTES;
+
+// 현재 진행 중인 PDF 파싱의 AbortController. 사용자 취소 버튼 또는 다른 파일 드롭 시 abort.
+// 동시에 하나의 파싱만 실행되므로 단일 모듈 레벨 참조로 충분.
+let activeParseController: AbortController | null = null;
+
+/** 진행 중인 PDF 파싱을 취소. 다음 배치/OCR 페이지 진입 직전에 ABORTED 에러로 조기 종료됨. */
+export function cancelPdfParse(): void {
+  activeParseController?.abort();
+}
 
 export async function handlePdfData(
   data: ArrayBuffer,
@@ -448,6 +523,11 @@ export async function handlePdfData(
     } as AppError);
     return;
   }
+  // 이전 파싱이 있으면 abort (이론상 isParsing 가드로 방지되지만 안전장치)
+  activeParseController?.abort();
+  const controller = new AbortController();
+  activeParseController = controller;
+
   store.setIsParsing(true);
   try {
     const doc = await parsePdf(data, name, filePath, {
@@ -455,6 +535,7 @@ export async function handlePdfData(
       onOcrProgress: (current, total) => {
         store.setOcrProgress({ current, total });
       },
+      signal: controller.signal,
     });
     // 새 문서로 교체되므로 이전 문서의 요약/Q&A/진행률 상태를 모두 초기화
     // (드롭/Ctrl+O로 덮어쓸 때 이전 문서의 summaryStream·qaMessages가 새 문서의 헤더와
@@ -468,11 +549,20 @@ export async function handlePdfData(
     store.setError(null);
   } catch (err) {
     const error = err as Error & { code?: string };
+    // 사용자 취소는 에러 배너로 표시하지 않음 (의도적 액션)
+    if (error.code === 'ABORTED') {
+      return;
+    }
+    const validCodes = new Set(['PDF_PARSE_FAIL', 'PDF_NO_TEXT', 'PDF_TOO_MANY_PAGES', 'OCR_FAIL']);
+    const code = (error.code && validCodes.has(error.code) ? error.code : 'PDF_PARSE_FAIL') as AppError['code'];
     store.setError({
-      code: (error.code as 'PDF_PARSE_FAIL') || 'PDF_PARSE_FAIL',
+      code,
       message: error.message || 'PDF를 읽을 수 없습니다.',
-    } as AppError);
+    });
   } finally {
+    if (activeParseController === controller) {
+      activeParseController = null;
+    }
     store.setIsParsing(false);
     store.setOcrProgress(null);
   }

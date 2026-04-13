@@ -271,6 +271,24 @@ function streamRequest(
       }
     };
 
+    /**
+     * webContents.send 안전 래퍼.
+     * 스트리밍 중 윈도우가 파괴되면 isDestroyed() 체크와 실제 send 사이에 경쟁이 생길 수 있음.
+     * (Node.js가 데이터를 큐잉한 상태에서 동일 tick 내 다른 핸들러가 윈도우를 종료하는 경우)
+     * isDestroyed() 가드로 대부분 방어되지만, TypeError: Object has been destroyed 를
+     * 최종 방어선으로 잡아 메인 프로세스 크래시를 막는다.
+     */
+    const safeSend = (channel: string, ...args: unknown[]): void => {
+      if (win.isDestroyed()) return;
+      try {
+        win.webContents.send(channel, ...args);
+      } catch (err) {
+        // 윈도우 파괴 race — 스트림 처리 중단
+        streamAborted = true;
+        console.error(`[ai:stream] send failed on '${channel}':`, err instanceof Error ? err.message : err);
+      }
+    };
+
     const req = client.request(
       {
         hostname: parsedUrl.hostname,
@@ -372,7 +390,7 @@ function streamRequest(
               const parsed = JSON.parse(jsonStr);
               const token = config.extractToken(parsed);
               if (token) {
-                win.webContents.send('ai:token', requestId, token);
+                safeSend('ai:token', requestId, token);
               }
             } catch {
               // JSON 파싱 실패 무시
@@ -388,8 +406,8 @@ function streamRequest(
             safeResolve();
             return;
           }
-          // 버퍼에 남은 마지막 데이터 처리
-          if (buffer.trim() && !win.isDestroyed()) {
+          // 버퍼에 남은 마지막 데이터 처리 (safeSend가 isDestroyed 가드 + try/catch 포함)
+          if (buffer.trim()) {
             const lines = buffer.split('\n');
             for (const line of lines) {
               if (!line.trim()) continue;
@@ -403,15 +421,13 @@ function streamRequest(
                 const parsed = JSON.parse(jsonStr);
                 const token = config.extractToken(parsed);
                 if (token) {
-                  win.webContents.send('ai:token', requestId, token);
+                  safeSend('ai:token', requestId, token);
                 }
               } catch { /* 파싱 실패 무시 */ }
             }
           }
           safeDeleteRequest();
-          if (!win.isDestroyed()) {
-            win.webContents.send('ai:done', requestId);
-          }
+          safeSend('ai:done', requestId);
           safeResolve();
         });
 
@@ -442,10 +458,11 @@ function streamRequest(
         streamAborted = true;
         if (clearIdleTimerFn) clearIdleTimerFn();
         safeDeleteRequest();
+        // settle을 destroy보다 먼저 수행: destroy()가 동기적으로 error 이벤트를 발생시키면
+        // 'socket hang up' 같은 실제 에러가 ABORTED 코드를 덮어써 호출자가 의도를 구분할 수 없어짐
+        safeReject(Object.assign(new Error('요청이 중단되었습니다.'), { code: 'ABORTED' }));
         if (responseStream && !responseStream.destroyed) responseStream.destroy();
         if (!req.destroyed) req.destroy();
-        // destroy()가 error 이벤트를 미발생시킬 수 있으므로 직접 settle하여 Promise 누수 방지
-        safeReject(Object.assign(new Error('요청이 중단되었습니다.'), { code: 'ABORTED' }));
       },
       createdAt: myCreatedAt,
       startedAt: Date.now(),
@@ -611,17 +628,47 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       // 타임아웃으로 이미 settled된 경우 응답 무시 (데이터 축적 방지)
       if (settled) { res.destroy(); return; }
       if (res.statusCode && res.statusCode >= 400) {
+        const errStatus = res.statusCode;
         const errChunks: Buffer[] = [];
+        let errSettled = false;
+        // 공통 reject — sanitization + JSON 파싱 + 최종 settle.
+        // end/error/close 중 어느 이벤트로 종료되든 단일 경로를 타도록 집계.
+        const finalizeError = (truncated: boolean) => {
+          if (errSettled) return;
+          errSettled = true;
+          const rawBody = Buffer.concat(errChunks).toString('utf-8').slice(0, 2000);
+          // 응답 body에 의도치 않게 Bearer 토큰/API 키가 echo되는 경우 로그 유출 방지.
+          // - Bearer: RFC 6750 토큰 문자 집합
+          // - sk-... : OpenAI 형식(sk-proj-..., sk-test-... 포함). 20자 이상 단어 경계로 한정
+          //            해 오탐과 단편 매칭을 방지.
+          // - sk-ant-api... : Anthropic Claude 키 형식
+          const sanitized = rawBody
+            .replace(/Bearer\s+[A-Za-z0-9._\-+/=]+/gi, 'Bearer [REDACTED]')
+            .replace(/\bsk-ant-[A-Za-z0-9_\-]{20,}\b/g, 'sk-ant-[REDACTED]')
+            .replace(/\bsk-(?:proj-|test-|live-)?[A-Za-z0-9_\-]{20,}\b/g, 'sk-[REDACTED]');
+          let detail = sanitized.slice(0, 500);
+          try {
+            const parsed = JSON.parse(sanitized);
+            detail = parsed.error?.message || parsed.error || parsed.message || detail;
+          } catch { /* 비 JSON 응답은 그대로 사용 */ }
+          console.error(`Vision API error: HTTP ${errStatus}${truncated ? ' (body truncated)' : ''}`, detail);
+          safeReject(new Error(`Vision API 요청 실패: HTTP ${errStatus}`));
+        };
         res.on('data', (c: Buffer) => {
-          if (errChunks.length < 8) errChunks.push(c);
-          else { res.destroy(); } // 8청크 초과 시 소켓 즉시 해제
+          if (errSettled) return;
+          if (errChunks.length < 8) {
+            errChunks.push(c);
+          } else {
+            // 8청크 초과 시 소켓 즉시 해제 — destroy()는 'end'가 아닌 'close' 를 발화시키므로
+            // 여기서 finalizeError 를 직접 호출하지 않으면 req.setTimeout 까지 Promise 가 pending
+            // 상태로 멈춰 사용자가 부정확한 "타임아웃" 에러를 본다.
+            res.destroy();
+            finalizeError(true);
+          }
         });
-        res.on('end', () => {
-          const errBody = Buffer.concat(errChunks).toString('utf-8').slice(0, 500);
-          console.error(`Vision API error: HTTP ${res.statusCode}`, errBody);
-          safeReject(new Error(`Vision API 요청 실패: HTTP ${res.statusCode}`));
-        });
-        res.on('error', () => safeReject(new Error(`Vision API 요청 실패: HTTP ${res.statusCode}`)));
+        res.on('end', () => finalizeError(false));
+        res.on('close', () => finalizeError(false));
+        res.on('error', () => finalizeError(false));
         return;
       }
       const chunks: Buffer[] = [];
@@ -633,6 +680,11 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       });
       res.on('end', () => safeResolve(Buffer.concat(chunks).toString('utf-8')));
       res.on('error', (err) => { if (!req.destroyed) req.destroy(); safeReject(err); });
+      // 네트워크가 비정상 종료되면 'end' 도 'error' 도 발화하지 않을 수 있어 Promise 가
+      // req.setTimeout (수 분) 까지 pending. 'close' 를 감시해 즉시 reject.
+      res.on('close', () => {
+        if (!res.complete) safeReject(new Error('Vision API 응답 연결이 끊어졌습니다.'));
+      });
     });
 
     req.on('error', (err) => safeReject(err));

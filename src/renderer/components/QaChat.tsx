@@ -63,7 +63,7 @@ export function QaChat() {
         </span>
         {ragState.isIndexing ? (
           <span className="text-xs text-amber-500 flex items-center gap-1">
-            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            <svg aria-hidden="true" className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
             {t('qa.indexing')}{ragState.progress ? ` ${ragState.progress.current}/${ragState.progress.total}` : '...'}
           </span>
         ) : ragState.chunkCount > 0 ? (
@@ -80,9 +80,15 @@ export function QaChat() {
         </div>
       )}
 
-      {/* 대화 목록 */}
+      {/* 대화 목록 — aria-live="polite"로 새 메시지/스트리밍 토큰을 스크린 리더에 알림 */}
       {(qaMessages.length > 0 || qaStream) && (
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-3">
+        <div
+          role="log"
+          aria-live="polite"
+          aria-busy={isQaGenerating}
+          aria-label={t('qa.header')}
+          className="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-3"
+        >
           {qaMessages.map((msg) => (
             <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${

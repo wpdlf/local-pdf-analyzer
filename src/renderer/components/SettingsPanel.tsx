@@ -53,9 +53,16 @@ export function SettingsPanel() {
   }, []);
 
   useEffect(() => {
-    window.electronAPI.ollama.listModels().then(setOllamaModels).catch(() => {});
-    window.electronAPI.apiKey.has('claude').then(setClaudeKeyStored).catch(() => {});
-    window.electronAPI.apiKey.has('openai').then(setOpenaiKeyStored).catch(() => {});
+    // mountedRef 체크 — 사용자가 결과 도착 전 설정 패널을 닫으면 unmounted setState 방지
+    window.electronAPI.ollama.listModels()
+      .then((models) => { if (mountedRef.current) setOllamaModels(models); })
+      .catch(() => {});
+    window.electronAPI.apiKey.has('claude')
+      .then((has) => { if (mountedRef.current) setClaudeKeyStored(has); })
+      .catch(() => {});
+    window.electronAPI.apiKey.has('openai')
+      .then((has) => { if (mountedRef.current) setOpenaiKeyStored(has); })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -84,7 +91,11 @@ export function SettingsPanel() {
 
   const handleSaveApiKey = async (provider: 'claude' | 'openai') => {
     const key = provider === 'claude' ? claudeKey : openaiKey;
-    if (!key.trim()) return;
+    if (!key.trim()) {
+      // 공백만 입력한 경우 무음 실패 대신 명시적 피드백 — 사용자가 "저장" 버튼 반응 없음으로 혼란
+      setKeyMessage(t('settings.keyEmpty'));
+      return;
+    }
     try {
       const result = await window.electronAPI.apiKey.save(provider, key.trim());
       if (!result.success) {
@@ -181,10 +192,14 @@ export function SettingsPanel() {
   const handleRestartOllama = async () => {
     try {
       await window.electronAPI.ollama.stop();
+      if (!mountedRef.current) return;
       await window.electronAPI.ollama.start();
+      if (!mountedRef.current) return;
       const status = await window.electronAPI.ollama.getStatus();
+      if (!mountedRef.current) return;
       setOllamaStatus(status);
     } catch {
+      if (!mountedRef.current) return;
       setError({ code: 'OLLAMA_NOT_RUNNING', message: t('settings.restartFail') });
     }
   };
@@ -264,7 +279,7 @@ export function SettingsPanel() {
             Claude API {claudeKeyStored && <span className="text-green-500 ml-1">{t('common.saved')}</span>}
           </label>
           <div className="flex gap-2">
-            <input type="password" placeholder={claudeKeyStored ? '••••••••••••' : 'sk-ant-...'} value={claudeKey} onChange={(e) => setClaudeKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+            <input type="password" autoComplete="off" spellCheck={false} maxLength={200} placeholder={claudeKeyStored ? t('settings.apiKeyMasked') : t('settings.apiKeyPlaceholder')} value={claudeKey} onChange={(e) => setClaudeKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
             {claudeKey ? (
               <button onClick={() => handleSaveApiKey('claude')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">{t('common.save')}</button>
             ) : claudeKeyStored ? (
@@ -278,7 +293,7 @@ export function SettingsPanel() {
             OpenAI API {openaiKeyStored && <span className="text-green-500 ml-1">{t('common.saved')}</span>}
           </label>
           <div className="flex gap-2">
-            <input type="password" placeholder={openaiKeyStored ? '••••••••••••' : 'sk-...'} value={openaiKey} onChange={(e) => setOpenaiKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+            <input type="password" autoComplete="off" spellCheck={false} maxLength={200} placeholder={openaiKeyStored ? t('settings.apiKeyMasked') : t('settings.apiKeyPlaceholder')} value={openaiKey} onChange={(e) => setOpenaiKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
             {openaiKey ? (
               <button onClick={() => handleSaveApiKey('openai')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">{t('common.save')}</button>
             ) : openaiKeyStored ? (
@@ -327,7 +342,7 @@ export function SettingsPanel() {
           {isPulling && pullProgress && (
             <div className="mb-3">
               <div className="flex items-center gap-2 mb-1">
-                <svg className="animate-spin h-4 w-4 text-blue-500" viewBox="0 0 24 24" fill="none">
+                <svg aria-hidden="true" className="animate-spin h-4 w-4 text-blue-500" viewBox="0 0 24 24" fill="none">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>

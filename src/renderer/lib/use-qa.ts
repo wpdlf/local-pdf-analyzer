@@ -102,8 +102,10 @@ function formatHistory(messages: QaMessage[]): string {
 
 // ─── RAG 인덱스 빌드 ───
 
-// 동시 빌드 방지용 — 새 빌드 시작 시 이전 빌드를 무효화
-let activeBuildId: string | null = null;
+// 현재 활성 빌드의 AbortController. 새 빌드가 시작되거나 cleanup 시점에 abort() 호출.
+// 주의: IPC embed 호출 자체는 취소 불가능 (renderer→main 단일 invoke).
+// signal.aborted 플래그는 다음 배치로 넘어가기 전 조기 종료에만 사용됨.
+let activeBuildController: AbortController | null = null;
 
 /** 배치 임베딩 호출 + 타임아웃 래퍼 */
 function embedWithTimeout(texts: string[]): Promise<{
@@ -130,22 +132,22 @@ function embedWithTimeout(texts: string[]): Promise<{
 /**
  * 문서의 벡터 인덱스를 빌드.
  * 임베딩 불가 시 false 반환 (keyword fallback 사용).
- * docId를 통해 문서 전환 시 이전 빌드를 즉시 취소.
+ * signal.aborted 를 통해 문서 전환/언마운트 시 이전 빌드를 즉시 취소.
  */
-async function buildRagIndex(extractedText: string, docId: string): Promise<boolean> {
-  const buildId = crypto.randomUUID();
-  activeBuildId = buildId;
-
+async function buildRagIndex(
+  extractedText: string,
+  docId: string,
+  signal: AbortSignal,
+): Promise<boolean> {
   const store = useAppStore.getState();
 
   // 임베딩 모델 사용 가능 여부 확인
   const embedCheck = await window.electronAPI.ai.checkEmbedModel();
+  if (signal.aborted) return false;
   if (!embedCheck.available) {
     store.setRagState({ isAvailable: false, model: null });
     return false;
   }
-  // 빌드 도중 문서 전환 체크
-  if (activeBuildId !== buildId) return false;
 
   // 오버랩 청킹
   const chunks = chunkTextWithOverlap(extractedText, RAG_CHUNK_SIZE);
@@ -166,15 +168,15 @@ async function buildRagIndex(extractedText: string, docId: string): Promise<bool
   try {
     // 배치 임베딩
     for (let i = 0; i < chunks.length; i += RAG_BATCH_SIZE) {
-      // 문서 전환 체크 — 이전 빌드 즉시 중단
-      // stale 분기에서는 인덱스/state를 건드리지 않음 (새 build가 소유)
-      if (activeBuildId !== buildId) return false;
+      // 문서 전환/언마운트 체크 — 이전 빌드 즉시 중단
+      // aborted 분기에서는 인덱스/state를 건드리지 않음 (새 build가 소유)
+      if (signal.aborted) return false;
 
       const batch = chunks.slice(i, i + RAG_BATCH_SIZE);
       const result = await embedWithTimeout(batch);
 
       // 빌드 도중 문서 전환 재확인
-      if (activeBuildId !== buildId) return false;
+      if (signal.aborted) return false;
 
       if (!result.success || !result.embeddings) {
         ragIndex.clear();
@@ -197,7 +199,7 @@ async function buildRagIndex(extractedText: string, docId: string): Promise<bool
     }
 
     // 최종 문서 일치 확인 — stale이면 새 build가 소유하므로 건드리지 않음
-    if (activeBuildId !== buildId || useAppStore.getState().document?.id !== docId) {
+    if (signal.aborted || useAppStore.getState().document?.id !== docId) {
       return false;
     }
 
@@ -209,7 +211,7 @@ async function buildRagIndex(extractedText: string, docId: string): Promise<bool
     return true;
   } catch {
     // 자신이 아직 active한 경우에만 정리 — 새 build의 상태를 덮어쓰지 않음
-    if (activeBuildId === buildId) {
+    if (!signal.aborted) {
       ragIndex.clear();
       store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null });
     }
@@ -282,18 +284,31 @@ export function useRagBuilder(): void {
     prevKeyRef.current = key;
     const docId = document.id;
 
+    // 이전 빌드가 아직 활성 상태라면 즉시 abort (새 빌드로 교체)
+    activeBuildController?.abort();
+    const controller = new AbortController();
+    activeBuildController = controller;
+
     // 이전 인덱스 즉시 초기화 (다른 문서/모델의 인덱스가 남아있지 않도록)
     const store = useAppStore.getState();
     store.ragIndex.clear();
     store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, model: null });
 
-    // 비동기로 인덱스 빌드 (UI 블로킹 없음, 요약과 병렬 실행)
-    buildRagIndex(document.extractedText, docId);
+    // 비동기로 인덱스 빌드 (UI 블로킹 없음, 요약과 병렬 실행).
+    // 내부 try/catch가 있지만 예기치 않은 동기 throw(예: store 접근 중 null)가
+    // unhandled rejection으로 전파되는 것을 최종 방어.
+    buildRagIndex(document.extractedText, docId, controller.signal).catch((err) => {
+      console.error('[useRagBuilder] buildRagIndex failed:', err);
+    });
 
     // Cleanup: deps 변경/언마운트 시 진행 중인 빌드 무효화.
-    // 이미 전송된 IPC 임베딩 배치는 취소 불가이지만, 다음 stale check에서 return함.
+    // 이미 전송된 IPC 임베딩 배치는 취소 불가이지만, 다음 signal.aborted 체크에서 return함.
     return () => {
-      activeBuildId = null;
+      controller.abort();
+      // 자기 자신이 여전히 active일 때만 null 할당 (새 빌드 덮어쓰기 방지)
+      if (activeBuildController === controller) {
+        activeBuildController = null;
+      }
     };
   }, [document, provider]);
 }
@@ -348,6 +363,9 @@ export function useQa() {
     state.clearQaStream();
 
     let completed = false;
+    // catch 블록에서 소유권 체크 시 참조하기 위해 try 바깥에 선언.
+    // try 스코프 내 const 로 두면 catch 가 접근 불가하여 ReferenceError (TS2552) 발생.
+    let requestId: string | null = null;
     try {
       const client = new AiClient(settings);
       clientRef.current = client;
@@ -376,7 +394,7 @@ export function useQa() {
 
       const promptText = `${context}${history}\n[질문]\n${sanitizePromptInput(trimmed)}`;
 
-      const requestId = client.prepareSummarize();
+      requestId = client.prepareSummarize();
       useAppStore.getState().setQaRequestId(requestId);
 
       let answer = '';
@@ -386,20 +404,37 @@ export function useQa() {
         answer += token;
       }
 
-      if (!abortedRef.current) {
-        useAppStore.getState().flushQaStream();
-        useAppStore.getState().clearQaStream();
+      // 소유권 체크: SummaryViewer.handleClose → resetSummaryState 가 외부에서
+      // 상태를 초기화한 경우, abortedRef 는 set 되지 않지만 문서·requestId 가
+      // 교체되어 이 핸들러의 결과물이 stale. 고아 assistant 메시지를 비워진
+      // qaMessages 에 주입하면 새 PDF 열 때 이전 Q&A 가 섞여 보인다.
+      const postState = useAppStore.getState();
+      const stillOurs = !abortedRef.current
+        && postState.document?.id === doc.id
+        && postState.qaRequestId === requestId;
+
+      if (stillOurs) {
+        postState.flushQaStream();
+        postState.clearQaStream();
         if (answer) {
-          useAppStore.getState().addQaMessage({ role: 'assistant', content: answer });
+          postState.addQaMessage({ role: 'assistant', content: answer });
         }
         completed = true;
       }
     } catch (err) {
       const code = (err instanceof Error && 'code' in err ? (err as Error & { code?: string }).code : undefined);
+      // 소유권 체크(try 블록 완료 경로와 동일): 에러 발생 시 이미 문서·requestId 가
+      // 교체되어 이 핸들러가 stale 이면 새 세션에 에러 배너를 주입하지 않음.
+      // requestId 가 아직 할당되지 않은 상태(prepareSummarize 이전 throw)에서는
+      // doc 소유권만 체크 — 에러는 보고되어야 함.
+      const errState = useAppStore.getState();
+      const docStillOurs = errState.document?.id === doc.id;
+      const requestStillOurs = requestId === null || errState.qaRequestId === requestId;
+      const stillOurs = docStillOurs && requestStillOurs;
       // 사용자 의도적 abort는 에러로 표시하지 않음
-      if (code !== 'ABORTED' && !abortedRef.current) {
+      if (code !== 'ABORTED' && !abortedRef.current && stillOurs) {
         const message = err instanceof Error ? err.message : String(err);
-        useAppStore.getState().setError({
+        errState.setError({
           code: 'GENERATE_FAIL',
           message: message || 'Q&A 답변 생성에 실패했습니다.',
         });

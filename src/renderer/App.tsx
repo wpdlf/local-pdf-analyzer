@@ -125,11 +125,23 @@ export default function App() {
       // 동기적으로 store 상태를 직접 읽어 경합 조건 방지 (setState 전파 대기 불필요)
       const { isParsing: parsing, isGenerating: generating, isQaGenerating: qaGenerating } = useAppStore.getState();
       if (parsing || generating || qaGenerating) return;
-      const file = e.dataTransfer?.files[0];
-      if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
-        const buffer = await file.arrayBuffer();
-        await handlePdfData(buffer, file.name, file.name);
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      const file = files[0];
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      if (!isPdf) {
+        useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.notPdf') });
+        return;
       }
+      // 다중 파일 드롭 시 첫 번째만 처리함을 알림 (silent drop 방지)
+      if (files.length > 1) {
+        useAppStore.getState().setError({
+          code: 'PDF_PARSE_FAIL',
+          message: t('uploader.multipleFiles', { name: file.name }),
+        });
+      }
+      const buffer = await file.arrayBuffer();
+      await handlePdfData(buffer, file.name, file.name);
     };
     window.addEventListener('dragover', handleDragOver, true);
     window.addEventListener('drop', handleDrop, true);
@@ -238,7 +250,7 @@ export default function App() {
       {bgModelSync && (
         <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-400">
           {bgModelLoading && (
-            <svg className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
+            <svg aria-hidden="true" className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>

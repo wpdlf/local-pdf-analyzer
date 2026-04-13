@@ -17,6 +17,7 @@ export class OllamaManager {
   private process: ChildProcess | null = null;
   private baseUrl = 'http://localhost:11434';
   private startPromise: Promise<boolean> | null = null; // 동시 start() 호출 시 동일 Promise 반환
+  private installPromise: Promise<{ success: boolean; error?: string }> | null = null; // 동시 install() 호출 시 동일 Promise 반환
 
   // Ollama 실행 파일 경로 (설치 직후 PATH 반영 안 될 수 있으므로 직접 지정)
   private getOllamaPath(): string {
@@ -68,6 +69,17 @@ export class OllamaManager {
   }
 
   async install(): Promise<{ success: boolean; error?: string }> {
+    // 동시 호출 시 동일 Promise 반환하여 이중 다운로드/인스톨러 spawn 방지
+    if (this.installPromise) return this.installPromise;
+    this.installPromise = this._installInternal();
+    try {
+      return await this.installPromise;
+    } finally {
+      this.installPromise = null;
+    }
+  }
+
+  private async _installInternal(): Promise<{ success: boolean; error?: string }> {
     const platform = process.platform;
 
     if (platform === 'win32') {

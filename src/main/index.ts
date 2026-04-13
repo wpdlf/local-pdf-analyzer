@@ -5,6 +5,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
 import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService } from './ai-service';
+import { MAX_PDF_SIZE_BYTES } from '../shared/constants';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -108,14 +109,24 @@ function createWindow(): BrowserWindow {
       // UNC 경로 차단: file://remote-server/share/file.pdf 등 네트워크 읽기 방지
       try { if (new URL(url).hostname !== '') return; } catch { return; }
       const filePath = fileURLToPath(url);
-      const MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
+      const MAX_PDF_SIZE = MAX_PDF_SIZE_BYTES;
       // 이전 드롭 읽기 취소
       dropAbortController?.abort();
       const ac = new AbortController();
       dropAbortController = ac;
       (async () => {
         try {
+          // 심볼릭 링크/junction 차단: 악의적 .pdf 링크가 시스템 파일을 가리키는 것 방지
+          const lstat = await fsp.lstat(filePath);
+          if (lstat.isSymbolicLink()) {
+            console.error('Dropped file is a symlink, rejected:', filePath);
+            return;
+          }
           const stat = await fsp.stat(filePath);
+          if (!stat.isFile()) {
+            console.error('Dropped path is not a regular file:', filePath);
+            return;
+          }
           if (stat.size > MAX_PDF_SIZE) {
             console.error('Dropped file too large:', stat.size);
             return;
@@ -187,14 +198,34 @@ app.on('before-quit', (e) => {
 
 const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');
 
+// ─── API 키 메모리 캐시 ───
+// 이유: 이전엔 loadApiKey 호출마다 readFileSync + safeStorage.decryptString 을 수행했는데,
+// 청크가 많은 요약에선 hot path에서 수십 회 동기 파일 I/O + OS 복호화가 발생해
+// 메인 이벤트 루프가 블로킹됐다. 프로세스 메모리에 복호화된 키를 캐시하고
+// save/delete 시에만 무효화하여 비용을 O(1)로 축소.
+//
+// 보안: 캐시는 프로세스 메모리에만 존재하고 disk/IPC로 유출되지 않음.
+// 렌더러에는 절대 전달되지 않으며 (기존과 동일), 앱 종료 시 자연히 소멸.
+let apiKeysCache: Record<string, string> | null = null;
+
 function readApiKeys(): Record<string, string> {
-  if (!safeStorage.isEncryptionAvailable()) return {};
+  if (apiKeysCache) return apiKeysCache;
+  if (!safeStorage.isEncryptionAvailable()) {
+    apiKeysCache = {};
+    return apiKeysCache;
+  }
   try {
     const encrypted = fs.readFileSync(apiKeysPath);
-    return JSON.parse(safeStorage.decryptString(encrypted));
+    apiKeysCache = JSON.parse(safeStorage.decryptString(encrypted));
+    return apiKeysCache!;
   } catch {
-    return {};
+    apiKeysCache = {};
+    return apiKeysCache;
   }
+}
+
+function invalidateApiKeysCache(): void {
+  apiKeysCache = null;
 }
 
 function writeApiKeys(keys: Record<string, string>): void {
@@ -211,21 +242,24 @@ function writeApiKeys(keys: Record<string, string>): void {
   try {
     fs.writeFileSync(tmpPath, encrypted);
     fs.renameSync(tmpPath, apiKeysPath);
+    // 쓰기 성공 후 캐시에 최신값 반영 — 다음 읽기에서 파일 I/O 회피
+    apiKeysCache = { ...keys };
   } catch (err) {
-    // rename 실패 시 tmp 파일 정리하여 디스크 누수 방지
+    // rename 실패 시 tmp 파일 정리 + 캐시 무효화 (디스크와 메모리 불일치 방지)
     try { fs.unlinkSync(tmpPath); } catch { /* 이미 삭제됨 */ }
+    invalidateApiKeysCache();
     throw err;
   }
 }
 
 function saveApiKey(provider: string, key: string): void {
-  const keys = readApiKeys();
-  keys[provider] = key;
+  // clone 후 수정 — writeApiKeys 실패 시 캐시가 불일치 상태로 남지 않도록 보호
+  const keys = { ...readApiKeys(), [provider]: key };
   writeApiKeys(keys);
 }
 
 function deleteApiKey(provider: string): void {
-  const keys = readApiKeys();
+  const keys = { ...readApiKeys() };
   delete keys[provider];
   writeApiKeys(keys);
 }
@@ -345,30 +379,58 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('ollama:status', async () => {
-    return ollamaManager.getStatus();
+    try {
+      return await ollamaManager.getStatus();
+    } catch (err) {
+      console.error('[ollama:status] failed:', err);
+      return { installed: false, running: false, models: [] };
+    }
   });
 
   ipcMain.handle('ollama:install', async (_event) => {
-    return ollamaManager.install();
+    try {
+      return await ollamaManager.install();
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Ollama 설치 실패' };
+    }
   });
 
   ipcMain.handle('ollama:start', async () => {
-    return ollamaManager.start();
+    try {
+      return await ollamaManager.start();
+    } catch (err) {
+      console.error('[ollama:start] failed:', err);
+      return false;
+    }
   });
 
   ipcMain.handle('ollama:stop', async () => {
-    return ollamaManager.stop();
+    try {
+      return await ollamaManager.stop();
+    } catch (err) {
+      console.error('[ollama:stop] failed:', err);
+      return false;
+    }
   });
 
   ipcMain.handle('ollama:pull-model', async (_event, model: string) => {
     if (typeof model !== 'string' || model.length === 0 || model.length > 128 || !/^[a-zA-Z0-9]([a-zA-Z0-9._:\/-]*[a-zA-Z0-9])?$/.test(model)) {
       return { success: false, error: 'Invalid model name' };
     }
-    return ollamaManager.pullModel(model);
+    try {
+      return await ollamaManager.pullModel(model);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : '모델 다운로드 실패' };
+    }
   });
 
   ipcMain.handle('ollama:list-models', async () => {
-    return ollamaManager.listModels();
+    try {
+      return await ollamaManager.listModels();
+    } catch (err) {
+      console.error('[ollama:list-models] failed:', err);
+      return [];
+    }
   });
 
   // ─── AI 요약 (Main 프로세스에서 API 키를 사용하여 직접 호출) ───
@@ -610,7 +672,7 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('file:open-pdf', async () => {
-    const MAX_PDF_SIZE = 100 * 1024 * 1024; // 100MB
+    const MAX_PDF_SIZE = MAX_PDF_SIZE_BYTES;
     const { filePaths } = await dialog.showOpenDialog({
       filters: [{ name: 'PDF', extensions: ['pdf'] }],
       properties: ['openFile'],

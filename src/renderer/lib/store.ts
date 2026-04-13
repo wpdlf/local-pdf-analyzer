@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type {
   PdfDocument,
   Summary,
-  SummaryType,
+  DefaultSummaryType,
   AppSettings,
   OllamaStatus,
   AppError,
@@ -68,7 +68,7 @@ interface AppState {
   // 요약
   summary: Summary | null;
   summaryStream: string;
-  summaryType: SummaryType;
+  summaryType: DefaultSummaryType;
   isGenerating: boolean;
   currentRequestId: string | null;
   progress: number;
@@ -77,7 +77,9 @@ interface AppState {
   appendStream: (token: string) => void;
   flushStream: () => void;
   clearStream: () => void;
-  setSummaryType: (type: SummaryType) => void;
+  /** 후처리된 전체 내용으로 summaryStream을 교체. 호출 전에 반드시 flushStream() 수행. */
+  replaceSummaryStream: (content: string) => void;
+  setSummaryType: (type: DefaultSummaryType) => void;
   setIsGenerating: (v: boolean) => void;
   setCurrentRequestId: (id: string | null) => void;
   setProgress: (p: number) => void;
@@ -182,6 +184,15 @@ export const useAppStore = create<AppState>((set) => ({
       streamState.flushTimer = null;
     }
     set({ summaryStream: '' });
+  },
+  replaceSummaryStream: (content) => {
+    // 후처리된 전체 내용으로 교체. 이미 flushStream 호출 이후이므로 버퍼 정리만 수행.
+    streamState.buffer = '';
+    if (streamState.flushTimer) {
+      clearTimeout(streamState.flushTimer);
+      streamState.flushTimer = null;
+    }
+    set({ summaryStream: content });
   },
   setSummaryType: (summaryType) => set({ summaryType }),
   setIsGenerating: (isGenerating) => set({ isGenerating }),

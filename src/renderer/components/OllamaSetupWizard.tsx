@@ -17,6 +17,10 @@ export function OllamaSetupWizard() {
   const setError = useAppStore((s) => s.setError);
   const t = useT();
   const doneTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // 사용자가 진행 중 취소를 요청하면 true. 각 await 뒤에서 체크되어 다음 단계 진입을 차단.
+  // 이미 전송된 install/pullModel IPC 는 Main 에서 계속 실행되지만, UI 는 사용자를
+  // 즉시 설정 화면으로 이동시켜 다른 provider 선택이 가능하도록 함.
+  const cancelledRef = useRef(false);
   const [step, setStep] = useState<SetupStep>('welcome');
   const [progressMessage, setProgressMessage] = useState('');
   const [errorCode, setErrorCode] = useState<AppErrorCode | null>(null);
@@ -32,6 +36,7 @@ export function OllamaSetupWizard() {
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.onSetupProgress((message) => {
+      if (cancelledRef.current) return;
       setProgressMessage(message);
     });
     return () => {
@@ -39,6 +44,13 @@ export function OllamaSetupWizard() {
       if (doneTimerRef.current) clearTimeout(doneTimerRef.current);
     };
   }, []);
+
+  const handleCancel = () => {
+    cancelledRef.current = true;
+    setProgressMessage(t('setup.cancelling'));
+    // 설정 화면으로 이동 — 사용자가 다른 provider (Claude/OpenAI) 선택 가능
+    setView('settings');
+  };
 
   const updateItem = (index: number, status: SetupItem['status']) => {
     setItems((prev) => prev.map((item, i) => i === index ? { ...item, status } : item));
@@ -53,6 +65,7 @@ export function OllamaSetupWizard() {
 
   const startSetup = async () => {
     if (doneTimerRef.current) { clearTimeout(doneTimerRef.current); doneTimerRef.current = undefined; }
+    cancelledRef.current = false;
     setStep('progress');
     setErrorCode(null);
     setErrorMsg('');
@@ -62,10 +75,12 @@ export function OllamaSetupWizard() {
       updateItem(0, 'running');
       setProgressMessage(t('setup.checkingOllama'));
       const status = await window.electronAPI.ollama.getStatus();
+      if (cancelledRef.current) return;
 
       if (!status.installed) {
         setProgressMessage(t('setup.installingOllama'));
         const installResult = await window.electronAPI.ollama.install();
+        if (cancelledRef.current) return;
         if (!installResult.success) {
           updateItem(0, 'error');
           handleError('OLLAMA_INSTALL_FAIL', installResult.error || t('setup.ollamaInstallFail'));
@@ -77,8 +92,10 @@ export function OllamaSetupWizard() {
       updateItem(1, 'running');
       setProgressMessage(t('setup.startingOllama'));
       await window.electronAPI.ollama.start();
+      if (cancelledRef.current) return;
 
       const recheckStatus = await window.electronAPI.ollama.getStatus();
+      if (cancelledRef.current) return;
       if (!recheckStatus.running) {
         updateItem(1, 'error');
         handleError('OLLAMA_NOT_RUNNING', t('setup.ollamaStartFail'));
@@ -87,8 +104,10 @@ export function OllamaSetupWizard() {
       updateItem(1, 'done');
 
       const existingModels = await window.electronAPI.ollama.listModels();
+      if (cancelledRef.current) return;
 
       for (let i = 0; i < INITIAL_INSTALL_MODELS.length; i++) {
+        if (cancelledRef.current) return;
         const modelName = INITIAL_INSTALL_MODELS[i];
         const itemIndex = 2 + i;
         updateItem(itemIndex, 'running');
@@ -104,6 +123,7 @@ export function OllamaSetupWizard() {
           : t('setup.downloadingModelLabel.korean', { model: modelName });
         setProgressMessage(t('setup.downloadingModel', { label: modelLabel }));
         const pullResult = await window.electronAPI.ollama.pullModel(modelName);
+        if (cancelledRef.current) return;
         if (!pullResult.success) {
           updateItem(itemIndex, 'error');
           handleError('MODEL_PULL_FAIL', pullResult.error || t('setup.modelDownloadFail', { model: modelName }));
@@ -113,6 +133,7 @@ export function OllamaSetupWizard() {
       }
 
       const finalModels = await window.electronAPI.ollama.listModels();
+      if (cancelledRef.current) return;
       if (finalModels.length === 0) {
         updateItem(2, 'error');
         handleError('MODEL_NOT_FOUND', t('setup.noModels'));
@@ -120,12 +141,14 @@ export function OllamaSetupWizard() {
       }
 
       const finalStatus = await window.electronAPI.ollama.getStatus();
+      if (cancelledRef.current) return;
       setOllamaStatus(finalStatus);
       setError(null);
       setStep('done');
 
       doneTimerRef.current = setTimeout(() => setView('main'), 1500);
     } catch (err) {
+      if (cancelledRef.current) return;
       handleError(
         'OLLAMA_NOT_FOUND',
         err instanceof Error ? err.message : t('setup.unknownError'),
@@ -188,7 +211,15 @@ export function OllamaSetupWizard() {
               </div>
             ))}
           </div>
-          <p className="text-gray-500 dark:text-gray-400 text-sm text-center">{progressMessage}</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm text-center mb-4">{progressMessage}</p>
+          <div className="flex justify-center">
+            <button
+              onClick={handleCancel}
+              className="px-4 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+            >
+              {t('setup.cancel')}
+            </button>
+          </div>
         </div>
       )}
 

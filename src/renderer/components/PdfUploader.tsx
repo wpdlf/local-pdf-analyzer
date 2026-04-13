@@ -1,7 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
-import { handlePdfData } from '../lib/pdf-parser';
+import { handlePdfData, cancelPdfParse } from '../lib/pdf-parser';
+import { MAX_PDF_SIZE_BYTES } from '../../shared/constants';
 
 export function PdfUploader() {
   const setError = useAppStore((s) => s.setError);
@@ -11,7 +12,7 @@ export function PdfUploader() {
   const [isDragging, setIsDragging] = useState(false);
   const dialogOpenRef = useRef(false);
 
-  const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+  const MAX_FILE_SIZE = MAX_PDF_SIZE_BYTES;
   const handleFile = useCallback(
     async (file: File) => {
       if (file.size > MAX_FILE_SIZE) {
@@ -32,12 +33,25 @@ export function PdfUploader() {
       e.preventDefault();
       setIsDragging(false);
       if (isParsing) return;
-      const file = e.dataTransfer.files[0];
-      if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
-        handleFile(file);
+      const files = e.dataTransfer.files;
+      if (files.length === 0) return;
+      const file = files[0];
+      if (!file) return;
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      if (!isPdf) {
+        setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.notPdf') });
+        return;
       }
+      // 다중 파일 드롭 시 첫 번째만 처리하는 것을 사용자에게 알림 (silent drop 방지)
+      if (files.length > 1) {
+        setError({
+          code: 'PDF_PARSE_FAIL',
+          message: t('uploader.multipleFiles', { name: file.name }),
+        });
+      }
+      handleFile(file);
     },
-    [handleFile, isParsing],
+    [handleFile, isParsing, setError, t],
   );
 
   const handleFileSelect = useCallback(async () => {
@@ -60,10 +74,15 @@ export function PdfUploader() {
   }, [setError, t]);
 
   return (
+    // 접근성: 외부 div 는 순수 드롭존 + 포인터 단축키.
+    // - role="button" 과 role 없는 div+aria-label 둘 다 문제 있음:
+    //   전자는 내부 <button> 중첩으로 ARIA nested interactive 규칙 위반,
+    //   후자는 aria-label 을 가졌지만 interactive 로 announce 안 되어 혼란.
+    // - 선택: 외부 div 는 aria tree 에서 비가시(presentation) 처리하고,
+    //   시각적/마우스 UX 는 유지. 키보드·스크린 리더 사용자는 내부 "파일 선택"
+    //   버튼을 통해 기능에 접근 (버튼이 전체 UI의 accessible primary control).
     <div
-      role="button"
-      tabIndex={0}
-      aria-label={t('uploader.ariaLabel')}
+      role="presentation"
       onDrop={handleDrop}
       onDragOver={(e) => {
         e.preventDefault();
@@ -71,12 +90,6 @@ export function PdfUploader() {
       }}
       onDragLeave={() => setIsDragging(false)}
       onClick={isParsing ? undefined : handleFileSelect}
-      onKeyDown={(e) => {
-        if (!isParsing && (e.key === 'Enter' || e.key === ' ')) {
-          e.preventDefault();
-          handleFileSelect();
-        }
-      }}
       className={`
         relative border-2 border-dashed rounded-xl p-12 text-center
         transition-colors duration-200
@@ -90,7 +103,7 @@ export function PdfUploader() {
     >
       {isParsing ? (
         <div className="flex flex-col items-center gap-4">
-          <svg className="animate-spin h-12 w-12 text-blue-500" viewBox="0 0 24 24" fill="none">
+          <svg aria-hidden="true" className="animate-spin h-12 w-12 text-blue-500" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
@@ -125,6 +138,14 @@ export function PdfUploader() {
               </p>
             </>
           )}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); cancelPdfParse(); }}
+            className="mt-2 px-4 py-1.5 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+            aria-label={t('uploader.cancelParse')}
+          >
+            {t('uploader.cancelBtn')}
+          </button>
         </div>
       ) : (
         <>

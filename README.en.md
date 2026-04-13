@@ -166,7 +166,7 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 
 | Item | Technology |
 |------|-----------|
-| Framework | Electron 34 + React 19 |
+| Framework | Electron 41 + React 19 |
 | Language | TypeScript (strict mode) |
 | AI Generation | Ollama (local) / Claude API / OpenAI API — Main process IPC |
 | AI Embedding (RAG) | Ollama /api/embed / OpenAI /v1/embeddings — In-memory vector store |

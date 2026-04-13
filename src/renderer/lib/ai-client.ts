@@ -1,4 +1,5 @@
 import type { SummaryType, AppSettings } from '../types';
+import { t } from './i18n';
 
 export class AiClient {
   private settings: AppSettings;
@@ -55,14 +56,14 @@ export class AiClient {
     // 에러 감지를 위해 비동기로 결과 확인
     resultPromise.then((result) => {
       if (!result.success) {
-        error = Object.assign(new Error(result.error || '요약 생성에 실패했습니다.'), {
+        error = Object.assign(new Error(result.error || t('ai.generateFail')), {
           code: result.code || 'GENERATE_FAIL',
         });
         done = true;
         resolver?.();
       }
     }).catch((err) => {
-      error = Object.assign(new Error(err instanceof Error ? err.message : '요약 요청에 실패했습니다.'), {
+      error = Object.assign(new Error(err instanceof Error ? err.message : t('ai.requestFail')), {
         code: 'GENERATE_FAIL',
       });
       done = true;
@@ -76,7 +77,7 @@ export class AiClient {
       if (ipcTimer) clearTimeout(ipcTimer);
       ipcTimer = setTimeout(() => {
         if (!done) {
-          error = new Error('AI 응답 수신이 중단되었습니다.');
+          error = new Error(t('ai.streamInterrupted'));
           done = true;
           resolver?.();
         }

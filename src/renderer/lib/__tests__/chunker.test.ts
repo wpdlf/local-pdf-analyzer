@@ -20,10 +20,10 @@ describe('chunkText', () => {
     expect(chunks.length).toBeGreaterThan(1);
   });
 
-  it('빈 텍스트는 빈 배열을 반환하지 않는다', () => {
-    const chunks = chunkText('', 4000);
-    // 빈 문자열이지만 trim 후에도 최소 1개
-    expect(chunks.length).toBeGreaterThanOrEqual(0);
+  it('빈/공백 텍스트는 빈 배열을 반환한다 (벡터 스토어 오염 방지)', () => {
+    expect(chunkText('', 4000)).toEqual([]);
+    expect(chunkText('   ', 4000)).toEqual([]);
+    expect(chunkText('\n\n\t', 4000)).toEqual([]);
   });
 
   it('문단 경계에서 분할한다', () => {

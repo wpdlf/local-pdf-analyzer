@@ -1,6 +1,6 @@
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
-import type { SummaryType } from '../types';
+import type { DefaultSummaryType } from '../types';
 import { SUMMARY_LANGUAGES } from '../types';
 
 // 한국어 특화 모델 — 다른 언어 출력 시 품질이 낮을 수 있음
@@ -13,7 +13,7 @@ export function SummaryTypeSelector() {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const t = useT();
 
-  const options: { value: SummaryType; label: string }[] = [
+  const options: { value: DefaultSummaryType; label: string }[] = [
     { value: 'full', label: t('selector.full') },
     { value: 'chapter', label: t('selector.chapter') },
     { value: 'keywords', label: t('selector.keywords') },
