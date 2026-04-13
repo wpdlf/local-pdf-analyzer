@@ -124,16 +124,19 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Clean summaries** — Unwanted greetings, compliments, and conversational phrases removed via prompt constraints + post-processing filter
 - **Image analysis** — Charts/diagrams/tables analyzed by Vision AI and integrated into summaries
 - **Scanned PDF OCR** — Text recognition via Vision AI for image-based PDFs (toggleable)
+- **Cancellable long-running tasks** — Cancel button during PDF parsing / OCR, mid-setup cancel in Ollama install wizard (instant switch to alternative Provider)
 - **Korean optimized** — Improved Korean PDF text extraction, auto-adjusted chunk sizes by Korean character ratio
 - **Auto model install** — First run auto-downloads gemma3, exaone3.5 (Korean models) + nomic-embed-text (RAG embedding)
 - **Paid AI support** — Claude API and OpenAI API for high-quality summaries (works without Ollama)
-- **API key security** — OS keychain encryption + decrypted only in Main process (never exposed to Renderer)
+- **Provider-aware OCR batching** — Cloud providers (Claude/OpenAI) use 8-page parallel batches for higher throughput; local Ollama uses 3 pages
+- **API key security** — OS keychain encryption + decrypted only in Main process (never exposed to Renderer) + in-memory cache for hot-path performance
 - **Data privacy** — PDFs never sent to external servers when using Ollama
-- **Real-time streaming** — Summary appears as it generates with auto-scroll (pauses when you scroll up)
+- **Real-time streaming** — Summary appears as it generates (leading-edge throttle), auto-scroll (pauses when you scroll up)
 - **Cancellable** — Stop summarization anytime; 5-minute timeout auto-abort
+- **Accessibility** — Screen reader `aria-live` streaming announcements, keyboard navigation, dark mode FOUC prevention
 - **Dark mode** — Light/Dark/System theme in Settings
 - **Multilingual UI** — Korean/English app interface toggle (Settings -> Language)
-- **Large PDF support** — Long documents auto-split into chunks for batch processing with integrated summary
+- **Large PDF support** — Long documents auto-split into chunks for batch processing with integrated summary (up to 500 pages)
 - **Persistent settings** — Settings saved across app restarts
 
 ## System Requirements
@@ -141,16 +144,19 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - Windows 10 or later
 - Minimum 8GB disk space (for AI models, when using Ollama)
 - Internet connection (for first install and paid API usage)
+- PDF limits: up to 100MB, up to 500 pages (split larger documents manually)
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| Ollama install fails | Install manually from [ollama.com](https://ollama.com), or click "Use other AI Provider" for Claude/OpenAI |
+| Ollama install fails | Install manually from [ollama.com](https://ollama.com), or click "Cancel and use another provider" in the setup wizard to switch to Claude/OpenAI |
 | Poor Korean summary quality | Check that gemma3 or exaone3.5 is selected in Settings |
 | Slow summarization | Switch to a lighter model (e.g., phi3) or reduce chunk size |
 | Cannot extract PDF text | Enable "Scanned PDF OCR" in Settings. Requires Vision model (llava, Claude, GPT-4o) |
-| Inaccurate OCR | Ollama llava has limited Korean accuracy. Switch to Claude or OpenAI for much better results |
+| Inaccurate OCR | Ollama llava has limited Korean accuracy. Switch to Claude or OpenAI for much better results (also 3→8 batch size upgrade) |
+| OCR taking too long | Click the "■ Cancel" button on the parsing screen. Switching to a cloud provider increases throughput |
+| PDF exceeds 500 pages | Manually split the document before uploading. The cap prevents runaway resource usage |
 | Image analysis not working | Ollama requires a Vision model (llava, etc.). Install via Settings |
 | API key error | Verify API key in Settings. Claude: `sk-ant-...`, OpenAI: `sk-...` |
 | Claude/OpenAI unavailable | Save your API key first, then select the Provider |
@@ -174,9 +180,10 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | State Management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (NSIS) |
-| Testing | Vitest (19 unit tests) |
-| i18n | Custom (i18n.ts) — 180+ keys, useT() hook, template interpolation |
-| API Key Security | Electron safeStorage (OS keychain encryption), decrypted only in Main process |
+| Testing | Vitest (19 unit tests) + `tsc --noEmit` strict type check |
+| i18n | Custom (i18n.ts) — 172+ keys, useT() hook, template interpolation |
+| API Key Security | Electron safeStorage (OS keychain encryption), decrypted only in Main process, in-memory cache for hot-path |
+| Shared constants | `src/shared/constants.ts` — Main/Renderer shared (MAX_PDF_SIZE etc.) to prevent drift |
 
 ### Development Setup
 
@@ -283,9 +290,10 @@ PDF File
 │    ├── Render each page to JPEG via OffscreenCanvas  │
 │    │   └── Auto scale (50p+: 1.5, 100p+: 1.0)       │
 │    │       → Max 3000px, immediate GPU memory release │
-│    ├── Batch 3 pages → Vision OCR requests            │
-│    │   └── ai:ocr-page IPC → Main → Vision API       │
-│    ├── Abort via isParsing subscription               │
+│    ├── Provider-aware batch → Vision OCR requests     │
+│    │   └── Ollama: 3 pages / Claude·OpenAI: 8 pages  │
+│    │       → ai:ocr-page IPC → Main → Vision API     │
+│    ├── AbortSignal propagation for instant cancel    │
 │    └── Extracted text joins normal pipeline            │
 └─────────────────────────────────────────────────────┘
   │
@@ -326,8 +334,10 @@ PDF File
 ┌─────────────────────────────────────────────────────┐
 │ 5. Renderer Display (SummaryViewer.tsx + store.ts)    │
 │    ├── Token buffering (50ms batch flush)             │
-│    ├── Markdown rendering debounce (150ms)            │
+│    ├── Markdown leading-edge throttle (150ms)         │
+│    │   └── First token immediate, then 150ms window   │
 │    ├── Auto-scroll (only when near bottom 100px)      │
+│    ├── aria-live=polite screen reader announcements   │
 │    ├── stripConversationalText post-processing        │
 │    └── Export .md / Copy to clipboard                 │
 └─────────────────────────────────────────────────────┘
@@ -370,19 +380,22 @@ PDF File
 
 | Threat | Mitigation |
 |--------|-----------|
-| API key theft | `safeStorage` (OS keychain) encryption, keys never sent to Renderer |
+| API key theft | `safeStorage` (OS keychain) encryption, keys never sent to Renderer, in-process memory cache to minimize decryption cost |
 | Ollama SSRF | localhost only (`validateOllamaUrl`), http/https only |
-| PDF drop path manipulation | `will-navigate` blocked, `file://` + `.pdf` extension only |
-| IPC input manipulation | Type/range/length validation on all IPC handlers |
+| PDF drop path manipulation | `will-navigate` blocked, `file://` + `.pdf` extension only, `lstat` symlink rejection (blocks malicious `.pdf` symlinks pointing to system files) |
+| IPC input manipulation | Type/range/length validation on all IPC handlers, shared constants module prevents main/renderer drift |
 | External URL opening | Allowed domain whitelist (ollama.com, anthropic.com, openai.com, github.com) |
 | Markdown XSS | `javascript:`, `data:` URLs blocked, external images blocked |
-| Response size overflow | Streaming 50MB, Vision 10MB, model list 1MB limits |
+| Iframe/form injection | CSP `frame-src 'none'; child-src 'none'; base-uri 'none'; form-action 'none'` for defense-in-depth |
+| Response size overflow | Streaming 50MB, Vision 10MB, model list 1MB limits, PDF max 500 pages / 100MB |
+| Vision API log leakage | Error body sanitized for Bearer / sk-ant- / sk-proj- / sk-live- tokens |
 | Q&A prompt injection | `splitPrompt` uses first separator only, `sanitizePromptInput` on both RAG/keyword contexts |
 | RAG embedding corruption | NaN/Infinity validation at IPC boundary, dimension lock (first chunk), array count mismatch rejection |
-| RAG document mixing | buildId guard + final docId verification cancels previous builds on document switch |
+| RAG document mixing | `AbortController` cancels previous builds instantly on document switch, final docId verification |
 | OCR prompt injection | Vision/OCR prompts explicitly ignore image instructions, response URL/code block removal |
 | OCR memory overflow | Auto page scale reduction, 3000px cap, OffscreenCanvas GPU immediate release |
 | Q&A history overflow | History 4000 char limit + 10-turn FIFO, question 1000 char cap |
+| Network stream hang | `res.on('close')` listener detects abnormal termination immediately (no 120s wait) |
 
 ## License
 
