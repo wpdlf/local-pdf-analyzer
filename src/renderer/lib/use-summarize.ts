@@ -1,8 +1,27 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { AiClient } from './ai-client';
-import { chunkText, chunkChapters, chunkTextWithOverlapByPage, estimateCharsPerToken } from './chunker';
-import { formatPageLabel } from './citation';
+import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
+
+/**
+ * 페이지별 텍스트 배열을 받아, 각 단락 앞에 `[p.N] ` inline 마커를 붙여 단일 문자열로 반환.
+ * LLM 이 각 문장의 정확한 페이지를 알 수 있게 하는 page-citation-viewer 기능의 핵심.
+ *
+ * 청크 prefix 1개만 붙이는 기존 방식은 LLM 이 범위만 알 수 있어 인용 생성이 희박했음.
+ * 단락 단위 inline 마커는 chunkText 가 어디서 분할하든 각 청크의 모든 문단에 라벨 유지.
+ */
+function labelParagraphsWithPages(pageTexts: string[]): string {
+  const labeled: string[] = [];
+  pageTexts.forEach((pageText, pageIdx) => {
+    if (!pageText || !pageText.trim()) return;
+    const label = `[p.${pageIdx + 1}]`;
+    const paragraphs = pageText.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+    for (const para of paragraphs) {
+      labeled.push(`${label} ${para}`);
+    }
+  });
+  return labeled.join('\n\n');
+}
 import type { PdfDocument, DefaultSummaryType, AppSettings, ProgressInfo, AppError } from '../types';
 
 // TrackFn은 요약 파이프라인 내부에서만 사용되며 'qa' 타입은 호출되지 않음.
@@ -135,7 +154,28 @@ async function summarizeByChapter(
   progressOffset: number,
 ) {
   const progressRange = 100 - progressOffset; // 요약 단계에서 사용할 진행률 범위
-  const chaptersData = chunkChapters(doc.chapters, settings.maxChunkSize);
+  // page-citation-viewer: 챕터의 원래 페이지들을 복원해 단락별 [p.N] 라벨 적용.
+  // chapter.text 는 pageTexts.slice(startPage-1, endPage).join('\n\n') 이므로,
+  // 같은 slice 에서 labelParagraphsWithPages 를 호출해 per-page 라벨링된 텍스트 생성.
+  const hasPageTexts = Array.isArray(doc.pageTexts) && doc.pageTexts.length > 0;
+  const labeledChapters = doc.chapters.map((ch) => {
+    if (!hasPageTexts) {
+      return { ...ch }; // 레거시 경로
+    }
+    const chapterPageTexts = doc.pageTexts.slice(ch.startPage - 1, ch.endPage);
+    // labelParagraphsWithPages 는 0-based index 를 가정 → pageIdx 를 startPage-1 만큼 shift 필요
+    const labeled = chapterPageTexts
+      .map((pt, i) => {
+        if (!pt || !pt.trim()) return '';
+        const label = `[p.${ch.startPage + i}]`;
+        const paragraphs = pt.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+        return paragraphs.map((para) => `${label} ${para}`).join('\n\n');
+      })
+      .filter(Boolean)
+      .join('\n\n');
+    return { ...ch, text: labeled || ch.text };
+  });
+  const chaptersData = chunkChapters(labeledChapters, settings.maxChunkSize);
   const total = chaptersData.reduce((sum, c) => sum + c.chunks.length, 0);
   // 모든 챕터의 청크가 비어있는 경우 → chunkText가 [] 반환(공백뿐인 텍스트)
   // 사용자에게 무음 실패 대신 명시적 에러 surface
@@ -151,12 +191,9 @@ async function summarizeByChapter(
     if (isTimedOut()) break;
     chapterIdx++;
     let chapterHeaderPending = `\n## ${chapter.title}\n\n`;
-    // page-citation-viewer: 챕터 page 범위 라벨 — LLM 이 [p.N] 인용을 생성하도록 유도
-    const chapterLabel = formatPageLabel(chapter.startPage, chapter.endPage);
+    // chunks 는 이미 단락 수준 [p.N] 인라인 마커를 포함 — 추가 prefix 불필요
     for (const chunk of chunks) {
       if (isTimedOut()) break;
-      // 각 청크 앞에 챕터 범위 라벨 삽입. 해당 페이지를 인용할 때 LLM 이 그대로 사용.
-      const labeledChunk = chapterLabel ? `${chapterLabel}\n${chunk}` : chunk;
       const elapsedMs = Date.now() - startTime;
       const rawPercent = total > 0 ? (processed / total) : 0;
       const percent = Math.min(100, progressOffset + rawPercent * progressRange);
@@ -172,7 +209,7 @@ async function summarizeByChapter(
         elapsedMs,
         estimatedRemainingMs,
       });
-      for await (const token of track(labeledChunk, 'chapter')) {
+      for await (const token of track(chunk, 'chapter')) {
         if (checkTimeout()) break;
         if (chapterHeaderPending) {
           append(chapterHeaderPending + token);
@@ -209,16 +246,16 @@ async function summarizeFull(
   progressOffset: number,
 ) {
   const progressRange = 100 - progressOffset;
-  // page-citation-viewer: pageTexts 가 있으면 page-aware 청커로 전환해
-  // 각 청크에 pageStart/pageEnd 메타데이터를 부착 → [p.N] 라벨 프롬프트 주입.
-  // 없으면(레거시 경로) 기존 chunkText 로 폴백.
+  // page-citation-viewer: 페이지 경계마다 inline [p.N] 마커를 **단락 수준** 으로 삽입.
+  // 이전 구현(청크 prefix 1개)은 LLM 이 청크 전체가 어느 페이지 "범위" 인지만 알 수 있어
+  // 실제 출력에서 인용이 거의 나오지 않는 문제가 있었음.
+  // 단락마다 `[p.N] ` 을 붙이면 LLM 이 각 문장의 정확한 페이지를 보게 되어 자연스럽게
+  // 여러 인용을 생성. chunkText 가 \n\n 으로 분할해도 각 청크의 모든 문단에 라벨이 있음.
   const hasPageTexts = Array.isArray(doc.pageTexts) && doc.pageTexts.length > 0;
-  const pageChunks = hasPageTexts
-    ? chunkTextWithOverlapByPage(doc.pageTexts, settings.maxChunkSize, 0) // overlap 0 — 요약은 경계 중복 불필요
-    : [];
-  const chunks = hasPageTexts
-    ? pageChunks.map((c) => c.text)
-    : chunkText(doc.extractedText, settings.maxChunkSize);
+  const labeledText = hasPageTexts
+    ? labelParagraphsWithPages(doc.pageTexts)
+    : doc.extractedText;
+  const chunks = chunkText(labeledText, settings.maxChunkSize);
   // chunkText는 공백/빈 입력 시 []를 반환. 빈 배열로 진입하면 루프 스킵 →
   // 사용자는 스피너가 사라지지만 content/에러가 없는 무음 실패를 겪음.
   if (chunks.length === 0) {
@@ -244,13 +281,8 @@ async function summarizeFull(
       elapsedMs,
       estimatedRemainingMs,
     });
-    // 해당 청크의 페이지 라벨 prefix
-    const label = hasPageTexts
-      ? formatPageLabel(pageChunks[i]?.pageStart, pageChunks[i]?.pageEnd)
-      : '';
-    const labeledChunk = label ? `${label}\n${chunks[i]}` : chunks[i];
     let chunkResult = '';
-    for await (const token of track(labeledChunk, summaryType)) {
+    for await (const token of track(chunks[i], summaryType)) {
       if (checkTimeout()) break;
       append(token);
       chunkResult += token;

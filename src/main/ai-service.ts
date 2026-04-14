@@ -1254,28 +1254,81 @@ const LANG_PROMPTS: Record<string, LangPrompts> = {
 // 요약/Q&A 타입에서 LLM 이 [p.N] 라벨을 그대로 인용하도록 시스템 지시를 주입한다.
 // keywords 는 테이블 포맷이라 인용 불필요.
 const CITATION_RULES: Record<string, string> = {
-  ko: `## 인용 규칙 (매우 중요)
-입력 텍스트에 \`[p.N]\` 형태의 페이지 라벨이 포함되어 있습니다. 각 핵심 사실이나 주장을 서술할 때, 그 근거가 되는 페이지의 라벨을 문장 끝에 \`[p.N]\` 형태로 그대로 인용하세요.
-- 예시: "메모리 누수는 backpressure 부재로 발생한다[p.12]."
-- 라벨이 \`[p.5-7]\` 범위면 가장 관련 있는 단일 페이지 하나만 골라 \`[p.5]\` 처럼 단일 형태로 출력하세요.
-- 인용 없이 문장을 쓰지 마세요. 단, 정확한 근거가 없으면 인용을 붙이지 말고 일반 서술하세요.`,
-  en: `## Citation rule (VERY IMPORTANT)
-The input text contains page labels in the form \`[p.N]\`. When stating any key fact or claim, cite the supporting page using the exact \`[p.N]\` format at the end of the sentence.
-- Example: "The memory leak occurs due to missing backpressure[p.12]."
-- If a range label like \`[p.5-7]\` appears, pick the single most relevant page and output it as \`[p.5]\`.
-- Do not fabricate citations. If you are not certain which page supports a sentence, omit the citation for that sentence.`,
-  ja: `## 引用ルール (非常に重要)
-入力テキストには \`[p.N]\` 形式のページラベルが含まれています。主要な事実や主張を述べる際は、該当する根拠ページのラベルを文末に \`[p.N]\` の形式でそのまま引用してください。
-- 例: 「メモリリークはbackpressure不足で発生する[p.12]。」
-- \`[p.5-7]\` のような範囲ラベルがある場合は、最も関連する単一ページを選んで \`[p.5]\` として出力してください。
-- 確実な根拠がない場合は引用を付けずに記述してください。`,
-  zh: `## 引用规则 (非常重要)
-输入文本中包含 \`[p.N]\` 形式的页码标签。陈述任何关键事实或主张时，请在句尾以 \`[p.N]\` 格式准确引用支持该陈述的页面。
-- 示例: "内存泄漏是由于缺少backpressure导致的[p.12]。"
-- 如果出现 \`[p.5-7]\` 这样的范围标签，请选择最相关的单一页面，以 \`[p.5]\` 格式输出。
-- 如果不确定哪一页支持某句，请省略该句的引用，不要编造。`,
-  auto: `## Citation rule
-The input text contains page labels in the form \`[p.N]\`. When stating a key fact, cite the source using exactly \`[p.N]\` at the end of the sentence. For range labels like \`[p.5-7]\`, pick the single most relevant page. Do not fabricate citations — omit when uncertain.`,
+  ko: `## 인용 규칙 (가장 중요한 출력 규칙)
+
+**입력 텍스트의 각 단락은 \`[p.N]\` 형태의 페이지 라벨로 시작합니다.** 이 라벨은 해당 단락이 어느 PDF 페이지에서 왔는지 정확히 알려줍니다.
+
+**반드시 지켜야 할 사항**:
+1. **거의 모든 주요 문장에 출처 인용 \`[p.N]\` 을 문장 끝에 붙이세요.** 해당 문장이 어느 단락의 라벨에서 왔는지 보고 그대로 사용합니다.
+2. 여러 사실을 한 문장에 담더라도, 가장 관련 있는 단일 페이지 하나를 골라 \`[p.N]\` 로 인용하세요. 목록(\`-\`, \`*\`, \`1.\`)의 각 항목에도 인용을 붙입니다.
+3. 인용 없는 문장은 도입부/연결어 정도로만 허용하고, 구체적 사실 서술에는 반드시 인용을 붙이세요.
+4. 라벨에서 그대로 복사하세요 — 페이지 번호를 추측하지 마세요. 확실치 않으면 인용 생략.
+
+**출력 예시**:
+- "메모리 누수는 backpressure 부재로 발생한다[p.12]. 해결책은 response.pipe(file) 사용이다[p.13]."
+- "- 핵심 개념 A: 정의는 다음과 같다[p.5]."
+- "수식 \\(E=mc^2\\)은 질량-에너지 등가성을 나타낸다[p.8]."
+
+**잘못된 예 (피하세요)**:
+- "이 문서는 메모리 관리에 대해 설명한다." (구체적 사실인데 인용 없음 ✗)
+- "backpressure 에 관한 내용이다[p.5-7]." (범위 라벨 그대로 사용 ✗ — 단일로 변환해야 함)`,
+  en: `## Citation rule (MOST IMPORTANT OUTPUT RULE)
+
+**Each paragraph in the input begins with a \`[p.N]\` page label** telling you exactly which PDF page it came from.
+
+**What you MUST do**:
+1. **Attach a source citation \`[p.N]\` at the end of almost every key sentence.** Take the page label from the paragraph the fact came from and reproduce it verbatim.
+2. Even when combining multiple facts, pick the single most relevant page and cite as \`[p.N]\`. Each bullet/list item also gets its own citation.
+3. Only transition/intro sentences may appear without a citation. Every concrete fact must be cited.
+4. Copy the label verbatim — do not guess page numbers. Omit if uncertain.
+
+**Output examples**:
+- "Memory leaks occur due to missing backpressure[p.12]. The fix is to use response.pipe(file)[p.13]."
+- "- Key concept A: the definition is as follows[p.5]."
+- "The formula \\(E=mc^2\\) represents mass-energy equivalence[p.8]."
+
+**Wrong (avoid)**:
+- "This document discusses memory management." (concrete claim without citation ✗)
+- "It covers backpressure[p.5-7]." (range label copied as-is ✗ — must pick single page)`,
+  ja: `## 引用ルール (最も重要な出力規則)
+
+**入力テキストの各段落は \`[p.N]\` 形式のページラベルで始まります。** このラベルは該当段落がどのPDFページから来たかを正確に示します。
+
+**必ず守ること**:
+1. **ほぼすべての主要な文の末尾に出典 \`[p.N]\` を付けてください。** 事実の出所となる段落のラベルをそのまま使います。
+2. 複数の事実を一文にまとめる場合でも、最も関連する単一ページを選んで \`[p.N]\` として引用してください。箇条書きの各項目にも引用を付けます。
+3. 導入/つなぎの文以外、具体的な事実の記述には必ず引用を付けてください。
+4. ラベルをそのままコピー — ページ番号を推測しないでください。確実でない場合は省略。
+
+**出力例**:
+- 「メモリリークはbackpressure不足で発生する[p.12]。解決策はresponse.pipe(file)の使用である[p.13]。」
+- 「- 主要概念A: 定義は以下の通り[p.5]。」
+
+**避けるべき例**:
+- 「この文書はメモリ管理について説明している。」 (具体的事実なのに引用なし ✗)
+- 「backpressureについての内容[p.5-7]。」 (範囲ラベルをそのまま使用 ✗)`,
+  zh: `## 引用规则 (最重要的输出规则)
+
+**输入文本的每个段落以 \`[p.N]\` 形式的页码标签开头。** 此标签精确指明该段落来自哪个PDF页面。
+
+**必须遵守**:
+1. **在几乎每个关键句子末尾附上来源引用 \`[p.N]\`。** 从事实所在段落的标签直接复制。
+2. 即使一句话包含多个事实，也请选择最相关的单一页面，以 \`[p.N]\` 格式引用。列表项也要加引用。
+3. 除了引导/过渡句外，具体事实陈述必须附引用。
+4. 直接复制标签 — 不要猜测页码。不确定时省略。
+
+**输出示例**:
+- "内存泄漏是由于缺少backpressure导致的[p.12]。解决方案是使用response.pipe(file)[p.13]。"
+- "- 核心概念A：定义如下[p.5]。"
+
+**错误示例 (避免)**:
+- "本文档讨论内存管理。" (具体陈述但无引用 ✗)
+- "关于backpressure的内容[p.5-7]。" (范围标签原样使用 ✗)`,
+  auto: `## Citation rule (MOST IMPORTANT OUTPUT RULE)
+
+**Each paragraph in the input begins with a \`[p.N]\` page label.** Attach \`[p.N]\` at the end of almost every key sentence, copying verbatim from the paragraph's label. List items need citations too. For range labels pick a single page. Do not fabricate — omit when uncertain.
+
+Example: "Memory leaks occur due to missing backpressure[p.12]. The fix is response.pipe(file)[p.13]."`,
 };
 
 function buildPrompt(text: string, type: 'full' | 'chapter' | 'keywords' | 'qa', language?: string): string {
