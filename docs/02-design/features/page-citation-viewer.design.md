@@ -205,7 +205,7 @@ status: Draft
 | `vector-store.ts` | 없음 | VectorChunk 타입 확장 |
 | `use-qa.ts` | `vector-store`, `citation` | page-labeled context 빌드 |
 | `use-summarize.ts` | `chunker`, `citation` | page-labeled chunk 프롬프트 |
-| `safe-markdown.tsx` | `citation`, `store` | text renderer 에서 인용 파싱·렌더 |
+| `safe-markdown.tsx` | `citation`, `store` | p/li/td/th/em/strong renderers 에서 인용 파싱·렌더 |
 | `CitationButton.tsx` | `store`, `useT` | 버튼 + 접근성 + i18n |
 | `PdfViewer.tsx` | `pdfjs-dist`, `store` | canvas 기반 가상 스크롤 뷰어 |
 | `SummaryViewer.tsx` | `PdfViewer`, `store` | 우측 패널 레이아웃 |
@@ -383,16 +383,18 @@ setCitationTarget: (target: { page: number } | null) => void;
 
 ```typescript
 interface PdfViewerProps {
-  /** pdfjs 에 로드할 PDF 바이트 */
-  pdfData: ArrayBuffer | Uint8Array;
+  /** pdfjs 에 로드할 PDF 바이트. pdf-parser.ts 의 handlePdfData 가 이미 Uint8Array
+   *  사본을 만들어 store.pdfBytes 에 보관하므로 ArrayBuffer 오버로드는 불필요. */
+  pdfBytes: Uint8Array;
   /** 현재 포커스할 페이지 (1-based). 변경 시 해당 페이지로 스크롤 */
   targetPage: number;
   /** 패널 닫기 */
   onClose: () => void;
-  /** 패널 너비 (픽셀). 기본 50% flex */
-  width?: number;
 }
 ```
+
+> **Note**: 패널 너비는 SummaryViewer 의 Tailwind `w-1/2` 고정 분할로 처리.
+> 가로 리사이즈 핸들(FR-09 일부)은 v0.17.x 후속 작업으로 deferred (Plan §9 참조).
 
 ---
 
@@ -415,13 +417,16 @@ interface PdfViewerProps {
 │  Header                                            │
 ├──────────────────────────┬─────────────────────────┤
 │  SummaryViewer           │  PdfViewer Panel (NEW)  │
-│    ├─ 요약 + [p.12]      │    ├─ Close × Resize   │
+│    ├─ 요약 + [p.12]      │    ├─ Close ×          │
 │    └─ QaChat + [p.15]    │    ├─ Page 12 canvas   │
 │                          │    ├─ Page 13 canvas   │
 │                          │    └─ Page 14 canvas   │
 └──────────────────────────┴─────────────────────────┘
-    50%                            50%
+    50% (고정)                     50% (고정)
 ```
+
+> **v0.17.0 범위**: 좌/우 패널은 Tailwind `w-1/2` 고정 분할.
+> 가로 리사이즈 핸들(Plan FR-09b)은 v0.17.x 후속 작업 (DR-01).
 
 ### 5.2 User Flow
 
@@ -443,7 +448,7 @@ interface PdfViewerProps {
 | `PdfViewer` | `src/renderer/components/PdfViewer.tsx` | pdfjs canvas 렌더링, 페이지 스크롤, lazy load, destroy on unmount |
 | `CitationButton` | `src/renderer/components/CitationButton.tsx` | `[p.N]` 인라인 버튼, 접근성, i18n, click dispatch |
 | `SummaryViewer` | (수정) | 우측 패널 슬롯 + citationTarget 구독 |
-| `safeComponents.text` | (신규 추가) | ReactMarkdown text node 에 parseCitations 적용 |
+| `safeComponents.{p,li,td,th,em,strong}` | (신규 추가) | react-markdown 9 의 text-bearing 블록 컴포넌트 6개에 `renderWithCitations` 헬퍼를 적용. (react-markdown 9 는 `text` 키를 노출하지 않으므로 부모 블록을 가로채는 방식이 필요) |
 
 ### 5.4 Page UI Checklist
 
@@ -527,7 +532,7 @@ background: #bfdbfe;  /* blue-200 */
 | pdfjs getDocument 실패 | 에러 배너 표시, 요약/Q&A 영역은 정상 동작 |
 | 인용 페이지가 PDF 범위 밖 | 버튼 disabled, 클릭 비활성, tooltip 안내 |
 | PDF 가 OCR 모드로 파싱됨 | citation 동일하게 작동 (pageTexts[] 는 OCR 결과여도 페이지 단위 유지) |
-| 인용 토큰이 코드블록 내부에 존재 | ReactMarkdown 이 code 블록 text 는 `components.code` 로 넘기므로 `safeComponents.text` 대신 `code` 가 적용됨 → 변환 없음 (의도) |
+| 인용 토큰이 코드블록 내부에 존재 | ReactMarkdown 이 code 블록 text 는 `components.code` 로 넘기므로 `p/li/td/th/em/strong` 오버라이드가 적용되지 않음 → 변환 없음 (의도) |
 
 ---
 
@@ -628,7 +633,7 @@ Electron 앱의 전통적 레이어:
 | `CitationButton` | Presentation | `src/renderer/components/CitationButton.tsx` |
 | `PdfViewer` | Presentation | `src/renderer/components/PdfViewer.tsx` |
 | `SummaryViewer` (수정) | Presentation | `src/renderer/components/SummaryViewer.tsx` |
-| `safeComponents.text` (수정) | Presentation | `src/renderer/lib/safe-markdown.tsx` |
+| `safeComponents.{p,li,td,th,em,strong}` (수정) | Presentation | `src/renderer/lib/safe-markdown.tsx` |
 | `use-qa.ts` (수정) | Application | `src/renderer/lib/use-qa.ts` |
 | `use-summarize.ts` (수정) | Application | `src/renderer/lib/use-summarize.ts` |
 | `store.citationTarget` | Application | `src/renderer/lib/store.ts` |
@@ -711,7 +716,7 @@ src/
 9. [ ] **ai-service.ts** — 요약/Q&A 시스템 프롬프트에 인용 지시 추가
 10. [ ] **use-qa.ts** — RAG 컨텍스트에 page 라벨 부착
 11. [ ] **use-summarize.ts** — 청크 프롬프트에 page 라벨 부착
-12. [ ] **safe-markdown.tsx** — text renderer 에서 parseCitations 적용
+12. [ ] **safe-markdown.tsx** — p/li/td/th/em/strong 컴포넌트 오버라이드에서 `renderWithCitations` 헬퍼로 parseCitations 적용 (react-markdown 9 는 `text` 키 미제공)
 13. [ ] **CitationButton.tsx** — 인라인 버튼 구현
 14. [ ] **PdfViewer.tsx** — pdfjs 기반 뷰어 + 스크롤 로직
 15. [ ] **SummaryViewer.tsx** — 우측 패널 슬롯 + citationTarget 구독 + ESC 닫기
