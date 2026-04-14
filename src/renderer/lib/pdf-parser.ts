@@ -558,6 +558,10 @@ export async function handlePdfData(
     if (activeParseController !== controller) return;
     store.setOcrProgress({ current, total });
   };
+  // page-citation-viewer: PdfViewer lazy 마운트를 위해 원본 바이트를 별도 보관.
+  // parsePdf 가 내부적으로 pdfjs.getDocument({ data }) 를 호출할 때 ArrayBuffer 가 transfer 될 수
+  // 있으므로, 파싱 전에 복사본을 만들어 두어 detached 상태를 피한다.
+  const pdfBytesCopy = new Uint8Array(data.slice(0));
   try {
     const doc = await parsePdf(data, name, filePath, {
       enableOcrFallback: store.settings.enableOcrFallback,
@@ -576,6 +580,7 @@ export async function handlePdfData(
     store.setProgressInfo(null);
     store.clearQa();
     store.setDocument(doc);
+    store.setPdfBytes(pdfBytesCopy); // PdfViewer 가 참조할 원본
     store.setError(null);
   } catch (err) {
     const error = err as Error & { code?: string };

@@ -5,6 +5,7 @@ import { useT } from '../lib/i18n';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
 import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
+import { PdfViewerPanel } from './PdfViewer';
 
 interface SummaryViewerProps {
   onAbort?: () => void;
@@ -17,6 +18,8 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const progress = useAppStore((s) => s.progress);
   const progressInfo = useAppStore((s) => s.progressInfo);
   const setError = useAppStore((s) => s.setError);
+  // page-citation-viewer: citationTarget 존재 시 우측 패널 슬롯에 PdfViewer 마운트
+  const citationTarget = useAppStore((s) => s.citationTarget);
   const t = useT();
 
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);
@@ -105,8 +108,11 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
     }
   };
 
+  const showCitationPanel = citationTarget !== null;
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-row h-full">
+      <div className={`flex flex-col h-full ${showCitationPanel ? 'w-1/2 min-w-0' : 'w-full'}`}>
       <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-t-lg">
         <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
           {document ? `📎 ${document.fileName} (${document.pageCount}p)` : t('viewer.result')}
@@ -189,6 +195,13 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
       {summaryStream && !isGenerating && (
         <div className="flex-1 basis-1/2 min-h-0 flex flex-col overflow-hidden">
           <QaChat />
+        </div>
+      )}
+      </div>
+      {/* page-citation-viewer: 우측 패널 (citationTarget 활성 시만 마운트) */}
+      {showCitationPanel && (
+        <div className="w-1/2 min-w-0 h-full">
+          <PdfViewerPanel />
         </div>
       )}
     </div>

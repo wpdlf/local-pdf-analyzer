@@ -120,6 +120,10 @@ interface AppState {
   // null 이면 PdfViewer 패널 비활성, { page: N } 이면 해당 페이지로 스크롤
   citationTarget: { page: number } | null;
   setCitationTarget: (target: { page: number } | null) => void;
+  // 원본 PDF 바이트 (PdfViewer 가 lazy 마운트 시 참조).
+  // document 와 라이프사이클 동일 — setDocument(null) / 새 문서 로드 시 교체.
+  pdfBytes: Uint8Array | null;
+  setPdfBytes: (bytes: Uint8Array | null) => void;
 
   // 설정
   settings: AppSettings;
@@ -234,8 +238,9 @@ export const useAppStore = create<AppState>((set) => ({
       qaRequestId: null,
       ocrProgress: null,
       ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
-      // 문서 전환 시 PdfViewer 패널도 닫힘
+      // 문서 전환 시 PdfViewer 패널도 닫히고 원본 바이트도 해제
       citationTarget: null,
+      pdfBytes: null,
     });
   },
 
@@ -301,6 +306,8 @@ export const useAppStore = create<AppState>((set) => ({
   // Page citation — Design Ref §4.2
   citationTarget: null,
   setCitationTarget: (target) => set({ citationTarget: target }),
+  pdfBytes: null,
+  setPdfBytes: (bytes) => set({ pdfBytes: bytes }),
 
   // 설정
   settings: DEFAULT_SETTINGS,
