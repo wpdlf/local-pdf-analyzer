@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chunkText, chunkChapters, chunkTextWithOverlap } from '../chunker';
+import { chunkText, chunkChapters, chunkTextWithOverlap, chunkTextWithOverlapByPage } from '../chunker';
 import type { Chapter } from '../../types';
 
 describe('chunkText', () => {
@@ -165,5 +165,67 @@ describe('chunkChapters', () => {
     ];
     const result = chunkChapters(chapters, 10);
     expect(result[0].chunks.length).toBeGreaterThan(1);
+  });
+});
+
+// page-citation-viewer 기능 — Design Ref §3.3.1
+describe('chunkTextWithOverlapByPage', () => {
+  it('빈 pageTexts 는 빈 배열을 반환', () => {
+    expect(chunkTextWithOverlapByPage([])).toEqual([]);
+  });
+
+  it('단일 짧은 페이지는 하나의 청크로 반환하고 pageStart/pageEnd 모두 1', () => {
+    const result = chunkTextWithOverlapByPage(['짧은 페이지 내용'], 500, 0.1);
+    expect(result).toHaveLength(1);
+    expect(result[0].pageStart).toBe(1);
+    expect(result[0].pageEnd).toBe(1);
+    expect(result[0].text).toContain('짧은');
+  });
+
+  it('여러 페이지에 걸친 큰 문서를 청크로 분할하고 각 청크의 페이지 범위를 반환', () => {
+    // 3 페이지, 각각 충분히 긴 텍스트
+    const pageTexts = [
+      '첫 번째 페이지의 내용 '.repeat(40),
+      '두 번째 페이지의 내용 '.repeat(40),
+      '세 번째 페이지의 내용 '.repeat(40),
+    ];
+    // 작은 청크 크기로 분할 유도
+    const result = chunkTextWithOverlapByPage(pageTexts, 50, 0.1);
+    expect(result.length).toBeGreaterThan(1);
+    // 모든 청크의 pageStart/pageEnd 는 1 ~ 3 범위 내여야 함
+    for (const chunk of result) {
+      expect(chunk.pageStart).toBeGreaterThanOrEqual(1);
+      expect(chunk.pageEnd).toBeLessThanOrEqual(3);
+      expect(chunk.pageStart).toBeLessThanOrEqual(chunk.pageEnd);
+    }
+  });
+
+  it('각 페이지의 내용이 해당 페이지 번호의 청크에 포함된다 (단일 페이지 판정)', () => {
+    const pageTexts = [
+      '페이지일 고유마커Aaa ' + '내용 '.repeat(30),
+      '페이지이 고유마커Bbb ' + '내용 '.repeat(30),
+      '페이지삼 고유마커Ccc ' + '내용 '.repeat(30),
+    ];
+    const result = chunkTextWithOverlapByPage(pageTexts, 30, 0.1);
+    // 마커가 포함된 청크가 올바른 페이지 번호에 매핑되어야 함
+    const aChunks = result.filter((c) => c.text.includes('고유마커Aaa'));
+    const bChunks = result.filter((c) => c.text.includes('고유마커Bbb'));
+    const cChunks = result.filter((c) => c.text.includes('고유마커Ccc'));
+    expect(aChunks.length).toBeGreaterThan(0);
+    expect(bChunks.length).toBeGreaterThan(0);
+    expect(cChunks.length).toBeGreaterThan(0);
+    // Aaa 를 포함하는 청크는 페이지 1 에서 시작
+    expect(aChunks[0].pageStart).toBe(1);
+    // Bbb 를 포함하는 청크는 페이지 2 를 포함
+    expect(bChunks[0].pageStart).toBeLessThanOrEqual(2);
+    expect(bChunks[0].pageEnd).toBeGreaterThanOrEqual(2);
+    // Ccc 를 포함하는 청크는 페이지 3 을 포함
+    expect(cChunks[0].pageEnd).toBeGreaterThanOrEqual(3);
+  });
+
+  it('청크의 pageStart/pageEnd 가 1-based 인지 검증', () => {
+    const result = chunkTextWithOverlapByPage(['single page content'], 500, 0.1);
+    expect(result[0].pageStart).toBeGreaterThanOrEqual(1);
+    expect(result[0].pageEnd).toBeGreaterThanOrEqual(1);
   });
 });

@@ -104,4 +104,36 @@ describe('VectorStore', () => {
       expect(store.model).toBe('nomic-embed-text');
     });
   });
+
+  // page-citation-viewer 기능 — Design Ref §3.1
+  describe('page metadata', () => {
+    it('addChunk 가 metadata 없이 호출되면 기존 동작 유지 (pageStart/pageEnd undefined)', () => {
+      const store = new VectorStore();
+      store.addChunk('a', [1, 0, 0], 0);
+      const result = store.search([1, 0, 0], 5, 0);
+      expect(result[0].text).toBe('a');
+      expect(result[0].pageStart).toBeUndefined();
+      expect(result[0].pageEnd).toBeUndefined();
+    });
+
+    it('addChunk metadata 가 있으면 search 결과에 pageStart/pageEnd 전파', () => {
+      const store = new VectorStore();
+      store.addChunk('first page', [1, 0, 0], 0, { pageStart: 1, pageEnd: 1 });
+      store.addChunk('span pages', [0.9, 0.1, 0], 1, { pageStart: 2, pageEnd: 4 });
+      const result = store.search([1, 0, 0], 5, 0);
+      expect(result[0].pageStart).toBe(1);
+      expect(result[0].pageEnd).toBe(1);
+      expect(result[1].pageStart).toBe(2);
+      expect(result[1].pageEnd).toBe(4);
+    });
+
+    it('일부 청크만 metadata 가 있어도 정상 동작 (혼합)', () => {
+      const store = new VectorStore();
+      store.addChunk('no meta', [1, 0, 0], 0);
+      store.addChunk('with meta', [0.8, 0.2, 0], 1, { pageStart: 5, pageEnd: 5 });
+      const result = store.search([1, 0, 0], 5, 0);
+      expect(result[0].pageStart).toBeUndefined();
+      expect(result[1].pageStart).toBe(5);
+    });
+  });
 });

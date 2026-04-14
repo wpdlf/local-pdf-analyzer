@@ -159,3 +159,104 @@ export function chunkChapters(
     chunks: chunkText(chapter.text, maxChunkSize),
   }));
 }
+
+// ─── Page-aware RAG chunking (page-citation-viewer 기능) ───
+// Design Ref: §3.3.1 chunkTextWithOverlapByPage — page 메타데이터 부착
+// Plan SC: SC-01 청크에 pageStart/pageEnd 포함
+
+/**
+ * 페이지 단위로 안전하게 청크를 나누면서 각 청크의 page 범위를 반환.
+ * RAG 인용 기능의 기반.
+ */
+export interface PageChunk {
+  text: string;
+  /** 1-based 시작 페이지 (청크가 처음 포함된 페이지) */
+  pageStart: number;
+  /** 1-based 끝 페이지 (청크가 마지막으로 포함된 페이지) */
+  pageEnd: number;
+}
+
+const PAGE_SEPARATOR = '\n\n';
+
+/**
+ * 페이지별 텍스트 배열을 오버랩 청크로 분할하면서 각 청크의 page 범위를 계산.
+ *
+ * 알고리즘:
+ * 1. 각 페이지의 시작 character offset 을 누적 계산 (pageOffsets)
+ * 2. 전체 텍스트를 join 후 기존 `chunkTextWithOverlap` 로 분할 (회귀 위험 최소)
+ * 3. 각 청크의 시작 offset 을 원본에서 indexOf 로 찾아 pageOffsets 와 이진 탐색
+ * 4. 오버랩 청크는 여러 페이지에 걸쳐 있을 수 있으므로 pageStart ~ pageEnd 범위 반환
+ *
+ * 빈 pageTexts 는 빈 배열 반환.
+ */
+export function chunkTextWithOverlapByPage(
+  pageTexts: string[],
+  maxChunkSize: number = 500,
+  overlapRatio: number = 0.1,
+): PageChunk[] {
+  if (!pageTexts || pageTexts.length === 0) return [];
+
+  // 1. pageOffsets[i] = i번째 페이지의 시작 오프셋 (전체 join 문자열 기준)
+  const pageOffsets: number[] = [];
+  let cursor = 0;
+  for (const pageText of pageTexts) {
+    pageOffsets.push(cursor);
+    cursor += pageText.length + PAGE_SEPARATOR.length;
+  }
+  const totalEnd = cursor - PAGE_SEPARATOR.length; // 마지막 separator 제거
+
+  // 2. 전체 텍스트 구성 후 기존 청크 분할
+  const fullText = pageTexts.join(PAGE_SEPARATOR);
+  const textChunks = chunkTextWithOverlap(fullText, maxChunkSize, overlapRatio);
+  if (textChunks.length === 0) return [];
+
+  // 3. 오프셋 → 페이지 번호 (1-based) 로 변환하는 헬퍼
+  const offsetToPage = (offset: number): number => {
+    // 이진 탐색: pageOffsets 에서 offset 을 초과하지 않는 가장 큰 인덱스
+    let lo = 0;
+    let hi = pageOffsets.length - 1;
+    let best = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (pageOffsets[mid] <= offset) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return best + 1; // 1-based
+  };
+
+  // 4. 각 청크의 시작/끝 오프셋을 찾아 page 범위 계산.
+  //    chunkTextWithOverlap 은 trim 후 push 하므로 정확한 offset 복구를 위해
+  //    searchFrom 을 단조 증가시키며 indexOf 로 탐색 (각 청크는 원본에 순서대로 등장).
+  const result: PageChunk[] = [];
+  let searchFrom = 0;
+  for (const chunk of textChunks) {
+    // 빈 청크는 스킵 (방어)
+    if (!chunk) continue;
+    const start = fullText.indexOf(chunk, searchFrom);
+    if (start === -1) {
+      // 방어: 오버랩/정규화 때문에 못 찾는 경우 전체 페이지 범위로 fallback
+      result.push({
+        text: chunk,
+        pageStart: 1,
+        pageEnd: pageTexts.length,
+      });
+      continue;
+    }
+    const end = Math.min(start + chunk.length - 1, totalEnd);
+    const pageStart = offsetToPage(start);
+    const pageEnd = offsetToPage(end);
+    result.push({
+      text: chunk,
+      pageStart,
+      pageEnd: Math.max(pageStart, pageEnd),
+    });
+    // 다음 탐색 시작점은 현재 청크의 중간 이후 (오버랩 청크가 뒤로 이동하는 것 보장)
+    searchFrom = start + Math.max(1, Math.floor(chunk.length / 2));
+  }
+
+  return result;
+}

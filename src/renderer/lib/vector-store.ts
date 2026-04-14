@@ -11,12 +11,29 @@ export interface VectorChunk {
   text: string;
   embedding: Float32Array; // unit-normalized
   index: number; // 원본 청크 순서
+  // Design Ref: §3.1 — page-citation-viewer 기능. 옵셔널 필드로 기존 호출자 호환.
+  /** 1-based 청크 시작 페이지 (있으면 인용 기능 활성화) */
+  pageStart?: number;
+  /** 1-based 청크 끝 페이지 */
+  pageEnd?: number;
 }
 
 export interface SearchResult {
   text: string;
   score: number;
   index: number;
+  // Design Ref: §3.1 — SearchResult 에도 page 전파하여 RAG 컨텍스트 빌더가 사용
+  pageStart?: number;
+  pageEnd?: number;
+}
+
+/**
+ * addChunk 의 옵셔널 메타데이터.
+ * page-citation-viewer 기능에서만 사용되며, 기존 호출자(`addChunk(text, emb, idx)`)는 무변경.
+ */
+export interface ChunkMetadata {
+  pageStart?: number;
+  pageEnd?: number;
 }
 
 /** 벡터를 unit-length로 정규화한 Float32Array 반환. 영벡터는 0으로 채움 */
@@ -62,14 +79,20 @@ export class VectorStore {
     this._model = model;
   }
 
-  addChunk(text: string, embedding: number[], index: number): void {
+  addChunk(text: string, embedding: number[], index: number, metadata?: ChunkMetadata): void {
     // 첫 번째 청크에서 차원 고정, 이후 불일치 시 거부
     if (this._dimension === null) {
       this._dimension = embedding.length;
     } else if (embedding.length !== this._dimension) {
       throw new Error(`임베딩 차원 불일치: expected ${this._dimension}, got ${embedding.length}`);
     }
-    this.chunks.push({ text, embedding: toNormalizedFloat32(embedding), index });
+    this.chunks.push({
+      text,
+      embedding: toNormalizedFloat32(embedding),
+      index,
+      pageStart: metadata?.pageStart,
+      pageEnd: metadata?.pageEnd,
+    });
   }
 
   /**
@@ -89,7 +112,13 @@ export class VectorStore {
     for (const chunk of this.chunks) {
       const score = dotFloat32(queryNorm, chunk.embedding);
       if (score >= minScore && Number.isFinite(score)) {
-        scored.push({ text: chunk.text, score, index: chunk.index });
+        scored.push({
+          text: chunk.text,
+          score,
+          index: chunk.index,
+          pageStart: chunk.pageStart,
+          pageEnd: chunk.pageEnd,
+        });
       }
     }
 
