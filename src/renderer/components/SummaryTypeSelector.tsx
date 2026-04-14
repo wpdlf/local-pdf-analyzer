@@ -49,7 +49,15 @@ export function SummaryTypeSelector() {
         <span className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.summaryLang')}</span>
         <select
           value={lang}
-          onChange={(e) => updateSettings({ ...settings, summaryLanguage: e.target.value as typeof settings.summaryLanguage })}
+          onChange={(e) => {
+            // store 에서 최신 settings 를 직접 읽어 다른 컴포넌트(SettingsPanel)가
+            // 동시에 저장한 변경을 덮어쓰지 않도록 한다. rendered closure 의 settings 는
+            // 리렌더 이전 snapshot 일 수 있어 stale 필드로 concurrent update 를 롤백하는
+            // 데이터 손실이 발생할 수 있음.
+            const latest = useAppStore.getState().settings;
+            const value = e.target.value as typeof settings.summaryLanguage;
+            updateSettings({ ...latest, summaryLanguage: value });
+          }}
           className="px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         >
           {SUMMARY_LANGUAGES.map((l) => (

@@ -72,6 +72,9 @@ export async function parsePdf(
       const batchEnd = Math.min(batchStart + BATCH_SIZE, pageCount);
       const promises = [];
       for (let i = batchStart; i < batchEnd; i++) {
+        // 페이지별 에러 격리: 한 페이지의 손상(깨진 xref, 미지원 폰트, 악성 content stream)이
+        // 전체 파싱을 중단시키지 않도록 catch 내부에서 빈 문자열로 대체.
+        // ABORTED 는 상위 취소 흐름이 처리하므로 재throw.
         promises.push(
           pdf.getPage(i + 1).then(async (page) => {
             // 이미지 추출 (배치 단위로 상한 체크 — 병렬 Promise 내 레이스 방지)
@@ -125,6 +128,10 @@ export async function parsePdf(
             try { page.cleanup(); } catch (err) {
               console.warn(`[pdf-parser] page.cleanup() 실패 (page ${i + 1}):`, err);
             }
+          }).catch((err: unknown) => {
+            if ((err as { code?: string })?.code === 'ABORTED') throw err;
+            console.warn(`[pdf-parser] page ${i + 1} 파싱 실패, 빈 페이지로 대체:`, err);
+            pages[i] = '';
           }),
         );
       }
@@ -258,10 +265,14 @@ async function ocrFallback(
         }),
       );
     }
+    // 내부 per-promise .catch 가 ABORTED 외 모든 에러를 '' 로 수렴시키므로 Promise.all 은
+    // ABORTED 외에는 reject 하지 않는다. 만약 코드가 리팩터링되어 inner catch 가 사라지더라도
+    // 배치 크기만큼 빈 문자열을 넣어 페이지 인덱스 정렬이 깨지지 않도록 방어.
+    const expectedBatchSize = Math.min(i + BATCH_SIZE, pageCount) - i;
     const results = await Promise.all(batch).catch((err: unknown) => {
-      // Promise.all 은 첫 rejection 을 전파 — ABORTED 면 상위로 throw, 그 외는 빈 배열
       if ((err as { code?: string })?.code === 'ABORTED') throw err;
-      return [] as string[];
+      console.warn('[pdf-parser] OCR 배치 실패, 해당 페이지 공란 처리:', err);
+      return new Array(expectedBatchSize).fill('') as string[];
     });
     pages.push(...results);
     onProgress(Math.min(i + BATCH_SIZE, pageCount), pageCount);
@@ -344,7 +355,18 @@ async function extractPageImages(
   page: pdfjsLib.PDFPageProxy,
   pageIndex: number,
 ): Promise<PageImage[]> {
-  const ops = await page.getOperatorList();
+  // getOperatorList 는 pdfjs 내부 content stream 파싱을 수행 — 손상된 PDF 에서 hang 가능.
+  // 5초 타임아웃을 Promise.race 로 걸어 뒤의 이미지 페치 경로에서 페이지를 빈 배열로 스킵.
+  const opsOrEmpty = await Promise.race([
+    page.getOperatorList(),
+    new Promise<{ fnArray: number[]; argsArray: unknown[] }>((resolve) => {
+      setTimeout(() => {
+        console.warn(`[pdf-parser] page ${pageIndex + 1} getOperatorList timeout, skipping images`);
+        resolve({ fnArray: [], argsArray: [] });
+      }, 5000);
+    }),
+  ]);
+  const ops = opsOrEmpty as Awaited<ReturnType<typeof page.getOperatorList>>;
   const images: PageImage[] = [];
 
   for (let j = 0; j < ops.fnArray.length && images.length < MAX_IMAGES_PER_PAGE; j++) {
@@ -513,9 +535,6 @@ export async function handlePdfData(
     } as AppError);
     return;
   }
-  if (store.isParsing) {
-    return; // 이미 파싱 진행 중 — 중복 실행 방지
-  }
   if (data.byteLength > MAX_FILE_SIZE) {
     store.setError({
       code: 'PDF_PARSE_FAIL',
@@ -523,20 +542,31 @@ export async function handlePdfData(
     } as AppError);
     return;
   }
-  // 이전 파싱이 있으면 abort (이론상 isParsing 가드로 방지되지만 안전장치)
-  activeParseController?.abort();
+  // 이미 파싱 진행 중이면 abort 후 새 파일로 교체.
+  // 기존 가드는 "진행 중이면 무시" 였으나, 사용자가 다른 PDF를 드롭/Ctrl+O 했을 때
+  // 아무 반응이 없어 UX가 혼란스러움. abort-replace 패턴으로 새 파일이 우선권을 가짐.
+  if (activeParseController) {
+    activeParseController.abort();
+  }
   const controller = new AbortController();
   activeParseController = controller;
 
   store.setIsParsing(true);
+  // onProgress 콜백도 ownership 체크 — 이전 파싱의 OCR 진행률이 새 파싱의 진행률을
+  // 덮어쓰는 경쟁 방지. parsePdf 는 abort 이후에도 in-flight 페이지의 콜백을 흘릴 수 있음.
+  const ownedProgress = (current: number, total: number) => {
+    if (activeParseController !== controller) return;
+    store.setOcrProgress({ current, total });
+  };
   try {
     const doc = await parsePdf(data, name, filePath, {
       enableOcrFallback: store.settings.enableOcrFallback,
-      onOcrProgress: (current, total) => {
-        store.setOcrProgress({ current, total });
-      },
+      onOcrProgress: ownedProgress,
       signal: controller.signal,
     });
+    // abort-replace 로 우리가 초과(supersede)된 경우, 성공한 파싱 결과를 store 에 반영하지 않는다.
+    // 그렇지 않으면 오래된 문서가 새 문서를 덮어쓰는 경쟁 조건이 발생.
+    if (activeParseController !== controller) return;
     // 새 문서로 교체되므로 이전 문서의 요약/Q&A/진행률 상태를 모두 초기화
     // (드롭/Ctrl+O로 덮어쓸 때 이전 문서의 summaryStream·qaMessages가 새 문서의 헤더와
     // 섞여 표시되는 버그 방지)
@@ -553,6 +583,8 @@ export async function handlePdfData(
     if (error.code === 'ABORTED') {
       return;
     }
+    // abort-replace 로 우리를 덮어쓴 새 파싱이 있는 경우, 에러 배너도 띄우지 않음.
+    if (activeParseController !== controller) return;
     const validCodes = new Set(['PDF_PARSE_FAIL', 'PDF_NO_TEXT', 'PDF_TOO_MANY_PAGES', 'OCR_FAIL']);
     const code = (error.code && validCodes.has(error.code) ? error.code : 'PDF_PARSE_FAIL') as AppError['code'];
     store.setError({
@@ -560,10 +592,12 @@ export async function handlePdfData(
       message: error.message || 'PDF를 읽을 수 없습니다.',
     });
   } finally {
+    // 새 파싱이 abort-replace 로 우리를 덮어쓴 경우, 전역 상태(isParsing, ocrProgress)를
+    // 건드리지 않음 — 새 파싱이 자신의 라이프사이클로 관리한다.
     if (activeParseController === controller) {
       activeParseController = null;
+      store.setIsParsing(false);
+      store.setOcrProgress(null);
     }
-    store.setIsParsing(false);
-    store.setOcrProgress(null);
   }
 }

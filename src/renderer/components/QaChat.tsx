@@ -10,19 +10,34 @@ export function QaChat() {
   const [input, setInput] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRafRef = useRef<number | null>(null);
 
-  // 새 메시지/스트리밍 시 자동 스크롤 (near-bottom 가드 + rAF로 jank 방지)
+  // 새 메시지/스트리밍 시 자동 스크롤 (near-bottom 가드 + rAF로 jank 방지).
+  // 이전 구현은 cleanup 에서 cancelAnimationFrame 을 호출해 — 밀집 스트리밍 시 매 effect
+  // 재실행마다 이전 RAF 가 취소되어 실제 스크롤이 거의 안 일어나는 문제가 있었음.
+  // 개선: pending ref 로 "이미 예약됨" 만 체크해 중복 예약을 막고, 취소는 하지 않음.
   useEffect(() => {
     if (!chatEndRef.current) return;
     const container = chatEndRef.current.parentElement;
     if (!container) return;
     const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
     if (!isNearBottom) return;
-    const id = requestAnimationFrame(() => {
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     });
-    return () => cancelAnimationFrame(id);
   }, [qaMessages.length, qaStream]);
+
+  // 언마운트 시에는 pending RAF 제거
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
+  }, []);
 
   const MAX_QUESTION_LENGTH = 1000;
 

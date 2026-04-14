@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from './lib/store';
 import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS } from './types';
-import { t } from './lib/i18n';
+import { t, useT } from './lib/i18n';
 import { PdfUploader } from './components/PdfUploader';
 import { SummaryViewer } from './components/SummaryViewer';
 import { SummaryTypeSelector } from './components/SummaryTypeSelector';
@@ -33,6 +33,12 @@ export default function App() {
   const [modelHint, setModelHint] = useState<string | null>(null);
   const [bgModelSync, setBgModelSync] = useState<string | null>(null);
   const [bgModelLoading, setBgModelLoading] = useState(false);
+  // Ctrl+O / 파일 다이얼로그 재진입 가드. 진행 중이면 연타 Ctrl+O 를 무시한다.
+  // 기존의 "setIsParsing(true) 만 올리는" 힌트 방식은 실제 재진입을 막지 못했음.
+  const dialogOpenRef = useRef(false);
+  // 렌더 내 번역은 useT() 훅 사용 — uiLanguage 변경 시 즉시 리렌더.
+  // (전역 t()는 호출 시점 snapshot만 반환하므로 JSX 내부 사용 시 stale 가능)
+  const tr = useT();
 
   const { handleSummarize, handleAbort } = useSummarize();
 
@@ -52,22 +58,33 @@ export default function App() {
       if (missing.length === 0) return;
 
       setBgModelLoading(true);
+      // 실패 시에도 직전까지 성공한 모델 목록을 메시지에 포함해 "부분 성공이 실패 토스트에 가려지는"
+      // UX 문제를 해결. 예: gemma3 설치 성공 후 exaone3.5 실패 시
+      // "모델 다운로드 실패: exaone3.5 — ... (설치 완료: gemma3)"
+      const succeeded: string[] = [];
       for (const model of missing) {
         if (aborted) return;
         setBgModelSync(t('app.downloadingModel', { model }));
         const result = await window.electronAPI.ollama.pullModel(model);
         if (aborted) return;
         if (!result.success) {
+          if (aborted) return;
           setBgModelLoading(false);
           // 이전 모델이 성공적으로 설치되었을 수 있으므로 store 갱신
           try {
             const partialStatus = await window.electronAPI.ollama.getStatus();
             if (!aborted) setOllamaStatus(partialStatus);
           } catch { /* 무시 */ }
-          setBgModelSync(t('app.modelDownloadFail', { model, error: result.error || t('app.modelDownloadFailDefault') }));
+          if (aborted) return;
+          const errorMsg = result.error || t('app.modelDownloadFailDefault');
+          const message = succeeded.length > 0
+            ? t('app.modelDownloadFailPartial', { model, error: errorMsg, succeeded: succeeded.join(', ') })
+            : t('app.modelDownloadFail', { model, error: errorMsg });
+          setBgModelSync(message);
           setTimeout(() => { if (!aborted) setBgModelSync(null); }, 5000);
           return;
         }
+        succeeded.push(model);
       }
       if (aborted) return;
       setBgModelLoading(false);
@@ -122,9 +139,8 @@ export default function App() {
     };
     const handleDrop = async (e: DragEvent) => {
       e.preventDefault();
-      // 동기적으로 store 상태를 직접 읽어 경합 조건 방지 (setState 전파 대기 불필요)
-      const { isParsing: parsing, isGenerating: generating, isQaGenerating: qaGenerating } = useAppStore.getState();
-      if (parsing || generating || qaGenerating) return;
+      // isParsing 중에도 handlePdfData 가 abort-replace 패턴으로 새 파일을 받도록 허용.
+      // isGenerating/isQaGenerating 은 handlePdfData 내부에서 에러 메시지로 차단됨.
       const files = e.dataTransfer?.files;
       if (!files || files.length === 0) return;
       const file = files[0];
@@ -140,8 +156,17 @@ export default function App() {
           message: t('uploader.multipleFiles', { name: file.name }),
         });
       }
-      const buffer = await file.arrayBuffer();
-      await handlePdfData(buffer, file.name, file.name);
+      // file.arrayBuffer() 가 실패(OOM, revoked blob 등)할 수 있으므로 try/catch 로 감싼다.
+      // isParsing 선제 마킹은 제거 — handlePdfData 가 내부에서 올리고, 실패 시에도 유출 없음.
+      try {
+        const buffer = await file.arrayBuffer();
+        await handlePdfData(buffer, file.name, file.name);
+      } catch (err) {
+        useAppStore.getState().setError({
+          code: 'PDF_PARSE_FAIL',
+          message: (err as Error)?.message || t('uploader.cannotRead'),
+        });
+      }
     };
     window.addEventListener('dragover', handleDragOver, true);
     window.addEventListener('drop', handleDrop, true);
@@ -156,13 +181,27 @@ export default function App() {
     const handleKeyDown = async (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
         e.preventDefault();
-        const result = await window.electronAPI.file.openPdf();
-        if (!result) return;
-        if ('error' in result) {
-          useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: result.error });
-          return;
+        // 재진입 가드 — 이미 다이얼로그가 열려 있으면 두 번째 Ctrl+O 무시.
+        if (dialogOpenRef.current) return;
+        dialogOpenRef.current = true;
+        try {
+          const result = await window.electronAPI.file.openPdf();
+          if (!result) return;
+          if ('error' in result) {
+            useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: result.error });
+            return;
+          }
+          await handlePdfData(result.data, result.name, result.path);
+        } catch (err) {
+          // async 이벤트 핸들러 내 throw 는 unhandledrejection 이 되어 ErrorBoundary 도
+          // 잡지 못한다. setError 로 전환해 사용자 표시 배너로 수렴.
+          useAppStore.getState().setError({
+            code: 'PDF_PARSE_FAIL',
+            message: (err as Error)?.message || t('uploader.cannotRead'),
+          });
+        } finally {
+          dialogOpenRef.current = false;
         }
-        await handlePdfData(result.data, result.name, result.path);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -179,8 +218,17 @@ export default function App() {
   // App.tsx 내에서 store의 `document`가 전역 document를 섀도잉하므로 window.document 사용.
   useEffect(() => {
     window.document.documentElement.lang = settings.uiLanguage;
-    window.document.title = t('app.title');
-  }, [settings.uiLanguage]);
+    window.document.title = tr('app.title');
+  }, [settings.uiLanguage, tr]);
+
+  // 한국어 비율은 문서별로 1회만 계산 — 모델 스왑 시 재계산 방지 (3000자 샘플은 저렴하지만
+  // 이 값이 effect deps 에 포함되면 불필요한 재실행이 발생)
+  const koreanRatio = useMemo(() => {
+    if (!document) return 0;
+    const sample = document.extractedText.slice(0, 3000);
+    const koreanChars = (sample.match(/[\uAC00-\uD7AF]/g) || []).length;
+    return koreanChars / Math.max(sample.length, 1);
+  }, [document]);
 
   // PDF 업로드 후 한국어 감지 → 모델 추천
   useEffect(() => {
@@ -188,9 +236,6 @@ export default function App() {
       setModelHint(null);
       return;
     }
-    const sample = document.extractedText.slice(0, 3000);
-    const koreanChars = (sample.match(/[\uAC00-\uD7AF]/g) || []).length;
-    const koreanRatio = koreanChars / Math.max(sample.length, 1);
 
     if (koreanRatio > 0.15) {
       const currentModel = settings.model.split(':')[0];
@@ -199,7 +244,7 @@ export default function App() {
       );
       if (!isKoreanModel) {
         setModelHint(
-          t('app.modelHint', { model: settings.model, recommended: KOREAN_RECOMMENDED_MODELS.join(', ') }),
+          tr('app.modelHint', { model: settings.model, recommended: KOREAN_RECOMMENDED_MODELS.join(', ') }),
         );
       } else {
         setModelHint(null);
@@ -207,7 +252,7 @@ export default function App() {
     } else {
       setModelHint(null);
     }
-  }, [document, settings.provider, settings.model]);
+  }, [document, settings.provider, settings.model, settings.uiLanguage, tr, koreanRatio]);
 
   if (view === 'setup') {
     return (
@@ -230,16 +275,16 @@ export default function App() {
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b dark:border-gray-700">
         <h1 className="flex items-center gap-2 text-lg font-bold text-gray-800 dark:text-white">
-          <img src={logoImg} alt={t('app.logo')} className="w-6 h-6 rounded" />
-          {t('app.title')}
+          <img src={logoImg} alt={tr('app.logo')} className="w-6 h-6 rounded" />
+          {tr('app.title')}
         </h1>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setView('settings')}
             disabled={isGenerating || isParsing || isQaGenerating}
             className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title={(isGenerating || isQaGenerating) ? t('app.settingsBlocked') : t('app.settings')}
-            aria-label={t('app.settings')}
+            title={(isGenerating || isQaGenerating) ? tr('app.settingsBlocked') : tr('app.settings')}
+            aria-label={tr('app.settings')}
           >
             ⚙️
           </button>
@@ -268,7 +313,7 @@ export default function App() {
             <button
               onClick={() => setError(null)}
               className="text-red-400 hover:text-red-600 dark:hover:text-red-300 ml-2 shrink-0"
-              aria-label={t('app.closeError')}
+              aria-label={tr('app.closeError')}
             >
               ✕
             </button>
@@ -287,7 +332,7 @@ export default function App() {
             <button
               onClick={() => setModelHint(null)}
               className="text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 ml-2 shrink-0"
-              aria-label={t('common.close')}
+              aria-label={tr('common.close')}
             >
               ✕
             </button>
@@ -314,9 +359,9 @@ export default function App() {
                   setProgress(0);
                 }}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm"
-                aria-label={t('app.removeFile')}
+                aria-label={tr('app.removeFile')}
               >
-                {t('app.otherFile')}
+                {tr('app.otherFile')}
               </button>
             </div>
             <SummaryTypeSelector />
@@ -324,7 +369,7 @@ export default function App() {
               onClick={handleSummarize}
               className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-lg font-medium transition-colors"
             >
-              {t('app.startSummary')}
+              {tr('app.startSummary')}
             </button>
           </div>
         )}

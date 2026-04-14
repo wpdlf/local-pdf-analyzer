@@ -64,14 +64,18 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
 
   const handleClose = () => {
     const store = useAppStore.getState();
-    if (store.isGenerating && onAbort) {
-      onAbort();
-    } else if (store.isGenerating) {
-      if (store.currentRequestId) {
-        window.electronAPI.ai.abort(store.currentRequestId);
+    // 생성 중이면 parent 의 handleAbort 를 우선 사용(외부 라이프사이클과 정합),
+    // 없으면 inline abort 로 fallback. 어느 쪽이든 그 다음 resetSummaryState 로 수렴.
+    if (store.isGenerating) {
+      if (onAbort) {
+        onAbort();
+      } else {
+        if (store.currentRequestId) {
+          window.electronAPI.ai.abort(store.currentRequestId);
+        }
+        store.flushStream();
+        store.setIsGenerating(false);
       }
-      store.flushStream();
-      store.setIsGenerating(false);
     }
     if (store.qaRequestId) {
       window.electronAPI.ai.abort(store.qaRequestId);
@@ -81,8 +85,9 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
 
   const handleExport = async () => {
     if (!summaryStream) return;
+    // `.pdf` 대소문자 무관하게 제거 — "report.PDF" 가 "report.PDF_summary.md" 가 되는 문제 방지
     const defaultName = document
-      ? document.fileName.replace('.pdf', `_${t('viewer.defaultFilename').replace('.md', '')}.md`)
+      ? document.fileName.replace(/\.pdf$/i, '') + `_${t('viewer.defaultFilename').replace('.md', '')}.md`
       : t('viewer.defaultFilename');
     try {
       await window.electronAPI.file.save(summaryStream, defaultName);

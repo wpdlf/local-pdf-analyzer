@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import type { AppSettings, AiProviderType } from '../types';
-import { PROVIDER_MODELS, UI_LANGUAGES } from '../types';
+import { PROVIDER_MODELS, UI_LANGUAGES, DEFAULT_SETTINGS } from '../types';
 import { applyTheme } from '../lib/theme';
 
 export function SettingsPanel() {
@@ -15,6 +15,8 @@ export function SettingsPanel() {
   const t = useT();
 
   const [draft, setDraft] = useState<AppSettings>({ ...settings });
+  // 사용자가 직접 편집했는지 추적 — 외부(store) 변경을 draft에 반영할 때 in-progress 편집 보호용.
+  const userEditedRef = useRef(false);
   const [ollamaModels, setOllamaModels] = useState<string[]>(ollamaStatus.models);
   const [pullModelName, setPullModelName] = useState('');
   const [isPulling, setIsPulling] = useState(false);
@@ -28,6 +30,10 @@ export function SettingsPanel() {
   const [claudeKeyStored, setClaudeKeyStored] = useState(false);
   const [openaiKeyStored, setOpenaiKeyStored] = useState(false);
   const [keyMessage, setKeyMessage] = useState('');
+  // 청크 크기는 로컬 string state 로 관리 — 한 글자씩 타이핑 중 범위 벗어난 중간값 허용.
+  // onChange 에서 즉시 거부하면 "2000" 타이핑 중 "2" 가 거부되어 입력 불가. blur 시 clamp + 커밋.
+  const [chunkSizeInput, setChunkSizeInput] = useState(String(draft.maxChunkSize));
+  const [chunkSizeError, setChunkSizeError] = useState(false);
 
   useEffect(() => {
     if (!keyMessage) return;
@@ -41,9 +47,27 @@ export function SettingsPanel() {
     return () => clearTimeout(timer);
   }, [saved]);
 
-  const hasChanges = (Object.keys(draft) as (keyof AppSettings)[]).some(
-    (key) => draft[key] !== settings[key],
-  );
+  // draft와 settings 양쪽 키를 모두 비교 — 새 설정 키가 나중에 추가되어도 포착.
+  const hasChanges = (() => {
+    const allKeys = new Set<keyof AppSettings>([
+      ...(Object.keys(draft) as (keyof AppSettings)[]),
+      ...(Object.keys(settings) as (keyof AppSettings)[]),
+    ]);
+    for (const key of allKeys) {
+      if (draft[key] !== settings[key]) return true;
+    }
+    return false;
+  })();
+
+  // settings가 외부(loadSettings 지연 완료, 다른 컴포넌트의 저장)에서 변경된 경우,
+  // 사용자가 편집하지 않은 상태라면 draft를 새 settings로 동기화.
+  // 사용자 편집 중이라면 덮어쓰지 않고 유지 (데이터 손실 방지).
+  useEffect(() => {
+    if (!userEditedRef.current) {
+      setDraft({ ...settings });
+      setChunkSizeInput(String(settings.maxChunkSize));
+    }
+  }, [settings]);
 
   useEffect(() => {
     return () => {
@@ -87,6 +111,7 @@ export function SettingsPanel() {
   const updateDraft = (partial: Partial<AppSettings>) => {
     setDraft((prev) => ({ ...prev, ...partial }));
     setSaved(false);
+    userEditedRef.current = true;
   };
 
   const handleSaveApiKey = async (provider: 'claude' | 'openai') => {
@@ -123,12 +148,21 @@ export function SettingsPanel() {
         setKeyMessage(result.error || t('settings.keyDeleteFail'));
         return;
       }
+      // 키 삭제 후 해당 provider 가 선택되어 있으면 Ollama 로 강제 전환 + 모델 명시 리셋.
+      // provider-change 훅은 ollamaModels 가 비어 있으면 모델을 건드리지 않기 때문에
+      // Claude/OpenAI 모델 id 가 draft 에 남아 저장 시 "Ollama + claude-sonnet-4" 같은
+      // 잘못된 조합이 StatusBar/AI client 로 전파되는 문제를 사전에 방지.
+      const needsProviderFlip =
+        (provider === 'claude' && draft.provider === 'claude') ||
+        (provider === 'openai' && draft.provider === 'openai');
       if (provider === 'claude') {
         setClaudeKeyStored(false);
-        if (draft.provider === 'claude') updateDraft({ provider: 'ollama' });
       } else {
         setOpenaiKeyStored(false);
-        if (draft.provider === 'openai') updateDraft({ provider: 'ollama' });
+      }
+      if (needsProviderFlip) {
+        const fallbackModel = ollamaModels.length > 0 ? ollamaModels[0] : DEFAULT_SETTINGS.model;
+        updateDraft({ provider: 'ollama', model: fallbackModel });
       }
       setKeyMessage(t('settings.keyDeleted'));
     } catch {
@@ -147,6 +181,8 @@ export function SettingsPanel() {
     }
     updateSettings(draft);
     setSaved(true);
+    // 저장 후 편집 플래그 해제 — 이후의 외부 변경은 draft에 재동기화됨.
+    userEditedRef.current = false;
   };
 
   const handleCancel = () => {
@@ -394,8 +430,39 @@ export function SettingsPanel() {
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.chunkSize')}</h3>
         <div className="flex items-center gap-2">
-          <input type="number" value={draft.maxChunkSize} onChange={(e) => { const v = Number(e.target.value); if (!isNaN(v) && v >= 1000 && v <= 16000) updateDraft({ maxChunkSize: v }); }} min={1000} max={16000} step={500} className="w-24 px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+          <input
+            type="number"
+            value={chunkSizeInput}
+            onChange={(e) => {
+              setChunkSizeInput(e.target.value);
+              const v = Number(e.target.value);
+              const valid = Number.isFinite(v) && v >= 1000 && v <= 16000;
+              setChunkSizeError(!valid && e.target.value !== '');
+              if (valid) updateDraft({ maxChunkSize: v });
+            }}
+            onBlur={(e) => {
+              // blur 시 범위 바깥이면 clamp 후 commit — 사용자가 잘못된 값을 남기지 않도록 보정.
+              const v = Number(e.target.value);
+              if (!Number.isFinite(v)) {
+                setChunkSizeInput(String(draft.maxChunkSize));
+                setChunkSizeError(false);
+                return;
+              }
+              const clamped = Math.min(16000, Math.max(1000, Math.round(v)));
+              setChunkSizeInput(String(clamped));
+              setChunkSizeError(false);
+              updateDraft({ maxChunkSize: clamped });
+            }}
+            min={1000}
+            max={16000}
+            step={500}
+            className={`w-24 px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white ${chunkSizeError ? 'border-red-500' : ''}`}
+            aria-invalid={chunkSizeError}
+          />
           <span className="text-sm text-gray-500">tokens</span>
+          {chunkSizeError && (
+            <span className="text-xs text-red-500">1000–16000</span>
+          )}
         </div>
       </section>
 

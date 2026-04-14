@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chunkText, chunkChapters } from '../chunker';
+import { chunkText, chunkChapters, chunkTextWithOverlap } from '../chunker';
 import type { Chapter } from '../../types';
 
 describe('chunkText', () => {
@@ -32,6 +32,113 @@ describe('chunkText', () => {
     for (const chunk of chunks) {
       // 각 청크가 문단 중간에서 잘리지 않음
       expect(chunk).not.toMatch(/^\n\n/);
+    }
+  });
+});
+
+describe('chunkTextWithOverlap', () => {
+  it('짧은 텍스트는 하나의 청크로 반환한다', () => {
+    const text = '짧은 RAG 텍스트';
+    expect(chunkTextWithOverlap(text, 500)).toEqual([text]);
+  });
+
+  it('빈/공백 텍스트는 빈 배열', () => {
+    expect(chunkTextWithOverlap('', 500)).toEqual([]);
+    expect(chunkTextWithOverlap('   \n\n', 500)).toEqual([]);
+  });
+
+  it('긴 텍스트를 여러 청크로 분할한다', () => {
+    // maxChunkSize=50 tokens, 한글 30자 * 20문단 = 600자 > maxChars
+    const paragraphs = Array.from({ length: 20 }, (_, i) =>
+      `문단${i + 1} ${'가'.repeat(30)}`,
+    );
+    const text = paragraphs.join('\n\n');
+    const chunks = chunkTextWithOverlap(text, 50);
+    expect(chunks.length).toBeGreaterThan(1);
+  });
+
+  it('overlap 이 0 이면 tail 이 추가되지 않는다', () => {
+    const paragraphs = Array.from({ length: 10 }, (_, i) =>
+      `p${i}` + 'a'.repeat(200),
+    );
+    const text = paragraphs.join('\n\n');
+    const noOverlap = chunkTextWithOverlap(text, 50, 0);
+    // 청크 경계 이웃 간 공유 tail 이 없어야 함
+    for (let i = 1; i < noOverlap.length; i++) {
+      const prevEnd = noOverlap[i - 1].slice(-20);
+      const currStart = noOverlap[i].slice(0, 20);
+      expect(currStart).not.toBe(prevEnd);
+    }
+  });
+
+  it('UTF-16 surrogate pair 를 잘못 분할하지 않는다 (이모지)', () => {
+    // 🎉 = U+1F389, 2 code units. maxChunkSize 작게 설정해 강제 분할 유도.
+    const text = '🎉'.repeat(300);
+    const chunks = chunkTextWithOverlap(text, 50, 0.1);
+    for (const chunk of chunks) {
+      // lone surrogate 탐지 — 쌍이 맞지 않으면 잘린 것
+      for (let i = 0; i < chunk.length; i++) {
+        const code = chunk.charCodeAt(i);
+        if (code >= 0xD800 && code <= 0xDBFF) {
+          // high surrogate — 다음 code unit 은 low surrogate 여야 함
+          const next = chunk.charCodeAt(i + 1);
+          expect(next >= 0xDC00 && next <= 0xDFFF).toBe(true);
+          i++; // skip low surrogate
+        } else if (code >= 0xDC00 && code <= 0xDFFF) {
+          // lone low surrogate — 실패
+          throw new Error(`lone low surrogate at chunk boundary: ${chunk.slice(Math.max(0, i - 5), i + 5)}`);
+        }
+      }
+    }
+  });
+
+  it('CJK 텍스트에서 청크 전체를 복원할 수 있다', () => {
+    const text = '한글 문서 내용입니다. '.repeat(100);
+    const chunks = chunkTextWithOverlap(text, 30, 0.1);
+    // 모든 청크를 concat 하면 원본의 모든 고유 단어를 포함
+    const combined = chunks.join(' ');
+    expect(combined).toContain('한글 문서 내용');
+  });
+
+  it('문장부호로 끝나는 문단 경계에서도 overlap 이 소실되지 않는다 (tailAtBoundary 회귀 가드)', () => {
+    // 각 문단이 마침표로 끝나며, 청크 분할이 문단 경계에서 일어나는 케이스.
+    // 과거 버그: tailAtBoundary 가 마지막 위치의 문장부호를 경계로 인식해 빈 tail 반환 → overlap 소실.
+    const paragraphs = Array.from({ length: 8 }, (_, i) => `${'가'.repeat(80)}${i + 1}.`);
+    const text = paragraphs.join('\n\n');
+    const chunks = chunkTextWithOverlap(text, 50, 0.2);
+    // 청크가 2개 이상 생성되어야 하고, 인접 청크는 비어있지 않은 tail overlap 을 공유해야 함.
+    expect(chunks.length).toBeGreaterThan(1);
+    let atLeastOneOverlap = false;
+    for (let i = 1; i < chunks.length; i++) {
+      const prev = chunks[i - 1];
+      const curr = chunks[i];
+      if (prev.length === 0 || curr.length === 0) continue;
+      // curr 의 시작 일부 (첫 10자) 가 prev 의 어딘가에 존재하면 overlap 으로 간주
+      const currHead = curr.slice(0, Math.min(10, curr.length));
+      if (prev.includes(currHead)) {
+        atLeastOneOverlap = true;
+        break;
+      }
+    }
+    expect(atLeastOneOverlap).toBe(true);
+  });
+});
+
+describe('chunkText surrogate safety', () => {
+  it('overflow 강제 분할 시 이모지가 잘리지 않는다', () => {
+    const text = '🎉'.repeat(200);
+    const chunks = chunkText(text, 10); // 매우 작은 청크로 overflow 유도
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++) {
+        const code = chunk.charCodeAt(i);
+        if (code >= 0xD800 && code <= 0xDBFF) {
+          const next = chunk.charCodeAt(i + 1);
+          expect(next >= 0xDC00 && next <= 0xDFFF).toBe(true);
+          i++;
+        } else if (code >= 0xDC00 && code <= 0xDFFF) {
+          throw new Error('lone low surrogate in overflow split');
+        }
+      }
     }
   });
 });

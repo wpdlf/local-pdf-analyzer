@@ -22,10 +22,27 @@ export function PdfUploader() {
         });
         return;
       }
+      // 매직바이트 검증을 전체 파일 로드 전에 수행 — 99MB 가짜 PDF 가 renderer 메모리에
+      // 전량 materialize 되는 것을 방지. Blob.slice() 는 데이터를 복사하지 않고 뷰만 반환.
+      try {
+        const headerBuf = await file.slice(0, 5).arrayBuffer();
+        const header = new Uint8Array(headerBuf);
+        const isPdfMagic = header.length >= 5
+          && header[0] === 0x25 && header[1] === 0x50
+          && header[2] === 0x44 && header[3] === 0x46
+          && header[4] === 0x2D;
+        if (!isPdfMagic) {
+          setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.notPdf') });
+          return;
+        }
+      } catch {
+        setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.cannotRead') });
+        return;
+      }
       const buffer = await file.arrayBuffer();
       await handlePdfData(buffer, file.name, file.name);
     },
-    [setError, t],
+    [setError, t, MAX_FILE_SIZE],
   );
 
   const handleDrop = useCallback(
@@ -86,7 +103,12 @@ export function PdfUploader() {
       onDrop={handleDrop}
       onDragOver={(e) => {
         e.preventDefault();
-        setIsDragging(true);
+        // dragOver 가 ~60Hz 로 발화 — 이미 true 면 setState 호출을 생략해
+        // reconciler bail-out 조차 건너뛰고 스케줄러 부하를 줄인다.
+        // 또한 dataTransfer.types 가 Files 인 경우에만 드래그 상태 진입 (텍스트/URL 드래그 무시).
+        if (!isDragging && e.dataTransfer.types?.includes('Files')) {
+          setIsDragging(true);
+        }
       }}
       onDragLeave={() => setIsDragging(false)}
       onClick={isParsing ? undefined : handleFileSelect}

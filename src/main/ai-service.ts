@@ -668,17 +668,25 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
           console.error(`Vision API error: HTTP ${errStatus}${truncated ? ' (body truncated)' : ''}`, detail);
           safeReject(new Error(`Vision API 요청 실패: HTTP ${errStatus}`));
         };
+        // 에러 바디 사이즈는 바이트 기준으로 제한 — chunk 개수 기준은 공격적/버그 서버가
+        // 초대형 chunk 를 보낼 때 실질 상한이 없어짐. 성공 경로(10MB)와 달리 에러는
+        // 보통 수백 바이트~몇 KB 이므로 64KB 로 충분.
+        const MAX_ERROR_BODY_BYTES = 64 * 1024;
+        let errBytes = 0;
         res.on('data', (c: Buffer) => {
           if (errSettled) return;
-          if (errChunks.length < 8) {
-            errChunks.push(c);
-          } else {
-            // 8청크 초과 시 소켓 즉시 해제 — destroy()는 'end'가 아닌 'close' 를 발화시키므로
+          // push 전에 cap 체크 — 1 chunk 오버슛을 제거하여 악성/버그 서버가 한 번에
+          // 매우 큰 chunk 를 보내도 힙에 적재되지 않도록 한다.
+          if (errBytes + c.length > MAX_ERROR_BODY_BYTES) {
+            // 상한 초과 시 소켓 즉시 해제 — destroy()는 'end'가 아닌 'close' 를 발화시키므로
             // 여기서 finalizeError 를 직접 호출하지 않으면 req.setTimeout 까지 Promise 가 pending
             // 상태로 멈춰 사용자가 부정확한 "타임아웃" 에러를 본다.
             res.destroy();
             finalizeError(true);
+            return;
           }
+          errBytes += c.length;
+          errChunks.push(c);
         });
         res.on('end', () => finalizeError(false));
         res.on('close', () => finalizeError(false));

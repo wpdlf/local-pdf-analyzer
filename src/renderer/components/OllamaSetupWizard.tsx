@@ -6,10 +6,7 @@ import { INITIAL_INSTALL_MODELS } from '../types';
 
 type SetupStep = 'welcome' | 'progress' | 'done' | 'error';
 
-interface SetupItem {
-  label: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-}
+type SetupItemStatus = 'pending' | 'running' | 'done' | 'error';
 
 export function OllamaSetupWizard() {
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
@@ -25,14 +22,20 @@ export function OllamaSetupWizard() {
   const [progressMessage, setProgressMessage] = useState('');
   const [errorCode, setErrorCode] = useState<AppErrorCode | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
-  const [items, setItems] = useState<SetupItem[]>([
-    { label: t('setup.ollamaCheck'), status: 'pending' },
-    { label: t('setup.ollamaStart'), status: 'pending' },
-    ...INITIAL_INSTALL_MODELS.map((m) => ({
-      label: m === 'nomic-embed-text' ? t('setup.downloadEmbed', { model: m }) : t('setup.downloadKorean', { model: m }),
-      status: 'pending' as const,
-    })),
+  // 상태만 state 로 관리하고 label 은 매 렌더 시 t 로 계산 — UI 언어 전환이 즉시 반영됨.
+  const [itemStatuses, setItemStatuses] = useState<SetupItemStatus[]>(() => [
+    'pending',
+    'pending',
+    ...INITIAL_INSTALL_MODELS.map(() => 'pending' as SetupItemStatus),
   ]);
+  const items = [
+    { label: t('setup.ollamaCheck'), status: itemStatuses[0] },
+    { label: t('setup.ollamaStart'), status: itemStatuses[1] },
+    ...INITIAL_INSTALL_MODELS.map((m, i) => ({
+      label: m === 'nomic-embed-text' ? t('setup.downloadEmbed', { model: m }) : t('setup.downloadKorean', { model: m }),
+      status: itemStatuses[2 + i],
+    })),
+  ];
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.onSetupProgress((message) => {
@@ -52,8 +55,8 @@ export function OllamaSetupWizard() {
     setView('settings');
   };
 
-  const updateItem = (index: number, status: SetupItem['status']) => {
-    setItems((prev) => prev.map((item, i) => i === index ? { ...item, status } : item));
+  const updateItem = (index: number, status: SetupItemStatus) => {
+    setItemStatuses((prev) => prev.map((s, i) => (i === index ? status : s)));
   };
 
   const handleError = (code: AppErrorCode, msg: string) => {
@@ -69,7 +72,7 @@ export function OllamaSetupWizard() {
     setStep('progress');
     setErrorCode(null);
     setErrorMsg('');
-    setItems((prev) => prev.map((item) => ({ ...item, status: 'pending' as const })));
+    setItemStatuses((prev) => prev.map(() => 'pending' as SetupItemStatus));
 
     try {
       updateItem(0, 'running');
@@ -164,7 +167,7 @@ export function OllamaSetupWizard() {
     MODEL_PULL_FAIL: t('setup.hint.pullFail'),
   };
 
-  const statusIcon = (status: SetupItem['status']) => {
+  const statusIcon = (status: SetupItemStatus) => {
     switch (status) {
       case 'pending': return '\u2B1C';
       case 'running': return '\uD83D\uDD04';

@@ -23,17 +23,44 @@ export class MarkdownErrorBoundary extends Component<
 export const REMARK_PLUGINS = [remarkGfm];
 
 /**
+ * URL scheme 이 안전한지 검사.
+ * - 허용: https://, http://, mailto:, #anchor
+ * - 차단(명시): javascript:, data:, vbscript:, file:
+ * - 그 외: scheme 자체가 없는 상대경로는 차단 (Electron file:// origin 에서 로컬 네비게이션 방지)
+ */
+function isSafeHref(href: string): boolean {
+  const trimmed = href.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith('#')) return true;
+  const lower = trimmed.toLowerCase();
+  // 명시적 차단 scheme — 알려진 XSS vector
+  if (
+    lower.startsWith('javascript:') ||
+    lower.startsWith('data:') ||
+    lower.startsWith('vbscript:') ||
+    lower.startsWith('file:')
+  ) {
+    return false;
+  }
+  if (lower.startsWith('https://') || lower.startsWith('http://') || lower.startsWith('mailto:')) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Markdown 렌더링 시 XSS 방지용 컴포넌트 오버라이드.
- * - <a>: https:// 와 # 앵커만 허용, 나머지는 <span>으로 대체
+ * - <a>: https/http/mailto/#anchor 허용, javascript/data/vbscript/file 명시 차단
  * - <img>: 외부 이미지 로드 차단 (트래킹 픽셀/데이터 유출 방지)
  */
 export const safeComponents: Components = {
   // props spread 제거: remark 플러그인 경유 위험 속성(dangerouslySetInnerHTML 등) 전파 방지
   a: ({ href, children }) => {
-    const isSafe = href && (href.startsWith('https://') || href.startsWith('#'));
-    return isSafe
-      ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
-      : <span>{children}</span>;
+    if (href && isSafeHref(href)) {
+      return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+    }
+    // 차단된 URL 은 툴팁으로 사용자에게 명시 (정상 링크가 침묵 차단되는 문제 가시화)
+    return <span title={t('common.blockedLink')}>{children}</span>;
   },
   img: ({ alt }) => {
     return <span>{alt || t('common.imagePlaceholder')}</span>;

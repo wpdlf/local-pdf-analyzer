@@ -15,6 +15,7 @@ interface OllamaStatusResult {
 
 export class OllamaManager {
   private process: ChildProcess | null = null;
+  private pullProcess: ChildProcess | null = null; // 진행 중인 `ollama pull` 자식 프로세스 — stop() 에서 종료 필요
   private baseUrl = 'http://localhost:11434';
   private startPromise: Promise<boolean> | null = null; // 동시 start() 호출 시 동일 Promise 반환
   private installPromise: Promise<{ success: boolean; error?: string }> | null = null; // 동시 install() 호출 시 동일 Promise 반환
@@ -268,25 +269,31 @@ export class OllamaManager {
               return;
             }
 
+            // response.pipe(file) 사용으로 backpressure 복구. 이전의 수동 pump
+            // (file.write(chunk) 반환값 무시) 는 느린 디스크 + 빠른 네트워크에서 chunks 가
+            // WriteStream 내부 버퍼에 쌓여 힙 폭주 → OOM 위험이 있었음.
+            // pipe() 는 readable.pause()/resume() 로 자동 backpressure 처리.
             let downloaded = 0;
             let aborted = false;
             const file = fs.createWriteStream(dest);
+
+            // 다운로드 바이트 카운터 — MAX_SIZE 초과 직전에 즉시 abort.
+            // 'data' 이벤트는 pipe 의 write 와 같은 턴에 발화되므로, chunk 를 더하기 전에
+            // 체크하면 해당 chunk 가 디스크로 쓰이기 전에 unpipe+destroy 할 수 있다.
+            // (Node 이벤트 emit 순서: readable → data 리스너들 실행 → pipe 가 내부적으로 write)
             response.on('data', (chunk: Buffer) => {
               if (aborted) return;
-              downloaded += chunk.length;
-              if (downloaded > MAX_SIZE) {
+              if (downloaded + chunk.length > MAX_SIZE) {
                 aborted = true;
+                response.unpipe(file);
                 response.destroy();
                 file.destroy();
                 safeReject(new Error('다운로드 크기가 500MB를 초과했습니다.'));
                 return;
               }
-              file.write(chunk);
+              downloaded += chunk.length;
             });
-            response.on('end', () => {
-              if (aborted) return;
-              file.end(() => safeResolve());
-            });
+
             response.on('error', (err) => {
               if (aborted) return;
               aborted = true;
@@ -300,6 +307,10 @@ export class OllamaManager {
               file.destroy();
               safeReject(err);
             });
+            // 파일 flush 완료 = 다운로드 성공
+            file.on('finish', () => {
+              if (!aborted) safeResolve();
+            });
             // 타임아웃 등으로 소켓이 파괴될 때 WriteStream 정리 (파일 디스크립터 누수 방지)
             response.on('close', () => {
               if (!aborted && !response.complete) {
@@ -308,6 +319,8 @@ export class OllamaManager {
                 safeReject(new Error('다운로드 연결이 끊어졌습니다.'));
               }
             });
+
+            response.pipe(file);
           } else {
             response.resume();
             safeReject(new Error(`다운로드 실패: HTTP ${response.statusCode}`));
@@ -395,6 +408,8 @@ export class OllamaManager {
   }
 
   async stop(): Promise<void> {
+    // 진행 중인 pull 도 함께 종료 (stop() 이 앱 종료 경로의 공통 진입점)
+    await this.killPullProcess();
     if (!this.process) return;
     const proc = this.process;
     this.process = null;
@@ -464,6 +479,13 @@ export class OllamaManager {
     const ollamaPath = this.getOllamaPath();
     const PULL_TIMEOUT_MS = 1800000; // 30분
 
+    // 재진입 가드 — 이미 pull 이 진행 중이면 두 번째 요청은 첫 번째 proc 참조를 덮어쓰지
+    // 않고 즉시 실패한다. 이전 구현은 this.pullProcess 단일 슬롯에 덮어쓰기만 해서
+    // 첫 번째 자식 프로세스가 killPullProcess 에서 보이지 않는 orphan 이 될 수 있었음.
+    if (this.pullProcess) {
+      return { success: false, error: '다른 모델 다운로드가 이미 진행 중입니다. 완료 후 다시 시도해주세요.' };
+    }
+
     return new Promise((resolve) => {
       let settled = false;
       const safeResolve = (result: { success: boolean; error?: string }) => {
@@ -471,10 +493,16 @@ export class OllamaManager {
       };
 
       const proc = spawn(ollamaPath, ['pull', model]);
+      // 인스턴스에 등록 — 앱 종료 시 stop() 에서 kill, 고아 프로세스 방지.
+      // Windows에서 부모 프로세스가 죽어도 pipe로 연결된 자식은 살아남는 문제(Node + win32)
+      // 때문에 명시적 taskkill 이 필요.
+      this.pullProcess = proc;
       let lastProgress = '';
 
       const timeout = setTimeout(() => {
-        proc.kill();
+        // killPullProcess 를 사용해 Windows taskkill /F /T 경로와 통일 — 향후 ollama pull 이
+        // 헬퍼 자식을 spawn 하더라도 프로세스 트리 전체가 종료된다.
+        this.killPullProcess().catch(() => { /* 이미 죽은 프로세스 무시 */ });
         safeResolve({ success: false, error: '모델 다운로드 타임아웃 (30분). 네트워크를 확인 후 다시 시도해주세요.' });
       }, PULL_TIMEOUT_MS);
 
@@ -524,11 +552,13 @@ export class OllamaManager {
 
       proc.on('error', (err) => {
         clearTimeout(timeout);
+        if (this.pullProcess === proc) this.pullProcess = null;
         safeResolve({ success: false, error: `모델 다운로드 실패: ${err.message}` });
       });
 
       proc.on('close', (code) => {
         clearTimeout(timeout);
+        if (this.pullProcess === proc) this.pullProcess = null;
         if (code === 0) {
           safeResolve({ success: true });
         } else {
@@ -536,6 +566,22 @@ export class OllamaManager {
         }
       });
     });
+  }
+
+  /** 진행 중인 `ollama pull` 자식 프로세스를 즉시 종료. 앱 종료 직전 호출. */
+  async killPullProcess(): Promise<void> {
+    const proc = this.pullProcess;
+    if (!proc) return;
+    this.pullProcess = null;
+    if (process.platform === 'win32' && proc.pid) {
+      try {
+        await new Promise<void>((resolve) => {
+          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], () => resolve());
+        });
+      } catch { /* 무시 */ }
+    } else {
+      try { proc.kill('SIGTERM'); } catch { /* 무시 */ }
+    }
   }
 
   /** renderer에 진행 상태 전송 */

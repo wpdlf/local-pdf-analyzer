@@ -16,6 +16,18 @@ import { VectorStore } from './vector-store';
 // 설정 저장 IPC 디바운스 타이머
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
+// crypto.randomUUID 는 secure context 에서만 동작. Electron file:// 는 secure context 로
+// 간주되어 정상 동작하지만, 드물게 비정상 origin 또는 구 버전에서 throw 할 수 있음.
+// 실패 시 충돌 가능성이 낮은 대체 식별자 생성.
+function safeRandomId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch { /* fallthrough */ }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
 // appendStream 배치 처리용 버퍼 (50ms 간격 flush)
 // 캡슐화하여 HMR/테스트 시 안전한 리셋 지원
 const streamState = {
@@ -130,12 +142,10 @@ export const useAppStore = create<AppState>((set) => ({
   isParsing: false,
   setDocument: (document) => {
     if (!document) {
-      // 문서 닫기 시 RAG 인덱스 메모리 해제
-      useAppStore.getState().ragIndex.clear();
-      set({
-        document: null,
-        ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
-      });
+      // 문서 닫기 시 RAG 인덱스 + 요약/Q&A 상태 전부 해제. resetSummaryState 와 수렴.
+      // 기존에는 summary/summaryStream/qaMessages 가 stale 하게 남아 다른 호출 경로에서
+      // 새 문서 없이 이전 요약이 재표시되는 문제가 있었음.
+      useAppStore.getState().resetSummaryState();
     } else {
       set({ document });
     }
@@ -229,7 +239,7 @@ export const useAppStore = create<AppState>((set) => ({
   qaRequestId: null,
   addQaMessage: (msg) => set((s) => {
     const MAX_QA_TURNS = 10;
-    const msgs = [...s.qaMessages, { ...msg, id: crypto.randomUUID() }];
+    const msgs = [...s.qaMessages, { ...msg, id: safeRandomId() }];
     // 10턴(20메시지) 초과 시 FIFO — 가장 오래된 쌍 제거
     if (msgs.length > MAX_QA_TURNS * 2) {
       return { qaMessages: msgs.slice(msgs.length - MAX_QA_TURNS * 2) };

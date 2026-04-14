@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { UiLanguage } from '../types';
 import { useAppStore } from './store';
 
@@ -8,6 +9,7 @@ const translations = {
   'common.close': { ko: '닫기', en: 'Close' },
   'common.renderError': { ko: '렌더링 오류가 발생했습니다.', en: 'A rendering error occurred.' },
   'common.imagePlaceholder': { ko: '[이미지]', en: '[image]' },
+  'common.blockedLink': { ko: '차단된 링크 (지원하지 않는 URL 형식)', en: 'Blocked link (unsupported URL scheme)' },
   'ai.generateFail': { ko: '요약 생성에 실패했습니다.', en: 'Failed to generate summary.' },
   'ai.requestFail': { ko: '요약 요청에 실패했습니다.', en: 'Failed to send summary request.' },
   'ai.streamInterrupted': { ko: 'AI 응답 수신이 중단되었습니다. 네트워크 연결과 AI 서비스 상태를 확인해주세요.', en: 'AI response stream interrupted. Please check your network connection and AI service status.' },
@@ -31,6 +33,10 @@ const translations = {
   'app.startSummary': { ko: '📝 요약 시작', en: '📝 Summarize' },
   'app.downloadingModel': { ko: '기본 모델 다운로드 중: {model}', en: 'Downloading model: {model}' },
   'app.modelDownloadFail': { ko: '모델 다운로드 실패: {model} — {error}', en: 'Model download failed: {model} — {error}' },
+  'app.modelDownloadFailPartial': {
+    ko: '모델 다운로드 실패: {model} — {error} (설치 완료: {succeeded})',
+    en: 'Model download failed: {model} — {error} (installed: {succeeded})',
+  },
   'app.modelDownloadFailDefault': { ko: '네트워크를 확인해주세요', en: 'Please check your network' },
   'app.modelInstallDone': { ko: '기본 모델 설치 완료', en: 'Model installation complete' },
   'app.modelHint': {
@@ -210,9 +216,28 @@ type TranslationKey = keyof typeof translations;
 
 // ─── 템플릿 치환 ───
 
-function interpolate(template: string, params?: Record<string, string | number>): string {
+// 개발 중 누락 키/파라미터를 즉시 탐지하기 위한 dev-only 경고 (프로덕션 번들에서는 제거됨).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _isDev = typeof (import.meta as any)?.env?.DEV === 'boolean' ? (import.meta as any).env.DEV : false;
+const _warnedMissingKeys = new Set<string>();
+const _warnedMissingParams = new Set<string>();
+
+function warnOnce(bucket: Set<string>, id: string, message: string): void {
+  if (!_isDev) return;
+  if (bucket.has(id)) return;
+  bucket.add(id);
+  console.warn(message);
+}
+
+function interpolate(template: string, params?: Record<string, string | number>, key?: string): string {
   if (!params) return template;
-  return template.replace(/\{(\w+)\}/g, (_, key) => String(params[key] ?? `{${key}}`));
+  return template.replace(/\{(\w+)\}/g, (_, name) => {
+    if (params[name] === undefined) {
+      warnOnce(_warnedMissingParams, `${key ?? ''}:${name}`, `[i18n] missing param "${name}" for key "${key ?? '?'}"`);
+      return `{${name}}`;
+    }
+    return String(params[name]);
+  });
 }
 
 // ─── 번역 함수 ───
@@ -220,17 +245,32 @@ function interpolate(template: string, params?: Record<string, string | number>)
 export function t(key: TranslationKey, params?: Record<string, string | number>): string {
   const lang = useAppStore.getState().settings.uiLanguage || 'ko';
   const entry = translations[key];
-  if (!entry) return key;
-  return interpolate(entry[lang] || entry['ko'], params);
+  if (!entry) {
+    warnOnce(_warnedMissingKeys, key, `[i18n] missing translation key "${key}"`);
+    return key;
+  }
+  return interpolate(entry[lang] || entry['ko'], params, key);
 }
 
 // ─── React 훅 ───
 
+/**
+ * 컴포넌트 내에서 반응형으로 번역을 읽는 훅.
+ *
+ * 반환 함수는 `lang` 이 변경될 때만 새 참조를 만든다 (useMemo 안정화).
+ * 이 덕분에 `useEffect([..., tr])` 에 tr 를 포함해도 매 렌더 재실행되지 않는다.
+ * 일반적으로 JSX 안에서 직접 `tr('key')` 로 사용하거나, effect deps 에 tr 를 포함시킨다.
+ */
 export function useT(): (key: TranslationKey, params?: Record<string, string | number>) => string {
   const lang = useAppStore((s) => s.settings.uiLanguage);
-  return (key: TranslationKey, params?: Record<string, string | number>) => {
-    const entry = translations[key];
-    if (!entry) return key;
-    return interpolate(entry[lang] || entry['ko'], params);
-  };
+  return useMemo(() => {
+    return (key: TranslationKey, params?: Record<string, string | number>) => {
+      const entry = translations[key];
+      if (!entry) {
+        warnOnce(_warnedMissingKeys, key, `[i18n] missing translation key "${key}"`);
+        return key;
+      }
+      return interpolate(entry[lang] || entry['ko'], params, key);
+    };
+  }, [lang]);
 }

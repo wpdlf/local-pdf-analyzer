@@ -50,7 +50,12 @@ async function loadSettings(): Promise<Record<string, unknown>> {
       }
     }
     return { ...defaultSettings, ...filtered };
-  } catch {
+  } catch (err) {
+    // ENOENT(최초 실행 시 파일 없음)는 정상이므로 로그 제외. 그 외(손상된 JSON, 권한 오류 등)는
+    // 사용자 리포트 시 진단에 필요 — 한 줄 경고로 가시성 확보.
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      console.error('[settings] load failed, using defaults:', err);
+    }
     return { ...defaultSettings };
   }
 }
@@ -86,6 +91,17 @@ function createWindow(): BrowserWindow {
 
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+  // 권한 요청 — 기본 거부(카메라/마이크/지오로케이션 등).
+  // 예외: clipboard write — SummaryViewer 의 "복사" 버튼이 navigator.clipboard.writeText 를
+  // 사용하므로 차단되면 회귀가 발생한다. read 는 불필요 → 거부.
+  win.webContents.session.setPermissionRequestHandler((_wc, permission, cb) => {
+    if (permission === 'clipboard-sanitized-write') {
+      cb(true);
+      return;
+    }
+    cb(false);
+  });
+
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
     win.webContents.openDevTools({ mode: 'detach' });
@@ -99,6 +115,17 @@ function createWindow(): BrowserWindow {
 
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     console.error('Failed to load:', errorCode, errorDescription);
+  });
+
+  // will-navigate 와 별개로 will-redirect 도 차단 — 서버측 HTTP 리다이렉트로 인한
+  // 원치 않는 네비게이션 방지.
+  // 프로덕션 빌드에서는 ELECTRON_RENDERER_URL 가 undefined → 기존 코드의
+  // `url.startsWith('')` 이 항상 true 가 되어 방어가 무력화되던 버그를 수정.
+  const devRendererUrl = process.env['ELECTRON_RENDERER_URL'];
+  win.webContents.on('will-redirect', (event, url) => {
+    if (url.startsWith('file://')) return;
+    if (!app.isPackaged && devRendererUrl && url.startsWith(devRendererUrl)) return;
+    event.preventDefault();
   });
 
   // 파일 드롭 시 file:// 탐색 차단 → 대신 IPC로 파일 데이터 전달 (비동기)
@@ -679,8 +706,15 @@ function registerIpcHandlers(): void {
       if (!['.md', '.txt'].includes(ext)) {
         return null;
       }
-      await fsp.writeFile(filePath, content, 'utf-8');
-      return filePath;
+      try {
+        await fsp.writeFile(filePath, content, 'utf-8');
+        return filePath;
+      } catch (err) {
+        // EACCES/ENOSPC/EPERM 등의 fs 에러가 Promise rejection 으로 렌더러에 전파되는 것을
+        // 방지. 기존 계약(성공 시 string, 취소/에러 시 null)을 유지하되 main 로그에 기록.
+        console.error('file:save writeFile failed:', err);
+        return null;
+      }
     }
     return null;
   });
