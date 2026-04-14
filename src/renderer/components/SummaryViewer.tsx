@@ -6,6 +6,7 @@ import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/sa
 import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
 import { PdfViewerPanel } from './PdfViewer';
+import { ResizeHandle } from './ResizeHandle';
 
 interface SummaryViewerProps {
   onAbort?: () => void;
@@ -20,6 +21,9 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const setError = useAppStore((s) => s.setError);
   // page-citation-viewer: citationTarget 존재 시 우측 패널 슬롯에 PdfViewer 마운트
   const citationTarget = useAppStore((s) => s.citationTarget);
+  // DR-01: 사용자 조정 가능한 패널 너비 비율 (우측 PdfViewer 가 차지할 비율)
+  const panelRatio = useAppStore((s) => s.citationPanelWidth);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
   const t = useT();
 
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);
@@ -109,10 +113,16 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   };
 
   const showCitationPanel = citationTarget !== null;
+  // DR-01: 동적 flex-basis — 좌측은 (1 - panelRatio), 우측은 panelRatio
+  const leftFlexBasis = showCitationPanel ? `${(1 - panelRatio) * 100}%` : '100%';
+  const rightFlexBasis = showCitationPanel ? `${panelRatio * 100}%` : '0%';
 
   return (
-    <div className="flex flex-row h-full">
-      <div className={`flex flex-col h-full ${showCitationPanel ? 'w-1/2 min-w-0' : 'w-full'}`}>
+    <div ref={splitContainerRef} className="flex flex-row h-full">
+      <div
+        className="flex flex-col h-full min-w-0"
+        style={{ flexBasis: leftFlexBasis, flexGrow: 0, flexShrink: 1 }}
+      >
       <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-t-lg">
         <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
           {document ? `📎 ${document.fileName} (${document.pageCount}p)` : t('viewer.result')}
@@ -199,10 +209,17 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
       )}
       </div>
       {/* page-citation-viewer: 우측 패널 (citationTarget 활성 시만 마운트) */}
+      {/* DR-01: ResizeHandle 로 좌/우 비율 조정 가능 */}
       {showCitationPanel && (
-        <div className="w-1/2 min-w-0 h-full">
-          <PdfViewerPanel />
-        </div>
+        <>
+          <ResizeHandle containerRef={splitContainerRef} />
+          <div
+            className="min-w-0 h-full"
+            style={{ flexBasis: rightFlexBasis, flexGrow: 0, flexShrink: 1 }}
+          >
+            <PdfViewerPanel />
+          </div>
+        </>
       )}
     </div>
   );

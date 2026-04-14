@@ -38,6 +38,10 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   const [loadState, setLoadState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const renderedPagesRef = useRef<Set<number>>(new Set());
+  // DR-01 리사이즈 재렌더: container 너비가 실제로 변할 때마다 증가 → 렌더 effect 재실행
+  const [renderVersion, setRenderVersion] = useState(0);
+  // 마지막으로 렌더된 width — 미세한 변동(스크롤바 등)에 반복 재렌더 방지
+  const lastRenderedWidthRef = useRef<number>(0);
 
   // 1. pdfjs 로 문서 로드 (마운트 1회)
   useEffect(() => {
@@ -75,7 +79,30 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     };
   }, [pdfBytes]);
 
-  // 2. 각 페이지 canvas 렌더 (totalPages 설정 후)
+  // 2a. ResizeObserver — 컨테이너 너비가 변하면 renderVersion 증가 → 재렌더 트리거
+  //     debounce 200ms 로 드래그 중 과도한 재렌더 방지
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const observer = new ResizeObserver(() => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const newWidth = container.clientWidth;
+        // 미세 변동(50px 미만) 은 무시 — 동일 scale 이 유지될 가능성 높음
+        if (Math.abs(newWidth - lastRenderedWidthRef.current) >= 50) {
+          setRenderVersion((v) => v + 1);
+        }
+      }, 200);
+    });
+    observer.observe(container);
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      observer.disconnect();
+    };
+  }, []);
+
+  // 2. 각 페이지 canvas 렌더 (totalPages 설정 후 + 너비 변경 시 재렌더)
   useEffect(() => {
     if (loadState !== 'loaded' || !pdfDocRef.current || !totalPages) return;
     let cancelled = false;
@@ -84,6 +111,14 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     // 패널 너비 기반 동적 scale — 고정 scale 은 좁은 패널에서 확대 표시 문제.
     const containerWidth = containerRef.current?.clientWidth ?? 800;
     const availableWidth = Math.max(300, containerWidth - 24);
+    lastRenderedWidthRef.current = containerWidth;
+    // renderVersion 이 증가하면 기존 canvas 를 모두 제거하고 재렌더
+    if (renderVersion > 0) {
+      for (const wrapper of pageRefs.current) {
+        if (wrapper) wrapper.querySelector('canvas')?.remove();
+      }
+      renderedPagesRef.current.clear();
+    }
 
     (async () => {
       for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
@@ -126,7 +161,7 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     return () => {
       cancelled = true;
     };
-  }, [loadState, totalPages, t]);
+  }, [loadState, totalPages, t, renderVersion]);
 
   // 3. targetPage 변경 시 해당 페이지로 scrollIntoView
   //    해당 페이지가 아직 렌더 안됐으면 폴링으로 대기 (최대 3초)

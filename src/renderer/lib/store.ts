@@ -120,6 +120,11 @@ interface AppState {
   // null 이면 PdfViewer 패널 비활성, { page: N } 이면 해당 페이지로 스크롤
   citationTarget: { page: number } | null;
   setCitationTarget: (target: { page: number } | null) => void;
+  // DR-01: 우측 PdfViewer 패널 너비 비율 (0.0 ~ 1.0). SummaryViewer 전체 폭 중
+  // 우측 패널이 차지하는 비율. 좌측(요약+Q&A)은 자동으로 1 - 비율.
+  // 기본 0.5 (50/50), min 0.2 / max 0.8.
+  citationPanelWidth: number;
+  setCitationPanelWidth: (ratio: number) => void;
   // 원본 PDF 바이트 (PdfViewer 가 lazy 마운트 시 참조).
   // document 와 라이프사이클 동일 — setDocument(null) / 새 문서 로드 시 교체.
   pdfBytes: Uint8Array | null;
@@ -308,6 +313,22 @@ export const useAppStore = create<AppState>((set) => ({
   setCitationTarget: (target) => set({ citationTarget: target }),
   pdfBytes: null,
   setPdfBytes: (bytes) => set({ pdfBytes: bytes }),
+  // DR-01: 패널 너비 비율 — localStorage 에서 복원, 기본 0.5
+  citationPanelWidth: (() => {
+    try {
+      const stored = localStorage.getItem('citationPanelWidth');
+      if (stored) {
+        const v = Number.parseFloat(stored);
+        if (Number.isFinite(v) && v >= 0.2 && v <= 0.8) return v;
+      }
+    } catch { /* 접근 실패 무시 */ }
+    return 0.5;
+  })(),
+  setCitationPanelWidth: (ratio) => {
+    const clamped = Math.min(0.8, Math.max(0.2, ratio));
+    set({ citationPanelWidth: clamped });
+    try { localStorage.setItem('citationPanelWidth', String(clamped)); } catch { /* 무시 */ }
+  },
 
   // 설정
   settings: DEFAULT_SETTINGS,

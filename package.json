@@ -1,6 +1,6 @@
 {
   "name": "summary-lecture-material",
-  "version": "0.17.1",
+  "version": "0.17.2",
   "description": "PDF 자료 분석 데스크톱 앱",
   "license": "MIT",
   "main": "./out/main/index.js",

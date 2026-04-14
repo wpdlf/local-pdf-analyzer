@@ -21,6 +21,7 @@ const translations = {
   'pdfviewer.renderFail': { ko: 'PDF 뷰어 로드 실패', en: 'Failed to load PDF viewer' },
   'pdfviewer.pageOf': { ko: '{current} / {total} 페이지', en: 'Page {current} of {total}' },
   'pdfviewer.pageRenderFail': { ko: '페이지 렌더링 실패', en: 'Failed to render page' },
+  'pdfviewer.resize': { ko: '패널 크기 조정 (화살표 키 또는 드래그)', en: 'Resize panel (arrow keys or drag)' },
   'ai.generateFail': { ko: '요약 생성에 실패했습니다.', en: 'Failed to generate summary.' },
   'ai.requestFail': { ko: '요약 요청에 실패했습니다.', en: 'Failed to send summary request.' },
   'ai.streamInterrupted': { ko: 'AI 응답 수신이 중단되었습니다. 네트워크 연결과 AI 서비스 상태를 확인해주세요.', en: 'AI response stream interrupted. Please check your network connection and AI service status.' },
