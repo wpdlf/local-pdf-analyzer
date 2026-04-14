@@ -1,7 +1,8 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { AiClient } from './ai-client';
-import { chunkText, chunkTextWithOverlap } from './chunker';
+import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage } from './chunker';
+import { formatPageLabel } from './citation';
 import type { QaMessage } from '../types';
 
 const MAX_QUESTION_LENGTH = 1000;
@@ -133,11 +134,15 @@ function embedWithTimeout(texts: string[]): Promise<{
  * 문서의 벡터 인덱스를 빌드.
  * 임베딩 불가 시 false 반환 (keyword fallback 사용).
  * signal.aborted 를 통해 문서 전환/언마운트 시 이전 빌드를 즉시 취소.
+ *
+ * page-citation-viewer 기능: pageTexts 가 있으면 page-aware 청커로 전환하여
+ * 각 청크에 pageStart/pageEnd 메타데이터를 부착한다. 없으면 기존 동작 그대로.
  */
 async function buildRagIndex(
   extractedText: string,
   docId: string,
   signal: AbortSignal,
+  pageTexts?: string[],
 ): Promise<boolean> {
   const store = useAppStore.getState();
 
@@ -149,8 +154,14 @@ async function buildRagIndex(
     return false;
   }
 
-  // 오버랩 청킹
-  const chunks = chunkTextWithOverlap(extractedText, RAG_CHUNK_SIZE);
+  // 오버랩 청킹 — page-aware 가능하면 사용, 아니면 기존 경로
+  const usePageAware = Array.isArray(pageTexts) && pageTexts.length > 0;
+  const pageChunks = usePageAware
+    ? chunkTextWithOverlapByPage(pageTexts!, RAG_CHUNK_SIZE)
+    : [];
+  const chunks = usePageAware
+    ? pageChunks.map((c) => c.text)
+    : chunkTextWithOverlap(extractedText, RAG_CHUNK_SIZE);
   const total = chunks.length;
 
   store.setRagState({
@@ -192,7 +203,11 @@ async function buildRagIndex(
       }
 
       for (let j = 0; j < result.embeddings.length; j++) {
-        ragIndex.addChunk(batch[j], result.embeddings[j], i + j);
+        // page-aware 모드면 page 메타데이터 동반 — SearchResult 로 전파되어 LLM 프롬프트 라벨링에 사용
+        const meta = usePageAware
+          ? { pageStart: pageChunks[i + j]?.pageStart, pageEnd: pageChunks[i + j]?.pageEnd }
+          : undefined;
+        ragIndex.addChunk(batch[j], result.embeddings[j], i + j, meta);
       }
 
       store.setRagState({ progress: { current: Math.min(i + RAG_BATCH_SIZE, total), total } });
@@ -245,9 +260,13 @@ async function ragSearch(question: string): Promise<string | null> {
     const parts: string[] = [];
     let totalLen = 0;
     for (const r of results) {
-      if (totalLen + r.text.length > MAX_QA_CONTEXT_CHARS) break;
-      parts.push(r.text);
-      totalLen += r.text.length;
+      // page-citation-viewer: page 메타데이터가 있으면 [p.N] 라벨을 앞에 붙여
+      // LLM 이 해당 페이지를 인용하도록 유도. 기존 청크도 label 없이 그대로 폴백.
+      const label = formatPageLabel(r.pageStart, r.pageEnd);
+      const segment = label ? `${label}\n${r.text}` : r.text;
+      if (totalLen + segment.length > MAX_QA_CONTEXT_CHARS) break;
+      parts.push(segment);
+      totalLen += segment.length;
     }
     return parts.join('\n\n');
   } catch {
@@ -297,7 +316,8 @@ export function useRagBuilder(): void {
     // 비동기로 인덱스 빌드 (UI 블로킹 없음, 요약과 병렬 실행).
     // 내부 try/catch가 있지만 예기치 않은 동기 throw(예: store 접근 중 null)가
     // unhandled rejection으로 전파되는 것을 최종 방어.
-    buildRagIndex(document.extractedText, docId, controller.signal).catch((err) => {
+    // page-citation-viewer: pageTexts 를 전달하여 각 청크에 page 메타데이터 부착.
+    buildRagIndex(document.extractedText, docId, controller.signal, document.pageTexts).catch((err) => {
       console.error('[useRagBuilder] buildRagIndex failed:', err);
     });
 

@@ -116,6 +116,11 @@ interface AppState {
   ragState: RagIndexState;
   setRagState: (state: Partial<RagIndexState>) => void;
 
+  // Page citation (Design Ref: §4.2) — page-citation-viewer 기능
+  // null 이면 PdfViewer 패널 비활성, { page: N } 이면 해당 페이지로 스크롤
+  citationTarget: { page: number } | null;
+  setCitationTarget: (target: { page: number } | null) => void;
+
   // 설정
   settings: AppSettings;
   updateSettings: (settings: AppSettings) => void;
@@ -229,6 +234,8 @@ export const useAppStore = create<AppState>((set) => ({
       qaRequestId: null,
       ocrProgress: null,
       ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+      // 문서 전환 시 PdfViewer 패널도 닫힘
+      citationTarget: null,
     });
   },
 
@@ -290,6 +297,10 @@ export const useAppStore = create<AppState>((set) => ({
   ragIndex: new VectorStore(),
   ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
   setRagState: (partial) => set((s) => ({ ragState: { ...s.ragState, ...partial } })),
+
+  // Page citation — Design Ref §4.2
+  citationTarget: null,
+  setCitationTarget: (target) => set({ citationTarget: target }),
 
   // 설정
   settings: DEFAULT_SETTINGS,

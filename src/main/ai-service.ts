@@ -1250,7 +1250,45 @@ const LANG_PROMPTS: Record<string, LangPrompts> = {
   auto: PROMPTS_AUTO,
 };
 
+// Citation rule — page-citation-viewer 기능 (Design Ref §4, SC-02)
+// 요약/Q&A 타입에서 LLM 이 [p.N] 라벨을 그대로 인용하도록 시스템 지시를 주입한다.
+// keywords 는 테이블 포맷이라 인용 불필요.
+const CITATION_RULES: Record<string, string> = {
+  ko: `## 인용 규칙 (매우 중요)
+입력 텍스트에 \`[p.N]\` 형태의 페이지 라벨이 포함되어 있습니다. 각 핵심 사실이나 주장을 서술할 때, 그 근거가 되는 페이지의 라벨을 문장 끝에 \`[p.N]\` 형태로 그대로 인용하세요.
+- 예시: "메모리 누수는 backpressure 부재로 발생한다[p.12]."
+- 라벨이 \`[p.5-7]\` 범위면 가장 관련 있는 단일 페이지 하나만 골라 \`[p.5]\` 처럼 단일 형태로 출력하세요.
+- 인용 없이 문장을 쓰지 마세요. 단, 정확한 근거가 없으면 인용을 붙이지 말고 일반 서술하세요.`,
+  en: `## Citation rule (VERY IMPORTANT)
+The input text contains page labels in the form \`[p.N]\`. When stating any key fact or claim, cite the supporting page using the exact \`[p.N]\` format at the end of the sentence.
+- Example: "The memory leak occurs due to missing backpressure[p.12]."
+- If a range label like \`[p.5-7]\` appears, pick the single most relevant page and output it as \`[p.5]\`.
+- Do not fabricate citations. If you are not certain which page supports a sentence, omit the citation for that sentence.`,
+  ja: `## 引用ルール (非常に重要)
+入力テキストには \`[p.N]\` 形式のページラベルが含まれています。主要な事実や主張を述べる際は、該当する根拠ページのラベルを文末に \`[p.N]\` の形式でそのまま引用してください。
+- 例: 「メモリリークはbackpressure不足で発生する[p.12]。」
+- \`[p.5-7]\` のような範囲ラベルがある場合は、最も関連する単一ページを選んで \`[p.5]\` として出力してください。
+- 確実な根拠がない場合は引用を付けずに記述してください。`,
+  zh: `## 引用规则 (非常重要)
+输入文本中包含 \`[p.N]\` 形式的页码标签。陈述任何关键事实或主张时，请在句尾以 \`[p.N]\` 格式准确引用支持该陈述的页面。
+- 示例: "内存泄漏是由于缺少backpressure导致的[p.12]。"
+- 如果出现 \`[p.5-7]\` 这样的范围标签，请选择最相关的单一页面，以 \`[p.5]\` 格式输出。
+- 如果不确定哪一页支持某句，请省略该句的引用，不要编造。`,
+  auto: `## Citation rule
+The input text contains page labels in the form \`[p.N]\`. When stating a key fact, cite the source using exactly \`[p.N]\` at the end of the sentence. For range labels like \`[p.5-7]\`, pick the single most relevant page. Do not fabricate citations — omit when uncertain.`,
+};
+
 function buildPrompt(text: string, type: 'full' | 'chapter' | 'keywords' | 'qa', language?: string): string {
-  const prompts = LANG_PROMPTS[language || 'ko'] || LANG_PROMPTS['ko'];
-  return prompts[type](text);
+  const lang = language || 'ko';
+  const prompts = LANG_PROMPTS[lang] || LANG_PROMPTS['ko'];
+  const raw = prompts[type](text);
+  // keywords 타입은 테이블 포맷이라 인용 규칙을 주입하지 않는다.
+  if (type === 'keywords') return raw;
+  const citationRule = CITATION_RULES[lang] || CITATION_RULES['ko'];
+  // 기존 템플릿은 시스템/유저를 `---\n\n` 구분자로 분리 (splitPrompt 참조).
+  // 이 구분자 바로 앞에 인용 규칙을 삽입하여 시스템 섹션 말미에 붙인다.
+  const separator = '\n\n---\n\n';
+  const idx = raw.indexOf(separator);
+  if (idx === -1) return raw;
+  return raw.slice(0, idx) + '\n\n' + citationRule + separator + raw.slice(idx + separator.length);
 }

@@ -10,6 +10,17 @@ const translations = {
   'common.renderError': { ko: '렌더링 오류가 발생했습니다.', en: 'A rendering error occurred.' },
   'common.imagePlaceholder': { ko: '[이미지]', en: '[image]' },
   'common.blockedLink': { ko: '차단된 링크 (지원하지 않는 URL 형식)', en: 'Blocked link (unsupported URL scheme)' },
+
+  // ─── Page citation / PDF viewer (page-citation-viewer) ───
+  'citation.aria': { ko: '{page} 페이지 원문 열기', en: 'Open source page {page}' },
+  'citation.tooltip': { ko: '클릭하여 {page} 페이지 원문 확인', en: 'Click to view source on page {page}' },
+  'citation.invalid': { ko: '유효하지 않은 페이지 ({page})', en: 'Invalid page ({page})' },
+  'pdfviewer.title': { ko: '원문 보기', en: 'Source Viewer' },
+  'pdfviewer.close': { ko: '뷰어 닫기', en: 'Close viewer' },
+  'pdfviewer.loading': { ko: 'PDF 로드 중...', en: 'Loading PDF...' },
+  'pdfviewer.renderFail': { ko: 'PDF 뷰어 로드 실패', en: 'Failed to load PDF viewer' },
+  'pdfviewer.pageOf': { ko: '{current} / {total} 페이지', en: 'Page {current} of {total}' },
+  'pdfviewer.pageRenderFail': { ko: '페이지 렌더링 실패', en: 'Failed to render page' },
   'ai.generateFail': { ko: '요약 생성에 실패했습니다.', en: 'Failed to generate summary.' },
   'ai.requestFail': { ko: '요약 요청에 실패했습니다.', en: 'Failed to send summary request.' },
   'ai.streamInterrupted': { ko: 'AI 응답 수신이 중단되었습니다. 네트워크 연결과 AI 서비스 상태를 확인해주세요.', en: 'AI response stream interrupted. Please check your network connection and AI service status.' },

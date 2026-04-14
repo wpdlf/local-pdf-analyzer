@@ -1,7 +1,8 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { AiClient } from './ai-client';
-import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
+import { chunkText, chunkChapters, chunkTextWithOverlapByPage, estimateCharsPerToken } from './chunker';
+import { formatPageLabel } from './citation';
 import type { PdfDocument, DefaultSummaryType, AppSettings, ProgressInfo, AppError } from '../types';
 
 // TrackFn은 요약 파이프라인 내부에서만 사용되며 'qa' 타입은 호출되지 않음.
@@ -150,8 +151,12 @@ async function summarizeByChapter(
     if (isTimedOut()) break;
     chapterIdx++;
     let chapterHeaderPending = `\n## ${chapter.title}\n\n`;
+    // page-citation-viewer: 챕터 page 범위 라벨 — LLM 이 [p.N] 인용을 생성하도록 유도
+    const chapterLabel = formatPageLabel(chapter.startPage, chapter.endPage);
     for (const chunk of chunks) {
       if (isTimedOut()) break;
+      // 각 청크 앞에 챕터 범위 라벨 삽입. 해당 페이지를 인용할 때 LLM 이 그대로 사용.
+      const labeledChunk = chapterLabel ? `${chapterLabel}\n${chunk}` : chunk;
       const elapsedMs = Date.now() - startTime;
       const rawPercent = total > 0 ? (processed / total) : 0;
       const percent = Math.min(100, progressOffset + rawPercent * progressRange);
@@ -167,7 +172,7 @@ async function summarizeByChapter(
         elapsedMs,
         estimatedRemainingMs,
       });
-      for await (const token of track(chunk, 'chapter')) {
+      for await (const token of track(labeledChunk, 'chapter')) {
         if (checkTimeout()) break;
         if (chapterHeaderPending) {
           append(chapterHeaderPending + token);
@@ -204,7 +209,16 @@ async function summarizeFull(
   progressOffset: number,
 ) {
   const progressRange = 100 - progressOffset;
-  const chunks = chunkText(doc.extractedText, settings.maxChunkSize);
+  // page-citation-viewer: pageTexts 가 있으면 page-aware 청커로 전환해
+  // 각 청크에 pageStart/pageEnd 메타데이터를 부착 → [p.N] 라벨 프롬프트 주입.
+  // 없으면(레거시 경로) 기존 chunkText 로 폴백.
+  const hasPageTexts = Array.isArray(doc.pageTexts) && doc.pageTexts.length > 0;
+  const pageChunks = hasPageTexts
+    ? chunkTextWithOverlapByPage(doc.pageTexts, settings.maxChunkSize, 0) // overlap 0 — 요약은 경계 중복 불필요
+    : [];
+  const chunks = hasPageTexts
+    ? pageChunks.map((c) => c.text)
+    : chunkText(doc.extractedText, settings.maxChunkSize);
   // chunkText는 공백/빈 입력 시 []를 반환. 빈 배열로 진입하면 루프 스킵 →
   // 사용자는 스피너가 사라지지만 content/에러가 없는 무음 실패를 겪음.
   if (chunks.length === 0) {
@@ -230,8 +244,13 @@ async function summarizeFull(
       elapsedMs,
       estimatedRemainingMs,
     });
+    // 해당 청크의 페이지 라벨 prefix
+    const label = hasPageTexts
+      ? formatPageLabel(pageChunks[i]?.pageStart, pageChunks[i]?.pageEnd)
+      : '';
+    const labeledChunk = label ? `${label}\n${chunks[i]}` : chunks[i];
     let chunkResult = '';
-    for await (const token of track(chunks[i], summaryType)) {
+    for await (const token of track(labeledChunk, summaryType)) {
       if (checkTimeout()) break;
       append(token);
       chunkResult += token;
