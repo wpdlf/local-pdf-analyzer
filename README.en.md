@@ -10,6 +10,7 @@ Unlike cloud-based AI summarization services that require uploading PDFs to exte
 - **Text + image analysis** — Analyzes text, charts, diagrams, and tables in any PDF using Vision AI
 - **Scanned PDF OCR** — Vision AI recognizes text page-by-page even in image-based scanned PDFs
 - **RAG-based Q&A chat** — Embedding vector semantic search finds the most relevant parts of your PDF to answer questions accurately
+- **Page citations + side PDF viewer (new in v0.17.0)** — Summary/Q&A answers automatically include source-page citations like `[p.12]`. Click a citation to open a PDF viewer panel on the right that instantly jumps to that page — verify AI hallucinations in one click
 - **Safe for sensitive documents** — Exam materials, internal documents, draft papers — summarize with confidence
 - **Korean/English UI** — Switch app interface language in Settings
 - **Paid AI available** — Switch to Claude or OpenAI API for higher quality when needed
@@ -54,6 +55,14 @@ Unlike cloud-based AI summarization services that require uploading PDFs to exte
 - Falls back to keyword-based search automatically if no embedding model is available
 - Maintains context across up to 10 conversation turns
 - `Enter`: send / `Shift+Enter`: new line
+
+### 5. Page Citations + PDF Viewer (new in v0.17.0)
+- Summary and Q&A answers automatically include source-page citations like **`[p.12]`** at the end of key sentences
+- **Click a citation** to open a **PDF viewer panel** on the right that jumps directly to that page
+- Clicking additional citations keeps the panel open and just scrolls to the new page
+- Press `ESC` or the ✕ button to close the panel and return to full-width view
+- Citations that point outside the PDF (e.g. beyond total page count) are shown as dashed grey tags and are click-disabled
+- This feature targets **AI hallucination verification** — instantly confirm the source page for any claim in a summary. Especially valuable for studying, research, and document review
 
 > **Embedding model**: `nomic-embed-text` (274MB) is auto-installed during first-run setup. OpenAI users automatically get `text-embedding-3-small`.
 
@@ -143,7 +152,8 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Render-error recovery** — Unexpected UI crashes offer a "Try again" button without a full reload (paths auto-masked)
 - **Instant language switch** — Toggling Korean/English in Settings reflects across the whole UI immediately (no restart required)
 - **Magic-byte PDF validation** — `%PDF-` signature is verified before the file is fully loaded into memory, rejecting fakes early
-- **Unit test coverage** — 39 regression tests for RAG core paths (vector store, chunker, surrogate-pair safety, CJK overlap quality)
+- **Unit test coverage** — **69 regression tests** for RAG/citation core paths (vector store, chunker, surrogate-pair safety, CJK overlap quality, citation parsing)
+- **Page citations + side PDF viewer (v0.17.0)** — Summary/Q&A answers automatically carry `[p.N]` source-page citations. Click to open a right-side PDF viewer panel that scrolls to the cited page. Built on page-aware RAG chunks + LLM prompt injection (5 languages) + lazy pdfjs-dist viewer + react-markdown text-block overrides
 
 ## System Requirements
 
