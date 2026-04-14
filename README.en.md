@@ -56,12 +56,15 @@ Unlike cloud-based AI summarization services that require uploading PDFs to exte
 - Maintains context across up to 10 conversation turns
 - `Enter`: send / `Shift+Enter`: new line
 
-### 5. Page Citations + PDF Viewer (new in v0.17.0)
-- Summary and Q&A answers automatically include source-page citations like **`[p.12]`** at the end of key sentences
+### 5. Page Citations + PDF Viewer (new in v0.17.0, extended in v0.17.2)
+- Summary and Q&A answers automatically get **`[p.12]`-style source citations at almost every key sentence** (citation frequency significantly improved in v0.17.1 via paragraph-level inline labels)
 - **Click a citation** to open a **PDF viewer panel** on the right that jumps directly to that page
 - Clicking additional citations keeps the panel open and just scrolls to the new page
+- **Horizontal resize handle (new in v0.17.2)** — drag the central vertical divider between the summary area and the PDF viewer to freely adjust the left/right ratio between 20~80%. Tab-focus the handle and use `←` / `→` for fine steps, `Home` / `End` for min/max. The ratio is persisted in `localStorage` and restored on app restart
+- **Automatic PDF re-render** — after resizing, PDF pages are re-rendered at the new width (200ms debounce, ResizeObserver based)
 - Press `ESC` or the ✕ button to close the panel and return to full-width view
 - Citations that point outside the PDF (e.g. beyond total page count) are shown as dashed grey tags and are click-disabled
+- Common LLM mistakes like wrapping citations in `([p.5])` or emitting standalone list items `- [p.44]` are **auto-fixed via post-processing** (v0.17.1)
 - This feature targets **AI hallucination verification** — instantly confirm the source page for any claim in a summary. Especially valuable for studying, research, and document review
 
 > **Embedding model**: `nomic-embed-text` (274MB) is auto-installed during first-run setup. OpenAI users automatically get `text-embedding-3-small`.
@@ -152,8 +155,10 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Render-error recovery** — Unexpected UI crashes offer a "Try again" button without a full reload (paths auto-masked)
 - **Instant language switch** — Toggling Korean/English in Settings reflects across the whole UI immediately (no restart required)
 - **Magic-byte PDF validation** — `%PDF-` signature is verified before the file is fully loaded into memory, rejecting fakes early
-- **Unit test coverage** — **69 regression tests** for RAG/citation core paths (vector store, chunker, surrogate-pair safety, CJK overlap quality, citation parsing)
-- **Page citations + side PDF viewer (v0.17.0)** — Summary/Q&A answers automatically carry `[p.N]` source-page citations. Click to open a right-side PDF viewer panel that scrolls to the cited page. Built on page-aware RAG chunks + LLM prompt injection (5 languages) + lazy pdfjs-dist viewer + react-markdown text-block overrides
+- **Unit test coverage** — **82 regression tests** for RAG/citation core paths (+13 in v0.17.x)
+- **Page citations + side PDF viewer (v0.17.0)** — Summary/Q&A answers automatically carry `[p.N]` source-page citations at almost every key sentence. Click to open a right-side PDF viewer panel that scrolls to the cited page. Built on page-aware RAG chunks + LLM prompt injection (5 languages) + lazy pdfjs-dist viewer + react-markdown text-block overrides. Citation frequency significantly improved in v0.17.1 via paragraph-level inline labels
+- **Horizontal resize handle (v0.17.2)** — when the PDF viewer panel is open, drag the central divider to freely adjust the left/right ratio between 20~80%. Pointer + keyboard (← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage persistence. PDF pages auto re-render via `ResizeObserver` + 200ms debounce
+- **Citation placement normalization (v0.17.1)** — LLM mistakes like `([p.5])` wrapping or standalone list items `- [p.44]` are automatically re-attached to the preceding sentence
 
 ## System Requirements
 
@@ -185,6 +190,11 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | Claude/OpenAI model sticks after deleting the API key | Fixed in v0.16.2 — deleting the key auto-switches to Ollama with an installed model |
 | Copy-summary button does nothing | Fixed in v0.16.2 via explicit `clipboard-sanitized-write` permission allow |
 | App freezes on render error | v0.16.2 adds a "Try again" button to the error boundary — recover without restart |
+| Summary has only one citation | Fixed in v0.17.1 — paragraph-level inline page labels generate a citation for each key fact |
+| Summary shows `([p.5])` wrapped in parens or `- [p.44]` standalone list items | v0.17.1 auto-normalizes — removes parens and re-attaches standalone citations to the preceding sentence |
+| PDF viewer looks too zoomed in a narrow panel | Fixed in v0.17.1 — container-width-based dynamic scale fits the PDF to the panel automatically |
+| Want to change the PDF viewer panel width | v0.17.2 new — drag the central divider or Tab-focus it and use ← → Home End to adjust between 20~80% |
+| PDF stays stretched after resizing | Fixed in v0.17.2 — `ResizeObserver` triggers re-render at the new scale ~200ms after the drag ends |
 
 ---
 
