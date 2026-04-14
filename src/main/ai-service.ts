@@ -1269,9 +1269,12 @@ const CITATION_RULES: Record<string, string> = {
 - "- 핵심 개념 A: 정의는 다음과 같다[p.5]."
 - "수식 \\(E=mc^2\\)은 질량-에너지 등가성을 나타낸다[p.8]."
 
-**잘못된 예 (피하세요)**:
+**잘못된 예 (절대 금지)**:
 - "이 문서는 메모리 관리에 대해 설명한다." (구체적 사실인데 인용 없음 ✗)
-- "backpressure 에 관한 내용이다[p.5-7]." (범위 라벨 그대로 사용 ✗ — 단일로 변환해야 함)`,
+- "backpressure 에 관한 내용이다[p.5-7]." (범위 라벨 그대로 사용 ✗ — 단일로 변환해야 함)
+- "메모리 누수가 발생한다 ([p.12])." **(괄호 금지 ✗ — 인용 앞뒤에 \`(\` \`)\` 절대 쓰지 마세요)**
+- "- [p.44]" **(목록의 단독 항목 금지 ✗ — 인용은 반드시 본문 문장 끝에 붙여야 함)**
+- "결론은 다음과 같다\\n[p.3]" **(줄바꿈 후 단독 금지 ✗ — 같은 줄 문장 끝에 붙여야 함)**`,
   en: `## Citation rule (MOST IMPORTANT OUTPUT RULE)
 
 **Each paragraph in the input begins with a \`[p.N]\` page label** telling you exactly which PDF page it came from.
@@ -1287,46 +1290,49 @@ const CITATION_RULES: Record<string, string> = {
 - "- Key concept A: the definition is as follows[p.5]."
 - "The formula \\(E=mc^2\\) represents mass-energy equivalence[p.8]."
 
-**Wrong (avoid)**:
+**Wrong (STRICTLY forbidden)**:
 - "This document discusses memory management." (concrete claim without citation ✗)
-- "It covers backpressure[p.5-7]." (range label copied as-is ✗ — must pick single page)`,
+- "It covers backpressure[p.5-7]." (range label copied as-is ✗ — must pick single page)
+- "Memory leaks occur ([p.12])." **(parentheses FORBIDDEN ✗ — never wrap citations in \`(\` \`)\`)**
+- "- [p.44]" **(standalone list item FORBIDDEN ✗ — citations must attach to a sentence)**
+- "The conclusion:\\n[p.3]" **(newline then citation FORBIDDEN ✗ — must be on the same line as the sentence)**`,
   ja: `## 引用ルール (最も重要な出力規則)
 
-**入力テキストの各段落は \`[p.N]\` 形式のページラベルで始まります。** このラベルは該当段落がどのPDFページから来たかを正確に示します。
+**入力テキストの各段落は \`[p.N]\` 形式のページラベルで始まります。**
 
 **必ず守ること**:
-1. **ほぼすべての主要な文の末尾に出典 \`[p.N]\` を付けてください。** 事実の出所となる段落のラベルをそのまま使います。
-2. 複数の事実を一文にまとめる場合でも、最も関連する単一ページを選んで \`[p.N]\` として引用してください。箇条書きの各項目にも引用を付けます。
-3. 導入/つなぎの文以外、具体的な事実の記述には必ず引用を付けてください。
-4. ラベルをそのままコピー — ページ番号を推測しないでください。確実でない場合は省略。
+1. **ほぼすべての主要な文の末尾に出典 \`[p.N]\` を付けてください。**
+2. 複数の事実を一文にまとめる場合も、最も関連する単一ページを選択。箇条書きの各項目にも引用必須。
+3. ラベルをそのままコピー — ページ番号を推測しないでください。
 
 **出力例**:
-- 「メモリリークはbackpressure不足で発生する[p.12]。解決策はresponse.pipe(file)の使用である[p.13]。」
-- 「- 主要概念A: 定義は以下の通り[p.5]。」
+- 「メモリリークはbackpressure不足で発生する[p.12]。」
+- 「- 主要概念A: 定義は以下[p.5]。」
 
 **避けるべき例**:
-- 「この文書はメモリ管理について説明している。」 (具体的事実なのに引用なし ✗)
-- 「backpressureについての内容[p.5-7]。」 (範囲ラベルをそのまま使用 ✗)`,
+- 「\`([p.12])\`」(括弧で囲むのは禁止 ✗)
+- 「- [p.44]」(独立した箇条書き項目は禁止 ✗)
+- 「[p.5-7]」 (範囲ラベル ✗)`,
   zh: `## 引用规则 (最重要的输出规则)
 
-**输入文本的每个段落以 \`[p.N]\` 形式的页码标签开头。** 此标签精确指明该段落来自哪个PDF页面。
+**输入文本的每个段落以 \`[p.N]\` 形式的页码标签开头。**
 
 **必须遵守**:
-1. **在几乎每个关键句子末尾附上来源引用 \`[p.N]\`。** 从事实所在段落的标签直接复制。
-2. 即使一句话包含多个事实，也请选择最相关的单一页面，以 \`[p.N]\` 格式引用。列表项也要加引用。
-3. 除了引导/过渡句外，具体事实陈述必须附引用。
-4. 直接复制标签 — 不要猜测页码。不确定时省略。
+1. **在几乎每个关键句子末尾附上来源引用 \`[p.N]\`。**
+2. 即使一句话包含多个事实,也请选择最相关的单一页面。列表项也要加引用。
+3. 直接复制标签 — 不要猜测页码。
 
 **输出示例**:
-- "内存泄漏是由于缺少backpressure导致的[p.12]。解决方案是使用response.pipe(file)[p.13]。"
-- "- 核心概念A：定义如下[p.5]。"
+- "内存泄漏是由于缺少backpressure导致的[p.12]。"
+- "- 核心概念A: 定义如下[p.5]。"
 
 **错误示例 (避免)**:
-- "本文档讨论内存管理。" (具体陈述但无引用 ✗)
-- "关于backpressure的内容[p.5-7]。" (范围标签原样使用 ✗)`,
+- "\`([p.12])\`" (括号包裹 ✗)
+- "- [p.44]" (独立列表项 ✗)
+- "[p.5-7]" (范围标签 ✗)`,
   auto: `## Citation rule (MOST IMPORTANT OUTPUT RULE)
 
-**Each paragraph in the input begins with a \`[p.N]\` page label.** Attach \`[p.N]\` at the end of almost every key sentence, copying verbatim from the paragraph's label. List items need citations too. For range labels pick a single page. Do not fabricate — omit when uncertain.
+**Each paragraph in the input begins with a \`[p.N]\` page label.** Attach \`[p.N]\` at the end of almost every key sentence, copying the label verbatim. List items need citations too. For range labels pick a single page. Never wrap in parentheses like \`([p.5])\`. Never put citations on a standalone line like \`- [p.5]\`. Omit when uncertain.
 
 Example: "Memory leaks occur due to missing backpressure[p.12]. The fix is response.pipe(file)[p.13]."`,
 };

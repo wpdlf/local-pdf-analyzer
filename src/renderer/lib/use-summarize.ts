@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { AiClient } from './ai-client';
 import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
+import { normalizeCitationPlacement } from './citation';
 
 /**
  * 페이지별 텍스트 배열을 받아, 각 단락 앞에 `[p.N] ` inline 마커를 붙여 단일 문자열로 반환.
@@ -489,8 +490,12 @@ export function useSummarize() {
       const durationMs = Date.now() - startTime;
       flushStream();
       const rawContent = useAppStore.getState().summaryStream;
-      // 후처리: 로컬 LLM이 프롬프트 금지 사항을 무시한 대화형 멘트 제거
-      const finalContent = stripConversationalText(rawContent);
+      // 후처리: (1) 대화형 멘트 제거 → (2) 인용 배치 정규화
+      //  - 괄호 감싸기: `([p.5])` → `[p.5]`
+      //  - 독립 라인 bullet 인용: `- [p.44]` → 이전 문장 끝에 부착
+      //  LLM (특히 로컬 Ollama) 이 프롬프트의 금지 패턴을 완전히 따르지 않을 때의 안전망.
+      const strippedContent = stripConversationalText(rawContent);
+      const finalContent = normalizeCitationPlacement(strippedContent);
       if (finalContent !== rawContent) {
         useAppStore.getState().replaceSummaryStream(finalContent);
       }

@@ -9,7 +9,6 @@ import { useT } from '../lib/i18n';
 // 이 모듈이 먼저 import 되면 worker 가 설정 안 된 상태일 수 있어 safeguard.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 if (!(pdfjsLib.GlobalWorkerOptions.workerSrc as any)) {
-  // pdf-parser.ts 가 여전히 primary 설정자. 여기서는 방어적 fallback 만.
   console.warn('[PdfViewer] pdfjs worker not set before mount — pdf-parser 가 먼저 import 되어야 함');
 }
 
@@ -22,12 +21,13 @@ interface PdfViewerProps {
   onClose: () => void;
 }
 
-const MAX_RENDER_SCALE = 1.5;
+const MAX_RENDER_SCALE = 2.0; // 고해상도 디스플레이 대응 상한
+const MIN_RENDER_SCALE = 0.6; // 너무 작은 패널에서도 가독성 유지
 
 /**
- * 간이 PdfViewer — pdfjs canvas 기반 페이지 렌더링.
- * 초기 마운트 시 모든 페이지를 canvas 로 렌더(간단함 vs 메모리 trade-off — 500p 상한 가정)
- * targetPage 변경 시 해당 canvas 로 scrollIntoView.
+ * PdfViewer — pdfjs canvas 기반 페이지 렌더링.
+ * 패널 너비 기반 동적 scale 계산으로 자동 fit.
+ * targetPage 변경 시 해당 페이지로 scrollIntoView.
  */
 export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   const t = useT();
@@ -37,15 +37,15 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   const [totalPages, setTotalPages] = useState<number | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const renderedPagesRef = useRef<Set<number>>(new Set());
 
-  // 1. pdfjs 로 문서 로드 (마운트 1회 — pdfBytes 가 같은 document 라이프사이클에서 불변이라고 가정)
+  // 1. pdfjs 로 문서 로드 (마운트 1회)
   useEffect(() => {
     let cancelled = false;
     let doc: pdfjsLib.PDFDocumentProxy | null = null;
 
     (async () => {
       try {
-        // pdfjs.getDocument 가 Uint8Array 를 소유할 수 있으므로 복사본 전달
         const copy = new Uint8Array(pdfBytes.byteLength);
         copy.set(pdfBytes);
         const loadingTask = pdfjsLib.getDocument({ data: copy });
@@ -67,7 +67,6 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
 
     return () => {
       cancelled = true;
-      // 언마운트 시 pdfjs 인스턴스 해제 (메모리 회수)
       if (pdfDocRef.current) {
         const d = pdfDocRef.current;
         pdfDocRef.current = null;
@@ -82,27 +81,37 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     let cancelled = false;
     const doc = pdfDocRef.current;
 
+    // 패널 너비 기반 동적 scale — 고정 scale 은 좁은 패널에서 확대 표시 문제.
+    const containerWidth = containerRef.current?.clientWidth ?? 800;
+    const availableWidth = Math.max(300, containerWidth - 24);
+
     (async () => {
       for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
         if (cancelled) return;
         const wrapper = pageRefs.current[pageNum - 1];
         if (!wrapper) continue;
-        // 이미 canvas 가 붙어 있으면 스킵 (재렌더 방지)
         if (wrapper.querySelector('canvas')) continue;
         try {
           const page = await doc.getPage(pageNum);
           if (cancelled) return;
-          const viewport = page.getViewport({ scale: MAX_RENDER_SCALE });
+          const naturalViewport = page.getViewport({ scale: 1 });
+          const fitScale = availableWidth / naturalViewport.width;
+          const scale = Math.min(MAX_RENDER_SCALE, Math.max(MIN_RENDER_SCALE, fitScale));
+          const viewport = page.getViewport({ scale });
           const canvas = document.createElement('canvas');
           canvas.width = Math.round(viewport.width);
           canvas.height = Math.round(viewport.height);
-          canvas.className = 'max-w-full h-auto shadow';
+          canvas.className = 'block shadow';
           const ctx = canvas.getContext('2d');
           if (!ctx) continue;
           await page.render({ canvasContext: ctx, viewport }).promise;
           if (cancelled) return;
-          wrapper.innerHTML = ''; // placeholder 제거
+          wrapper.innerHTML = '';
+          wrapper.style.width = `${canvas.width}px`;
+          wrapper.style.height = `${canvas.height}px`;
+          wrapper.style.minHeight = '';
           wrapper.appendChild(canvas);
+          renderedPagesRef.current.add(pageNum);
           try { page.cleanup(); } catch { /* ignore */ }
         } catch (err) {
           if (cancelled) return;
@@ -120,13 +129,35 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   }, [loadState, totalPages, t]);
 
   // 3. targetPage 변경 시 해당 페이지로 scrollIntoView
+  //    해당 페이지가 아직 렌더 안됐으면 폴링으로 대기 (최대 3초)
   useEffect(() => {
     if (loadState !== 'loaded' || !totalPages) return;
     if (targetPage < 1 || targetPage > totalPages) return;
-    const wrapper = pageRefs.current[targetPage - 1];
-    if (wrapper) {
-      wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    const scrollToPage = () => {
+      const wrapper = pageRefs.current[targetPage - 1];
+      if (wrapper) {
+        wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+
+    if (renderedPagesRef.current.has(targetPage)) {
+      scrollToPage();
+      return;
     }
+    let attempts = 0;
+    const maxAttempts = 30;
+    const interval = setInterval(() => {
+      attempts++;
+      if (renderedPagesRef.current.has(targetPage)) {
+        clearInterval(interval);
+        scrollToPage();
+      } else if (attempts >= maxAttempts) {
+        clearInterval(interval);
+        scrollToPage();
+      }
+    }, 100);
+    return () => clearInterval(interval);
   }, [targetPage, loadState, totalPages]);
 
   // 4. ESC 키로 닫기
@@ -189,7 +220,7 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
               <div
                 key={i}
                 ref={(el) => { pageRefs.current[i] = el; }}
-                className="bg-white flex items-center justify-center min-h-[200px] w-full max-w-2xl"
+                className="bg-white flex items-center justify-center min-h-[200px]"
               >
                 <span className="text-xs text-gray-400">
                   {t('pdfviewer.pageOf', { current: i + 1, total: totalPages })}

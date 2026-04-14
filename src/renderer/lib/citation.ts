@@ -8,8 +8,12 @@
  *
  * 'g' flag — matchAll 반복 사용
  * 'i' flag — 대소문자 무시 (LLM 이 간혹 `[P.5]` 출력)
+ *
+ * 파이프 이후의 quote 포맷(`[p.N|...]`)도 관용적으로 허용 — 과거 DR-03 하이라이트 기능에서
+ * 사용한 확장이지만 기능이 제거된 후에도 LLM 이 quote 를 포함할 수 있어, 정규식이 호환적으로
+ * 인식하되 quote 내용은 무시한다. `\s*\|\s*[^\]]*` 는 선택적으로 소비만 한다.
  */
-export const CITATION_REGEX = /\[p\.\s*(\d+)\]/gi;
+export const CITATION_REGEX = /\[p\.\s*(\d+)(?:\s*\|\s*[^\]]*)?\s*\]/gi;
 
 /**
  * safe-markdown 의 text renderer 에서 사용할 단일 세그먼트.
@@ -63,6 +67,57 @@ export function parseCitations(text: string): CitationSegment[] {
     segments.push({ type: 'text', content: text });
   }
   return segments;
+}
+
+/**
+ * LLM 이 자주 어기는 인용 배치 실수를 후처리로 정리.
+ * - `([p.N])` / `( [p.N] )` → `[p.N]` (괄호 stripping — 학술 스타일 관성)
+ * - `(  [p.N|quote]  )` → `[p.N|quote]`
+ * - 독립된 줄의 `- [p.N]` 또는 `* [p.N]` 또는 공백만의 `[p.N]` → 이전 비어있지 않은 줄 끝에 이동
+ *
+ * 스트리밍 도중에는 적용 불가 (부분 토큰 파괴 위험) — 각 청크 스트림 종료 후 호출.
+ */
+export function normalizeCitationPlacement(text: string): string {
+  if (!text) return text;
+  // 1) 괄호로 감싸진 인용 해제: `([p.N])` 또는 `([p.N|quote])` → `[p.N...]`
+  //    `\s*` 로 괄호 내부 공백도 포함. 인용 pattern 은 기존 CITATION_REGEX 와 동일.
+  let result = text.replace(/\(\s*(\[p\.\s*\d+(?:\s*\|\s*[^\]]*?)?\s*\])\s*\)/gi, '$1');
+
+  // 2) 독립적 목록 항목 또는 공백 라인으로 떨어진 인용을 이전 라인 끝으로 이동
+  //    정규식: 줄 시작 (선택적 bullet 기호 + 공백) + 인용 (여러 개 가능) + 공백만 → 끝
+  const lines = result.split('\n');
+  const stripped: string[] = [];
+  const isStandaloneCitationLine = (line: string) =>
+    /^[\s-*•]*(?:\[p\.\s*\d+(?:\s*\|\s*[^\]]*?)?\s*\]\s*[.,]?\s*)+$/i.test(line);
+  for (const line of lines) {
+    if (isStandaloneCitationLine(line)) {
+      // 이 라인의 인용들을 추출 + 이전 비어있지 않은 라인 끝에 부착
+      const citations = Array.from(line.matchAll(/\[p\.\s*\d+(?:\s*\|\s*[^\]]*?)?\s*\]/gi)).map((m) => m[0]);
+      // 바로 위 비어있지 않은 라인 찾기 (역방향)
+      let attached = false;
+      for (let k = stripped.length - 1; k >= 0; k--) {
+        if (stripped[k].trim().length > 0) {
+          // 이전 라인 끝의 구두점 앞에 삽입하거나 끝에 추가
+          const prev = stripped[k];
+          const trailingPuncMatch = prev.match(/[.!?。！？]\s*$/);
+          if (trailingPuncMatch && trailingPuncMatch.index !== undefined) {
+            stripped[k] = prev.slice(0, trailingPuncMatch.index) + citations.join('') + prev.slice(trailingPuncMatch.index);
+          } else {
+            stripped[k] = prev + citations.join('');
+          }
+          attached = true;
+          break;
+        }
+      }
+      // 이전 라인이 없으면 drop (첫 줄이 단독 인용이면 버림)
+      if (!attached) continue;
+    } else {
+      stripped.push(line);
+    }
+  }
+  result = stripped.join('\n');
+
+  return result;
 }
 
 /**

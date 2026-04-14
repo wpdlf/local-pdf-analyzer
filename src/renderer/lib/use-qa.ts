@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { AiClient } from './ai-client';
 import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage } from './chunker';
-import { formatPageLabel } from './citation';
+import { formatPageLabel, normalizeCitationPlacement } from './citation';
 import type { QaMessage } from '../types';
 
 const MAX_QUESTION_LENGTH = 1000;
@@ -437,7 +437,9 @@ export function useQa() {
         postState.flushQaStream();
         postState.clearQaStream();
         if (answer) {
-          postState.addQaMessage({ role: 'assistant', content: answer });
+          // 인용 배치 정규화 — 괄호/독립 라인 후처리 (use-summarize 와 동일)
+          const normalized = normalizeCitationPlacement(answer);
+          postState.addQaMessage({ role: 'assistant', content: normalized });
         }
         completed = true;
       }

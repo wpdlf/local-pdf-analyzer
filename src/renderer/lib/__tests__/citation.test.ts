@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCitations, formatPageLabel, clampCitationPage, CITATION_REGEX } from '../citation';
+import { parseCitations, formatPageLabel, clampCitationPage, CITATION_REGEX, normalizeCitationPlacement } from '../citation';
 
 describe('parseCitations', () => {
   it('단일 인용을 3 세그먼트로 분리한다', () => {
@@ -73,7 +73,87 @@ describe('parseCitations', () => {
     expect(first).toEqual(second);
     expect(second).toEqual(third);
   });
+
+  // 레거시 quote 포맷 호환 — DR-03 하이라이트 기능은 제거됐지만 LLM 이 여전히
+  // `[p.N|quote]` 를 생성할 수 있어 정규식이 이를 인식하되 quote 는 무시해야 함.
+  it('quote 포함 형식 [p.12|원문] 도 page 만 추출 (quote 는 drop)', () => {
+    const segments = parseCitations('결론[p.12|메모리 누수]');
+    const citation = segments.find((s) => s.type === 'citation');
+    expect(citation?.page).toBe(12);
+    // quote 필드 자체가 interface 에서 제거됨
+    expect((citation as { quote?: string }).quote).toBeUndefined();
+  });
+
+  it('quote 포함 + 연속 인용도 정상 파싱', () => {
+    const segments = parseCitations('사실1[p.1|first] 사실2[p.2|second]');
+    const citations = segments.filter((s) => s.type === 'citation');
+    expect(citations).toHaveLength(2);
+    expect(citations.map((c) => c.page)).toEqual([1, 2]);
+  });
 });
+
+describe('normalizeCitationPlacement', () => {
+  it('괄호로 감싸진 인용 `([p.5])` → `[p.5]`', () => {
+    expect(normalizeCitationPlacement('문장 ([p.5]).')).toBe('문장 [p.5].');
+  });
+
+  it('괄호 내부 공백 허용 `( [p.5] )`', () => {
+    expect(normalizeCitationPlacement('문장 ( [p.5] ).')).toBe('문장 [p.5].');
+  });
+
+  it('quote 포함 인용도 괄호 해제 `([p.5|quote])`', () => {
+    expect(normalizeCitationPlacement('문장 ([p.5|원문 조각]).')).toBe('문장 [p.5|원문 조각].');
+  });
+
+  it('여러 괄호 인용 동시 해제', () => {
+    const input = '사실 A ([p.1]). 사실 B ([p.2]).';
+    expect(normalizeCitationPlacement(input)).toBe('사실 A [p.1]. 사실 B [p.2].');
+  });
+
+  it('독립 라인 `- [p.44]` 를 이전 문장 끝에 부착', () => {
+    const input = '핵심 결론은 다음과 같다.\n- [p.44]';
+    const out = normalizeCitationPlacement(input);
+    expect(out).toContain('[p.44]');
+    // 더 이상 독립 bullet 라인이 없어야 함
+    expect(out).not.toMatch(/^-\s*\[p\.44\]/m);
+  });
+
+  it('독립 라인의 여러 인용 모두 이전 라인에 부착', () => {
+    const input = '결론은 중요하다.\n- [p.10]\n- [p.11]';
+    const out = normalizeCitationPlacement(input);
+    expect(out).toContain('[p.10]');
+    expect(out).toContain('[p.11]');
+    expect(out.split('\n').filter((l) => /^-\s*\[p\./.test(l))).toHaveLength(0);
+  });
+
+  it('bullet 없는 단독 `[p.5]` 라인도 부착', () => {
+    const input = '핵심 사실\n[p.5]';
+    const out = normalizeCitationPlacement(input);
+    expect(out).toBe('핵심 사실[p.5]');
+  });
+
+  it('이전 문장 끝 마침표 앞에 삽입', () => {
+    const input = '결론이다.\n- [p.5]';
+    const out = normalizeCitationPlacement(input);
+    expect(out).toBe('결론이다[p.5].');
+  });
+
+  it('정상 인용은 건드리지 않음', () => {
+    const input = '메모리 누수[p.12]. 해결책은 pipe[p.13].';
+    expect(normalizeCitationPlacement(input)).toBe(input);
+  });
+
+  it('빈/공백 입력', () => {
+    expect(normalizeCitationPlacement('')).toBe('');
+    expect(normalizeCitationPlacement('   ')).toBe('   ');
+  });
+
+  it('일반 괄호 표현은 건드리지 않음', () => {
+    const input = '함수 (foo) 는 인자를 받는다[p.3].';
+    expect(normalizeCitationPlacement(input)).toBe(input);
+  });
+});
+
 
 describe('formatPageLabel', () => {
   it('단일 페이지', () => {
