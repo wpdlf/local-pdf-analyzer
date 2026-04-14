@@ -138,6 +138,12 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - **다국어 UI** — 한국어/English 앱 인터페이스 언어 전환 (설정 → 언어)
 - **대용량 PDF 지원** — 긴 문서도 자동으로 나누어 처리 후 통합 요약 (배치 병렬 처리, 최대 500페이지)
 - **설정 저장** — 앱 재시작 후에도 설정 유지
+- **파싱 중 파일 교체** — PDF 분석 도중 다른 파일을 드롭/`Ctrl+O`로 선택하면 이전 작업을 자동 취소하고 새 파일로 전환 (abort-replace)
+- **페이지 단위 손상 복원력** — 깨진 페이지 한 장이 있어도 전체 파싱이 중단되지 않고 나머지 페이지를 계속 처리
+- **렌더 에러 복구** — 예기치 못한 UI 오류 발생 시 "다시 시도" 버튼으로 새로고침 없이 복구 시도 (민감 경로 자동 마스킹)
+- **언어 즉시 전환** — 설정에서 한국어/English 변경 시 전체 화면이 즉시 반영 (재시작 불필요)
+- **매직바이트 기반 PDF 검증** — 파일 전체를 메모리에 로드하기 전에 `%PDF-` 시그니처를 선행 확인하여 잘못된 파일 즉시 거부
+- **단위 테스트 커버리지** — 핵심 RAG 경로(벡터 스토어·청커·surrogate pair 안전성·CJK 오버랩) 회귀 방지 테스트 39건
 
 ## 시스템 요구 사항
 
@@ -164,6 +170,12 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | Q&A에서 답변을 못 함 | RAG 배지가 없으면 `ollama pull nomic-embed-text`로 임베딩 모델을 설치하세요. 키워드 모드에서는 질문에 구체적 용어를 포함해주세요 |
 | RAG 인덱싱이 안 됨 | 첫 실행 셋업을 완료했는지 확인하세요 (nomic-embed-text 자동 설치). 수동 설치: `ollama pull nomic-embed-text` |
 | 모델 추가 후 선택한 모델이 바뀜 | v0.8.2 이상에서 수정됨 — 모델 추가 시 기존 선택이 유지됩니다 |
+| 파싱 중 다른 파일 드롭이 무시됨 | v0.16.2 에서 abort-replace 패턴 적용 — 새 파일이 즉시 우선권을 갖습니다 |
+| 청크 크기 입력이 한 글자씩 거부됨 | v0.16.2 에서 수정됨 — 타이핑 중에는 자유롭게 입력하고 blur 시 1000–16000 범위로 자동 보정됩니다 |
+| 설정에서 언어를 바꿔도 일부 문구가 안 바뀜 | v0.16.2 에서 전체 UI 반응형 전환 — `tr()` 훅 기반으로 렌더 즉시 반영 |
+| API 키 삭제 후에도 Claude/OpenAI 모델이 잔존 | v0.16.2 에서 수정됨 — 키 삭제 시 Ollama + 설치된 모델로 자동 전환 |
+| 요약 복사 버튼이 동작하지 않음 | v0.16.2 에서 `clipboard-sanitized-write` 권한 명시 허용으로 해결 |
+| 화면 오류로 앱이 멈춤 | v0.16.2 에서 ErrorBoundary "다시 시도" 버튼 제공 — 재시작 없이 복구 시도 가능 |
 
 ---
 
@@ -419,6 +431,15 @@ PDF 파일
 | OCR 메모리 폭주 | 페이지 scale 자동 축소, 3000px 상한, OffscreenCanvas GPU 즉시 해제 |
 | Q&A 대화 이력 과다 | 이력 4000자 제한 + 10턴 FIFO, 질문 1000자 상한 |
 | 네트워크 단절 무응답 | HTTP 스트림 `close` 리스너로 비정상 종료 즉시 감지 (120초 대기 없음) |
+| 네비게이션 하이재킹 | `will-navigate` + `will-redirect` 모두 차단 (프로덕션 빌드에서도 정상 동작 검증) |
+| 브라우저 권한 남용 | `setPermissionRequestHandler` 기본 거부, `clipboard-sanitized-write` 만 예외 허용 (복사 기능 유지) |
+| 설치 파일 다운로드 OOM | `response.pipe(file)` backpressure, 500MB 상한 push 전 체크, 부분 다운로드 자동 정리 |
+| `ollama pull` 자식 프로세스 고아화 | `pullProcess` 인스턴스 추적, 앱 종료 시 `taskkill /F /T` (Windows), 재진입 가드 |
+| Vision 에러 바디 메모리 폭주 | 에러 바디 64KB 바이트 cap (push 전 검사) + 초과 시 소켓 즉시 해제 |
+| 렌더 예외 경로 유출 | `AppErrorBoundary` 에서 홈 디렉토리 경로(`C:\Users\...`, `/Users/...`, `/home/...`)를 `~`로 치환 후 500자 truncate |
+| 악성 파일 전량 로드 유도 | `PdfUploader` 가 `file.slice(0,5)` 로 `%PDF-` 매직바이트만 먼저 검사 — 전량 메모리 로드 전에 거부 |
+| UTF-16 surrogate pair split | 청커·RAG 오버랩 모두 codepoint 단위 분할 (이모지/확장 CJK 안전) |
+| 프롬프트 인젝션 (URL scheme) | Markdown allowlist: `https/http/mailto/#`, blocklist: `javascript:`/`data:`/`vbscript:`/`file:` |
 
 ## 라이선스
 

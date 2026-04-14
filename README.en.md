@@ -138,6 +138,12 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Multilingual UI** — Korean/English app interface toggle (Settings -> Language)
 - **Large PDF support** — Long documents auto-split into chunks for batch processing with integrated summary (up to 500 pages)
 - **Persistent settings** — Settings saved across app restarts
+- **Swap files mid-parse** — Drop a different PDF or press `Ctrl+O` while one is being parsed; the previous operation aborts automatically and the new file takes precedence (abort-replace)
+- **Per-page parsing resilience** — One corrupt page no longer aborts the entire document; remaining pages are still processed
+- **Render-error recovery** — Unexpected UI crashes offer a "Try again" button without a full reload (paths auto-masked)
+- **Instant language switch** — Toggling Korean/English in Settings reflects across the whole UI immediately (no restart required)
+- **Magic-byte PDF validation** — `%PDF-` signature is verified before the file is fully loaded into memory, rejecting fakes early
+- **Unit test coverage** — 39 regression tests for RAG core paths (vector store, chunker, surrogate-pair safety, CJK overlap quality)
 
 ## System Requirements
 
@@ -163,6 +169,12 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | Unwanted phrases in summary | v0.10.0+ includes prompt hardening + post-processing filter for auto-removal |
 | Q&A can't answer | If no RAG badge, install embedding model: `ollama pull nomic-embed-text`. In keyword mode, include specific terms |
 | RAG indexing not working | Complete first-run setup (nomic-embed-text auto-installs). Manual: `ollama pull nomic-embed-text` |
+| Dropping a new file during parsing is ignored | Fixed in v0.16.2 via abort-replace — the new file takes precedence immediately |
+| Chunk-size input rejects single keystrokes | Fixed in v0.16.2 — type freely, blur clamps to the 1000–16000 range |
+| Language switch doesn't fully update the UI | Fixed in v0.16.2 — entire UI re-renders via reactive `tr()` hook |
+| Claude/OpenAI model sticks after deleting the API key | Fixed in v0.16.2 — deleting the key auto-switches to Ollama with an installed model |
+| Copy-summary button does nothing | Fixed in v0.16.2 via explicit `clipboard-sanitized-write` permission allow |
+| App freezes on render error | v0.16.2 adds a "Try again" button to the error boundary — recover without restart |
 
 ---
 
@@ -396,6 +408,15 @@ PDF File
 | OCR memory overflow | Auto page scale reduction, 3000px cap, OffscreenCanvas GPU immediate release |
 | Q&A history overflow | History 4000 char limit + 10-turn FIFO, question 1000 char cap |
 | Network stream hang | `res.on('close')` listener detects abnormal termination immediately (no 120s wait) |
+| Navigation hijacking | `will-navigate` + `will-redirect` both blocked (verified to work in packaged builds) |
+| Browser permission abuse | `setPermissionRequestHandler` denies by default, only `clipboard-sanitized-write` explicitly allowed (for the copy button) |
+| Installer download OOM | `response.pipe(file)` backpressure, 500MB cap checked before chunk push, partial downloads auto-deleted |
+| Orphaned `ollama pull` child | `pullProcess` tracked on the instance, `taskkill /F /T` on Windows at app quit, re-entry guard |
+| Vision error body memory blowup | 64KB byte cap on error bodies (checked before push) + immediate socket destroy on overflow |
+| Render-error path leak | `AppErrorBoundary` rewrites home-directory paths (`C:\Users\...`, `/Users/...`, `/home/...`) to `~` and truncates to 500 chars |
+| Malicious full-file allocation | `PdfUploader` reads only the first 5 bytes via `file.slice(0,5)` to verify the `%PDF-` magic — rejects fakes before materializing the full buffer |
+| UTF-16 surrogate pair splits | Chunker and RAG overlap both split on codepoint boundaries (safe for emoji and supplementary CJK) |
+| Prompt injection via URL schemes | Markdown allowlist: `https/http/mailto/#`, blocklist: `javascript:`/`data:`/`vbscript:`/`file:` |
 
 ## License
 
