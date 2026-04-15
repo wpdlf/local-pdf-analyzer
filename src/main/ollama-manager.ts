@@ -128,10 +128,20 @@ export class OllamaManager {
       // 3. 설치 실행 (사용자가 설치 UI에서 완료할 때까지 대기)
       this.sendProgress('Ollama 설치 창이 열립니다. 설치를 완료해주세요...');
       await new Promise<void>((resolve, reject) => {
-        // Start-Process의 -FilePath를 변수로 분리하여 인젝션 방지
+        // PowerShell 의 -Command 플래그는 뒤따르는 argv 를 단일 scriptblock 문자열로 재합치므로,
+        // installerPath 에 공백/한글이 있으면 quote 정보가 소실되어 인스톨러 경로가 여러 토큰으로
+        // 쪼개질 수 있다 (예: C:\Users\John Doe\...\OllamaSetup.exe). 이를 방지하기 위해
+        // path 를 PowerShell single-quote literal 로 직접 감싸 하나의 command 문자열로 전달한다.
+        // PowerShell single-quote 규칙: 내부 `'` 는 `''` 로 escape (path injection 방어).
+        const psQuotedPath = `'${installerPath.replace(/'/g, "''")}'`;
         execFile(
           'powershell',
-          ['-Command', 'Start-Process', '-FilePath', installerPath, '-Verb', 'RunAs', '-Wait'],
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `Start-Process -FilePath ${psQuotedPath} -Verb RunAs -Wait`,
+          ],
           { timeout: 300000 },
           (error) => {
             if (error && !error.message.includes('exited')) reject(error);
