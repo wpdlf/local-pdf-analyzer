@@ -31,6 +31,10 @@ const MIN_RENDER_SCALE = 0.6; // 너무 작은 패널에서도 가독성 유지
  */
 export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   const t = useT();
+  // t 는 UI 언어 변경 시 새 참조가 되어 effect 의존성에 두면 고비용 pdfjs 재렌더를 유발한다.
+  // 렌더 효과에서는 ref 로만 참조해 언어 변경이 재렌더를 트리거하지 않도록 한다.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
@@ -50,8 +54,10 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
 
     (async () => {
       try {
-        const copy = new Uint8Array(pdfBytes.byteLength);
-        copy.set(pdfBytes);
+        // pdfjs.getDocument 는 전달된 버퍼를 내부적으로 transfer 할 수 있어,
+        // store.pdfBytes (원본) 가 detach 되면 이후 재마운트가 실패한다.
+        // 매 마운트마다 store 바이트를 보존할 fresh copy 를 1회만 할당한다.
+        const copy = pdfBytes.slice();
         const loadingTask = pdfjsLib.getDocument({ data: copy });
         doc = await loadingTask.promise;
         if (cancelled) {
@@ -103,6 +109,8 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   }, []);
 
   // 2. 각 페이지 canvas 렌더 (totalPages 설정 후 + 너비 변경 시 재렌더)
+  //    TODO v0.18: 가상 스크롤 도입. 현재는 마운트 즉시 전체 페이지를 순차 렌더하므로
+  //    100+ 페이지 문서에서 렌더 메모리 피크가 커진다 (Design §5.4 Phase 4 목표).
   useEffect(() => {
     if (loadState !== 'loaded' || !pdfDocRef.current || !totalPages) return;
     let cancelled = false;
@@ -152,7 +160,7 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
           if (cancelled) return;
           console.warn(`[PdfViewer] page ${pageNum} render failed:`, err);
           if (wrapper) {
-            wrapper.innerHTML = `<div class="text-xs text-red-500 py-8 text-center">${t('pdfviewer.pageRenderFail')}</div>`;
+            wrapper.innerHTML = `<div class="text-xs text-red-500 py-8 text-center">${tRef.current('pdfviewer.pageRenderFail')}</div>`;
           }
         }
       }
@@ -161,7 +169,7 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     return () => {
       cancelled = true;
     };
-  }, [loadState, totalPages, t, renderVersion]);
+  }, [loadState, totalPages, renderVersion]);
 
   // 3. targetPage 변경 시 해당 페이지로 scrollIntoView
   //    해당 페이지가 아직 렌더 안됐으면 폴링으로 대기 (최대 3초)

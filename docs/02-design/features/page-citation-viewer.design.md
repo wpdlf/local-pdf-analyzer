@@ -207,8 +207,9 @@ status: Draft
 | `use-summarize.ts` | `chunker`, `citation` | page-labeled chunk 프롬프트 |
 | `safe-markdown.tsx` | `citation`, `store` | p/li/td/th/em/strong renderers 에서 인용 파싱·렌더 |
 | `CitationButton.tsx` | `store`, `useT` | 버튼 + 접근성 + i18n |
-| `PdfViewer.tsx` | `pdfjs-dist`, `store` | canvas 기반 가상 스크롤 뷰어 |
-| `SummaryViewer.tsx` | `PdfViewer`, `store` | 우측 패널 레이아웃 |
+| `PdfViewer.tsx` | `pdfjs-dist`, `store`, `useT` | canvas 페이지 리스트 뷰어 (v0.18 가상 스크롤 예정). `ResizeObserver` 기반 debounce 재렌더. |
+| `ResizeHandle.tsx` | `store`, `useT` | DR-01 가로 리사이즈 핸들 (pointer capture + 키보드 Arrow / Home / End + ARIA slider). `store.citationPanelWidth` 구독·갱신 + `localStorage` 영속화. |
+| `SummaryViewer.tsx` | `PdfViewer`, `ResizeHandle`, `store` | 우측 패널 레이아웃. `flexBasis` 로 가변 분배. |
 | `ai-service.ts` (main) | 없음 | 프롬프트 시스템 메시지 확장 |
 
 ---
@@ -393,8 +394,9 @@ interface PdfViewerProps {
 }
 ```
 
-> **Note**: 패널 너비는 SummaryViewer 의 Tailwind `w-1/2` 고정 분할로 처리.
-> 가로 리사이즈 핸들(FR-09 일부)은 v0.17.x 후속 작업으로 deferred (Plan §9 참조).
+> **Note**: 패널 너비는 `store.citationPanelWidth` 상태(기본 50%, 20%~80% clamp)를
+> `flexBasis` 로 적용하며, `ResizeHandle` 컴포넌트가 pointer drag / 키보드 Arrow / Home / End 로 조정한다.
+> 너비는 `localStorage` 에 영속화되어 재시작 후 복원된다 (DR-01, v0.17.2 구현 완료).
 
 ---
 
@@ -422,11 +424,13 @@ interface PdfViewerProps {
 │                          │    ├─ Page 13 canvas   │
 │                          │    └─ Page 14 canvas   │
 └──────────────────────────┴─────────────────────────┘
-    50% (고정)                     50% (고정)
+    가변 (기본 50%)                가변 (기본 50%)
+      ↑ ResizeHandle 드래그 / Arrow·Home·End 로 조정 (20%~80%)
 ```
 
-> **v0.17.0 범위**: 좌/우 패널은 Tailwind `w-1/2` 고정 분할.
-> 가로 리사이즈 핸들(Plan FR-09b)은 v0.17.x 후속 작업 (DR-01).
+> **v0.17.2 범위**: 좌/우 패널은 `store.citationPanelWidth` 기반 `flexBasis` 로 가변 분할.
+> 가로 `ResizeHandle` 컴포넌트(DR-01)가 pointer drag 및 키보드(Arrow / Home / End)를 지원하고,
+> 패널 너비는 `localStorage` 에 저장되어 세션 간 복원된다.
 
 ### 5.2 User Flow
 
@@ -445,22 +449,24 @@ interface PdfViewerProps {
 
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
-| `PdfViewer` | `src/renderer/components/PdfViewer.tsx` | pdfjs canvas 렌더링, 페이지 스크롤, lazy load, destroy on unmount |
+| `PdfViewer` | `src/renderer/components/PdfViewer.tsx` | pdfjs canvas 렌더링, 페이지 스크롤, ResizeObserver 기반 재렌더, destroy on unmount |
 | `CitationButton` | `src/renderer/components/CitationButton.tsx` | `[p.N]` 인라인 버튼, 접근성, i18n, click dispatch |
-| `SummaryViewer` | (수정) | 우측 패널 슬롯 + citationTarget 구독 |
+| `ResizeHandle` | `src/renderer/components/ResizeHandle.tsx` | DR-01 가로 리사이즈 핸들. pointer drag / 키보드(Arrow / Home / End) / ARIA slider. `store.citationPanelWidth` 를 구독·갱신하고 `localStorage` 에 영속화 |
+| `SummaryViewer` | (수정) | 우측 패널 슬롯 + citationTarget 구독 + `flexBasis` 분배 + `ResizeHandle` 통합 |
 | `safeComponents.{p,li,td,th,em,strong}` | (신규 추가) | react-markdown 9 의 text-bearing 블록 컴포넌트 6개에 `renderWithCitations` 헬퍼를 적용. (react-markdown 9 는 `text` 키를 노출하지 않으므로 부모 블록을 가로채는 방식이 필요) |
 
 ### 5.4 Page UI Checklist
 
 #### SummaryViewer (수정)
 
-- [ ] 기존 요약 스트리밍 영역 유지 (상단 좌측 50%)
-- [ ] `citationTarget !== null` 일 때만 우측 50% 에 `<PdfViewer />` 마운트
+- [ ] 기존 요약 스트리밍 영역 유지 (좌측 패널, `flexBasis` 가변 분배 — 기본 50%)
+- [ ] `citationTarget !== null` 일 때만 우측 패널(`flexBasis` 가변 — 기본 50%, 20%~80% clamp)에 `<PdfViewer />` 마운트 + 좌/우 사이 `<ResizeHandle />` 삽입
 - [ ] `citationTarget === null` 일 때는 기존과 동일한 full-width 레이아웃
 - [ ] 인용 버튼(`<CitationButton>`)이 ReactMarkdown 내부에 인라인 버튼으로 렌더
 - [ ] 인용 버튼 키보드 포커스 가능 + `aria-label={t('citation.aria', { page: N })}`
 - [ ] 인용 버튼 hover 시 `title="p.{N} 페이지 보기"` 툴팁
 - [ ] 패널 열린 상태에서 `Esc` 키 → 패널 닫기
+- [ ] 패널 너비 (`store.citationPanelWidth`) 가 `localStorage` 에 영속화되어 세션 간 복원
 
 #### QaChat (수정)
 
@@ -471,7 +477,7 @@ interface PdfViewerProps {
 #### PdfViewer (신규)
 
 - [ ] 상단바: 파일명 + 현재 페이지 / 총 페이지 표시 + 닫기 `×` 버튼
-- [ ] 메인: 세로 스크롤 canvas 리스트 (가시 페이지만 렌더 — 간이 가상화)
+- [ ] 메인: 세로 스크롤 canvas 리스트 (전체 페이지 즉시 순차 렌더 — v0.18 가상 스크롤 예정)
 - [ ] `targetPage` prop 변경 시 해당 페이지로 `scrollIntoView({ block: 'start' })`
 - [ ] 로딩 스피너 (pdfjs getDocument 중)
 - [ ] 에러 메시지 (pdf 로드 실패 시)
@@ -632,6 +638,7 @@ Electron 앱의 전통적 레이어:
 |-----------|-------|----------|
 | `CitationButton` | Presentation | `src/renderer/components/CitationButton.tsx` |
 | `PdfViewer` | Presentation | `src/renderer/components/PdfViewer.tsx` |
+| `ResizeHandle` (DR-01) | Presentation | `src/renderer/components/ResizeHandle.tsx` |
 | `SummaryViewer` (수정) | Presentation | `src/renderer/components/SummaryViewer.tsx` |
 | `safeComponents.{p,li,td,th,em,strong}` (수정) | Presentation | `src/renderer/lib/safe-markdown.tsx` |
 | `use-qa.ts` (수정) | Application | `src/renderer/lib/use-qa.ts` |
@@ -683,7 +690,8 @@ src/
 │   ├── components/
 │   │   ├── PdfViewer.tsx          ← NEW
 │   │   ├── CitationButton.tsx     ← NEW
-│   │   └── SummaryViewer.tsx      ← MODIFIED (right panel slot)
+│   │   ├── ResizeHandle.tsx       ← NEW (DR-01, v0.17.2)
+│   │   └── SummaryViewer.tsx      ← MODIFIED (right panel slot + flexBasis + ResizeHandle)
 │   │
 │   ├── lib/
 │   │   ├── citation.ts            ← NEW (pure functions + regex)
@@ -692,7 +700,7 @@ src/
 │   │   ├── use-qa.ts              ← MODIFIED (page-labeled context)
 │   │   ├── use-summarize.ts       ← MODIFIED (page-labeled chunks)
 │   │   ├── safe-markdown.tsx      ← MODIFIED (text renderer with parseCitations)
-│   │   ├── store.ts               ← MODIFIED (+citationTarget)
+│   │   ├── store.ts               ← MODIFIED (+citationTarget, +citationPanelWidth)
 │   │   ├── i18n.ts                ← MODIFIED (+citation.* keys)
 │   │   └── __tests__/
 │   │       ├── citation.test.ts   ← NEW
@@ -718,10 +726,11 @@ src/
 11. [ ] **use-summarize.ts** — 청크 프롬프트에 page 라벨 부착
 12. [ ] **safe-markdown.tsx** — p/li/td/th/em/strong 컴포넌트 오버라이드에서 `renderWithCitations` 헬퍼로 parseCitations 적용 (react-markdown 9 는 `text` 키 미제공)
 13. [ ] **CitationButton.tsx** — 인라인 버튼 구현
-14. [ ] **PdfViewer.tsx** — pdfjs 기반 뷰어 + 스크롤 로직
-15. [ ] **SummaryViewer.tsx** — 우측 패널 슬롯 + citationTarget 구독 + ESC 닫기
-16. [ ] **전체 빌드 + 39 + 신규 테스트 pass**
-17. [ ] **수동 smoke test (한국어 5p)**
+14. [ ] **PdfViewer.tsx** — pdfjs 기반 뷰어 + 스크롤 로직 + ResizeObserver debounce 재렌더
+15. [ ] **ResizeHandle.tsx** (DR-01, v0.17.2) — pointer capture / 키보드 Arrow·Home·End / ARIA slider, `store.citationPanelWidth` 구독·갱신 + `localStorage` 영속화
+16. [ ] **SummaryViewer.tsx** — 우측 패널 슬롯 + citationTarget 구독 + ESC 닫기 + `flexBasis` 가변 분배 + `<ResizeHandle />` 통합
+17. [ ] **전체 빌드 + 39 + 신규 테스트 pass**
+18. [ ] **수동 smoke test (한국어 5p)**
 
 ### 11.3 Session Guide
 
@@ -754,3 +763,5 @@ src/
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
 | 0.1 | 2026-04-14 | 초안 작성 (PDCA Design phase, Option C 선택) | jjw |
+| 0.2 | 2026-04-15 | DR-01 구현 반영 — §4.3 / §5.1 / §5.3 에 `ResizeHandle` · `citationPanelWidth` · `flexBasis` 기재. §5.4 가상화 표기를 실제 동작(전체 즉시 렌더)과 정합하도록 정정 | jjw |
+| 0.3 | 2026-04-15 | 라운드 2 gap 제거 — §2.3 Dependencies 테이블에 `ResizeHandle` 행 추가 및 `PdfViewer` / `SummaryViewer` 의존성 갱신, §5.4 SummaryViewer 체크리스트의 "50% 고정" 잔존 표현을 `flexBasis` 가변 분배로 정정, §9.4 Layer Assignment 에 `ResizeHandle` 행 신설, §11.1 File Structure 에 `ResizeHandle.tsx` 및 store `citationPanelWidth` 반영, §11.2 Implementation Order 에 ResizeHandle 단계(#15) 삽입 | jjw |

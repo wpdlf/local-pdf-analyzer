@@ -1,18 +1,22 @@
 import type { Chapter } from '../types';
 
 /**
- * 한글 비율에 따라 토큰당 문자 수를 동적으로 계산
- * 영어: ~4 chars/token, 한글: ~1.5 chars/token
+ * CJK(한글·한자·일본어 가나) 비율에 따라 토큰당 문자 수를 동적으로 계산
+ * 영어: ~4 chars/token, CJK: ~1.5 chars/token
+ *
+ * 이전에는 한글만 감지해 일본/중국어 문서에서 청크 크기가 과대평가되어
+ * LLM 컨텍스트 상한을 초과하는 위험이 있었다 (M2, 2026-04-15).
  *
  * export 이유: use-summarize.ts의 통합 요약 단계에서도 동일한 추정식이 필요.
  * 한쪽만 수정 시 불일치가 발생하지 않도록 단일 구현을 공유.
  */
 export function estimateCharsPerToken(text: string): number {
   const sample = text.slice(0, 2000);
-  const koreanChars = (sample.match(/[\uAC00-\uD7AF\u3130-\u318F\u1100-\u11FF]/g) || []).length;
-  const koreanRatio = koreanChars / Math.max(sample.length, 1);
-  // 한글 비율이 높을수록 토큰당 문자 수 감소
-  return Math.max(1.5, 4 - (koreanRatio * 2.5)); // 100% 한글 → 1.5, 0% 한글 → 4
+  // 한글 완성형 + 자모 + 일본어 히라가나/가타카나 + CJK 통합한자
+  const cjkChars = (sample.match(/[\uAC00-\uD7AF\u3130-\u318F\u1100-\u11FF\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g) || []).length;
+  const cjkRatio = cjkChars / Math.max(sample.length, 1);
+  // CJK 비율이 높을수록 토큰당 문자 수 감소
+  return Math.max(1.5, 4 - (cjkRatio * 2.5)); // 100% CJK → 1.5, 0% CJK → 4
 }
 
 /**
@@ -49,7 +53,13 @@ function tailAtBoundary(text: string, targetChars: number): string {
   for (let i = startIdx; i < chars.length - 1; i++) {
     if (i < minAcceptIdx) continue;
     const c = chars[i];
-    if (c === ' ' || c === '\n' || c === '\t' || c === '.' || c === '!' || c === '?' || c === '。' || c === '，' || c === ',') {
+    // CJK 문장부호도 경계로 허용 — 일/중 PDF 에서 overlap 품질 향상 (L2, 2026-04-15)
+    if (
+      c === ' ' || c === '\n' || c === '\t' ||
+      c === '.' || c === '!' || c === '?' || c === ',' ||
+      c === '。' || c === '，' || c === '！' || c === '？' ||
+      c === '、' || c === '：' || c === '；' || c === ':'
+    ) {
       return chars.slice(i + 1).join('');
     }
   }
@@ -99,6 +109,98 @@ export function chunkText(
 }
 
 /**
+ * 내부 헬퍼: 오버랩 청크 분할을 **원본 텍스트 오프셋과 함께** 수행.
+ * `chunkTextWithOverlap` (문자열만) 과 `chunkTextWithOverlapByPage` (페이지 매핑) 가
+ * 동일한 분할 로직을 공유하도록 단일 소스. (M4, 2026-04-15 refactor)
+ *
+ * 반환 각 항목:
+ * - text: 최종 청크 문자열 (prevTail 포함, trim 완료)
+ * - bodyStart / bodyEnd: prevTail 을 **제외한** body 가 원본에서 차지하는 [start, end) 범위
+ * - tailStart: prevTail 이 원본에서 시작하는 위치 (없으면 -1)
+ *
+ * 페이지 매핑 시 `tailStart >= 0` 이면 거기부터, 아니면 `bodyStart` 부터 포함.
+ */
+interface ChunkOffsetResult {
+  text: string;
+  bodyStart: number;
+  bodyEnd: number;
+  tailStart: number;
+}
+
+function chunkTextWithOverlapOffsets(
+  text: string,
+  maxChunkSize: number,
+  overlapRatio: number,
+): ChunkOffsetResult[] {
+  if (!text || !text.trim()) return [];
+  const charsPerToken = estimateCharsPerToken(text);
+  const maxChars = Math.max(200, Math.floor(maxChunkSize * charsPerToken));
+  const overlapChars = Math.floor(maxChars * overlapRatio);
+  const effectiveMax = maxChars + overlapChars;
+
+  if (text.length <= maxChars) {
+    return [{ text, bodyStart: 0, bodyEnd: text.length, tailStart: -1 }];
+  }
+
+  // 원본에서 paragraph 경계(start, end) 를 추적 — split 이 위치 정보를 버리므로 matchAll 사용
+  interface Para { start: number; end: number; }
+  const paras: Para[] = [];
+  let pos = 0;
+  for (const m of text.matchAll(/\n\n+/g)) {
+    paras.push({ start: pos, end: m.index as number });
+    pos = (m.index as number) + m[0].length;
+  }
+  paras.push({ start: pos, end: text.length });
+
+  const results: ChunkOffsetResult[] = [];
+  let bodyStart = -1;
+  let bodyEnd = -1;
+  let prevTail = '';
+  let prevTailStart = -1;
+
+  const flush = () => {
+    if (bodyStart < 0 || bodyEnd <= bodyStart) return;
+    const body = text.slice(bodyStart, bodyEnd);
+    const raw = prevTail ? prevTail + '\n\n' + body : body;
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    if (trimmed.length <= effectiveMax) {
+      results.push({ text: trimmed, bodyStart, bodyEnd, tailStart: prevTail ? prevTailStart : -1 });
+    } else {
+      // 거대한 단일 단락 → codepoint 경계 분할. 페이지 범위는 동일하게 부여(근사).
+      const parts = splitByCodepoint(trimmed, effectiveMax);
+      for (const p of parts) {
+        results.push({ text: p, bodyStart, bodyEnd, tailStart: prevTail ? prevTailStart : -1 });
+      }
+    }
+  };
+
+  for (const para of paras) {
+    if (bodyStart < 0) {
+      bodyStart = para.start;
+      bodyEnd = para.end;
+      continue;
+    }
+    const bridgeLen = prevTail ? prevTail.length + 2 : 0;
+    const candidateLen = bridgeLen + (para.end - bodyStart);
+    if (candidateLen > effectiveMax && bodyEnd > bodyStart) {
+      flush();
+      // 다음 청크의 오버랩 tail 을 현재 body 에서 계산
+      const body = text.slice(bodyStart, bodyEnd);
+      prevTail = overlapChars > 0 ? tailAtBoundary(body, overlapChars) : '';
+      // prevTail 은 body 의 접미사이므로 원본 오프셋 = bodyEnd - prevTail.length
+      prevTailStart = prevTail ? bodyEnd - prevTail.length : -1;
+      bodyStart = para.start;
+      bodyEnd = para.end;
+    } else {
+      bodyEnd = para.end;
+    }
+  }
+  flush();
+  return results;
+}
+
+/**
  * RAG용 오버랩 청크 분할
  * 작은 청크 + 10% 오버랩으로 검색 정확도 향상
  */
@@ -107,44 +209,7 @@ export function chunkTextWithOverlap(
   maxChunkSize: number = 500,
   overlapRatio: number = 0.1,
 ): string[] {
-  if (!text || !text.trim()) return [];
-  const charsPerToken = estimateCharsPerToken(text);
-  const maxChars = Math.max(200, Math.floor(maxChunkSize * charsPerToken));
-  const overlapChars = Math.floor(maxChars * overlapRatio);
-  // 오버랩을 포함한 실제 청크 한도 — 오버랩 추가로 인한 초과 방지
-  const effectiveMax = maxChars + overlapChars;
-
-  if (text.length <= maxChars) {
-    return [text];
-  }
-
-  const chunks: string[] = [];
-  const paragraphs = text.split(/\n\n+/);
-  let current = '';
-  let prevTail = '';
-
-  for (const para of paragraphs) {
-    const candidate = current ? current + '\n\n' + para : para;
-
-    if (candidate.length > effectiveMax && current.length > 0) {
-      chunks.push(current.trim());
-      // tail 은 단어/문장 경계 우선 추출 — 단어 중간 cut 시 RAG 검색 정확도 저하.
-      // tailAtBoundary 가 surrogate pair 와 CJK 경계를 모두 존중.
-      prevTail = overlapChars > 0 ? tailAtBoundary(current, overlapChars) : '';
-      current = prevTail ? prevTail + '\n\n' + para : para;
-    } else {
-      current = candidate;
-    }
-  }
-
-  if (current.trim()) {
-    chunks.push(current.trim());
-  }
-
-  // 단일 단락이 effectiveMax를 초과하는 경우 codepoint 단위로 강제 분할 (surrogate pair 안전)
-  return chunks.flatMap((chunk) =>
-    chunk.length > effectiveMax ? splitByCodepoint(chunk, effectiveMax) : [chunk],
-  );
+  return chunkTextWithOverlapOffsets(text, maxChunkSize, overlapRatio).map((c) => c.text);
 }
 
 /**
@@ -181,12 +246,13 @@ const PAGE_SEPARATOR = '\n\n';
 /**
  * 페이지별 텍스트 배열을 오버랩 청크로 분할하면서 각 청크의 page 범위를 계산.
  *
- * 알고리즘:
+ * 알고리즘 (v0.17.3 M4 refactor):
  * 1. 각 페이지의 시작 character offset 을 누적 계산 (pageOffsets)
- * 2. 전체 텍스트를 join 후 기존 `chunkTextWithOverlap` 로 분할 (회귀 위험 최소)
- * 3. 각 청크의 시작 offset 을 원본에서 indexOf 로 찾아 pageOffsets 와 이진 탐색
- * 4. 오버랩 청크는 여러 페이지에 걸쳐 있을 수 있으므로 pageStart ~ pageEnd 범위 반환
+ * 2. `chunkTextWithOverlapOffsets` 로 청크 분할과 동시에 원본 오프셋을 **직접** 획득
+ *    (이전: `indexOf` 폴백 — 반복 구문에서 잘못된 위치 매칭 위험)
+ * 3. 각 청크의 `tailStart` / `bodyStart..bodyEnd` 를 pageOffsets 와 이진 탐색해 1-based 페이지 범위로 변환
  *
+ * 오버랩이 있는 청크는 앞 페이지의 tail 을 포함하므로 `pageStart` 는 tail 의 위치부터 산정.
  * 빈 pageTexts 는 빈 배열 반환.
  */
 export function chunkTextWithOverlapByPage(
@@ -203,12 +269,11 @@ export function chunkTextWithOverlapByPage(
     pageOffsets.push(cursor);
     cursor += pageText.length + PAGE_SEPARATOR.length;
   }
-  const totalEnd = cursor - PAGE_SEPARATOR.length; // 마지막 separator 제거
 
-  // 2. 전체 텍스트 구성 후 기존 청크 분할
+  // 2. 전체 텍스트 + 오프셋 추적 청크 분할
   const fullText = pageTexts.join(PAGE_SEPARATOR);
-  const textChunks = chunkTextWithOverlap(fullText, maxChunkSize, overlapRatio);
-  if (textChunks.length === 0) return [];
+  const offsetChunks = chunkTextWithOverlapOffsets(fullText, maxChunkSize, overlapRatio);
+  if (offsetChunks.length === 0) return [];
 
   // 3. 오프셋 → 페이지 번호 (1-based) 로 변환하는 헬퍼
   const offsetToPage = (offset: number): number => {
@@ -228,34 +293,17 @@ export function chunkTextWithOverlapByPage(
     return best + 1; // 1-based
   };
 
-  // 4. 각 청크의 시작/끝 오프셋을 찾아 page 범위 계산.
-  //    chunkTextWithOverlap 은 trim 후 push 하므로 정확한 offset 복구를 위해
-  //    searchFrom 을 단조 증가시키며 indexOf 로 탐색 (각 청크는 원본에 순서대로 등장).
+  // 4. 각 청크의 오프셋 → 페이지 범위로 변환
   const result: PageChunk[] = [];
-  let searchFrom = 0;
-  for (const chunk of textChunks) {
-    // 빈 청크는 스킵 (방어)
-    if (!chunk) continue;
-    const start = fullText.indexOf(chunk, searchFrom);
-    if (start === -1) {
-      // 방어: 오버랩/정규화 때문에 못 찾는 경우 전체 페이지 범위로 fallback
-      result.push({
-        text: chunk,
-        pageStart: 1,
-        pageEnd: pageTexts.length,
-      });
-      continue;
-    }
-    const end = Math.min(start + chunk.length - 1, totalEnd);
-    const pageStart = offsetToPage(start);
-    const pageEnd = offsetToPage(end);
-    result.push({
-      text: chunk,
-      pageStart,
-      pageEnd: Math.max(pageStart, pageEnd),
-    });
-    // 다음 탐색 시작점은 현재 청크의 중간 이후 (오버랩 청크가 뒤로 이동하는 것 보장)
-    searchFrom = start + Math.max(1, Math.floor(chunk.length / 2));
+  for (const c of offsetChunks) {
+    if (!c.text) continue;
+    // tailStart >= 0 이면 overlap tail 이 있음 → 그 페이지부터 포함
+    const chunkStart = c.tailStart >= 0 ? c.tailStart : c.bodyStart;
+    // bodyEnd 는 exclusive → 마지막 문자는 bodyEnd - 1
+    const chunkEndChar = Math.max(chunkStart, c.bodyEnd - 1);
+    const pageStart = offsetToPage(chunkStart);
+    const pageEnd = Math.max(pageStart, offsetToPage(chunkEndChar));
+    result.push({ text: c.text, pageStart, pageEnd });
   }
 
   return result;
