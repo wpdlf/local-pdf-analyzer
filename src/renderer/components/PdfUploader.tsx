@@ -66,7 +66,9 @@ export function PdfUploader() {
           message: t('uploader.multipleFiles', { name: file.name }),
         });
       }
-      handleFile(file);
+      handleFile(file).catch((err) => {
+        setError({ code: 'PDF_PARSE_FAIL', message: err instanceof Error ? err.message : String(err) });
+      });
     },
     [handleFile, isParsing, setError, t],
   );
