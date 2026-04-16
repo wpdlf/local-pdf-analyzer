@@ -92,7 +92,7 @@ export class OllamaManager {
     return { success: false, error: '지원하지 않는 운영체제입니다.' };
   }
 
-  /** 다운로드 파일의 SHA-256 해시를 계산합니다 (무결성 추적용, 자동 검증 아님) */
+  /** 다운로드 파일의 SHA-256 해시를 계산합니다 (로깅 + 에러 진단용) */
   private async computeFileHash(filePath: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const hash = crypto.createHash('sha256');
@@ -107,6 +107,47 @@ export class OllamaManager {
     });
   }
 
+  /**
+   * Windows Authenticode 서명 검증 (v0.17.7, 보안 M1).
+   * 다운로드한 인스톨러가 Ollama 발행자의 유효한 서명을 갖는지 확인.
+   * SHA-256 pinning 대비 장점: Ollama 버전 bump 시 bkit 릴리즈 없이도 지속 동작.
+   * 실패 시 invalid → 인스톨러 실행 거부.
+   */
+  private async verifyInstallerSignature(filePath: string): Promise<{ valid: boolean; subject?: string; reason?: string }> {
+    return new Promise((resolve) => {
+      // PowerShell single-quote escape (installWindows 와 동일 규칙)
+      const psQuotedPath = `'${filePath.replace(/'/g, "''")}'`;
+      // Status 가 'Valid' 여야 하고, Subject 에 Ollama 발행자 CN 이 포함되어야 함
+      const script = `$s = Get-AuthenticodeSignature -FilePath ${psQuotedPath}; if ($s.Status -ne 'Valid') { Write-Output "STATUS:$($s.Status)"; exit } $subj = $s.SignerCertificate.Subject; Write-Output "OK:$subj"`;
+      execFile(
+        'powershell',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        { timeout: 30000 },
+        (err, stdout) => {
+          if (err) {
+            resolve({ valid: false, reason: `PowerShell 실패: ${err.message}` });
+            return;
+          }
+          const out = String(stdout).trim();
+          if (out.startsWith('OK:')) {
+            const subject = out.slice('OK:'.length);
+            // 발행자 CN 에 "Ollama" 포함 (대소문자 무관). 여러 법인명 변형(Ollama, Ollama Inc, Ollama, Inc.) 수용.
+            const isOllama = /CN=[^,]*Ollama/i.test(subject);
+            if (isOllama) {
+              resolve({ valid: true, subject });
+            } else {
+              resolve({ valid: false, subject, reason: '서명자가 Ollama 가 아님' });
+            }
+          } else if (out.startsWith('STATUS:')) {
+            resolve({ valid: false, reason: `서명 상태: ${out.slice('STATUS:'.length)}` });
+          } else {
+            resolve({ valid: false, reason: `알 수 없는 출력: ${out.slice(0, 100)}` });
+          }
+        },
+      );
+    });
+  }
+
   private async installWindows(): Promise<{ success: boolean; error?: string }> {
     const installerUrl = 'https://ollama.com/download/OllamaSetup.exe';
     const installerPath = path.join(app.getPath('temp'), 'OllamaSetup.exe');
@@ -116,7 +157,7 @@ export class OllamaManager {
       this.sendProgress('Ollama 인스톨러 다운로드 중...');
       await this.downloadFile(installerUrl, installerPath);
 
-      // 2. 다운로드 무결성 검증
+      // 2. 다운로드 무결성 검증 (크기 + Authenticode 서명)
       this.sendProgress('다운로드 무결성 검증 중...');
       const hash = await this.computeFileHash(installerPath);
       const stat = fs.statSync(installerPath);
@@ -124,6 +165,14 @@ export class OllamaManager {
         fs.unlinkSync(installerPath);
         return { success: false, error: `다운로드 파일이 비정상적으로 작습니다 (${stat.size} bytes). 네트워크를 확인 후 다시 시도해주세요. (sha256:${hash.slice(0, 16)}...)` };
       }
+      // v0.17.7 (M1): Authenticode 서명 검증 — Ollama 발행자 인증서로 서명되었는지 확인
+      const sig = await this.verifyInstallerSignature(installerPath);
+      if (!sig.valid) {
+        console.error(`[Ollama] Installer signature verification FAILED: ${sig.reason || sig.subject || 'unknown'} (sha256:${hash})`);
+        fs.unlinkSync(installerPath);
+        return { success: false, error: `Ollama 인스톨러 서명 검증에 실패했습니다 (${sig.reason || '알 수 없는 서명자'}). 안전을 위해 설치가 중단되었습니다. https://ollama.com 에서 직접 다운로드 후 수동 설치해주세요.` };
+      }
+      console.log(`[Ollama] Installer Authenticode verified: ${sig.subject}`);
 
       // 3. 설치 실행 (사용자가 설치 UI에서 완료할 때까지 대기)
       this.sendProgress('Ollama 설치 창이 열립니다. 설치를 완료해주세요...');

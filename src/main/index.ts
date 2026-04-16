@@ -85,6 +85,8 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
+      devTools: !app.isPackaged,
     },
     title: '',
   });
@@ -100,6 +102,10 @@ function createWindow(): BrowserWindow {
       return;
     }
     cb(false);
+  });
+  // v0.17.7 (Hardening 3): permission.query() 를 통한 capability probing 차단
+  win.webContents.session.setPermissionCheckHandler((_wc, permission) => {
+    return permission === 'clipboard-sanitized-write';
   });
 
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
@@ -184,6 +190,22 @@ function createWindow(): BrowserWindow {
   });
 
   return win;
+}
+
+// v0.17.7 (Hardening 5): 이중 인스턴스 방지 — 두 번째 실행은 첫 번째에 포커스 위임.
+// settingsWriteChain 은 프로세스 내부 직렬화만 보장하므로, 이중 실행 시 settings.json
+// 및 api-keys.enc 의 경쟁적 쓰기를 원천 차단.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const windows = BrowserWindow.getAllWindows();
+    if (windows[0]) {
+      if (windows[0].isMinimized()) windows[0].restore();
+      windows[0].focus();
+    }
+  });
 }
 
 app.whenReady().then(async () => {
@@ -595,8 +617,9 @@ function registerIpcHandlers(): void {
   }
 
   function validateImageBase64(imageBase64: unknown): imageBase64 is string {
+    // v0.17.7 (M2): 불필요한 \n 허용 제거 + padding 위치 제한 (종단 0~2자만)
     return typeof imageBase64 === 'string' && imageBase64.length > 0
-      && imageBase64.length <= 10 * 1024 * 1024 && /^[A-Za-z0-9+/\n]+=*$/.test(imageBase64);
+      && imageBase64.length <= 10 * 1024 * 1024 && /^[A-Za-z0-9+/]+={0,2}$/.test(imageBase64);
   }
 
   ipcMain.handle('ai:analyze-image', async (_event, imageBase64: string) => {
@@ -719,14 +742,21 @@ function registerIpcHandlers(): void {
     return null;
   });
 
-  const ALLOWED_EXTERNAL_DOMAINS = ['ollama.com', 'anthropic.com', 'openai.com', 'github.com'];
+  // v0.17.7 (Hardening 2): 정확 호스트명 매칭으로 변경 — suffix 매칭은
+  // gist.github.com 등 사용자 콘텐츠 도메인까지 허용하는 문제가 있었음
+  const ALLOWED_EXTERNAL_HOSTS = new Set([
+    'ollama.com', 'www.ollama.com',
+    'anthropic.com', 'www.anthropic.com', 'console.anthropic.com', 'docs.anthropic.com',
+    'openai.com', 'www.openai.com', 'platform.openai.com',
+    'github.com', 'www.github.com',
+  ]);
 
   ipcMain.handle('shell:open-external', async (_event, url: string) => {
     if (typeof url !== 'string') return;
     try {
       const parsed = new URL(url);
       if (parsed.protocol !== 'https:') return;
-      if (!ALLOWED_EXTERNAL_DOMAINS.some(d => parsed.hostname === d || parsed.hostname.endsWith('.' + d))) return;
+      if (!ALLOWED_EXTERNAL_HOSTS.has(parsed.hostname)) return;
       await shell.openExternal(url);
     } catch { /* 유효하지 않은 URL 무시 */ }
   });
