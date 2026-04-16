@@ -21,9 +21,14 @@
 
 > **[최신 버전 다운로드](https://github.com/wpdlf/local-pdf-analyzer/releases/latest)**
 
-1. 위 링크에서 `PDF.Setup.x.x.x.exe`를 다운로드합니다
-2. 다운로드한 파일을 실행하여 설치합니다
-3. 바탕화면 바로가기 또는 시작 메뉴에서 앱을 실행합니다
+| 플랫폼 | 파일 |
+|---|---|
+| **Windows** | `Local-PDF-Analyzer-Setup-x.x.x.exe` |
+| **macOS** | `Local-PDF-Analyzer-x.x.x.dmg` |
+
+1. 위 링크에서 사용 중인 OS 에 맞는 설치 파일을 다운로드합니다
+2. 다운로드한 파일을 실행하여 설치합니다 (macOS: dmg 마운트 → Applications 폴더로 드래그)
+3. 바탕화면 바로가기 또는 시작 메뉴(Windows) / Launchpad(macOS)에서 앱을 실행합니다
 4. 첫 실행 시 AI 엔진(Ollama)과 한국어 특화 모델(gemma3, exaone3.5) + RAG 임베딩 모델(nomic-embed-text)이 자동 설치됩니다 — 안내를 따라 진행해주세요
 
 > **참고**: AI 모델 다운로드에 약 8GB의 디스크 공간과 수 분의 시간이 필요합니다.
@@ -162,7 +167,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 
 ## 시스템 요구 사항
 
-- Windows 10 이상
+- **Windows 10 이상** 또는 **macOS 12 (Monterey) 이상**
 - 디스크 공간 최소 8GB (AI 모델 저장용, Ollama 사용 시)
 - 인터넷 연결 (첫 설치 시 및 유료 API 사용 시)
 - PDF 제한: 최대 100MB, 최대 500페이지 (초과 시 문서 분할 권장)
@@ -212,8 +217,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | PDF 파싱 | pdfjs-dist (위치 기반 텍스트 추출 + 이미지 추출, 한글 최적화) |
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
-| 빌드 | electron-vite + electron-builder (NSIS) |
-| 테스트 | Vitest (19개 단위 테스트) + `tsc --noEmit` strict 타입 체크 |
+| 빌드 | electron-vite + electron-builder (Windows NSIS + macOS DMG) |
+| 테스트 | Vitest (82개 단위 테스트) + `tsc --noEmit` strict 타입 체크 |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화, 메모리 캐시로 hot path 최적화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -261,7 +266,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (19개)
+    │   └── __tests__/         # 단위 테스트 (82개)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -439,7 +444,11 @@ PDF 파일
 | Ollama SSRF | localhost만 허용 (`validateOllamaUrl`), http/https만 허용 |
 | PDF 드롭 경로 조작 | `will-navigate` 차단, `file://` + `.pdf` 확장자만 허용, `lstat` 심볼릭 링크 거부 (악성 `.pdf` 링크가 시스템 파일 가리키는 공격 차단) |
 | IPC 입력값 조작 | 모든 IPC 핸들러에서 타입/범위/길이 검증, 공유 상수 모듈로 main/renderer drift 방지 |
-| 외부 URL 열기 | 허용 도메인 화이트리스트 (ollama.com, anthropic.com, openai.com, github.com) |
+| 외부 URL 열기 | 정확 호스트명 화이트리스트 (`Set.has()` 매칭 — suffix 매칭 제거로 UGC 도메인 차단) |
+| Ollama 인스톨러 변조 | Authenticode 서명 검증 (v0.17.7) — 다운로드 후 `Get-AuthenticodeSignature` 로 발행자 CN 확인, 비-Ollama 서명 시 설치 거부 |
+| 이중 인스턴스 경쟁 쓰기 | `requestSingleInstanceLock` — 두 번째 프로세스 즉시 종료, settings.json / api-keys.enc clobber 방지 |
+| DevTools 정보 노출 | 프로덕션 빌드에서 `webPreferences.devTools: false` 로 원천 비활성화 |
+| 권한 probing | `setPermissionCheckHandler` 추가 — `permission.query()` 를 통한 capability 탐색 차단 |
 | Markdown XSS | `javascript:`, `data:` URL 차단, 외부 이미지 차단 |
 | Iframe/Form 주입 | CSP `frame-src 'none'; child-src 'none'; base-uri 'none'; form-action 'none'` 로 예방적 차단 |
 | 응답 크기 폭주 | 스트리밍 50MB, Vision 10MB, 모델 목록 1MB 제한, PDF 최대 500페이지/100MB |
@@ -452,7 +461,7 @@ PDF 파일
 | Q&A 대화 이력 과다 | 이력 4000자 제한 + 10턴 FIFO, 질문 1000자 상한 |
 | 네트워크 단절 무응답 | HTTP 스트림 `close` 리스너로 비정상 종료 즉시 감지 (120초 대기 없음) |
 | 네비게이션 하이재킹 | `will-navigate` + `will-redirect` 모두 차단 (프로덕션 빌드에서도 정상 동작 검증) |
-| 브라우저 권한 남용 | `setPermissionRequestHandler` 기본 거부, `clipboard-sanitized-write` 만 예외 허용 (복사 기능 유지) |
+| 브라우저 권한 남용 | `setPermissionRequestHandler` + `setPermissionCheckHandler` 기본 거부, `clipboard-sanitized-write` 만 예외 허용 (복사 기능 유지) |
 | 설치 파일 다운로드 OOM | `response.pipe(file)` backpressure, 500MB 상한 push 전 체크, 부분 다운로드 자동 정리 |
 | `ollama pull` 자식 프로세스 고아화 | `pullProcess` 인스턴스 추적, 앱 종료 시 `taskkill /F /T` (Windows), 재진입 가드 |
 | Vision 에러 바디 메모리 폭주 | 에러 바디 64KB 바이트 cap (push 전 검사) + 초과 시 소켓 즉시 해제 |

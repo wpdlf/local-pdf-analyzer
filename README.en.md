@@ -21,9 +21,14 @@ Unlike cloud-based AI summarization services that require uploading PDFs to exte
 
 > **[Download Latest Version](https://github.com/wpdlf/local-pdf-analyzer/releases/latest)**
 
-1. Download `PDF.Setup.x.x.x.exe` from the link above
-2. Run the downloaded file to install
-3. Launch the app from the desktop shortcut or Start menu
+| Platform | File |
+|---|---|
+| **Windows** | `Local-PDF-Analyzer-Setup-x.x.x.exe` |
+| **macOS** | `Local-PDF-Analyzer-x.x.x.dmg` |
+
+1. Download the installer for your OS from the link above
+2. Run the installer (macOS: mount the dmg and drag to Applications)
+3. Launch the app from the desktop shortcut / Start menu (Windows) or Launchpad (macOS)
 4. On first launch, the AI engine (Ollama), Korean-specialized models (gemma3, exaone3.5), and RAG embedding model (nomic-embed-text) are installed automatically — follow the on-screen instructions
 
 > **Note**: AI model downloads require approximately 8GB of disk space and a few minutes.
@@ -162,7 +167,7 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 
 ## System Requirements
 
-- Windows 10 or later
+- **Windows 10 or later** or **macOS 12 (Monterey) or later**
 - Minimum 8GB disk space (for AI models, when using Ollama)
 - Internet connection (for first install and paid API usage)
 - PDF limits: up to 100MB, up to 500 pages (split larger documents manually)
@@ -211,8 +216,8 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | PDF Parsing | pdfjs-dist (position-based text extraction + image extraction, Korean optimized) |
 | State Management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
-| Build | electron-vite + electron-builder (NSIS) |
-| Testing | Vitest (19 unit tests) + `tsc --noEmit` strict type check |
+| Build | electron-vite + electron-builder (Windows NSIS + macOS DMG) |
+| Testing | Vitest (82 unit tests) + `tsc --noEmit` strict type check |
 | i18n | Custom (i18n.ts) — 172+ keys, useT() hook, template interpolation |
 | API Key Security | Electron safeStorage (OS keychain encryption), decrypted only in Main process, in-memory cache for hot-path |
 | Shared constants | `src/shared/constants.ts` — Main/Renderer shared (MAX_PDF_SIZE etc.) to prevent drift |
@@ -260,7 +265,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, conversation history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity search, dimension validation)
     │   ├── store.ts           # Zustand state management (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (19)
+    │   └── __tests__/         # Unit tests (82)
     └── types/
         └── index.ts       # Type definitions + Provider model constants
 ```
@@ -416,7 +421,11 @@ PDF File
 | Ollama SSRF | localhost only (`validateOllamaUrl`), http/https only |
 | PDF drop path manipulation | `will-navigate` blocked, `file://` + `.pdf` extension only, `lstat` symlink rejection (blocks malicious `.pdf` symlinks pointing to system files) |
 | IPC input manipulation | Type/range/length validation on all IPC handlers, shared constants module prevents main/renderer drift |
-| External URL opening | Allowed domain whitelist (ollama.com, anthropic.com, openai.com, github.com) |
+| External URL opening | Exact hostname whitelist (`Set.has()` match — suffix matching removed to block UGC domains) |
+| Ollama installer tampering | Authenticode signature verification (v0.17.7) — `Get-AuthenticodeSignature` validates publisher CN after download; non-Ollama signatures abort installation |
+| Dual-instance file clobber | `requestSingleInstanceLock` — second process quits immediately, prevents settings.json / api-keys.enc race writes |
+| DevTools information leak | `webPreferences.devTools: false` in production builds — DevTools entirely disabled at Chromium level |
+| Permission probing | `setPermissionCheckHandler` added — blocks `permission.query()` capability enumeration |
 | Markdown XSS | `javascript:`, `data:` URLs blocked, external images blocked |
 | Iframe/form injection | CSP `frame-src 'none'; child-src 'none'; base-uri 'none'; form-action 'none'` for defense-in-depth |
 | Response size overflow | Streaming 50MB, Vision 10MB, model list 1MB limits, PDF max 500 pages / 100MB |
@@ -429,7 +438,7 @@ PDF File
 | Q&A history overflow | History 4000 char limit + 10-turn FIFO, question 1000 char cap |
 | Network stream hang | `res.on('close')` listener detects abnormal termination immediately (no 120s wait) |
 | Navigation hijacking | `will-navigate` + `will-redirect` both blocked (verified to work in packaged builds) |
-| Browser permission abuse | `setPermissionRequestHandler` denies by default, only `clipboard-sanitized-write` explicitly allowed (for the copy button) |
+| Browser permission abuse | `setPermissionRequestHandler` + `setPermissionCheckHandler` deny by default, only `clipboard-sanitized-write` explicitly allowed (for the copy button) |
 | Installer download OOM | `response.pipe(file)` backpressure, 500MB cap checked before chunk push, partial downloads auto-deleted |
 | Orphaned `ollama pull` child | `pullProcess` tracked on the instance, `taskkill /F /T` on Windows at app quit, re-entry guard |
 | Vision error body memory blowup | 64KB byte cap on error bodies (checked before push) + immediate socket destroy on overflow |
