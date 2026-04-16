@@ -15,6 +15,9 @@ import { VectorStore } from './vector-store';
 
 // 설정 저장 IPC 디바운스 타이머
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+// citationPanelWidth localStorage 저장 디바운스 타이머 — 드래그 중 pointermove 마다
+// setCitationPanelWidth 가 호출되어 동기 localStorage.setItem 이 초당 수백 회 발생하는 것 방지
+let citationPanelWidthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 // crypto.randomUUID 는 secure context 에서만 동작. Electron file:// 는 secure context 로
 // 간주되어 정상 동작하지만, 드물게 비정상 origin 또는 구 버전에서 throw 할 수 있음.
@@ -67,6 +70,7 @@ if (_meta.hot) {
     streamState.reset();
     qaStreamState.reset();
     if (settingsSaveTimer) { clearTimeout(settingsSaveTimer); settingsSaveTimer = null; }
+    if (citationPanelWidthSaveTimer) { clearTimeout(citationPanelWidthSaveTimer); citationPanelWidthSaveTimer = null; }
   });
 }
 
@@ -327,7 +331,13 @@ export const useAppStore = create<AppState>((set) => ({
   setCitationPanelWidth: (ratio) => {
     const clamped = Math.min(0.8, Math.max(0.2, ratio));
     set({ citationPanelWidth: clamped });
-    try { localStorage.setItem('citationPanelWidth', String(clamped)); } catch { /* 무시 */ }
+    // 드래그 중 pointermove 마다 호출되므로 localStorage 쓰기는 trailing 200ms 디바운스.
+    // 마지막 값만 저장되어 동기 I/O 비용을 수백 회 → 1 회로 줄인다.
+    if (citationPanelWidthSaveTimer) clearTimeout(citationPanelWidthSaveTimer);
+    citationPanelWidthSaveTimer = setTimeout(() => {
+      citationPanelWidthSaveTimer = null;
+      try { localStorage.setItem('citationPanelWidth', String(clamped)); } catch { /* 무시 */ }
+    }, 200);
   },
 
   // 설정

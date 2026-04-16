@@ -300,6 +300,7 @@ Selected Level: Dynamic
 | DR-01 | FR-09b 가로 리사이즈 핸들 | ✅ 구현 완료 (v0.17.2) | v0.17.0 출시 후 사용자 피드백으로 Medium → Done 승격. `ResizeHandle.tsx` 신설 (pointer capture + 키보드 Arrow / Home / End + ARIA slider), `store.citationPanelWidth` (20%~80% clamp) + `localStorage` 영속화, `SummaryViewer` 의 `flexBasis` 분배. PdfViewer 는 `ResizeObserver` 기반 debounce 재렌더로 너비 변경 시 캔버스 재계산. |
 | DR-02 | 페이지 범위/다중 인용 (`[p.5-7]`, `[p.5, p.18]`) | v0.17.x 후속 (Plan §2.2 명시) | LLM 안정성 + UI 단순화 우선. 단일 페이지 인용으로 핵심 가치 제공. |
 | DR-03 | 텍스트 조각 단위 하이라이트 (textLayer 매칭) | v0.17.x 후속 (Plan §2.2 명시) | 페이지 스크롤만으로 충분. textLayer 매칭은 fuzzy/정확도 트레이드오프 + 성능 비용. |
+| DR-04 | 언마운트 전반 `PDFDocumentProxy` 캐시 | ✅ 구현 완료 (v0.17.5) | `PdfViewer.tsx` 모듈 레벨 `cachedDoc = { bytes, doc }` 도입. `pdfBytes` 참조로 키잉 — 동일 문서 재클릭 시 `getDocument` 재실행 없이 즉시 재사용, 다른 bytes 시 stale 파기. Design §1.1#3/§2.2/§5.2/§5.4 의 "언마운트 시 destroy" 불변식을 완화. **이유**: 100+ 페이지 PDF 에서 citation 재클릭 시 수 초간 full re-parse 로 UX 저하. **트레이드오프**: 문서 close 후 미개봉 상태에서 1 문서 분량 메모리 일시 잔류 — 다음 문서 로드 시 자동 해제. |
 
 ---
 

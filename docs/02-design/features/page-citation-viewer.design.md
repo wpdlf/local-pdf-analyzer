@@ -42,7 +42,7 @@ status: Draft
 
 1. **신뢰성**: 요약/Q&A 답변에서 AI 가 주장하는 근거를 원문과 1-click 으로 대조 가능
 2. **회귀 0**: 기존 RAG 파이프라인과 39/39 단위 테스트에 영향 없는 backward-compatible 확장
-3. **메모리 효율**: 사용자가 실제로 인용을 클릭할 때만 pdfjs 뷰어 인스턴스 생성 (lazy)
+3. **메모리 효율**: 첫 인용 클릭 전까지 pdfjs 인스턴스 생성 0. 이후 동일 문서 재클릭 시 모듈 캐시 재사용 (DR-04, v0.17.5)
 4. **실패 우아함**: LLM 이 인용 토큰을 누락해도 답변은 정상 렌더 (FR-12)
 5. **타입 안전**: 인용 파싱·전파·렌더까지 타입 추론으로 NPE 방지
 
@@ -193,7 +193,7 @@ status: Draft
    → PdfViewer 내부 useEffect([targetPage]) 에서 page 12 로 scroll
 
 8. 패널 닫기
-   store.setCitationTarget(null) → PdfViewer 언마운트 → pdf 인스턴스 destroy
+   store.setCitationTarget(null) → PdfViewer 언마운트 → pdf 인스턴스는 모듈 캐시에 보존 (DR-04). 다음 문서 로드 또는 다른 pdfBytes 전달 시 destroy.
 ```
 
 ### 2.3 Dependencies
@@ -441,7 +441,7 @@ interface PdfViewerProps {
 4. 우측 패널 슬라이드 인 → PdfViewer 마운트 → 페이지 12 로 스크롤
 5. 사용자 → 원문 확인
 6. (a) 다른 인용 클릭 → 패널 유지 + targetPage 갱신 + 해당 페이지 스크롤
-   (b) × 클릭 → 패널 닫기 + PdfViewer 언마운트 → 인스턴스 destroy
+   (b) × 클릭 → 패널 닫기 + PdfViewer 언마운트. pdfjs 인스턴스는 모듈 캐시에 유지되어 재클릭 시 즉시 재사용 (DR-04). 문서 변경 시에만 destroy.
 7. 새 PDF 로드 시 citationTarget 자동 null
 ```
 
@@ -482,7 +482,7 @@ interface PdfViewerProps {
 - [ ] 로딩 스피너 (pdfjs getDocument 중)
 - [ ] 에러 메시지 (pdf 로드 실패 시)
 - [ ] 라이트 배경 강제 (PDF 는 white 가정)
-- [ ] 언마운트 시 `pdf.destroy()` 호출
+- [ ] 모듈 캐시 `cachedDoc` 키잉: 동일 `pdfBytes` 참조면 재사용, 다른 bytes 시 stale 파기 후 재파싱 (DR-04). 언마운트 시 `pdf.destroy()` 는 호출하지 않고 `pdfDocRef.current = null` 만 해제
 
 ### 5.5 인용 버튼 시각 스펙
 

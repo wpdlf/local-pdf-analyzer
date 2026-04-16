@@ -16,12 +16,15 @@ interface CitationButtonProps {
 export function CitationButton({ page }: CitationButtonProps) {
   const t = useT();
   const setCitationTarget = useAppStore((s) => s.setCitationTarget);
-  const currentTarget = useAppStore((s) => s.citationTarget);
   // pageCount 는 store 의 document 에서 직접 읽음 — 렌더 시점 최신값
   const pageCount = useAppStore((s) => s.document?.pageCount ?? 0);
 
   const validPage = clampCitationPage(page, pageCount);
-  const isActive = currentTarget?.page === validPage;
+  // 이 버튼 자신의 활성 여부만 boolean 으로 구독 → citationTarget 변경 시 다른 페이지 버튼은
+  // zustand Object.is 비교로 리렌더 skip. N개 인용 버튼에서 N회 → 영향받는 1~2회로 축소.
+  const isActive = useAppStore(
+    (s) => validPage !== null && s.citationTarget?.page === validPage
+  );
 
   if (validPage === null) {
     // 범위 초과 — 클릭 불가, 툴팁으로 이유 안내, 시각적으로 구분

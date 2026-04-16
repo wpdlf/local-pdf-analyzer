@@ -12,6 +12,13 @@ if (!(pdfjsLib.GlobalWorkerOptions.workerSrc as any)) {
   console.warn('[PdfViewer] pdfjs worker not set before mount — pdf-parser 가 먼저 import 되어야 함');
 }
 
+// 모듈 레벨 PDF 문서 캐시.
+// PdfViewer 언마운트 시(citationTarget=null) 파싱된 PDFDocumentProxy 를 버리면
+// 동일 문서에 대한 재클릭마다 getDocument 가 재실행되어 전체 페이지 재파싱이 일어난다.
+// pdfBytes 참조로 키잉하여 같은 문서면 캐시 재사용, 다른 Uint8Array 가 들어오면 stale 파기.
+// 주의: 문서 close → 미개봉 상태에서는 캐시가 남지만 다음 문서 로드 시 파기되어 일시적 잔류일 뿐.
+let cachedDoc: { bytes: Uint8Array; doc: pdfjsLib.PDFDocumentProxy } | null = null;
+
 interface PdfViewerProps {
   /** 원본 PDF 바이트 (store.pdfBytes) */
   pdfBytes: Uint8Array;
@@ -50,7 +57,24 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   // 1. pdfjs 로 문서 로드 (마운트 1회)
   useEffect(() => {
     let cancelled = false;
-    let doc: pdfjsLib.PDFDocumentProxy | null = null;
+
+    // 캐시 히트 — 동일 pdfBytes 참조면 재파싱 없이 즉시 재사용
+    if (cachedDoc && cachedDoc.bytes === pdfBytes) {
+      pdfDocRef.current = cachedDoc.doc;
+      setTotalPages(cachedDoc.doc.numPages);
+      setLoadState('loaded');
+      return () => {
+        // 언마운트 시에도 캐시된 doc 는 파기하지 않음 — 재마운트에서 재사용
+        pdfDocRef.current = null;
+      };
+    }
+
+    // 다른 bytes — stale 캐시 파기 후 새 파싱
+    if (cachedDoc) {
+      const stale = cachedDoc;
+      cachedDoc = null;
+      stale.doc.destroy().catch(() => { /* ignore */ });
+    }
 
     (async () => {
       try {
@@ -59,11 +83,13 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
         // 매 마운트마다 store 바이트를 보존할 fresh copy 를 1회만 할당한다.
         const copy = pdfBytes.slice();
         const loadingTask = pdfjsLib.getDocument({ data: copy });
-        doc = await loadingTask.promise;
+        const doc = await loadingTask.promise;
         if (cancelled) {
+          // 파싱 중 언마운트 — 캐시하지 않고 파기
           try { await doc.destroy(); } catch { /* ignore */ }
           return;
         }
+        cachedDoc = { bytes: pdfBytes, doc };
         pdfDocRef.current = doc;
         setTotalPages(doc.numPages);
         setLoadState('loaded');
@@ -77,11 +103,8 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
 
     return () => {
       cancelled = true;
-      if (pdfDocRef.current) {
-        const d = pdfDocRef.current;
-        pdfDocRef.current = null;
-        d.destroy().catch(() => { /* ignore */ });
-      }
+      // 파싱 성공 후 언마운트 — 캐시된 doc 는 유지, ref 만 해제
+      pdfDocRef.current = null;
     };
   }, [pdfBytes]);
 
@@ -114,6 +137,8 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   useEffect(() => {
     if (loadState !== 'loaded' || !pdfDocRef.current || !totalPages) return;
     let cancelled = false;
+    // 진행 중인 RenderTask — 언마운트/리사이즈 시 cancel() 호출로 detached canvas 계속 그리는 것 방지
+    let currentTask: { promise: Promise<void>; cancel: () => void } | null = null;
     const doc = pdfDocRef.current;
 
     // 패널 너비 기반 동적 scale — 고정 scale 은 좁은 패널에서 확대 표시 문제.
@@ -147,7 +172,10 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
           canvas.className = 'block shadow';
           const ctx = canvas.getContext('2d');
           if (!ctx) continue;
-          await page.render({ canvasContext: ctx, viewport }).promise;
+          const task = page.render({ canvasContext: ctx, viewport });
+          currentTask = task as unknown as { promise: Promise<void>; cancel: () => void };
+          await task.promise;
+          currentTask = null;
           if (cancelled) return;
           wrapper.innerHTML = '';
           wrapper.style.width = `${canvas.width}px`;
@@ -157,10 +185,17 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
           renderedPagesRef.current.add(pageNum);
           try { page.cleanup(); } catch { /* ignore */ }
         } catch (err) {
+          currentTask = null;
           if (cancelled) return;
+          // cancel() 호출로 인한 RenderingCancelledException 은 정상 흐름 — 무시하고 다음 페이지로
+          if ((err as { name?: string })?.name === 'RenderingCancelledException') return;
           console.warn(`[PdfViewer] page ${pageNum} render failed:`, err);
           if (wrapper) {
-            wrapper.innerHTML = `<div class="text-xs text-red-500 py-8 text-center">${tRef.current('pdfviewer.pageRenderFail')}</div>`;
+            wrapper.innerHTML = '';
+            const errDiv = document.createElement('div');
+            errDiv.className = 'text-xs text-red-500 py-8 text-center';
+            errDiv.textContent = tRef.current('pdfviewer.pageRenderFail');
+            wrapper.appendChild(errDiv);
           }
         }
       }
@@ -168,6 +203,10 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
 
     return () => {
       cancelled = true;
+      if (currentTask) {
+        try { currentTask.cancel(); } catch { /* ignore */ }
+        currentTask = null;
+      }
     };
   }, [loadState, totalPages, renderVersion]);
 
