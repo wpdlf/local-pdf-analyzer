@@ -42,3 +42,23 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*Setup*.exe
+
+  build-mac:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm install
+
+      - run: npm run build && npx electron-builder --publish never
+
+      - name: Upload installer to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg

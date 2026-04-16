@@ -1,6 +1,6 @@
 {
   "name": "summary-lecture-material",
-  "version": "0.17.7",
+  "version": "0.17.8",
   "description": "PDF 자료 분석 데스크톱 앱",
   "license": "MIT",
   "main": "./out/main/index.js",
@@ -51,9 +51,9 @@
     "icon": "resources/icon.png",
     "win": {
       "target": "nsis",
-      "icon": "resources/icon.png"
+      "icon": "resources/icon.png",
+      "artifactName": "Local-PDF-Analyzer-Setup-${version}.${ext}"
     },
-    "artifactName": "Local-PDF-Analyzer-Setup-${version}.${ext}",
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -64,7 +64,8 @@
     "forceCodeSigning": false,
     "mac": {
       "target": "dmg",
-      "icon": "resources/icon.png"
+      "icon": "resources/icon.png",
+      "artifactName": "Local-PDF-Analyzer-${version}.${ext}"
     }
   }
 }
