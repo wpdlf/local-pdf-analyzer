@@ -53,6 +53,7 @@
       "target": "nsis",
       "icon": "resources/icon.png"
     },
+    "artifactName": "Local-PDF-Analyzer-Setup-${version}.${ext}",
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
