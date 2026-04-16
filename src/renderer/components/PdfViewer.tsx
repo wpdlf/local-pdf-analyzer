@@ -12,12 +12,34 @@ if (!(pdfjsLib.GlobalWorkerOptions.workerSrc as any)) {
   console.warn('[PdfViewer] pdfjs worker not set before mount — pdf-parser 가 먼저 import 되어야 함');
 }
 
-// 모듈 레벨 PDF 문서 캐시.
+// 모듈 레벨 PDF 문서 캐시 (DR-04).
 // PdfViewer 언마운트 시(citationTarget=null) 파싱된 PDFDocumentProxy 를 버리면
 // 동일 문서에 대한 재클릭마다 getDocument 가 재실행되어 전체 페이지 재파싱이 일어난다.
 // pdfBytes 참조로 키잉하여 같은 문서면 캐시 재사용, 다른 Uint8Array 가 들어오면 stale 파기.
-// 주의: 문서 close → 미개봉 상태에서는 캐시가 남지만 다음 문서 로드 시 파기되어 일시적 잔류일 뿐.
+// v0.17.6: 문서 close(store.pdfBytes=null) 시 캐시 즉시 해제 — 50MB PDF 기준 2× 크기 잔류 제거.
 let cachedDoc: { bytes: Uint8Array; doc: pdfjsLib.PDFDocumentProxy } | null = null;
+
+// store.pdfBytes 가 null 로 전환되면(resetSummaryState / 문서 close) 캐시된 doc 즉시 해제.
+// 모듈 스코프 단일 구독 — 앱 수명과 동일. HMR 리로드 시 dispose 로 리스너 + 캐시 정리.
+const unsubscribeCacheCleanup = useAppStore.subscribe((state, prev) => {
+  if (prev.pdfBytes && !state.pdfBytes && cachedDoc) {
+    const stale = cachedDoc;
+    cachedDoc = null;
+    stale.doc.destroy().catch(() => { /* ignore */ });
+  }
+});
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _pdfViewerHot = (import.meta as any).hot;
+if (_pdfViewerHot) {
+  _pdfViewerHot.dispose(() => {
+    unsubscribeCacheCleanup();
+    if (cachedDoc) {
+      const stale = cachedDoc;
+      cachedDoc = null;
+      stale.doc.destroy().catch(() => { /* ignore */ });
+    }
+  });
+}
 
 interface PdfViewerProps {
   /** 원본 PDF 바이트 (store.pdfBytes) */

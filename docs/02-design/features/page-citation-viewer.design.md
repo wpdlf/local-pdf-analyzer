@@ -449,7 +449,7 @@ interface PdfViewerProps {
 
 | Component | Location | Responsibility |
 |-----------|----------|----------------|
-| `PdfViewer` | `src/renderer/components/PdfViewer.tsx` | pdfjs canvas 렌더링, 페이지 스크롤, ResizeObserver 기반 재렌더, destroy on unmount |
+| `PdfViewer` | `src/renderer/components/PdfViewer.tsx` | pdfjs canvas 렌더링, 페이지 스크롤, ResizeObserver 기반 재렌더, 모듈 캐시 (DR-04) — destroy on pdfBytes change / 문서 close |
 | `CitationButton` | `src/renderer/components/CitationButton.tsx` | `[p.N]` 인라인 버튼, 접근성, i18n, click dispatch |
 | `ResizeHandle` | `src/renderer/components/ResizeHandle.tsx` | DR-01 가로 리사이즈 핸들. pointer drag / 키보드(Arrow / Home / End) / ARIA slider. `store.citationPanelWidth` 를 구독·갱신하고 `localStorage` 에 영속화 |
 | `SummaryViewer` | (수정) | 우측 패널 슬롯 + citationTarget 구독 + `flexBasis` 분배 + `ResizeHandle` 통합 |
@@ -765,3 +765,4 @@ src/
 | 0.1 | 2026-04-14 | 초안 작성 (PDCA Design phase, Option C 선택) | jjw |
 | 0.2 | 2026-04-15 | DR-01 구현 반영 — §4.3 / §5.1 / §5.3 에 `ResizeHandle` · `citationPanelWidth` · `flexBasis` 기재. §5.4 가상화 표기를 실제 동작(전체 즉시 렌더)과 정합하도록 정정 | jjw |
 | 0.3 | 2026-04-15 | 라운드 2 gap 제거 — §2.3 Dependencies 테이블에 `ResizeHandle` 행 추가 및 `PdfViewer` / `SummaryViewer` 의존성 갱신, §5.4 SummaryViewer 체크리스트의 "50% 고정" 잔존 표현을 `flexBasis` 가변 분배로 정정, §9.4 Layer Assignment 에 `ResizeHandle` 행 신설, §11.1 File Structure 에 `ResizeHandle.tsx` 및 store `citationPanelWidth` 반영, §11.2 Implementation Order 에 ResizeHandle 단계(#15) 삽입 | jjw |
+| 0.4 | 2026-04-16 | DR-04 반영 — §1.1#3 / §2.2 step 8 / §5.2 6(b) / §5.3 Component List / §5.4 PdfViewer checklist 의 pdfjs 인스턴스 라이프사이클을 "언마운트 시 destroy" → "모듈 캐시 + pdfBytes 변경/문서 close 시 destroy" 로 정정 (v0.17.5~v0.17.6) | jjw |
