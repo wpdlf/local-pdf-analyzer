@@ -466,20 +466,13 @@ export function useSummarize() {
 
       const docWithImages = { ...doc, extractedText: textForSummary };
       if (enrichedPagesRef) {
-        // pageTexts 도 enriched 로 동기화 — 아래 summarizeFull/summarizeByChapter 가
-        // labelParagraphsWithPages(doc.pageTexts) 를 LLM 입력 소스로 사용하므로,
-        // 여기서 교체하지 않으면 Vision 으로 추출한 이미지/차트 설명이 요약에 반영되지 않음.
+        // pageTexts 를 enriched 로 교체하는 것으로 충분.
+        // summarizeByChapter (use-summarize.ts:162-178) 가 doc.pageTexts 에서 챕터별로
+        // 재slicing + labelParagraphsWithPages 로 [p.N] 라벨을 재생성하므로, 여기서 별도로
+        // docWithImages.chapters[*].text 를 갱신해도 그 값은 아래에서 덮어써지는 dead write.
+        // (과거 v0.17.9 의 chapters rewrite 블록은 multi-line prefix 보존 휴리스틱의 잠재 버그도
+        //  갖고 있었음 — 단순화해 진실의 원천을 pageTexts 한 곳으로 통일.)
         docWithImages.pageTexts = enrichedPagesRef;
-        docWithImages.chapters = doc.chapters.map((ch) => {
-          const enrichedText = enrichedPagesRef!.slice(ch.startPage - 1, ch.endPage).join('\n\n');
-          // 원본 chapter.text에만 존재하는 pre-chapter 텍스트 보존
-          const originalPrefix = ch.text.split('\n')[0] || '';
-          const enrichedFirst = enrichedText.split('\n')[0] || '';
-          if (originalPrefix !== enrichedFirst && !enrichedText.startsWith(originalPrefix)) {
-            return { ...ch, text: originalPrefix + '\n\n' + enrichedText };
-          }
-          return { ...ch, text: enrichedText };
-        });
       }
 
       const isCancelled = () => timedOut || !useAppStore.getState().isGenerating;

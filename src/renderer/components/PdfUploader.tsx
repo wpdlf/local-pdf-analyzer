@@ -1,8 +1,7 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { handlePdfData, cancelPdfParse } from '../lib/pdf-parser';
-import { MAX_PDF_SIZE_BYTES } from '../../shared/constants';
 
 export function PdfUploader() {
   const setError = useAppStore((s) => s.setError);
@@ -12,66 +11,21 @@ export function PdfUploader() {
   const [isDragging, setIsDragging] = useState(false);
   const dialogOpenRef = useRef(false);
 
-  const MAX_FILE_SIZE = MAX_PDF_SIZE_BYTES;
-  const handleFile = useCallback(
-    async (file: File) => {
-      if (file.size > MAX_FILE_SIZE) {
-        setError({
-          code: 'PDF_PARSE_FAIL',
-          message: t('uploader.fileTooLarge', { size: Math.round(file.size / 1024 / 1024) }),
-        });
-        return;
-      }
-      // 매직바이트 검증을 전체 파일 로드 전에 수행 — 99MB 가짜 PDF 가 renderer 메모리에
-      // 전량 materialize 되는 것을 방지. Blob.slice() 는 데이터를 복사하지 않고 뷰만 반환.
-      try {
-        const headerBuf = await file.slice(0, 5).arrayBuffer();
-        const header = new Uint8Array(headerBuf);
-        const isPdfMagic = header.length >= 5
-          && header[0] === 0x25 && header[1] === 0x50
-          && header[2] === 0x44 && header[3] === 0x46
-          && header[4] === 0x2D;
-        if (!isPdfMagic) {
-          setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.notPdf') });
-          return;
-        }
-      } catch {
-        setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.cannotRead') });
-        return;
-      }
-      const buffer = await file.arrayBuffer();
-      await handlePdfData(buffer, file.name, file.name);
-    },
-    [setError, t, MAX_FILE_SIZE],
-  );
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-      if (isParsing) return;
-      const files = e.dataTransfer.files;
-      if (files.length === 0) return;
-      const file = files[0];
-      if (!file) return;
-      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-      if (!isPdf) {
-        setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.notPdf') });
-        return;
-      }
-      // 다중 파일 드롭 시 첫 번째만 처리하는 것을 사용자에게 알림 (silent drop 방지)
-      if (files.length > 1) {
-        setError({
-          code: 'PDF_PARSE_FAIL',
-          message: t('uploader.multipleFiles', { name: file.name }),
-        });
-      }
-      handleFile(file).catch((err) => {
-        setError({ code: 'PDF_PARSE_FAIL', message: err instanceof Error ? err.message : String(err) });
-      });
-    },
-    [handleFile, isParsing, setError, t],
-  );
+  // App.tsx 의 window capture-phase drop 핸들러가 stopPropagation 으로 React 의
+  // delegated onDrop 을 차단하므로, PdfUploader 의 onDrop 이 더 이상 isDragging
+  // 해제를 담당하지 못한다. 동일한 window/capture 레벨에 독립 listener 를 등록해
+  // App.tsx 의 stopPropagation 과 무관하게 drag-highlight 를 확실히 해제.
+  // (stopPropagation 은 다른 요소로의 전파를 막지만, 같은 요소 같은 phase 의 다른
+  // listener 까지 막지는 않음 — stopImmediatePropagation 과 다른 지점)
+  useEffect(() => {
+    const reset = () => setIsDragging(false);
+    window.addEventListener('drop', reset, true);
+    window.addEventListener('dragend', reset, true);
+    return () => {
+      window.removeEventListener('drop', reset, true);
+      window.removeEventListener('dragend', reset, true);
+    };
+  }, []);
 
   const handleFileSelect = useCallback(async () => {
     if (dialogOpenRef.current) return;
@@ -102,7 +56,6 @@ export function PdfUploader() {
     //   버튼을 통해 기능에 접근 (버튼이 전체 UI의 accessible primary control).
     <div
       role="presentation"
-      onDrop={handleDrop}
       onDragOver={(e) => {
         e.preventDefault();
         // dragOver 가 ~60Hz 로 발화 — 이미 true 면 setState 호출을 생략해
@@ -113,6 +66,9 @@ export function PdfUploader() {
         }
       }}
       onDragLeave={() => setIsDragging(false)}
+      // drop 처리는 App.tsx 의 window capture-phase 단일 경로로 위임.
+      // 과거의 onDrop={handleDrop} 은 App.tsx stopPropagation 으로 인해 호출되지 않는
+      // dead code 였음. isDragging 해제는 위 useEffect 의 window drop listener 가 담당.
       onClick={isParsing ? undefined : handleFileSelect}
       className={`
         relative border-2 border-dashed rounded-xl p-12 text-center

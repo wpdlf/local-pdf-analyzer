@@ -542,6 +542,22 @@ export async function handlePdfData(
     } as AppError);
     return;
   }
+  // 매직바이트 검증 — 모든 진입 경로(DOM drop, IPC file:dropped, file:open-pdf 다이얼로그)
+  // 의 공통 게이트. zero-copy 뷰로 5바이트만 읽어 pdfjs 로딩 전에 위장 바이너리를 조기 거부.
+  // DOM 경로(App.tsx, PdfUploader)는 이미 materialize 전에 Blob.slice(0,5) 로 차단하지만,
+  // IPC 경로는 main 에서 fs-level 검증만 하므로 여기서 content-type 검증을 통일한다.
+  const magic = data.byteLength >= 5 ? new Uint8Array(data, 0, 5) : null;
+  const isPdfMagic = magic !== null
+    && magic[0] === 0x25 && magic[1] === 0x50
+    && magic[2] === 0x44 && magic[3] === 0x46
+    && magic[4] === 0x2D;
+  if (!isPdfMagic) {
+    store.setError({
+      code: 'PDF_PARSE_FAIL',
+      message: '유효한 PDF 파일이 아닙니다.',
+    } as AppError);
+    return;
+  }
   // 이미 파싱 진행 중이면 abort 후 새 파일로 교체.
   // 기존 가드는 "진행 중이면 무시" 였으나, 사용자가 다른 PDF를 드롭/Ctrl+O 했을 때
   // 아무 반응이 없어 UX가 혼란스러움. abort-replace 패턴으로 새 파일이 우선권을 가짐.
