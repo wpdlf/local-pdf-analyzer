@@ -134,6 +134,13 @@ interface AppState {
   pdfBytes: Uint8Array | null;
   setPdfBytes: (bytes: Uint8Array | null) => void;
 
+  // Vision 이미지 분석으로 enrich 된 page-level 텍스트. use-summarize 에서 요약 파이프라인
+  // 진입 직후 세팅되며, useRagBuilder 는 이 값이 있으면 raw pageTexts 대신 이를 사용해
+  // RAG 인덱스를 재빌드한다 — 그 결과 "요약에는 이미지 설명이 있지만 Q&A 검색은 못 봄" 비대칭 해소.
+  // 문서 전환(setDocument) 시 자동으로 null 로 초기화.
+  enrichedPageTexts: string[] | null;
+  setEnrichedPageTexts: (pages: string[] | null) => void;
+
   // 설정
   settings: AppSettings;
   updateSettings: (settings: AppSettings) => void;
@@ -165,7 +172,10 @@ export const useAppStore = create<AppState>((set) => ({
       // 새 문서 없이 이전 요약이 재표시되는 문제가 있었음.
       useAppStore.getState().resetSummaryState();
     } else {
-      set({ document });
+      // 새 문서 로드 시 이전 문서의 enrichedPageTexts 는 무효 — 반드시 초기화.
+      // resetSummaryState 경로(setDocument(null))와 달리 여기서는 document 만 교체하므로
+      // 명시적으로 null 세팅.
+      set({ document, enrichedPageTexts: null });
     }
   },
   setIsParsing: (isParsing) => set({ isParsing }),
@@ -250,6 +260,7 @@ export const useAppStore = create<AppState>((set) => ({
       // 문서 전환 시 PdfViewer 패널도 닫히고 원본 바이트도 해제
       citationTarget: null,
       pdfBytes: null,
+      enrichedPageTexts: null,
     });
   },
 
@@ -317,6 +328,9 @@ export const useAppStore = create<AppState>((set) => ({
   setCitationTarget: (target) => set({ citationTarget: target }),
   pdfBytes: null,
   setPdfBytes: (bytes) => set({ pdfBytes: bytes }),
+
+  enrichedPageTexts: null,
+  setEnrichedPageTexts: (pages) => set({ enrichedPageTexts: pages }),
   // DR-01: 패널 너비 비율 — localStorage 에서 복원, 기본 0.5
   citationPanelWidth: (() => {
     try {

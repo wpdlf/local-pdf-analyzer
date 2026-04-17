@@ -144,6 +144,16 @@ function enrichDocumentWithImages(
       enrichedPages[pageIdx] = enrichedPages[pageIdx] + '\n' + desc;
     }
   }
+  // 방어적 불변식: enrichedPages.length 는 반드시 pageTexts.length 와 같아야 한다.
+  // 현재 구현(spread + index-only 쓰기)은 이를 만족하지만, 향후 리팩토링이 실수로
+  // 길이를 바꾸면 summarizeByChapter 의 slice(startPage-1, endPage) 가 short array 를
+  // 반환하고 챕터 tail 이 조용히 누락된다. 조기 실패 유도.
+  if (enrichedPages.length !== doc.pageTexts.length) {
+    throw new Error(
+      `enrichDocumentWithImages 불변식 위반: enrichedPages.length=${enrichedPages.length}, ` +
+      `doc.pageTexts.length=${doc.pageTexts.length}`,
+    );
+  }
   return { textForSummary: enrichedPages.join('\n\n'), enrichedPages };
 }
 
@@ -445,6 +455,12 @@ export function useSummarize() {
           const enriched = enrichDocumentWithImages(doc, imageDescriptions);
           textForSummary = enriched.textForSummary;
           enrichedPagesRef = enriched.enrichedPages;
+          // Q&A RAG 가 이미지 분석 결과를 함께 인덱싱하도록 store 에 공유.
+          // useRagBuilder 는 이 값이 세팅되면 key 에 enrichment 플래그가 바뀌어 재빌드.
+          // 이미지 분석이 있었으나 결과가 비어있는 경우(enrichedPages === null)는 세팅 생략.
+          if (enrichedPagesRef) {
+            useAppStore.getState().setEnrichedPageTexts(enrichedPagesRef);
+          }
         } catch (imgErr) {
           setError({ code: 'GENERATE_FAIL', message: (imgErr as Error).message });
           // 중복 cleanup 제거 — outer finally에서 flushStream, setIsGenerating, timeout 정리 일괄 처리

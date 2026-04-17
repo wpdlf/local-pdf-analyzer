@@ -290,6 +290,10 @@ async function ragSearch(question: string): Promise<string | null> {
 export function useRagBuilder(): void {
   const document = useAppStore((s) => s.document);
   const provider = useAppStore((s) => s.settings.provider);
+  // Vision 이미지 분석으로 enrich 된 page-level 텍스트. 존재하면 이것을 우선 사용해
+  // RAG 인덱스에 이미지 설명이 함께 들어가도록 한다 — "요약에는 이미지 설명이 있지만
+  // Q&A 검색은 못 보는" UX 비대칭 해소.
+  const enrichedPageTexts = useAppStore((s) => s.enrichedPageTexts);
   const prevKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -298,7 +302,11 @@ export function useRagBuilder(): void {
       prevKeyRef.current = null;
       return;
     }
-    const key = `${document.id}:${provider}`;
+    // key 에 enrichment 플래그 포함 — raw→enriched 전이 시 자동 재빌드.
+    // enrichedPageTexts 는 setEnrichedPageTexts 가 새 배열로 교체할 때마다 identity 가 바뀌므로
+    // 길이를 fingerprint 로 사용해 한 문서 내 여러 번의 enrichment 도 감지 (실무상 1회지만 방어).
+    const enrichTag = enrichedPageTexts ? `e${enrichedPageTexts.length}` : 'r';
+    const key = `${document.id}:${provider}:${enrichTag}`;
     if (key === prevKeyRef.current) return;
     prevKeyRef.current = key;
     const docId = document.id;
@@ -313,11 +321,17 @@ export function useRagBuilder(): void {
     store.ragIndex.clear();
     store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, model: null });
 
+    // 이미지 분석 결과가 있으면 enriched 페이지 텍스트로 인덱싱, 없으면 원본 사용.
+    // extractedText 도 동일하게 enriched 버전으로 교체 — selectRelevantChunks fallback 경로도
+    // 이미지 설명을 볼 수 있도록 일관성 유지.
+    const pageTextsForRag = enrichedPageTexts ?? document.pageTexts;
+    const textForRag = enrichedPageTexts ? enrichedPageTexts.join('\n\n') : document.extractedText;
+
     // 비동기로 인덱스 빌드 (UI 블로킹 없음, 요약과 병렬 실행).
     // 내부 try/catch가 있지만 예기치 않은 동기 throw(예: store 접근 중 null)가
     // unhandled rejection으로 전파되는 것을 최종 방어.
     // page-citation-viewer: pageTexts 를 전달하여 각 청크에 page 메타데이터 부착.
-    buildRagIndex(document.extractedText, docId, controller.signal, document.pageTexts).catch((err) => {
+    buildRagIndex(textForRag, docId, controller.signal, pageTextsForRag).catch((err) => {
       console.error('[useRagBuilder] buildRagIndex failed:', err);
     });
 
@@ -330,7 +344,7 @@ export function useRagBuilder(): void {
         activeBuildController = null;
       }
     };
-  }, [document, provider]);
+  }, [document, provider, enrichedPageTexts]);
 }
 
 export function useQa() {
