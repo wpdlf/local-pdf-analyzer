@@ -12,6 +12,7 @@ import { handlePdfData } from './lib/pdf-parser';
 import { applyTheme } from './lib/theme';
 import { useSummarize } from './lib/use-summarize';
 import { useRagBuilder } from './lib/use-qa';
+import { MAX_PDF_SIZE_BYTES } from '../shared/constants';
 import logoImg from './assets/logo.png';
 
 export default function App() {
@@ -139,6 +140,10 @@ export default function App() {
     };
     const handleDrop = async (e: DragEvent) => {
       e.preventDefault();
+      // capture-phase 에서 stopPropagation 해 PdfUploader 의 React onDrop 중복 발화를 차단.
+      // (과거: 동일 드롭 이벤트가 글로벌 핸들러 + PdfUploader 에서 두 번 처리되어
+      //  100MB arrayBuffer() 중복 할당 + 첫 파싱이 abort-replace 로 즉시 취소됨)
+      e.stopPropagation();
       // isParsing 중에도 handlePdfData 가 abort-replace 패턴으로 새 파일을 받도록 허용.
       // isGenerating/isQaGenerating 은 handlePdfData 내부에서 에러 메시지로 차단됨.
       const files = e.dataTransfer?.files;
@@ -147,6 +152,31 @@ export default function App() {
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       if (!isPdf) {
         useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.notPdf') });
+        return;
+      }
+      // 파일 전체를 arrayBuffer() 로 materialize 하기 전에 크기 + 매직바이트 선검증.
+      // 과거: 확장자가 .pdf 로 위장된 100MB 임의 바이너리가 renderer 힙에 전량 로드된 뒤에야
+      // pdfjs 에서 거부됐음 — 공격/오조작 모두에서 불필요한 메모리 스파이크 발생.
+      if (file.size > MAX_PDF_SIZE_BYTES) {
+        useAppStore.getState().setError({
+          code: 'PDF_PARSE_FAIL',
+          message: t('uploader.fileTooLarge', { size: Math.round(file.size / 1024 / 1024) }),
+        });
+        return;
+      }
+      try {
+        const headerBuf = await file.slice(0, 5).arrayBuffer();
+        const header = new Uint8Array(headerBuf);
+        const isPdfMagic = header.length >= 5
+          && header[0] === 0x25 && header[1] === 0x50
+          && header[2] === 0x44 && header[3] === 0x46
+          && header[4] === 0x2D;
+        if (!isPdfMagic) {
+          useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.notPdf') });
+          return;
+        }
+      } catch {
+        useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.cannotRead') });
         return;
       }
       // 다중 파일 드롭 시 첫 번째만 처리함을 알림 (silent drop 방지)

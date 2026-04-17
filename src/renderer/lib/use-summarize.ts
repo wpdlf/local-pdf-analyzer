@@ -466,6 +466,10 @@ export function useSummarize() {
 
       const docWithImages = { ...doc, extractedText: textForSummary };
       if (enrichedPagesRef) {
+        // pageTexts 도 enriched 로 동기화 — 아래 summarizeFull/summarizeByChapter 가
+        // labelParagraphsWithPages(doc.pageTexts) 를 LLM 입력 소스로 사용하므로,
+        // 여기서 교체하지 않으면 Vision 으로 추출한 이미지/차트 설명이 요약에 반영되지 않음.
+        docWithImages.pageTexts = enrichedPagesRef;
         docWithImages.chapters = doc.chapters.map((ch) => {
           const enrichedText = enrichedPagesRef!.slice(ch.startPage - 1, ch.endPage).join('\n\n');
           // 원본 chapter.text에만 존재하는 pre-chapter 텍스트 보존
