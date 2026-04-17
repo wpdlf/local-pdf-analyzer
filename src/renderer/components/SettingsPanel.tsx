@@ -490,6 +490,18 @@ export function SettingsPanel() {
         </label>
       </section>
 
+      {/* Q&A 답변 검증 (v0.18.0) */}
+      <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.answerVerificationTitle')}</h3>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" checked={draft.enableAnswerVerification} onChange={(e) => updateDraft({ enableAnswerVerification: e.target.checked })} className="w-4 h-4 rounded" />
+          <div>
+            <span className="text-sm text-gray-700 dark:text-gray-200">{t('settings.answerVerificationLabel')}</span>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('settings.answerVerificationDesc')}</p>
+          </div>
+        </label>
+      </section>
+
       {/* 저장 */}
       <div className="flex items-center gap-3">
         <button

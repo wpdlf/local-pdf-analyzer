@@ -106,6 +106,7 @@ const translations = {
   'qa.ragActive': { ko: 'RAG 시맨틱 검색이 활성화되었습니다. 문서에 대해 질문해보세요.', en: 'RAG semantic search is active. Ask a question about the document.' },
   'qa.emptyHint': { ko: '요약된 내용이나 원문에 대해 궁금한 점을 질문해보세요', en: 'Ask questions about the summary or original document' },
   'qa.generating': { ko: '답변 생성 중...', en: 'Generating answer...' },
+  'qa.verifying': { ko: '답변 준비 중 (근거 확인)...', en: 'Preparing answer (checking sources)...' },
   'qa.waitIndexing': { ko: 'RAG 인덱싱 중입니다. 잠시 후 다시 시도해주세요.', en: 'RAG is indexing. Please wait a moment and try again.' },
   'qa.charLimit': { ko: '질문은 {max}자까지 입력 가능합니다 ({current}/{max})', en: 'Question limited to {max} characters ({current}/{max})' },
   'qa.placeholder': { ko: '질문을 입력하세요... (Enter: 전송, Shift+Enter: 줄바꿈)', en: 'Type your question... (Enter: send, Shift+Enter: newline)' },
@@ -185,6 +186,12 @@ const translations = {
   'settings.ocrDesc': {
     ko: '텍스트를 추출할 수 없는 스캔 PDF에서 Vision 모델로 텍스트를 인식합니다. 페이지 수에 따라 시간과 API 비용이 증가할 수 있습니다.',
     en: 'Recognizes text in scanned PDFs using Vision models. Time and API costs increase with page count.',
+  },
+  'settings.answerVerificationTitle': { ko: 'Q&A 답변 검증', en: 'Q&A Answer Verification' },
+  'settings.answerVerificationLabel': { ko: '답변 근거 자동 확인', en: 'Auto-verify answer sources' },
+  'settings.answerVerificationDesc': {
+    ko: '답변 초안을 원문에 대조해 환각(근거 없는 주장) 이 감지되면 자동으로 한 번 더 다듬어 정확도를 높입니다. 답변 시간이 약간 길어지고 임베딩 호출이 추가됩니다. (OpenAI 사용자는 소폭 비용 증가)',
+    en: 'Cross-checks draft answers against the source and silently refines if hallucinations are detected. Slightly longer response time and extra embedding calls (minor OpenAI cost increase).',
   },
   'settings.savedBtn': { ko: '✅ 저장되었습니다', en: '✅ Saved' },
   'settings.saveBtn': { ko: '설정 저장', en: 'Save settings' },

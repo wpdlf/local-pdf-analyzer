@@ -107,12 +107,17 @@ interface AppState {
   qaStream: string;
   isQaGenerating: boolean;
   qaRequestId: string | null;
+  // v0.18.0: 답변 검증 단계(초안 생성 + RAG 대조) 중 UI 에 "답변 준비 중..." 인디케이터 표시용.
+  // qaStream 은 draft 를 담지 않음 — verifying=true 인 동안 사용자에게 표시되는 건 스피너뿐.
+  // refine 단계 또는 good-draft flush 시 qaStream 이 채워지면서 verifying=false 로 전환.
+  qaVerifying: boolean;
   addQaMessage: (msg: Omit<QaMessage, 'id'>) => void;
   appendQaStream: (token: string) => void;
   flushQaStream: () => void;
   clearQaStream: () => void;
   setIsQaGenerating: (v: boolean) => void;
   setQaRequestId: (id: string | null) => void;
+  setQaVerifying: (v: boolean) => void;
   clearQa: () => void;
 
   // RAG
@@ -255,6 +260,7 @@ export const useAppStore = create<AppState>((set) => ({
       qaStream: '',
       isQaGenerating: false,
       qaRequestId: null,
+      qaVerifying: false,
       ocrProgress: null,
       ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
       // 문서 전환 시 PdfViewer 패널도 닫히고 원본 바이트도 해제
@@ -269,6 +275,8 @@ export const useAppStore = create<AppState>((set) => ({
   qaStream: '',
   isQaGenerating: false,
   qaRequestId: null,
+  qaVerifying: false,
+  setQaVerifying: (qaVerifying) => set({ qaVerifying }),
   addQaMessage: (msg) => set((s) => {
     const MAX_QA_TURNS = 10;
     const msgs = [...s.qaMessages, { ...msg, id: safeRandomId() }];
@@ -315,7 +323,7 @@ export const useAppStore = create<AppState>((set) => ({
   setQaRequestId: (qaRequestId) => set({ qaRequestId }),
   clearQa: () => {
     qaStreamState.reset();
-    set({ qaMessages: [], qaStream: '', isQaGenerating: false, qaRequestId: null });
+    set({ qaMessages: [], qaStream: '', isQaGenerating: false, qaRequestId: null, qaVerifying: false });
   },
 
   // RAG

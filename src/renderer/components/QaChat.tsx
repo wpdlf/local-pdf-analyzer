@@ -5,7 +5,7 @@ import { useT } from '../lib/i18n';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
 
 export function QaChat() {
-  const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, ragState } = useQa();
+  const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, qaVerifying, ragState } = useQa();
   const t = useT();
   const [input, setInput] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -134,8 +134,14 @@ export function QaChat() {
 
           {isQaGenerating && !qaStream && (
             <div className="flex justify-start">
-              <div className="rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-400">
-                {t('qa.generating')}
+              <div className="rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-400 flex items-center gap-2">
+                {qaVerifying && (
+                  <svg aria-hidden="true" className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                )}
+                {qaVerifying ? t('qa.verifying') : t('qa.generating')}
               </div>
             </div>
           )}

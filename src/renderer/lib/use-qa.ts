@@ -13,6 +13,18 @@ const RAG_TOP_K = 5;              // 검색 상위 K개 청크
 const RAG_MIN_SCORE = 0.3;        // 최소 유사도 점수
 const RAG_BATCH_TIMEOUT_MS = 120000; // 배치당 타임아웃 2분
 
+// ─── 답변 검증(Hallucination 감지) 파라미터 ───
+// 초안 답변의 각 문장을 RAG 인덱스와 대조해 "근거 없는 주장" 을 자동 감지한다.
+// 감지된 경우 refine 프롬프트로 한 번 더 호출해 사용자에게는 정확도가 개선된 최종 답변만 표시.
+/** 이 값 미만의 cosine 유사도를 가진 문장은 "약한 근거" 로 분류 */
+const VERIFY_WEAK_SCORE = 0.5;
+/** 문장별 최대 유사도의 평균이 이 값 미만이면 전체적으로 refine 대상 */
+const VERIFY_AVG_SCORE = 0.65;
+/** 검증에서 제외할 최소 문장 길이 (너무 짧으면 인용만 있거나 noise) */
+const VERIFY_MIN_SENTENCE_CHARS = 15;
+/** 답변당 검증할 최대 문장 수 — 매우 긴 답변의 비용/지연 상한 */
+const VERIFY_MAX_SENTENCES = 100;
+
 /**
  * 프롬프트 구분자 인젝션 방어: 사용자 입력에서 splitPrompt 구분자(---\n\n)와
  * 프롬프트 구조 마커([질문], [이전 대화] 등)를 이스케이프하여
@@ -311,6 +323,95 @@ async function ragSearch(question: string): Promise<string | null> {
   }
 }
 
+// ─── 답변 검증 (v0.18.0) ───
+
+/**
+ * 답변 텍스트를 문장 단위로 분할. 한국어/중국어/일본어/영어 종결 구두점 지원.
+ * 너무 짧은 문장(인용만 있는 라인, 단일 키워드 등) 은 검증에서 제외 — noise 방지.
+ *
+ * 주의: 인용 토큰 `[p.N]` 끝의 마침표는 citation 정규식 소속이 아니라 문장 종결이므로
+ * 정상적으로 split 된다. 코드블록/테이블 안의 점은 가끔 오탐하지만 검증은 fail-safe
+ * (needsRefine=false 로 수렴) 이므로 무해.
+ */
+function splitIntoSentences(text: string): string[] {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  // lookbehind 로 종결 부호를 문장에 포함시키고, 뒤이은 공백+대문자/한글 시작에서 분할.
+  const sentences = normalized.split(/(?<=[.!?。！？])\s+(?=\S)/);
+  return sentences
+    .map((s) => s.trim())
+    .filter((s) => s.length >= VERIFY_MIN_SENTENCE_CHARS);
+}
+
+/**
+ * 답변 초안의 각 문장을 RAG 인덱스에 대조해 신뢰도 평가.
+ * - 문장 배열을 한 번에 배치 임베딩 → IPC 왕복 최소화.
+ * - 각 문장에 대해 VectorStore.search 로 top-1 cosine 을 구함.
+ * - weak 문장 1개+ 또는 평균 < AVG_SCORE 이면 refine 대상.
+ *
+ * Fail-safe: 임베딩 실패/RAG 비활성/인덱스 빈 경우 needsRefine=false 반환 → 초안 그대로 사용.
+ */
+async function verifyAnswerSentences(
+  answer: string,
+  signal?: AbortSignal,
+): Promise<{ needsRefine: boolean; avgScore: number; weakCount: number; totalSentences: number }> {
+  const ragIndex = useAppStore.getState().ragIndex;
+  if (ragIndex.size === 0) {
+    return { needsRefine: false, avgScore: 1, weakCount: 0, totalSentences: 0 };
+  }
+
+  const sentences = splitIntoSentences(answer).slice(0, VERIFY_MAX_SENTENCES);
+  if (sentences.length === 0) {
+    return { needsRefine: false, avgScore: 1, weakCount: 0, totalSentences: 0 };
+  }
+
+  // 문장 전체를 단일 배치로 임베딩 (ai:embed IPC 가 200개까지 허용).
+  // VERIFY_MAX_SENTENCES=100 이므로 항상 한 배치로 처리된다.
+  const result = await embedWithTimeout(sentences, signal);
+  if (!result.success || !result.embeddings || result.embeddings.length !== sentences.length) {
+    // 검증 자체 실패 → 안전하게 draft 그대로 사용 (refine 강제하지 않음)
+    return { needsRefine: false, avgScore: 1, weakCount: 0, totalSentences: sentences.length };
+  }
+
+  let totalScore = 0;
+  let weakCount = 0;
+  for (let i = 0; i < result.embeddings.length; i++) {
+    if (signal?.aborted) break;
+    // minScore=0 으로 호출 — top-1 의 실제 유사도가 해당 문장의 최대 근거 점수.
+    const hits = ragIndex.search(result.embeddings[i], 1, 0);
+    const maxScore = hits.length > 0 ? hits[0].score : 0;
+    totalScore += maxScore;
+    if (maxScore < VERIFY_WEAK_SCORE) weakCount++;
+  }
+
+  const avgScore = totalScore / sentences.length;
+  const needsRefine = weakCount >= 1 || avgScore < VERIFY_AVG_SCORE;
+  return { needsRefine, avgScore, weakCount, totalSentences: sentences.length };
+}
+
+/**
+ * Refine 프롬프트. 초안 + 원문 컨텍스트를 주고 "근거 있는 내용만" 을 남기도록 유도.
+ * 스타일/구조는 유지, 환각 주장만 제거 — 사용자에게는 "한 번의 답변" 으로 보여야 함.
+ *
+ * 주의: LLM 이 refine 지시를 무시하면 초안과 거의 같은 답변이 나올 수 있음.
+ * 그 경우에도 사용자 경험상 정상(동일 답변) 이므로 무해.
+ */
+function buildRefinePrompt(question: string, draft: string, context: string): string {
+  return `${context}
+
+[질문]
+${question}
+
+[초안 답변]
+${draft}
+
+위 초안 답변 중 원문(컨텍스트) 에서 근거를 찾을 수 있는 내용만 남기고 다시 작성하세요.
+규칙:
+- 원문에 명시되지 않은 주장은 제거하거나 "문서에서 확인되지 않음" 으로 표시
+- 문체와 구조(문단/목록 형식) 는 초안을 그대로 유지
+- [p.N] 인용은 근거 페이지를 찾으면 그대로, 찾을 수 없으면 제거
+- 새 정보를 추가하지 말고 초안의 정확성만 개선`;
+}
+
 // ─── Hooks ───
 
 /**
@@ -405,6 +506,8 @@ export function useQa() {
     if (reqId) window.electronAPI.ai.abort(reqId);
     clientRef.current = null;
     const store = useAppStore.getState();
+    // 검증 단계에서 abort 하면 draft 는 내부 변수라 qaStream 은 비어있음 — partial 없음.
+    // refine 단계에서 abort 하면 qaStream 에 부분 답변이 있어 저장 대상.
     store.flushQaStream();
     const partial = useAppStore.getState().qaStream;
     if (partial) {
@@ -413,6 +516,8 @@ export function useQa() {
     store.clearQaStream();
     store.setIsQaGenerating(false);
     store.setQaRequestId(null);
+    // 검증 인디케이터도 항상 해제 — draft 도중 abort 시 스피너가 남는 것 방지
+    store.setQaVerifying(false);
   }, []);
 
   const handleAsk = useCallback(async (question: string) => {
@@ -468,11 +573,67 @@ export function useQa() {
       requestId = client.prepareSummarize();
       useAppStore.getState().setQaRequestId(requestId);
 
+      // 2-pass 검증 파이프라인 사용 여부 결정:
+      //  - 설정이 OFF 거나
+      //  - RAG 가 unavailable 하거나 인덱스가 비어있으면
+      //  → 기존 단일 pass 스트리밍 fast path.
+      const useVerification = settings.enableAnswerVerification !== false
+        && useAppStore.getState().ragState.isAvailable
+        && useAppStore.getState().ragIndex.size > 0;
+
       let answer = '';
-      for await (const token of client.summarize(promptText, 'qa', requestId)) {
-        if (!useAppStore.getState().isQaGenerating) break;
-        useAppStore.getState().appendQaStream(token);
-        answer += token;
+      if (!useVerification) {
+        // fast path: 이전 동작 그대로 — 토큰이 도착하는 대로 qaStream 에 append.
+        for await (const token of client.summarize(promptText, 'qa', requestId)) {
+          if (!useAppStore.getState().isQaGenerating) break;
+          useAppStore.getState().appendQaStream(token);
+          answer += token;
+        }
+      } else {
+        // ─── 2-pass: Draft → Verify → (Refine or Flush) ───
+        // Step 1. Draft 를 내부 변수에만 수집 (qaStream 은 건드리지 않음). UI 는 qaVerifying=true
+        //         로 "답변 준비 중..." 스피너 표시. 사용자에게는 검증된 최종 답변만 보임.
+        useAppStore.getState().setQaVerifying(true);
+
+        let draft = '';
+        for await (const token of client.summarize(promptText, 'qa', requestId)) {
+          if (!useAppStore.getState().isQaGenerating) break;
+          draft += token;
+        }
+
+        // 사용자 abort 또는 empty draft → 그대로 종료 (finally 가 qaVerifying 해제).
+        if (!useAppStore.getState().isQaGenerating || !draft.trim()) {
+          useAppStore.getState().setQaVerifying(false);
+          answer = draft;
+        } else {
+          // Step 2. 문장 단위 RAG 대조 (내부 임베딩 호출).
+          const verification = await verifyAnswerSentences(draft);
+
+          // abort 재확인 — 검증 중 사용자가 취소했을 수 있음.
+          if (!useAppStore.getState().isQaGenerating) {
+            useAppStore.getState().setQaVerifying(false);
+            answer = draft;
+          } else if (verification.needsRefine) {
+            // Step 3b. Refine — 새 requestId 로 두번째 호출. 스트리밍으로 qaStream 에 바로 표시.
+            //         qaVerifying=false 로 전환하면 UI 가 스피너 → 스트리밍 답변으로 자연스럽게 이동.
+            useAppStore.getState().setQaVerifying(false);
+            const refineRequestId = client.prepareSummarize();
+            useAppStore.getState().setQaRequestId(refineRequestId);
+            requestId = refineRequestId; // 소유권 체크를 위해 갱신
+            const refinePrompt = buildRefinePrompt(trimmed, draft, `${context}${history}`);
+            for await (const token of client.summarize(refinePrompt, 'qa', refineRequestId)) {
+              if (!useAppStore.getState().isQaGenerating) break;
+              useAppStore.getState().appendQaStream(token);
+              answer += token;
+            }
+          } else {
+            // Step 3a. 초안이 충분히 근거 있음 → draft 를 일괄로 qaStream 에 주입 + 즉시 flush.
+            //          batch flush 동작은 appendStream 내부에서 자동 처리.
+            useAppStore.getState().setQaVerifying(false);
+            useAppStore.getState().appendQaStream(draft);
+            answer = draft;
+          }
+        }
       }
 
       // 소유권 체크: SummaryViewer.handleClose → resetSummaryState 가 외부에서
@@ -520,8 +681,11 @@ export function useQa() {
       }
       useAppStore.getState().setIsQaGenerating(false);
       useAppStore.getState().setQaRequestId(null);
+      // 검증 인디케이터는 항상 해제 — 예외/abort 어느 경로든 스피너 잔존 방지.
+      useAppStore.getState().setQaVerifying(false);
     }
   }, []);
 
-  return { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, ragState };
+  const qaVerifying = useAppStore((s) => s.qaVerifying);
+  return { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, qaVerifying, ragState };
 }

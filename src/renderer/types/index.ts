@@ -99,6 +99,10 @@ export interface AppSettings {
   enableImageAnalysis: boolean;
   enableOcrFallback: boolean;
   summaryLanguage: SummaryLanguage;
+  // Q&A 답변 검증 — 답변 초안을 RAG 인덱스와 대조해 환각 의심 문장이 있으면 refine 한 번 더.
+  // 사용자에게는 여전히 단일 답변만 표시되며 배지/스코어는 노출하지 않음 — 내부적으로 정확성만 개선.
+  // OFF 하면 기존 단일 pass 스트리밍 (빠르지만 환각 위험 높음).
+  enableAnswerVerification: boolean;
 }
 
 // Provider별 대표 모델
@@ -174,4 +178,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableImageAnalysis: true,
   enableOcrFallback: true,
   summaryLanguage: 'ko' as SummaryLanguage,
+  enableAnswerVerification: true,
 };
