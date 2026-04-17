@@ -394,6 +394,14 @@ export function useSummarize() {
     const currentSummaryType = currentState.summaryType;
     const doc = currentState.document;
 
+    // Vision 토글 일관성: 이미지 분석이 꺼진 채로 재요약할 때 이전 run 의 enrichedPageTexts 가
+    // RAG 에 남아 있으면 "Vision 은 꺼졌는데 Q&A 검색 결과에는 이미지 설명이 섞여 나오는"
+    // 비대칭 발생. 요약 시작 직전에 명시적으로 raw 상태로 되돌려 useRagBuilder 가
+    // raw pageTexts 로 재빌드하도록 유도.
+    if (!currentSettings.enableImageAnalysis && currentState.enrichedPageTexts !== null) {
+      useAppStore.getState().setEnrichedPageTexts(null);
+    }
+
     setIsGenerating(true);
     clearStream();
     setProgress(0);

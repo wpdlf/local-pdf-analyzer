@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
-import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService } from './ai-service';
+import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest } from './ai-service';
 import { MAX_PDF_SIZE_BYTES } from '../shared/constants';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
@@ -652,7 +652,7 @@ function registerIpcHandlers(): void {
 
   // ─── 임베딩 (RAG용) ───
 
-  ipcMain.handle('ai:embed', async (_event, texts: unknown) => {
+  ipcMain.handle('ai:embed', async (_event, texts: unknown, requestId: unknown) => {
     if (!Array.isArray(texts) || texts.length === 0 || texts.length > 200) {
       return { success: false, error: 'Invalid texts array (1-200 items)' };
     }
@@ -661,12 +661,22 @@ function registerIpcHandlers(): void {
         return { success: false, error: 'Each text must be 1-32000 chars' };
       }
     }
+    // requestId 는 선택적 — 제공되면 ai:abort IPC 로 진행 중 배치 취소 가능.
+    // 형식/길이 검증 후 activeRequests 에 AbortController 등록.
+    const validRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
+      ? requestId
+      : null;
+    let controller: AbortController | undefined;
+    if (validRequestId) {
+      controller = new AbortController();
+      registerEmbedRequest(validRequestId, controller);
+    }
     try {
       const settings = await loadSettings();
       const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
       const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
       const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
-      const result = await generateEmbeddings(texts, provider, ollamaBaseUrl, apiKey);
+      const result = await generateEmbeddings(texts, provider, ollamaBaseUrl, apiKey, undefined, controller?.signal);
       if (!result) {
         return { success: false, error: '임베딩 생성 불가 (해당 프로바이더 미지원)' };
       }
@@ -683,7 +693,12 @@ function registerIpcHandlers(): void {
       }
       return { success: true, embeddings: result.embeddings, model: result.model };
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : '임베딩 생성 실패' };
+      const msg = err instanceof Error ? err.message : '임베딩 생성 실패';
+      // Aborted 는 renderer 가 이미 취소를 알고 있으므로 조용히 반환 (로깅 생략)
+      const isAbort = msg === 'Aborted' || (err as Error & { code?: string })?.code === 'ABORT_ERR';
+      return { success: false, error: isAbort ? 'Aborted' : msg };
+    } finally {
+      if (validRequestId) unregisterEmbedRequest(validRequestId);
     }
   });
 

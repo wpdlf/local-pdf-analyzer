@@ -104,28 +104,65 @@ function formatHistory(messages: QaMessage[]): string {
 // ─── RAG 인덱스 빌드 ───
 
 // 현재 활성 빌드의 AbortController. 새 빌드가 시작되거나 cleanup 시점에 abort() 호출.
-// 주의: IPC embed 호출 자체는 취소 불가능 (renderer→main 단일 invoke).
-// signal.aborted 플래그는 다음 배치로 넘어가기 전 조기 종료에만 사용됨.
+// v0.17.12: 배치별 requestId 를 발급해 ai:abort IPC 로 in-flight HTTP 까지 진짜 취소.
+// 과거에는 signal.aborted 로 "다음 배치 전 조기 종료"만 가능해 OpenAI 배치 중도 취소가 안 됐음.
 let activeBuildController: AbortController | null = null;
 
-/** 배치 임베딩 호출 + 타임아웃 래퍼 */
-function embedWithTimeout(texts: string[]): Promise<{
+function generateBatchRequestId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `rag-${crypto.randomUUID()}`;
+    }
+  } catch { /* fallthrough */ }
+  return `rag-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+/**
+ * 배치 임베딩 호출 + 타임아웃 래퍼.
+ * signal 이 넘어오면 abort 시 main 에 ai:abort 를 보내 HTTP 소켓을 즉시 해제 —
+ * OpenAI 사용자의 불필요한 토큰 과금 방지.
+ */
+function embedWithTimeout(texts: string[], signal?: AbortSignal): Promise<{
   success: boolean;
   embeddings?: number[][];
   model?: string;
   error?: string;
 }> {
   return new Promise((resolve) => {
+    const requestId = generateBatchRequestId();
+    let settled = false;
+    const safeResolve = (v: { success: boolean; embeddings?: number[][]; model?: string; error?: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve(v);
+    };
+
     const timer = setTimeout(() => {
-      resolve({ success: false, error: 'RAG 임베딩 배치 타임아웃' });
+      // 타임아웃 시에도 main 의 활성 등록 해제 시도 (idempotent)
+      window.electronAPI.ai.abort(requestId).catch(() => {});
+      safeResolve({ success: false, error: 'RAG 임베딩 배치 타임아웃' });
     }, RAG_BATCH_TIMEOUT_MS);
 
-    window.electronAPI.ai.embed(texts).then((result) => {
-      clearTimeout(timer);
-      resolve(result);
+    const onAbort = () => {
+      // main 에 진행 중 HTTP 소켓 파괴 요청 — generateEmbeddings 가 Aborted 로 reject,
+      // ai:embed 핸들러가 success:false/error:'Aborted' 반환.
+      window.electronAPI.ai.abort(requestId).catch(() => {});
+      safeResolve({ success: false, error: 'Aborted' });
+    };
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener('abort', onAbort);
+    }
+
+    window.electronAPI.ai.embed(texts, requestId).then((result) => {
+      safeResolve(result);
     }).catch(() => {
-      clearTimeout(timer);
-      resolve({ success: false, error: '임베딩 요청 실패' });
+      safeResolve({ success: false, error: '임베딩 요청 실패' });
     });
   });
 }
@@ -184,7 +221,7 @@ async function buildRagIndex(
       if (signal.aborted) return false;
 
       const batch = chunks.slice(i, i + RAG_BATCH_SIZE);
-      const result = await embedWithTimeout(batch);
+      const result = await embedWithTimeout(batch, signal);
 
       // 빌드 도중 문서 전환 재확인
       if (signal.aborted) return false;

@@ -64,6 +64,29 @@ export function abortGenerate(requestId: string): void {
   }
 }
 
+/**
+ * 임베딩 요청을 activeRequests 에 등록해 ai:abort IPC 로 취소 가능하게 한다.
+ * RAG 인덱스 재빌드 시 renderer 가 in-flight 배치를 진짜 취소하도록 — 특히
+ * OpenAI 사용자의 불필요한 토큰 과금 방지.
+ */
+export function registerEmbedRequest(requestId: string, controller: AbortController): void {
+  // 이전 동일 requestId 방어 — 구 배치 취소 후 등록
+  if (activeRequests.has(requestId)) {
+    activeRequests.get(requestId)!.abort();
+    activeRequests.delete(requestId);
+  }
+  const now = Date.now();
+  activeRequests.set(requestId, {
+    abort: () => controller.abort(),
+    createdAt: now,
+    startedAt: now,
+  });
+}
+
+export function unregisterEmbedRequest(requestId: string): void {
+  activeRequests.delete(requestId);
+}
+
 export async function generate(
   requestId: string,
   request: GenerateRequest,
@@ -621,11 +644,27 @@ export async function analyzeImageForOcr(
   );
 }
 
-function httpPost(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<string> {
+function httpPost(
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const safeResolve = (value: string) => { if (!settled) { settled = true; resolve(value); } };
-    const safeReject = (err: Error) => { if (!settled) { settled = true; reject(err); } };
+    const safeResolve = (value: string) => { if (!settled) { settled = true; cleanupAbort(); resolve(value); } };
+    const safeReject = (err: Error) => { if (!settled) { settled = true; cleanupAbort(); reject(err); } };
+
+    // AbortSignal 통합 — signal.aborted 면 즉시 reject, 그렇지 않으면 'abort' 이벤트 구독.
+    // req 가 아직 정의되기 전에도 aborted 상태를 처리할 수 있도록 핸들러는 req 선언 이후 등록하고,
+    // 종료(settle) 시 listener 를 떼어 GC hazard/메모리 누수 방지.
+    let cleanupAbort: () => void = () => {};
+    if (signal?.aborted) {
+      // 이미 취소된 signal — 요청 자체를 시작하지 않고 즉시 reject
+      safeReject(new Error('Aborted'));
+      return;
+    }
 
     const parsedUrl = new URL(url);
     const client = parsedUrl.protocol === 'https:' ? https : http;
@@ -715,6 +754,18 @@ function httpPost(url: string, headers: Record<string, string>, body: string, ti
       req.destroy();
       safeReject(new Error('Vision API 타임아웃'));
     });
+
+    // signal 이 있으면 abort 시 req + responseStream 파괴해 HTTP 소켓 즉시 해제
+    if (signal) {
+      const onAbort = () => {
+        if (responseStream && !responseStream.destroyed) responseStream.destroy();
+        if (!req.destroyed) req.destroy();
+        safeReject(new Error('Aborted'));
+      };
+      signal.addEventListener('abort', onAbort);
+      cleanupAbort = () => signal.removeEventListener('abort', onAbort);
+    }
+
     req.write(body);
     req.end();
   });
@@ -741,23 +792,24 @@ export async function generateEmbeddings(
   ollamaBaseUrl: string,
   apiKey: string | undefined,
   embeddingModel?: string,
+  signal?: AbortSignal,
 ): Promise<EmbeddingResult | null> {
   // Claude → Ollama fallback 시도
   if (provider === 'claude') {
     try {
-      return await embedOllama(texts, ollamaBaseUrl, embeddingModel);
+      return await embedOllama(texts, ollamaBaseUrl, embeddingModel, signal);
     } catch {
       return null; // Ollama도 불가 → keyword fallback
     }
   }
 
   if (provider === 'ollama') {
-    return embedOllama(texts, ollamaBaseUrl, embeddingModel);
+    return embedOllama(texts, ollamaBaseUrl, embeddingModel, signal);
   }
 
   if (provider === 'openai') {
     if (!apiKey) return null;
-    return embedOpenAi(texts, apiKey, embeddingModel);
+    return embedOpenAi(texts, apiKey, embeddingModel, signal);
   }
 
   return null;
@@ -767,12 +819,13 @@ async function embedOllama(
   texts: string[],
   ollamaBaseUrl: string,
   model?: string,
+  signal?: AbortSignal,
 ): Promise<EmbeddingResult> {
   validateOllamaUrl(ollamaBaseUrl);
   const url = new URL('/api/embed', ollamaBaseUrl);
   const useModel = model || OLLAMA_EMBED_MODELS[0];
   const body = JSON.stringify({ model: useModel, input: texts });
-  const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, 120000);
+  const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, 120000, signal);
   const parsed = JSON.parse(result);
   if (!parsed.embeddings || !Array.isArray(parsed.embeddings)) {
     throw new Error('Ollama 임베딩 응답 형식 오류');
@@ -787,13 +840,14 @@ async function embedOpenAi(
   texts: string[],
   apiKey: string,
   model?: string,
+  signal?: AbortSignal,
 ): Promise<EmbeddingResult> {
   const useModel = model || 'text-embedding-3-small';
   const body = JSON.stringify({ model: useModel, input: texts });
   const result = await httpPost('https://api.openai.com/v1/embeddings', {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${apiKey}`,
-  }, body, 60000);
+  }, body, 60000, signal);
   const parsed = JSON.parse(result);
   if (!parsed.data || !Array.isArray(parsed.data)) {
     throw new Error('OpenAI 임베딩 응답 형식 오류');
