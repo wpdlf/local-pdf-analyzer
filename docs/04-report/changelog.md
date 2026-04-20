@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.2] - 2026-04-21
+
+### Security (P3 Low — 2건)
+- **`ai:generate` requestId 길이 캡 추가** (`main/index.ts:519`): 형제 IPC 핸들러(`ai:abort` 256자, `ai:embed` 128자)와 drift 되어있던 제한을 ≤256 으로 정합. 렌더러 손상 시 과대한 requestId 가 activeRequests Map 키로 저장되며 매 토큰마다 echo 되던 자기-DoS 벡터 차단.
+- **`sanitizePromptInput` whitespace padding 우회 강화** (`use-qa.ts:33-41`): `^---$` 등 regex 를 `^\s*---\s*$` 로 확장. `" ---"` / `"[질문] "` 같은 앞뒤 공백 padding 으로 이스케이프를 우회하던 엣지 케이스 차단.
+
+### Tests
+- **qa-core.test.ts 신규** (31 케이스): sanitizePromptInput 11 + extractKeywords 10 + selectRelevantChunks 10. 3 함수 export 추가. **124/124 pass** (기존 93 + 신규 31).
+
+### QA Process
+- 3라운드 병렬 4-agent QA (code-analyzer R20 / security-architect R21 / gap-detector / qa-test-planner) 후 새 P3 Low 2건 식별·수정.
+- 20회 연속 Critical/High/Medium zero 유지, 97/100.
+
+---
+
 ## [0.18.1] - 2026-04-20
 
 ### Fixed (Critical)

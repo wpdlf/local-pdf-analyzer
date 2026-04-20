@@ -28,15 +28,17 @@ const VERIFY_MAX_SENTENCES = 100;
 /**
  * 프롬프트 구분자 인젝션 방어: 사용자 입력에서 splitPrompt 구분자(---\n\n)와
  * 프롬프트 구조 마커([질문], [이전 대화] 등)를 이스케이프하여
- * system/user 분리 및 컨텍스트 구조가 오염되지 않도록 보호
+ * system/user 분리 및 컨텍스트 구조가 오염되지 않도록 보호.
+ *
+ * 앞뒤 공백 허용(`\s*`)으로 `" ---"` / `"[질문] "` 같은 whitespace padding 우회 차단.
  */
-function sanitizePromptInput(text: string): string {
+export function sanitizePromptInput(text: string): string {
   return text
-    .replace(/^---$/gm, '\\-\\-\\-')
-    .replace(/^\[질문\]/gm, '\\[질문\\]')
-    .replace(/^\[이전 대화\]/gm, '\\[이전 대화\\]')
-    .replace(/^\[요약 내용\]/gm, '\\[요약 내용\\]')
-    .replace(/^\[원문 관련 부분\]/gm, '\\[원문 관련 부분\\]');
+    .replace(/^\s*---\s*$/gm, '\\-\\-\\-')
+    .replace(/^\s*\[질문\]/gm, '\\[질문\\]')
+    .replace(/^\s*\[이전 대화\]/gm, '\\[이전 대화\\]')
+    .replace(/^\s*\[요약 내용\]/gm, '\\[요약 내용\\]')
+    .replace(/^\s*\[원문 관련 부분\]/gm, '\\[원문 관련 부분\\]');
 }
 
 // 한국어 불용어 (키워드 매칭에서 제외)
@@ -52,7 +54,7 @@ const STOPWORDS = new Set([
 ]);
 
 /** 질문에서 의미 있는 키워드 추출 */
-function extractKeywords(question: string): string[] {
+export function extractKeywords(question: string): string[] {
   return question
     .replace(/[?？!！.,;:'"()[\]{}]/g, ' ')
     .split(/\s+/)
@@ -61,7 +63,7 @@ function extractKeywords(question: string): string[] {
 }
 
 /** 질문 키워드 기반 관련 청크 선별 (TF 스코어링) — RAG fallback용 */
-function selectRelevantChunks(
+export function selectRelevantChunks(
   question: string,
   fullText: string,
   maxChunkSize: number,

@@ -515,8 +515,8 @@ function registerIpcHandlers(): void {
     temperature?: number;
     language?: string;
   }) => {
-    // 입력값 검증
-    if (typeof requestId !== 'string' || !requestId) {
+    // 입력값 검증 (길이 캡: ai:abort=256, ai:embed=128 과 정합 — 자기-DoS 방어)
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 256) {
       return { success: false, error: 'Invalid requestId' };
     }
     if (!request || typeof request.text !== 'string' || !request.text || request.text.length > 10 * 1024 * 1024) {
