@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.1] - 2026-04-20
+
+### Fixed (Critical)
+- **enableAnswerVerification 설정 영구 저장**: `src/main/index.ts` 의 defaultSettings + VALID_SETTINGS_KEYS_SET + VALID_SETTINGS_KEYS + switch validator 네 군데에 신규 키 누락 → 토글 OFF 후 재시작 시 TRUE 로 복원되던 문제. v0.18.0 대표 기능의 persistence 파기를 복구.
+
+### Fixed (High)
+- **verifyAnswerSentences abort signal 미연결**: `use-qa.ts` 의 2-pass verify 경로가 AbortController signal 을 전달하지 않아 사용자가 "멈춤" 을 눌러도 OpenAI 배치 임베딩이 최대 120s 진행되며 과금되던 회귀(v0.17.12 abort 인프라와 미연결). `verifyAbortRef` 를 도입해 handleQaAbort 에서 즉시 파괴.
+
+### Tests
+- **qa-verify.test.ts 신규** (11 케이스): splitIntoSentences / buildRefinePrompt / verifyAnswerSentences (RAG empty / embed fail / weak / strong / pre-aborted signal). 93/93 pass.
+
+### Docs
+- changelog v0.11~v0.18 backfill, page-citation-viewer Analysis 재평가(88.8% → ~98%) + `docs/archive/2026-04/` 이관.
+
+---
+
+## [0.11.0 – 0.18.0] - 2026-04-01 ~ 2026-04-20 (Consolidated Backfill)
+
+> v0.10.1 이후 changelog 갱신이 누락되어 2026-04-20 에 커밋 이력 기반으로 backfill. 세부 QA 라운드 내역은 `git log` 참조. 핵심 릴리즈만 발췌.
+
+### [0.18.0] - 2026-04-20 — Q&A 답변 자동 검증
+- **Hallucination 감지 + silent refine**: Q&A 답변을 문장 단위로 쪼개 RAG 인덱스와 cosine 유사도 대조. weak 문장 ≥1 또는 평균 점수 < 0.65 이면 refine 프롬프트로 한 번 더 호출해 사용자에게는 최종 답변만 표시.
+- **2-pass Orchestration**: Draft 수집(스트림 숨김, `qaVerifying=true` 스피너) → verify → flush 또는 refine 스트리밍.
+- **Fail-safe**: RAG 비활성/임베딩 실패/빈 draft 시 needsRefine=false 로 기존 단일-pass 경로로 수렴.
+
+### [0.17.0 – 0.17.12] — page-citation-viewer + QA Hardening
+- **v0.17.0 page-citation-viewer**: 요약/답변의 `[p.N]` 인용 → 클릭 시 우측 PDF 뷰어 해당 페이지 이동. `citation.ts` 신규 + `chunkTextWithOverlapByPage` + pdfjs 직접 사용.
+- **v0.17.1~0.17.2**: DR-01 가로 리사이즈 핸들(`ResizeHandle.tsx` + `citationPanelWidth` localStorage), citation 품질 개선.
+- **v0.17.3~0.17.6**: 병렬 QA (M1~M4) + DR-04 설계 sync + cachedDoc 누수 해소.
+- **v0.17.7 Security**: Ollama 인스톨러 Authenticode 검증 + Electron 보안 하드닝.
+- **v0.17.8**: Mac (.dmg) 빌드 CI 추가, artifactName 플랫폼별 분리.
+- **v0.17.9~0.17.12 QA Rounds**: 병렬 QA P1 3건 → R2 H1/H2/M1 → R3 RAG enrichment + length assertion → R4 embed abort (registerEmbedRequest) + Vision 토글 일관성.
+
+### [0.15.0 – 0.16.2] — 안정성 · UX · 다국어
+- **v0.15.0**: 안정성 + UX + 다국어 일관성 대규모 개선.
+- **v0.16.0**: 11라운드 병렬 QA 40건 수정.
+- **v0.16.1**: 12~15차 QA 14건 + file:open-pdf dialog try/catch + AppErrorBoundary + i18n store error.
+- **v0.16.2**: 3라운드 병렬 QA (Critical 2 + High 16 + Medium 22 + 회귀 10).
+
+### [0.11.0 – 0.14.x] — i18n + pdf-qa
+- UI 다국어(한국어/English), 셋업 위자드 임베딩 모델 구분, pdf-qa feature (9 QA 사이클), ASCII/Mermaid 다이어그램 왕복.
+
+---
+
 ## [0.10.1] - 2026-03-31
 
 ### Security (Critical)

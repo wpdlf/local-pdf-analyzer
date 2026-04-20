@@ -333,7 +333,7 @@ async function ragSearch(question: string): Promise<string | null> {
  * 정상적으로 split 된다. 코드블록/테이블 안의 점은 가끔 오탐하지만 검증은 fail-safe
  * (needsRefine=false 로 수렴) 이므로 무해.
  */
-function splitIntoSentences(text: string): string[] {
+export function splitIntoSentences(text: string): string[] {
   const normalized = text.replace(/\s+/g, ' ').trim();
   // lookbehind 로 종결 부호를 문장에 포함시키고, 뒤이은 공백+대문자/한글 시작에서 분할.
   const sentences = normalized.split(/(?<=[.!?。！？])\s+(?=\S)/);
@@ -350,7 +350,7 @@ function splitIntoSentences(text: string): string[] {
  *
  * Fail-safe: 임베딩 실패/RAG 비활성/인덱스 빈 경우 needsRefine=false 반환 → 초안 그대로 사용.
  */
-async function verifyAnswerSentences(
+export async function verifyAnswerSentences(
   answer: string,
   signal?: AbortSignal,
 ): Promise<{ needsRefine: boolean; avgScore: number; weakCount: number; totalSentences: number }> {
@@ -395,7 +395,7 @@ async function verifyAnswerSentences(
  * 주의: LLM 이 refine 지시를 무시하면 초안과 거의 같은 답변이 나올 수 있음.
  * 그 경우에도 사용자 경험상 정상(동일 답변) 이므로 무해.
  */
-function buildRefinePrompt(question: string, draft: string, context: string): string {
+export function buildRefinePrompt(question: string, draft: string, context: string): string {
   return `${context}
 
 [질문]
@@ -492,11 +492,15 @@ export function useQa() {
   const ragState = useAppStore((s) => s.ragState);
   const clientRef = useRef<AiClient | null>(null);
   const abortedRef = useRef(false);
+  // verify 단계 embedding 중단용 — qaRequestId 는 draft/refine LLM 호출만 커버하므로
+  // verifyAnswerSentences 내부의 배치 임베딩(rag-*)은 별도 signal 로 abort 해야 한다.
+  const verifyAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     return () => {
       const reqId = useAppStore.getState().qaRequestId;
       if (reqId) window.electronAPI.ai.abort(reqId);
+      verifyAbortRef.current?.abort();
     };
   }, []);
 
@@ -504,6 +508,7 @@ export function useQa() {
     abortedRef.current = true;
     const reqId = useAppStore.getState().qaRequestId;
     if (reqId) window.electronAPI.ai.abort(reqId);
+    verifyAbortRef.current?.abort();
     clientRef.current = null;
     const store = useAppStore.getState();
     // 검증 단계에서 abort 하면 draft 는 내부 변수라 qaStream 은 비어있음 — partial 없음.
@@ -534,6 +539,9 @@ export function useQa() {
     const doc = state.document;
 
     abortedRef.current = false;
+    // 이전 호출의 verify signal 정리 후 새 컨트롤러 준비 — handleAsk 진입마다 fresh 신호.
+    verifyAbortRef.current?.abort();
+    verifyAbortRef.current = new AbortController();
     state.addQaMessage({ role: 'user', content: trimmed });
     state.setIsQaGenerating(true);
     state.clearQaStream();
@@ -607,7 +615,9 @@ export function useQa() {
           answer = draft;
         } else {
           // Step 2. 문장 단위 RAG 대조 (내부 임베딩 호출).
-          const verification = await verifyAnswerSentences(draft);
+          // signal 을 전달해 사용자가 "멈춤" 을 누르면 OpenAI embedding 소켓을 즉시 파괴
+          // (v0.17.12 embed abort 인프라와 연결) — 불필요 토큰 과금 방지.
+          const verification = await verifyAnswerSentences(draft, verifyAbortRef.current?.signal);
 
           // abort 재확인 — 검증 중 사용자가 취소했을 수 있음.
           if (!useAppStore.getState().isQaGenerating) {

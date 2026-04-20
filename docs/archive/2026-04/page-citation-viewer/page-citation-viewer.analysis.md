@@ -1,22 +1,28 @@
 ---
 template: analysis
-version: 1.0
+version: 1.1
 feature: page-citation-viewer
-date: 2026-04-14
+date: 2026-04-20
 author: jjw
 project: local-pdf-analyzer
-projectVersion: 0.16.2 → 0.17.0 (pending)
+projectVersion: 0.16.2 → 0.18.0 (shipped)
 phase: check
+status: resolved
 ---
 
 # page-citation-viewer Gap Analysis Report
 
-> **Phase**: PDCA Check
-> **Date**: 2026-04-14
-> **Match Rate**: **88.8%** (Structural 100% + Functional 92% + Contract 80%)
-> **Tests**: **5 files · 69/69 pass** (회귀 0)
-> **Critical**: 0 · **Important**: 2 · **Info**: 1
-> **Recommendation**: 문서 정정 + 수동 smoke 후 Report 단계 진행 (iterate 불필요)
+> **Phase**: PDCA Check (Re-evaluated)
+> **Date**: 2026-04-20 (v1.1 update — gap-detector 재검증)
+> **Match Rate**: **~98%** (Structural 100% + Functional 100% + Contract 95%)
+> **Tests**: **6 files · 93/93 pass** (회귀 0, v0.18 qa-verify 테스트 포함)
+> **Critical**: 0 · **Important**: 0 · **Info**: 0 — 모든 Gap 해결 완료
+> **Recommendation**: Archive 이관 (`docs/archive/2026-04/page-citation-viewer/`)
+>
+> **v1.0 (88.8%) → v1.1 (~98%) Delta**:
+> - G1 PdfViewerProps contract drift → ✅ 해결 (design.md:386-389 == PdfViewer.tsx:44-51)
+> - G2 가로 리사이즈 핸들 미구현 → ✅ 해결 (ResizeHandle.tsx + store.citationPanelWidth + localStorage)
+> - I1 "text renderer" 용어 → ✅ 해결 (design.md:208 "p/li/td/th/em/strong renderers")
 
 ---
 
@@ -200,3 +206,4 @@ Match Rate 가 70% iterate 임계를 충분히 상회하고 (88.8%), Important 2
 | Version | Date | Changes | Author |
 |---|---|---|---|
 | 0.1 | 2026-04-14 | 초안 작성 (PDCA Check phase, gap-detector + 수동 검증) | jjw |
+| 1.1 | 2026-04-20 | G1/G2/I1 해결 확인 → Match Rate 88.8% → ~98% 갱신, Archive 권고 | jjw + gap-detector |

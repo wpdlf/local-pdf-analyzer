@@ -32,10 +32,11 @@ const defaultSettings = {
   enableImageAnalysis: true,
   enableOcrFallback: true,
   summaryLanguage: 'ko',
+  enableAnswerVerification: true,
 } as const;
 
 const VALID_SETTINGS_KEYS_SET = new Set([
-  'provider', 'model', 'ollamaBaseUrl', 'theme', 'uiLanguage', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage',
+  'provider', 'model', 'ollamaBaseUrl', 'theme', 'uiLanguage', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage', 'enableAnswerVerification',
 ]);
 
 async function loadSettings(): Promise<Record<string, unknown>> {
@@ -332,6 +333,7 @@ function registerIpcHandlers(): void {
   const VALID_SETTINGS_KEYS = [
     'provider', 'model', 'ollamaBaseUrl', 'theme', 'uiLanguage',
     'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage',
+    'enableAnswerVerification',
   ] as const;
 
   ipcMain.handle('apikey:save', (_event, provider: string, key: string) => {
@@ -429,6 +431,9 @@ function registerIpcHandlers(): void {
             break;
           case 'summaryLanguage':
             if (['ko', 'en', 'ja', 'zh', 'auto'].includes(val as string)) filtered[key] = val;
+            break;
+          case 'enableAnswerVerification':
+            if (typeof val === 'boolean') filtered[key] = val;
             break;
         }
       }
