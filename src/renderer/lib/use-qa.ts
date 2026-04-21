@@ -386,7 +386,11 @@ export async function verifyAnswerSentences(
   }
 
   const avgScore = totalScore / sentences.length;
-  const needsRefine = weakCount >= 1 || avgScore < VERIFY_AVG_SCORE;
+  // v0.18.3: 단일 약문장(boilerplate/연결어) 한 개로 refine 이 강제 트리거되어
+  // 대부분의 답변이 두 번째 LLM 호출 비용을 치르던 문제를 완화.
+  // 약문장 2개 이상 또는 전체 비율이 20% 초과이거나, 평균 점수가 임계 미만이면 refine.
+  const weakRatio = weakCount / sentences.length;
+  const needsRefine = weakCount >= 2 || weakRatio > 0.2 || avgScore < VERIFY_AVG_SCORE;
   return { needsRefine, avgScore, weakCount, totalSentences: sentences.length };
 }
 
@@ -632,17 +636,22 @@ export function useQa() {
             const refineRequestId = client.prepareSummarize();
             useAppStore.getState().setQaRequestId(refineRequestId);
             requestId = refineRequestId; // 소유권 체크를 위해 갱신
-            const refinePrompt = buildRefinePrompt(trimmed, draft, `${context}${history}`);
+            // v0.18.3 H1 fix: draft 경로(line 581)는 question 을 sanitizePromptInput 으로 이스케이프하지만
+            // refine 경로는 raw trimmed 를 썼기 때문에, `---` / `[질문]` / `[이전 대화]` 마커가 포함된
+            // 질문이 프롬프트 구조를 오염시킬 수 있었다 (v0.18.0 회귀). 두 경로 모두 동일하게 정화.
+            const sanitizedQuestion = sanitizePromptInput(trimmed);
+            const refinePrompt = buildRefinePrompt(sanitizedQuestion, draft, `${context}${history}`);
             for await (const token of client.summarize(refinePrompt, 'qa', refineRequestId)) {
               if (!useAppStore.getState().isQaGenerating) break;
               useAppStore.getState().appendQaStream(token);
               answer += token;
             }
           } else {
-            // Step 3a. 초안이 충분히 근거 있음 → draft 를 일괄로 qaStream 에 주입 + 즉시 flush.
-            //          batch flush 동작은 appendStream 내부에서 자동 처리.
+            // Step 3a. 초안이 충분히 근거 있음 → draft 를 answer 로 사용.
+            //          v0.18.3 M2: 기존의 appendQaStream(draft) 는 직후에 동기적으로 실행되는
+            //          clearQaStream() (line ~665) 로 인해 React 가 렌더하지 못하는 dead code.
+            //          최종 답변은 공통 경로의 addQaMessage(normalized) 로만 표시된다.
             useAppStore.getState().setQaVerifying(false);
-            useAppStore.getState().appendQaStream(draft);
             answer = draft;
           }
         }

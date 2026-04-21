@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.3] - 2026-04-21
+
+### Fixed (High)
+- **refine 경로의 question sanitize 누락 복구** (`use-qa.ts:635`): v0.18.0 도입된 2-pass Q&A 중 draft 분기는 `sanitizePromptInput(trimmed)` 을 거치지만 refine 분기는 raw question 을 `buildRefinePrompt` 에 전달해, `---` / `[질문]` / `[이전 대화]` 마커가 포함된 질문이 프롬프트 구조를 오염시킬 수 있었다. 두 분기 모두 동일한 sanitize 파이프라인 통과하도록 정합.
+
+### Fixed (Medium)
+- **`needsRefine` 임계 완화** (`use-qa.ts:389`): 기존 `weakCount >= 1` 규칙이 boilerplate 한 문장만으로도 두 번째 LLM 호출을 강제해 대부분의 답변에 지연+비용 증가를 유발. 새 규칙 `weakCount >= 2 || weakRatio > 0.2 || avgScore < VERIFY_AVG_SCORE` 로 단일 약문장은 허용하되 실제 hallucination 시그널(복수 약문장/20% 초과/평균 하락)에서만 refine 트리거.
+- **verified-draft 경로 dead code 제거** (`use-qa.ts:644`): React 가 동기 setState 를 batch 하므로 직후 `clearQaStream()` 에 의해 절대 렌더되지 않던 `appendQaStream(draft)` 를 삭제. 최종 답변은 공통 경로의 `addQaMessage(normalized)` 로 일원화.
+- **Ollama 다운로드 타임아웃 시 WriteStream 미해제** (`ollama-manager.ts:389-392`): `req.setTimeout` 핸들러에서 200 분기 내부 지역변수 `file` 에 접근 불가 → `response.on('close')` 전파에만 의존하던 FD 해제 경로를 `currentFile` outer-scope 참조로 명시적 `file.destroy()` 호출. 10분 타임아웃 히트 시 FD leak 가능성 차단.
+
+### Tests
+- **qa-verify.test.ts +7 케이스** (124→131): buildRefinePrompt sanitize regression 1 + `sanitizePromptInput` 단위 4 + `verifyAnswerSentences` 임계 regression 2. v0.18 주요 회귀 포인트를 정적으로 방어.
+
+### QA Process
+- 22라운드 병렬 4-agent QA (AI/RAG core / main+PDF / UI layer / Security) 기반으로 High 1 + Medium 3 + 테스트 공백 선별 수정. UI/Security 레이어는 findings zero 로 maintenance mode 재확인.
+- 전체 131/131 pass, 보안 점수 97/100 유지.
+
+---
+
 ## [0.18.2] - 2026-04-21
 
 ### Security (P3 Low — 2건)

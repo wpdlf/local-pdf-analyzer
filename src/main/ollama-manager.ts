@@ -307,6 +307,9 @@ export class OllamaManager {
           return;
         }
         const client = targetUrl.startsWith('https') ? https : http;
+        // v0.18.3 M3: req.setTimeout 핸들러에서도 WriteStream 을 파괴할 수 있도록 outer-scope 참조.
+        // 이전에는 file 이 200 분기 내부 지역변수라 타임아웃 경로에서 접근 불가 → FD leak 가능성.
+        let currentFile: fs.WriteStream | null = null;
         const req = client.get(targetUrl, (response) => {
           if (response.statusCode && [301, 302, 303, 307, 308].includes(response.statusCode)) {
             response.resume(); // 리다이렉트 응답 body 소비하여 소켓 해제
@@ -335,6 +338,7 @@ export class OllamaManager {
             let downloaded = 0;
             let aborted = false;
             const file = fs.createWriteStream(dest);
+            currentFile = file;
 
             // 다운로드 바이트 카운터 — MAX_SIZE 초과 직전에 즉시 abort.
             // 'data' 이벤트는 pipe 의 write 와 같은 턴에 발화되므로, chunk 를 더하기 전에
@@ -388,6 +392,9 @@ export class OllamaManager {
         req.on('error', safeReject);
         req.setTimeout(TIMEOUT_MS, () => {
           req.destroy();
+          // v0.18.3 M3: 200 분기에서 생성된 WriteStream 이 있으면 명시적으로 파괴.
+          // req.destroy() → response 'close' 이벤트 전파에 의존하지 않고 즉시 FD 반환.
+          currentFile?.destroy();
           safeReject(new Error('다운로드 타임아웃 (10분)'));
         });
       };
