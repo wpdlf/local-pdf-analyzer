@@ -22,13 +22,16 @@ import { Component, type ReactNode } from 'react';
 export function sanitizeErrorPath(raw: string): string {
   if (!raw) return raw;
   return raw
-    // Windows 사용자 홈 (드라이브 C/D/E 등 허용)
-    .replace(/[A-Z]:\\Users\\[^\\\s"'<>|?*]+/gi, '~')
-    // macOS/Linux 사용자 홈
-    .replace(/\/Users\/[^/\s"'<>|?*]+/g, '~')
-    .replace(/\/home\/[^/\s"'<>|?*]+/g, '~')
-    // UNC 공유 경로 — `\\server\share\...` 전체를 <share> 로
-    .replace(/\\\\[^\\\s"'<>|?*]+\\[^\\\s"'<>|?*]+/g, '<share>')
+    // v0.18.5 Round 23 #3: Windows 사용자 홈 — 사용자명 이후 **하위 경로 전체** 도 소비.
+    // 이전에는 `C:\Users\alice` 만 `~` 로 바뀌고 `\secrets\api-key.ts` 가 남아 민감
+    // 폴더/파일명이 노출됐다. 전체 경로를 `~` 로 일괄 치환해 프로젝트 구조까지 은닉.
+    .replace(/[A-Z]:\\Users\\[^\\\s"'<>|?*]+(?:\\[^\s"'<>|?*]+)*/gi, '~')
+    // macOS/Linux 사용자 홈 — 동일 정책
+    .replace(/\/Users\/[^/\s"'<>|?*]+(?:\/[^\s"'<>|?*]+)*/g, '~')
+    .replace(/\/home\/[^/\s"'<>|?*]+(?:\/[^\s"'<>|?*]+)*/g, '~')
+    // v0.18.5 Round 23 #2: UNC 공유 — `\\server\share` 뒤의 하위 경로(프로젝트 폴더 등)
+    // 도 모두 `<share>` 로 흡수. 이전에는 `\\srv\share\a\b\c` 에서 `\a\b\c` 가 남았다.
+    .replace(/\\\\[^\\\s"'<>|?*]+\\[^\\\s"'<>|?*]+(?:\\[^\s"'<>|?*]+)*/g, '<share>')
     // Linux/macOS 시스템 절대경로 (공백 전 까지)
     .replace(/\/(?:etc|var|usr|opt|tmp|private|boot|sys|proc|dev|run|srv|mnt|media)(?:\/[^\s"'<>|?*]*)?/g, '<system>')
     // 남은 Windows 드라이브 절대경로 (일반화) — 사용자 홈·<share> 치환 이후에만 매치.

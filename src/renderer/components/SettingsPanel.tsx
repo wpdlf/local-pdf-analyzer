@@ -263,7 +263,11 @@ export function SettingsPanel() {
     <div className="p-6 max-w-lg mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold text-gray-800 dark:text-white">{t('settings.title')}</h2>
-        <button onClick={handleCancel} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+        <button
+          onClick={handleCancel}
+          aria-label={t('settings.closePanel')}
+          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+        >
           ✕ {t('common.close')}
         </button>
       </div>

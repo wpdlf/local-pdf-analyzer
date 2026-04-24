@@ -3,6 +3,7 @@ import { useAppStore } from './store';
 import { AiClient } from './ai-client';
 import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage } from './chunker';
 import { formatPageLabel, normalizeCitationPlacement } from './citation';
+import { t } from './i18n';
 import type { QaMessage } from '../types';
 
 const MAX_QUESTION_LENGTH = 1000;
@@ -542,6 +543,10 @@ export function useQa() {
   }, []);
 
   const handleQaAbort = useCallback(() => {
+    // v0.18.5 Round 23 #1: 중복 호출 방어 — 이미 비생성 상태면 no-op.
+    // (UI 버튼이 isQaGenerating 조건부 렌더라 현재는 중복 호출이 어렵지만
+    // 프로그램 경로로 호출될 가능성 대비 + 빈 placeholder 중복 주입 방지.)
+    if (!useAppStore.getState().isQaGenerating) return;
     abortedRef.current = true;
     const reqId = useAppStore.getState().qaRequestId;
     if (reqId) window.electronAPI.ai.abort(reqId);
@@ -554,6 +559,14 @@ export function useQa() {
     const partial = useAppStore.getState().qaStream;
     if (partial) {
       store.addQaMessage({ role: 'assistant', content: partial });
+    } else {
+      // v0.18.5 Round 23 #1: verify/draft 단계 abort 는 qaStream 이 비어있어
+      // assistant 가 추가되지 않고 user 만 홀로 남았다. 이후 다음 handleAsk 가
+      // 또 user 를 append 하면 [..., u_orphan, u_new] 연속 user 상태가 되고,
+      // M3 짝수 FIFO drop 이 그 쌍을 함께 제거해 윈도우 선두가 assistant 로
+      // 시작하는 orphan 을 만들 수 있었다. placeholder assistant 를 명시 주입해
+      // "user→assistant 짝" 불변식을 전 경로에서 유지.
+      store.addQaMessage({ role: 'assistant', content: t('qa.answerCancelled') });
     }
     store.clearQaStream();
     store.setIsQaGenerating(false);

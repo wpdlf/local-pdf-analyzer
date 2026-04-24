@@ -117,6 +117,7 @@ export const _translations = {
   'qa.placeholder': { ko: '질문을 입력하세요... (Enter: 전송, Shift+Enter: 줄바꿈)', en: 'Type your question... (Enter: send, Shift+Enter: newline)' },
   'qa.inputAria': { ko: '질문 입력', en: 'Question input' },
   'qa.stopAria': { ko: '답변 중지', en: 'Stop answer' },
+  'qa.answerCancelled': { ko: '(답변이 취소되었습니다)', en: '(Answer cancelled)' },
   'qa.sendAria': { ko: '질문 전송', en: 'Send question' },
 
   // ─── ProgressBar ───
@@ -152,6 +153,7 @@ export const _translations = {
   'settings.noModels': { ko: 'Ollama에 설치된 모델이 없습니다. 아래에서 모델을 추가해주세요.', en: 'No models installed in Ollama. Please add a model below.' },
   'settings.modelRecommend': { ko: '한국어 요약에는 gemma3, qwen2.5 모델을 권장합니다.', en: 'gemma3 and qwen2.5 are recommended for Korean summaries.' },
   'settings.dismissPullError': { ko: '오류 메시지 닫기', en: 'Dismiss error message' },
+  'settings.closePanel': { ko: '설정 패널 닫기', en: 'Close settings panel' },
   'settings.apiKeyMgmt': { ko: 'API 키 관리', en: 'API Key Management' },
   'settings.apiKeyEncrypted': { ko: 'API 키는 암호화되어 로컬에 저장됩니다.', en: 'API keys are encrypted and stored locally.' },
   'settings.apiKeyPlaceholder': { ko: 'API 키를 입력하세요', en: 'Enter API key' },
