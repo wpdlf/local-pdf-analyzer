@@ -117,7 +117,7 @@ describe('addQaMessage FIFO cap (10 turns = 20 messages)', () => {
     expect(msgs[19].content).toBe('a9');
   });
 
-  it('21번째(11턴 시작) 메시지 추가 시 가장 오래된 쌍 2개 제거되고 윈도우 유지', () => {
+  it('v0.18.5 M3: 21번째(홀수 excess) 메시지 추가 시 짝수(2개) drop — 윈도우는 19개로 수축하되 user 로 시작', () => {
     const s = useAppStore.getState();
     for (let i = 0; i < 10; i++) {
       s.addQaMessage({ role: 'user', content: `u${i}` });
@@ -126,10 +126,39 @@ describe('addQaMessage FIFO cap (10 turns = 20 messages)', () => {
     // 21번째 메시지 = 11턴의 user
     s.addQaMessage({ role: 'user', content: 'u10' });
     const msgs = useAppStore.getState().qaMessages;
-    // 20개로 유지되고 u0 은 drop, a0 도 drop 되어 u1 부터 시작해야 함
-    expect(msgs).toHaveLength(20);
-    expect(msgs[0].content).toBe('a0');
+    // excess=1 → dropCount=2 → u0/a0 쌍 drop. 첫 메시지는 u1 (user→assistant 짝 유지).
+    expect(msgs).toHaveLength(19);
+    expect(msgs[0].role).toBe('user');
+    expect(msgs[0].content).toBe('u1');
     expect(msgs[msgs.length - 1].content).toBe('u10');
+  });
+
+  it('v0.18.5 M3: 22번째(짝수 excess) 메시지까지 추가되면 윈도우 20개 회복 + user→assistant 불변식 유지', () => {
+    const s = useAppStore.getState();
+    for (let i = 0; i < 10; i++) {
+      s.addQaMessage({ role: 'user', content: `u${i}` });
+      s.addQaMessage({ role: 'assistant', content: `a${i}` });
+    }
+    s.addQaMessage({ role: 'user', content: 'u10' });
+    s.addQaMessage({ role: 'assistant', content: 'a10' });
+    const msgs = useAppStore.getState().qaMessages;
+    expect(msgs).toHaveLength(20);
+    expect(msgs[0].role).toBe('user');
+    expect(msgs[0].content).toBe('u1');
+    expect(msgs[msgs.length - 1].content).toBe('a10');
+  });
+
+  it('v0.18.5 M3 불변식: FIFO 동작 중 윈도우 선두는 항상 user 역할', () => {
+    const s = useAppStore.getState();
+    // 13 턴(26 메시지) 주입하며 매 호출 후 첫 메시지 role 을 확인
+    for (let i = 0; i < 13; i++) {
+      s.addQaMessage({ role: 'user', content: `u${i}` });
+      const afterUser = useAppStore.getState().qaMessages;
+      if (afterUser.length > 0) expect(afterUser[0].role).toBe('user');
+      s.addQaMessage({ role: 'assistant', content: `a${i}` });
+      const afterAssistant = useAppStore.getState().qaMessages;
+      if (afterAssistant.length > 0) expect(afterAssistant[0].role).toBe('user');
+    }
   });
 
   it('메시지에는 고유 id 가 부여된다', () => {

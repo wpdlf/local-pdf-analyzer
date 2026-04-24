@@ -4,7 +4,12 @@ import { useAppStore } from './store';
 
 // ─── 번역 사전 ───
 
-const translations = {
+/**
+ * 번역 엔트리 맵. v0.18.5 T2: runtime parity/품질 검증을 위해 `_translations` 로 export.
+ * 프로덕션 코드는 `t()` / `useT()` 만 사용해야 하며 이 객체를 직접 참조하지 말 것
+ * (키 오타가 타입 체크를 통과해버린다). 테스트/디버깅 전용 접근 채널.
+ */
+export const _translations = {
   // ─── 공통 ───
   'common.close': { ko: '닫기', en: 'Close' },
   'common.renderError': { ko: '렌더링 오류가 발생했습니다.', en: 'A rendering error occurred.' },
@@ -146,6 +151,7 @@ const translations = {
   'settings.apiBilling': { ko: 'API 사용량에 따라 요금이 부과됩니다.', en: 'Charges apply based on API usage.' },
   'settings.noModels': { ko: 'Ollama에 설치된 모델이 없습니다. 아래에서 모델을 추가해주세요.', en: 'No models installed in Ollama. Please add a model below.' },
   'settings.modelRecommend': { ko: '한국어 요약에는 gemma3, qwen2.5 모델을 권장합니다.', en: 'gemma3 and qwen2.5 are recommended for Korean summaries.' },
+  'settings.dismissPullError': { ko: '오류 메시지 닫기', en: 'Dismiss error message' },
   'settings.apiKeyMgmt': { ko: 'API 키 관리', en: 'API Key Management' },
   'settings.apiKeyEncrypted': { ko: 'API 키는 암호화되어 로컬에 저장됩니다.', en: 'API keys are encrypted and stored locally.' },
   'settings.apiKeyPlaceholder': { ko: 'API 키를 입력하세요', en: 'Enter API key' },
@@ -231,7 +237,7 @@ const translations = {
   'setup.cancelling': { ko: '취소 중... 진행 중인 작업은 백그라운드에서 완료됩니다.', en: 'Cancelling... ongoing operations will finish in the background.' },
 } as const;
 
-type TranslationKey = keyof typeof translations;
+type TranslationKey = keyof typeof _translations;
 
 // ─── 템플릿 치환 ───
 
@@ -263,7 +269,7 @@ function interpolate(template: string, params?: Record<string, string | number>,
 
 export function t(key: TranslationKey, params?: Record<string, string | number>): string {
   const lang = useAppStore.getState().settings.uiLanguage || 'ko';
-  const entry = translations[key];
+  const entry = _translations[key];
   if (!entry) {
     warnOnce(_warnedMissingKeys, key, `[i18n] missing translation key "${key}"`);
     return key;
@@ -284,7 +290,7 @@ export function useT(): (key: TranslationKey, params?: Record<string, string | n
   const lang = useAppStore((s) => s.settings.uiLanguage);
   return useMemo(() => {
     return (key: TranslationKey, params?: Record<string, string | number>) => {
-      const entry = translations[key];
+      const entry = _translations[key];
       if (!entry) {
         warnOnce(_warnedMissingKeys, key, `[i18n] missing translation key "${key}"`);
         return key;

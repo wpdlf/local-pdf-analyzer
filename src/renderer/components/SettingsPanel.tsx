@@ -274,6 +274,32 @@ export function SettingsPanel() {
         </div>
       )}
 
+      {/* v0.18.5 M1 fix: pullError 배너는 provider-무관 위치로 리프트.
+          이전에는 Ollama 섹션 내부에 있어, 사용자가 실패 후 provider 를 Claude/OpenAI 로
+          전환하면 섹션 언마운트 + pullError state 소실로 원인을 영구 확인 불가했다. */}
+      {pullError && (
+        <div
+          className="mb-4 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded"
+          role="alert"
+        >
+          <div className="flex items-start gap-2">
+            <p
+              className="flex-1 text-xs text-red-700 dark:text-red-400 break-words"
+              title={pullError}
+            >
+              {pullError}
+            </p>
+            <button
+              onClick={() => setPullError('')}
+              aria-label={t('settings.dismissPullError')}
+              className="shrink-0 text-red-500 hover:text-red-700 dark:hover:text-red-300 text-sm leading-none"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* AI Provider */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.provider')}</h3>
@@ -393,30 +419,6 @@ export function SettingsPanel() {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
                 <p className="text-xs text-blue-600 dark:text-blue-400 truncate" title={pullProgress}>{pullProgress}</p>
-              </div>
-            </div>
-          )}
-          {/* v0.18.4 H2 fix: pull 실패 메시지는 isPulling 과 독립적으로 표시.
-              다음 pull 시도 진입 시 자동 클리어되거나, 유저가 X 를 눌러 닫을 수 있다. */}
-          {pullError && (
-            <div
-              className="mb-3 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded"
-              role="alert"
-            >
-              <div className="flex items-start gap-2">
-                <p
-                  className="flex-1 text-xs text-red-700 dark:text-red-400 break-words"
-                  title={pullError}
-                >
-                  {pullError}
-                </p>
-                <button
-                  onClick={() => setPullError('')}
-                  aria-label={t('common.close')}
-                  className="shrink-0 text-red-500 hover:text-red-700 dark:hover:text-red-300 text-sm leading-none"
-                >
-                  ✕
-                </button>
               </div>
             </div>
           )}

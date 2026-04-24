@@ -1,14 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 
-// i18n.ts 의 `translations` 상수는 비공개(non-exported) 이므로 소스 파일을 직접 파싱해
-// key parity(모든 엔트리가 ko/en 동시 존재) 를 검증한다. 이렇게 해야 새 키 추가 시
-// 한쪽 언어를 누락하면 CI 에서 즉시 실패.
+// v0.18.5 T2 — `_translations` 가 export 되어 런타임 parity 검증이 가능해졌다.
+// 이전에는 소스 파일을 regex 로 파싱해 "ko:"/"en:" 존재 여부만 확인했기 때문에
+// `en: ''` 같은 빈 번역도 합격하는 갭이 있었다. 런타임 검증은 trim() 기반이라 강력.
 //
-// t() 함수 단위 동작(store 의존, 보간, 누락 키 fallback) 은 별도 블록에서 런타임 테스트.
-
 // t() 런타임 테스트용 stub — store 와 electronAPI 는 t() 경로에서만 필요.
 vi.stubGlobal('window', {
   electronAPI: {
@@ -23,81 +18,57 @@ vi.stubGlobal('localStorage', {
 });
 vi.stubGlobal('crypto', { randomUUID: () => 'uuid' });
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const I18N_SRC = resolve(__dirname, '../i18n.ts');
-const src = readFileSync(I18N_SRC, 'utf-8');
+// v0.18.5 T2 — 런타임 parity 는 `_translations` export 를 직접 읽어 "빈 문자열 / 공백만"
+// 도 누락으로 간주한다. 소스 파싱 기반 체크는 `hasKo`/`hasEn` 정규식만 확인하므로
+// `en: ''` 같은 번역 누락 회귀를 잡지 못했다 (Round 22 T2 지적).
+describe('i18n key parity (ko/en) · 런타임 검증 (주)', () => {
+  it('_translations export 가 작동한다 (최소 30 키)', async () => {
+    const { _translations } = await import('../i18n');
+    const keys = Object.keys(_translations);
+    expect(keys.length).toBeGreaterThanOrEqual(30);
+  });
 
-/**
- * translations 객체 본문(`const translations = { ... } as const;`) 을 추출.
- * 단순 문자열 매칭으로도 충분 — 중첩 객체가 한 단계뿐이라 `as const;` 종결부만 찾으면 된다.
- */
-function extractTranslationsBody(): string {
-  const startMarker = 'const translations = {';
-  const endMarker = '} as const;';
-  const startIdx = src.indexOf(startMarker);
-  const endIdx = src.indexOf(endMarker, startIdx);
-  expect(startIdx).toBeGreaterThan(-1);
-  expect(endIdx).toBeGreaterThan(startIdx);
-  return src.slice(startIdx + startMarker.length, endIdx);
-}
+  it('모든 엔트리의 ko 값이 공백 외 문자를 포함한다', async () => {
+    const { _translations } = await import('../i18n');
+    const empty: string[] = [];
+    for (const [key, entry] of Object.entries(_translations) as Array<[string, { ko: string; en: string }]>) {
+      if (!entry.ko || entry.ko.trim() === '') empty.push(key);
+    }
+    expect(empty, `ko 값이 빈/공백: ${empty.join(', ')}`).toEqual([]);
+  });
 
-/**
- * 각 엔트리에서 key 와 ko/en 존재 여부를 추출. 문자열 리터럴 안에 있는 `{` 는 정규식으로
- * 신뢰할 수 없으므로, 키 라인만 찾고 해당 라인 이후 다음 키 전까지의 블록에서 ko/en 유무 확인.
- */
-function parseEntries(): Array<{ key: string; hasKo: boolean; hasEn: boolean; rawBlock: string }> {
-  const body = extractTranslationsBody();
-  // 키는 `'...':` 혹은 `"...":` 패턴. 정의 라인의 위치만 우선 잡는다.
-  const keyRegex = /(^|\n)\s*['"]([^'"\n]+)['"]\s*:/g;
-  const matches: Array<{ index: number; key: string }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = keyRegex.exec(body)) !== null) {
-    matches.push({ index: m.index + (m[1]?.length ?? 0), key: m[2] });
-  }
+  it('모든 엔트리의 en 값이 공백 외 문자를 포함한다', async () => {
+    const { _translations } = await import('../i18n');
+    const empty: string[] = [];
+    for (const [key, entry] of Object.entries(_translations) as Array<[string, { ko: string; en: string }]>) {
+      if (!entry.en || entry.en.trim() === '') empty.push(key);
+    }
+    expect(empty, `en 값이 빈/공백: ${empty.join(', ')}`).toEqual([]);
+  });
 
-  // key 는 top-level(외부 객체) 와 ko/en(내부 객체) 양쪽에서 잡히므로 필터링 필요.
-  // top-level 키는 value 위치에 `{` 가 오고, 그 {} 블록 안에 `ko:` 와 `en:` 이 있다.
-  // 아래에서 각 match 의 다음 `{`→짝 `}` 블록을 뜯어 내부 키가 `ko`/`en` 여부만 체크.
-  const entries: Array<{ key: string; hasKo: boolean; hasEn: boolean; rawBlock: string }> = [];
-  for (const { index, key } of matches) {
-    if (key === 'ko' || key === 'en') continue; // 내부 키 스킵
-    const afterColon = body.slice(index);
-    const bracePos = afterColon.indexOf('{');
-    if (bracePos < 0) continue;
-    // 괄호 짝 맞추기 (문자열 리터럴은 동일 라인에서 끝나므로 단순 카운터로 충분)
-    let depth = 0;
-    let endPos = -1;
-    for (let i = bracePos; i < afterColon.length; i++) {
-      const ch = afterColon[i];
-      if (ch === '{') depth++;
-      else if (ch === '}') {
-        depth--;
-        if (depth === 0) { endPos = i; break; }
+  it('엔트리 구조는 항상 { ko, en } — 추가 언어 필드가 실수로 들어가지 않음', async () => {
+    const { _translations } = await import('../i18n');
+    const malformed: string[] = [];
+    for (const [key, entry] of Object.entries(_translations) as Array<[string, Record<string, string>]>) {
+      const fieldKeys = Object.keys(entry).sort();
+      if (fieldKeys.length !== 2 || fieldKeys[0] !== 'en' || fieldKeys[1] !== 'ko') {
+        malformed.push(`${key}:{${fieldKeys.join(',')}}`);
       }
     }
-    if (endPos < 0) continue;
-    const block = afterColon.slice(bracePos, endPos + 1);
-    const hasKo = /(^|[^a-zA-Z_$])ko\s*:/.test(block);
-    const hasEn = /(^|[^a-zA-Z_$])en\s*:/.test(block);
-    entries.push({ key, hasKo, hasEn, rawBlock: block });
-  }
-  return entries;
-}
-
-describe('i18n key parity (ko/en)', () => {
-  it('translations 블록을 성공적으로 파싱한다', () => {
-    const entries = parseEntries();
-    expect(entries.length).toBeGreaterThan(20);
+    expect(malformed, `잘못된 구조: ${malformed.join(', ')}`).toEqual([]);
   });
 
-  it('모든 엔트리는 ko 번역을 가진다', () => {
-    const missing = parseEntries().filter((e) => !e.hasKo).map((e) => e.key);
-    expect(missing, `ko 누락 키: ${missing.join(', ')}`).toEqual([]);
-  });
-
-  it('모든 엔트리는 en 번역을 가진다', () => {
-    const missing = parseEntries().filter((e) => !e.hasEn).map((e) => e.key);
-    expect(missing, `en 누락 키: ${missing.join(', ')}`).toEqual([]);
+  it('보간 placeholder (`{name}`) 를 한 쪽만 가지는 비대칭 엔트리가 없다', async () => {
+    const { _translations } = await import('../i18n');
+    const mismatched: string[] = [];
+    for (const [key, entry] of Object.entries(_translations) as Array<[string, { ko: string; en: string }]>) {
+      const koParams = Array.from(entry.ko.matchAll(/\{(\w+)\}/g)).map((m) => m[1]).sort();
+      const enParams = Array.from(entry.en.matchAll(/\{(\w+)\}/g)).map((m) => m[1]).sort();
+      if (koParams.join(',') !== enParams.join(',')) {
+        mismatched.push(`${key}: ko[${koParams}] vs en[${enParams}]`);
+      }
+    }
+    expect(mismatched, `보간 비대칭: ${mismatched.join(' | ')}`).toEqual([]);
   });
 });
 

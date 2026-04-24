@@ -268,13 +268,22 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   //    v0.18.4 H3 fix: editable 포커스(textarea/input/contenteditable) 에서 ESC 는
   //    입력 롤백·IME 조합 취소 등 관례적 용도로 쓰이므로 가로채지 않고 흘려보낸다.
   //    (QaChat 질문 입력 중 ESC 누르면 인용 패널이 닫히던 UX 이슈 해소)
+  //    v0.18.5 L1 fix: Shadow DOM 내부에 포커스가 있을 때 `document.activeElement` 는
+  //    shadow 호스트를 반환하므로 단순 체크로는 내부 INPUT/TEXTAREA 를 놓친다.
+  //    shadowRoot.activeElement 를 재귀적으로 따라가 실제 포커스 element 를 찾는다.
+  //    (현재 코드에 shadow DOM 위젯은 없으나, 서드파티/네이티브 위젯 도입 대비 future-proof.)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      const active = document.activeElement as HTMLElement | null;
+      // Shadow DOM walk — shadowRoot 이 있으면 내부 activeElement 로 내려간다.
+      let active = document.activeElement as Element | null;
+      while (active?.shadowRoot?.activeElement) {
+        active = active.shadowRoot.activeElement;
+      }
       if (active) {
         const tag = active.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || active.isContentEditable) {
+        const editable = (active as HTMLElement).isContentEditable;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || editable) {
           return;
         }
       }

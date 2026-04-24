@@ -279,10 +279,17 @@ export const useAppStore = create<AppState>((set) => ({
   setQaVerifying: (qaVerifying) => set({ qaVerifying }),
   addQaMessage: (msg) => set((s) => {
     const MAX_QA_TURNS = 10;
+    const MAX_MSGS = MAX_QA_TURNS * 2;
     const msgs = [...s.qaMessages, { ...msg, id: safeRandomId() }];
-    // 10턴(20메시지) 초과 시 FIFO — 가장 오래된 쌍 제거
-    if (msgs.length > MAX_QA_TURNS * 2) {
-      return { qaMessages: msgs.slice(msgs.length - MAX_QA_TURNS * 2) };
+    // v0.18.5 M3 fix: 이전에는 `slice(-MAX_MSGS)` 로 단일 메시지 drop 시
+    // 윈도우 선두가 assistant 로 시작하는 orphan 상태가 만들어졌다 (user→assistant
+    // 쌍이 깨져 LLM history 주입 시 "질문 없는 답변" 패턴이 컨텍스트 오염).
+    // 항상 user→assistant 쌍 단위(짝수)로 drop 하여 정합성 유지.
+    if (msgs.length > MAX_MSGS) {
+      const excess = msgs.length - MAX_MSGS;
+      // 홀수 excess 면 다음 짝까지 추가로 1개 더 drop (pair-align)
+      const dropCount = excess + (excess % 2);
+      return { qaMessages: msgs.slice(dropCount) };
     }
     return { qaMessages: msgs };
   }),

@@ -1,6 +1,42 @@
 import { Component, type ReactNode } from 'react';
 
 /**
+ * Error 메시지에서 로컬 절대경로를 홈 기호(`~`) 또는 `<system>` 로 치환.
+ *
+ * v0.18.5 M4: 이전에는 `C:\\Users\\<u>` · `/Users/<u>` · `/home/<u>` 3 패턴만 커버했다.
+ * 패키지된 Electron 앱은 에러 메시지를 fallback UI 로 사용자에게 직접 노출하므로,
+ * 다음 경로들이 그대로 새어 나갈 수 있었다:
+ *  - Windows 드라이브 일반: `D:\\Projects\\...`, `E:\\...`
+ *  - Windows UNC: `\\\\server\\share\\...`
+ *  - Linux 시스템: `/etc/...`, `/var/...`, `/usr/...`, `/opt/...`
+ *  - macOS 시스템: `/private/var/...`, `/tmp/...`
+ *
+ * 정책:
+ *  - 사용자 홈 경로 (Users/home/<name>) → `~` 치환.
+ *  - 시스템 디렉토리 → `<system>` 치환 (어떤 디렉토리인지는 노출하지 않음).
+ *  - 그 외 Windows 드라이브 경로 → `<path>` 치환 (사용자 정보 + 프로젝트 구조 숨김).
+ *  - UNC 서버/공유명 → `<share>` 치환.
+ *
+ * 순수 함수로 분리한 이유: 커버리지 갭 회귀 방지용 단위 테스트를 가능하게 하기 위함.
+ */
+export function sanitizeErrorPath(raw: string): string {
+  if (!raw) return raw;
+  return raw
+    // Windows 사용자 홈 (드라이브 C/D/E 등 허용)
+    .replace(/[A-Z]:\\Users\\[^\\\s"'<>|?*]+/gi, '~')
+    // macOS/Linux 사용자 홈
+    .replace(/\/Users\/[^/\s"'<>|?*]+/g, '~')
+    .replace(/\/home\/[^/\s"'<>|?*]+/g, '~')
+    // UNC 공유 경로 — `\\server\share\...` 전체를 <share> 로
+    .replace(/\\\\[^\\\s"'<>|?*]+\\[^\\\s"'<>|?*]+/g, '<share>')
+    // Linux/macOS 시스템 절대경로 (공백 전 까지)
+    .replace(/\/(?:etc|var|usr|opt|tmp|private|boot|sys|proc|dev|run|srv|mnt|media)(?:\/[^\s"'<>|?*]*)?/g, '<system>')
+    // 남은 Windows 드라이브 절대경로 (일반화) — 사용자 홈·<share> 치환 이후에만 매치.
+    // [^\s"'<>|?*]+ 로 한 토큰 경로만 소비 (에러 메시지 끝까지 과잉 매치 방지).
+    .replace(/[A-Z]:\\[^\s"'<>|?*]+/g, '<path>');
+}
+
+/**
  * 앱 최상위 Error Boundary — React render-time 예외를 최종 방어.
  *
  * 존재 이유: 패키지된 Electron 앱에서는 DevTools 가 차단되어 있어 render-time 예외로 빈
@@ -39,11 +75,9 @@ export class AppErrorBoundary extends Component<
     if (this.state.hasError) {
       // i18n 사용 불가(렌더 트리 밖) — 한/영 동시 표기로 최소 장벽
       const rawMessage = this.state.error?.message || (this.state.error ? String(this.state.error) : '');
-      // 절대경로(Windows C:\Users\... 또는 POSIX /Users/...) 를 홈으로 치환 + 길이 제한
-      const sanitizedMessage = rawMessage
-        .replace(/[A-Z]:\\Users\\[^\\]+/gi, '~')
-        .replace(/\/Users\/[^/]+/g, '~')
-        .replace(/\/home\/[^/]+/g, '~');
+      // v0.18.5 M4: 경로 sanitization 을 pure helper 로 분리 — Windows 드라이브 일반화,
+      // UNC, Linux 시스템 경로까지 커버.
+      const sanitizedMessage = sanitizeErrorPath(rawMessage);
       const MAX_DISPLAY = 500;
       const truncatedMessage = sanitizedMessage.length > MAX_DISPLAY
         ? sanitizedMessage.slice(0, MAX_DISPLAY) + '…'
