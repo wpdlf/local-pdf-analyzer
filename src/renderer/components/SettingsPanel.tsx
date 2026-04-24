@@ -21,6 +21,11 @@ export function SettingsPanel() {
   const [pullModelName, setPullModelName] = useState('');
   const [isPulling, setIsPulling] = useState(false);
   const [pullProgress, setPullProgress] = useState('');
+  // v0.18.4 H2 fix: 모델 pull 실패 시 기존에는 `setPullProgress(error)` 후 같은 batch 에서
+  // `setIsPulling(false)` 가 실행되어 렌더 조건 `{isPulling && pullProgress}` 가 false 가 되므로
+  // 에러가 0 프레임 보임 (유저가 원인을 절대 알 수 없었음). 에러만 별도 state 로 승격해
+  // isPulling 과 무관하게 표시하고, 재시도 진입 시에만 명시적으로 클리어.
+  const [pullError, setPullError] = useState('');
   const pullUnsubRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
   const [saved, setSaved] = useState(false);
@@ -199,6 +204,8 @@ export function SettingsPanel() {
     if (!pullModelName.trim()) return;
     setIsPulling(true);
     setPullProgress(t('setup.downloadReady'));
+    // v0.18.4 H2: 이전 실패의 잔존 에러가 새 시도 중에 혼란을 주지 않도록 진입 시 클리어.
+    setPullError('');
     const unsubscribe = window.electronAPI.onSetupProgress((message) => {
       if (mountedRef.current) setPullProgress(message);
     });
@@ -216,7 +223,10 @@ export function SettingsPanel() {
         setPullModelName('');
         setPullProgress('');
       } else {
-        setPullProgress(result.error || t('setup.modelDownloadFail', { model: pullModelName }));
+        // v0.18.4 H2: 에러는 isPulling 과 독립된 pullError 로 표시해 finally 의
+        // setIsPulling(false) 후에도 사용자에게 계속 보이도록 함.
+        setPullError(result.error || t('setup.modelDownloadFail', { model: pullModelName }));
+        setPullProgress('');
       }
     } finally {
       unsubscribe();
@@ -382,7 +392,31 @@ export function SettingsPanel() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                <p className="text-xs text-blue-600 dark:text-blue-400 truncate">{pullProgress}</p>
+                <p className="text-xs text-blue-600 dark:text-blue-400 truncate" title={pullProgress}>{pullProgress}</p>
+              </div>
+            </div>
+          )}
+          {/* v0.18.4 H2 fix: pull 실패 메시지는 isPulling 과 독립적으로 표시.
+              다음 pull 시도 진입 시 자동 클리어되거나, 유저가 X 를 눌러 닫을 수 있다. */}
+          {pullError && (
+            <div
+              className="mb-3 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded"
+              role="alert"
+            >
+              <div className="flex items-start gap-2">
+                <p
+                  className="flex-1 text-xs text-red-700 dark:text-red-400 break-words"
+                  title={pullError}
+                >
+                  {pullError}
+                </p>
+                <button
+                  onClick={() => setPullError('')}
+                  aria-label={t('common.close')}
+                  className="shrink-0 text-red-500 hover:text-red-700 dark:hover:text-red-300 text-sm leading-none"
+                >
+                  ✕
+                </button>
               </div>
             </div>
           )}

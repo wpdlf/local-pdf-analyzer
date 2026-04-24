@@ -288,13 +288,18 @@ async function buildRagIndex(
 /**
  * RAG 시맨틱 검색으로 관련 컨텍스트 추출.
  * 질문을 임베딩하고 벡터 스토어에서 유사 청크 검색.
+ *
+ * v0.18.4 M1: signal 을 전달받아 pre-draft 임베딩 호출이 abortable 해졌다.
+ * 이전에는 raw `window.electronAPI.ai.embed` 를 requestId 없이 호출해
+ * 사용자가 Stop 을 눌러도 OpenAI 소켓이 완료까지 돌아 불필요 과금 원인이었다.
+ * embedWithTimeout 을 재사용해 v0.17.12 abort 인프라와 일관성 확보.
  */
-async function ragSearch(question: string): Promise<string | null> {
+async function ragSearch(question: string, signal?: AbortSignal): Promise<string | null> {
   const ragIndex = useAppStore.getState().ragIndex;
   if (ragIndex.size === 0) return null;
 
   try {
-    const result = await window.electronAPI.ai.embed([question]);
+    const result = await embedWithTimeout([question], signal);
     if (!result.success || !result.embeddings || result.embeddings.length === 0) {
       return null;
     }
@@ -392,6 +397,32 @@ export async function verifyAnswerSentences(
   const weakRatio = weakCount / sentences.length;
   const needsRefine = weakCount >= 2 || weakRatio > 0.2 || avgScore < VERIFY_AVG_SCORE;
   return { needsRefine, avgScore, weakCount, totalSentences: sentences.length };
+}
+
+/**
+ * Refine 스트림 수집기 (v0.18.4 H1 fix 대상).
+ *
+ * refine LLM 의 토큰 스트림을 돌면서 onToken 사이드이펙트(qaStream append) 를 수행하고
+ * 전체 답변을 누적한다. 스트림이 0 토큰 반환하면(Ollama silent timeout, 공백만, done:true only 등)
+ * `draft` 를 fallback 으로 사용해 draft 유실을 방지한다.
+ *
+ * 순수 함수로 분리한 이유: 원래 `handleAsk` 훅 클로저 안에 인라인돼 있어 단위 테스트가 불가능했다.
+ * 동일 로직 그대로 유지하되 외부에서 주입 가능한 계약으로 노출 → fallback 불변식 회귀 테스트 가능.
+ */
+export async function collectRefineAnswer(
+  stream: AsyncIterable<string>,
+  draft: string,
+  isActive: () => boolean,
+  onToken: (token: string) => void,
+): Promise<string> {
+  let answer = '';
+  for await (const token of stream) {
+    if (!isActive()) break;
+    onToken(token);
+    answer += token;
+  }
+  // refine 이 빈 응답 → draft 그대로 사용. 사용자 abort 도 여기로 오지만 stillOurs 체크에서 걸러짐.
+  return answer.trim() ? answer : draft;
 }
 
 /**
@@ -563,9 +594,10 @@ export function useQa() {
       // 요약 결과를 우선 컨텍스트로 포함
       const summaryText = useAppStore.getState().summaryStream || '';
 
-      // RAG 시맨틱 검색 시도 → 실패 시 키워드 기반 fallback
+      // RAG 시맨틱 검색 시도 → 실패 시 키워드 기반 fallback.
+      // v0.18.4 M1: verifyAbortRef.signal 을 넘겨 draft 이전 embedding 도 Stop 즉시 취소.
       let relevantChunks: string;
-      const ragResult = await ragSearch(trimmed);
+      const ragResult = await ragSearch(trimmed, verifyAbortRef.current?.signal);
       if (ragResult) {
         relevantChunks = ragResult;
       } else {
@@ -641,11 +673,15 @@ export function useQa() {
             // 질문이 프롬프트 구조를 오염시킬 수 있었다 (v0.18.0 회귀). 두 경로 모두 동일하게 정화.
             const sanitizedQuestion = sanitizePromptInput(trimmed);
             const refinePrompt = buildRefinePrompt(sanitizedQuestion, draft, `${context}${history}`);
-            for await (const token of client.summarize(refinePrompt, 'qa', refineRequestId)) {
-              if (!useAppStore.getState().isQaGenerating) break;
-              useAppStore.getState().appendQaStream(token);
-              answer += token;
-            }
+            // v0.18.4 H1 fix: 이전에는 for-await 가 인라인되어 있었고 refine 이 0 토큰을 반환하면
+            // answer='' → 바깥 `if (answer)` 가드에 걸려 draft 가 통째로 유실됐다.
+            // collectRefineAnswer 헬퍼가 빈 응답 시 draft 로 fallback 시켜 불변식 보장.
+            answer = await collectRefineAnswer(
+              client.summarize(refinePrompt, 'qa', refineRequestId),
+              draft,
+              () => useAppStore.getState().isQaGenerating,
+              (token) => useAppStore.getState().appendQaStream(token),
+            );
           } else {
             // Step 3a. 초안이 충분히 근거 있음 → draft 를 answer 로 사용.
             //          v0.18.3 M2: 기존의 appendQaStream(draft) 는 직후에 동기적으로 실행되는

@@ -265,12 +265,21 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   }, [targetPage, loadState, totalPages]);
 
   // 4. ESC 키로 닫기
+  //    v0.18.4 H3 fix: editable 포커스(textarea/input/contenteditable) 에서 ESC 는
+  //    입력 롤백·IME 조합 취소 등 관례적 용도로 쓰이므로 가로채지 않고 흘려보낸다.
+  //    (QaChat 질문 입력 중 ESC 누르면 인용 패널이 닫히던 UX 이슈 해소)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
+      if (e.key !== 'Escape') return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active) {
+        const tag = active.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || active.isContentEditable) {
+          return;
+        }
       }
+      e.preventDefault();
+      onClose();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
