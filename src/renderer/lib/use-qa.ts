@@ -343,8 +343,12 @@ async function ragSearch(question: string, signal?: AbortSignal): Promise<string
  */
 export function splitIntoSentences(text: string): string[] {
   const normalized = text.replace(/\s+/g, ' ').trim();
-  // lookbehind 로 종결 부호를 문장에 포함시키고, 뒤이은 공백+대문자/한글 시작에서 분할.
-  const sentences = normalized.split(/(?<=[.!?。！？])\s+(?=\S)/);
+  // v0.18.5 C-M1 fix: CJK 종결부호(`。！？`) 뒤에 공백이 없어도 분할.
+  // 이전 정규식은 `\s+` 가 필수라 `"입니다。다음으로…"` 처럼 공백 없는 한국어/일본어/중국어
+  // 답변이 단일 문장으로 처리됐고, 1문장에 대한 top-1 cosine 검증이 거의 항상 ≥0.5 라
+  // hallucination 감지가 무력화됐다. CJK 종결부호는 zero-width 분할 (lookbehind+lookahead) 로,
+  // 라틴 종결부호는 기존처럼 공백 필수로 유지 (소수점 ".5" / 약어 "Mr." 등 오탐 방지).
+  const sentences = normalized.split(/(?<=[.!?])\s+(?=\S)|(?<=[。！？])(?=\S)/);
   return sentences
     .map((s) => s.trim())
     .filter((s) => s.length >= VERIFY_MIN_SENTENCE_CHARS);

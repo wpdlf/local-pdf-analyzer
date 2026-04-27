@@ -82,6 +82,32 @@ describe('VectorStore', () => {
       expect(result[0].score).toBeCloseTo(1.0, 5);
       expect(result[1].score).toBeCloseTo(1.0, 5);
     });
+
+    // v0.18.5 B4 regression — Float32 정규화 round-off 가 dot product 를 1.0 초과로 만들지 않음을 보장.
+    it('동일 임베딩(identity) 의 cosine score 는 정확히 [-1, 1] 범위 안에 있다', () => {
+      const store = new VectorStore();
+      // 큰 차원 + 비정수 값으로 round-off 노이즈 유도
+      const dim = 768;
+      const vec = Array.from({ length: dim }, (_, i) => Math.sin(i * 0.123) * 0.5 + 0.7);
+      store.addChunk('a', vec, 0);
+      const result = store.search(vec, 1, 0);
+      expect(result).toHaveLength(1);
+      expect(result[0].score).toBeLessThanOrEqual(1);
+      expect(result[0].score).toBeGreaterThanOrEqual(-1);
+    });
+
+    it('반대 방향 임베딩의 score 도 -1 미만으로 떨어지지 않는다', () => {
+      const store = new VectorStore();
+      const dim = 256;
+      const vec = Array.from({ length: dim }, (_, i) => Math.cos(i * 0.07) + 0.3);
+      const opp = vec.map((v) => -v);
+      store.addChunk('opp', opp, 0);
+      // minScore=-1 로 호출해 음수 결과도 통과시키도록
+      const result = store.search(vec, 1, -1);
+      expect(result).toHaveLength(1);
+      expect(result[0].score).toBeGreaterThanOrEqual(-1);
+      expect(result[0].score).toBeLessThanOrEqual(1);
+    });
   });
 
   describe('clear', () => {

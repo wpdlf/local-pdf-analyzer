@@ -152,6 +152,27 @@ describe('normalizeCitationPlacement', () => {
     const input = '함수 (foo) 는 인자를 받는다[p.3].';
     expect(normalizeCitationPlacement(input)).toBe(input);
   });
+
+  // v0.18.5 B6 regression — 첫 줄이 단독 citation 일 때 drop 되던 데이터 손실 가드
+  it('첫 줄이 단독 인용이면 dropped 되지 않고 보존된다', () => {
+    const input = '[p.5]\n핵심 사실 본문';
+    const out = normalizeCitationPlacement(input);
+    // 인용이 살아있어야 함 (이전: continue 로 drop)
+    expect(out).toContain('[p.5]');
+  });
+
+  it('연속된 단독 인용 라인 + 본문 → 인용 모두 보존', () => {
+    const input = '[p.5]\n[p.6]\n본문 시작';
+    const out = normalizeCitationPlacement(input);
+    expect(out).toContain('[p.5]');
+    expect(out).toContain('[p.6]');
+  });
+
+  it('단독 인용으로만 이루어진 답변 (비정상 LLM 응답) 도 인용 정보 보존', () => {
+    const input = '[p.7]';
+    const out = normalizeCitationPlacement(input);
+    expect(out).toContain('[p.7]');
+  });
 });
 
 

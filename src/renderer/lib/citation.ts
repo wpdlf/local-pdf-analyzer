@@ -109,8 +109,15 @@ export function normalizeCitationPlacement(text: string): string {
           break;
         }
       }
-      // 이전 라인이 없으면 drop (첫 줄이 단독 인용이면 버림)
-      if (!attached) continue;
+      // v0.18.5 B6 fix: 부착 대상 비어있지 않은 라인이 위에 없으면 (첫 줄이 단독 인용이거나
+      // 직전이 모두 공백 라인) 인용을 buffer 형태로 보존해 다음 비어있지 않은 라인에 부착.
+      // 과거: `continue` 로 단순 drop → 사용자에게 출처 메타데이터 데이터 손실.
+      // 새 동작: 인용 토큰만 라인으로 push → 이후 정상 라인이 나오면 그 라인에 prepend 되도록
+      //         standalone 라인 패턴으로 인식되지 않게 일반 텍스트로 보존.
+      //         실패 안전: 단독 라인뿐인 답변(예: 비정상 LLM 응답)은 텍스트로 그대로 유지.
+      if (!attached) {
+        stripped.push(citations.join(''));
+      }
     } else {
       stripped.push(line);
     }

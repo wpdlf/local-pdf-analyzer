@@ -52,6 +52,32 @@ describe('splitIntoSentences (v0.18)', () => {
     expect(out[0]).not.toMatch(/\n/);
     expect(out[0]).not.toMatch(/  /);
   });
+
+  // v0.18.5 C-M1 regression — CJK 답변에서 종결 부호 뒤 공백이 없는 케이스.
+  // 이전: 단일 문장으로 처리되어 hallucination 감지가 무력화 (top-1 cosine 거의 항상 ≥0.5)
+  // 새 동작: `。！？` 뒤에 공백 없어도 zero-width 분할.
+  it('한국어 종결부호 뒤 공백이 없어도 분할한다 (CJK 환각 감지 회귀 가드)', () => {
+    const input = '첫 번째 주장이 충분히 길게 있다。두 번째 주장이 충분히 길게 있다。세 번째 주장이 충분히 길게 있다。';
+    const out = splitIntoSentences(input);
+    expect(out).toHaveLength(3);
+    expect(out[0]).toContain('첫 번째');
+    expect(out[1]).toContain('두 번째');
+    expect(out[2]).toContain('세 번째');
+  });
+
+  it('일본어/중국어 종결부호(！？) 뒤 공백이 없어도 분할한다', () => {
+    // 각 sub-문장 ≥15자 (VERIFY_MIN_SENTENCE_CHARS) 보장
+    const input = 'これは最初の十分に長い文章になっています！これは二番目の十分に長い文章になっています？これは三番目の十分に長い文章になっています。';
+    const out = splitIntoSentences(input);
+    expect(out.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('라틴 종결부호 `.` 는 공백 필수 유지 (소수점/약어 오탐 방지)', () => {
+    // "3.14" 가 "3" / "14" 로 잘리지 않아야 한다
+    const input = '소수점 값은 3.14 라는 의미를 가지고 있다는 점이 중요하다.';
+    const out = splitIntoSentences(input);
+    expect(out).toHaveLength(1);
+  });
 });
 
 describe('buildRefinePrompt (v0.18)', () => {

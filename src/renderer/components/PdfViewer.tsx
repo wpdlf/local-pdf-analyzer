@@ -76,9 +76,18 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   // 마지막으로 렌더된 width — 미세한 변동(스크롤바 등)에 반복 재렌더 방지
   const lastRenderedWidthRef = useRef<number>(0);
 
-  // 1. pdfjs 로 문서 로드 (마운트 1회)
+  // 1. pdfjs 로 문서 로드 (pdfBytes 가 바뀔 때마다 재실행)
   useEffect(() => {
     let cancelled = false;
+
+    // v0.18.5 H1 fix: pdfBytes 가 바뀌면(문서 전환) 이전 문서가 렌더했던 페이지 번호가
+    // renderedPagesRef 에 잔존한다. 새 doc 의 targetPage 가 같은 번호로 들어오면
+    // `has(targetPage) === true` 라 폴링 없이 즉시 scrollIntoView 가 발화되는데, 이때
+    // 새 wrapper 는 아직 canvas 가 안 그려졌을 수 있어 빈 placeholder 로 스크롤되는 UX 저하.
+    // pageRefs.current 자체는 React 가 unmount 시 ref-callback null 을 호출해 자동 cleanup 하므로
+    // 명시 초기화하면 캐시 히트(same bytes) 경로에서 ref 가 비어버린다. 따라서 ref 는 건드리지 않음.
+    renderedPagesRef.current.clear();
+    lastRenderedWidthRef.current = 0;
 
     // 캐시 히트 — 동일 pdfBytes 참조면 재파싱 없이 즉시 재사용
     if (cachedDoc && cachedDoc.bytes === pdfBytes) {
@@ -167,6 +176,13 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     const containerWidth = containerRef.current?.clientWidth ?? 800;
     const availableWidth = Math.max(300, containerWidth - 24);
     lastRenderedWidthRef.current = containerWidth;
+    // v0.18.5 H1 fix: totalPages 가 작아지면 React 가 unmount 한 div 의 ref 는 null 로 정리되지만
+    // pageRefs.current.length 자체는 그대로다. 이후 renderVersion>0 wipe 가 high index 를 traverse 할 때
+    // 이미 null 인 항목을 건너뛰므로 functional 영향은 없으나, 길이를 totalPages 로 truncate 해
+    // 이후 코드/디버깅에서 stale slot 이 보이지 않도록 정리.
+    if (pageRefs.current.length > totalPages) {
+      pageRefs.current.length = totalPages;
+    }
     // renderVersion 이 증가하면 기존 canvas 를 모두 제거하고 재렌더
     if (renderVersion > 0) {
       for (const wrapper of pageRefs.current) {

@@ -228,4 +228,43 @@ describe('chunkTextWithOverlapByPage', () => {
     expect(result[0].pageStart).toBeGreaterThanOrEqual(1);
     expect(result[0].pageEnd).toBeGreaterThanOrEqual(1);
   });
+
+  // v0.18.5 B2 regression — 누적 단락이 effectiveMax 를 초과해 splitByCodepoint 에 들어가는 경우,
+  // 모든 part 가 동일 페이지 범위를 갖지 않고 part 별로 다르게 분배되는지 검증.
+  it('effectiveMax 를 초과한 단락 split 시 part 별 페이지 범위가 분배된다', () => {
+    // 각 페이지가 단락 구분 없는 긴 텍스트 — 페이지 join 시 \n\n 추가됨.
+    // 의도: chunker 가 인접 페이지를 묶어 effectiveMax 를 넘기게 만들고,
+    //       splitByCodepoint 가 각 part 에 다른 페이지 범위를 부여하는지 확인.
+    const pageTexts = Array.from({ length: 6 }, (_, i) =>
+      `페이지${i + 1}`.repeat(1) + '내용가나다라마바사아자차카타파하'.repeat(20),
+    );
+    // 작은 maxChunkSize 로 분할 빈도 증가 — 단일 페이지가 effectiveMax 를 일부 초과하도록 유도
+    const result = chunkTextWithOverlapByPage(pageTexts, 60, 0.1);
+    expect(result.length).toBeGreaterThan(1);
+
+    // 청크의 페이지 범위가 모두 1-6 으로 균일하지 않고 진행에 따라 변화해야 함
+    const pageStarts = result.map((c) => c.pageStart);
+    const pageEnds = result.map((c) => c.pageEnd);
+    // pageStart 들이 모두 동일하지 않고 (즉, 분배가 일어남)
+    const uniqueStarts = new Set(pageStarts);
+    expect(uniqueStarts.size).toBeGreaterThan(1);
+    // 모든 청크의 pageStart <= pageEnd
+    for (let i = 0; i < result.length; i++) {
+      expect(pageStarts[i]).toBeLessThanOrEqual(pageEnds[i]);
+    }
+    // 첫 청크의 pageStart 는 1, 마지막 청크의 pageEnd 는 6 이어야 (전체 커버)
+    expect(pageStarts[0]).toBe(1);
+    expect(pageEnds[pageEnds.length - 1]).toBe(6);
+  });
+
+  it('단일 페이지 거대 단락이 split 되어도 모든 part 가 같은 페이지(1)로 매핑', () => {
+    // 한 페이지 안의 거대한 텍스트 → split 되어도 모두 페이지 1
+    const pageTexts = ['단일페이지'.repeat(2000)];
+    const result = chunkTextWithOverlapByPage(pageTexts, 50, 0);
+    expect(result.length).toBeGreaterThan(1);
+    for (const c of result) {
+      expect(c.pageStart).toBe(1);
+      expect(c.pageEnd).toBe(1);
+    }
+  });
 });

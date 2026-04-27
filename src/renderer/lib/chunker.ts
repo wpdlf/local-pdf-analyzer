@@ -167,10 +167,29 @@ function chunkTextWithOverlapOffsets(
     if (trimmed.length <= effectiveMax) {
       results.push({ text: trimmed, bodyStart, bodyEnd, tailStart: prevTail ? prevTailStart : -1 });
     } else {
-      // 거대한 단일 단락 → codepoint 경계 분할. 페이지 범위는 동일하게 부여(근사).
+      // 거대한 단일 단락(또는 누적 다중 단락이 effectiveMax 를 넘은 경우) → codepoint 경계 분할.
+      //
+      // v0.18.5 B2 fix: 이전에는 모든 part 에 동일한 bodyStart/bodyEnd 를 부여해, body 가
+      // 여러 페이지에 걸쳐있을 때(예: 페이지 5~10 합쳐 effectiveMax 를 1자 초과해 split)
+      // 모든 청크의 page 범위가 5~10 으로 동일했고, citation 클릭 시 잘못된 페이지로
+      // 점프하는 정확도 저하가 있었다.
+      //
+      // 새 동작: body 영역을 part 개수만큼 균등 분배해 각 part 가 자신의 위치에 대응하는
+      // page 범위만 보고하도록 한다. tail 은 첫 part 에만 부여 — 이후 part 는 순수 body 슬라이스.
+      // 분배는 코드포인트 길이 기준 근사치(part 가 거의 균등 길이로 잘리므로 인덱스 비율로 충분).
       const parts = splitByCodepoint(trimmed, effectiveMax);
-      for (const p of parts) {
-        results.push({ text: p, bodyStart, bodyEnd, tailStart: prevTail ? prevTailStart : -1 });
+      const bodyLen = bodyEnd - bodyStart;
+      for (let k = 0; k < parts.length; k++) {
+        const partBodyStart = bodyStart + Math.floor((k * bodyLen) / parts.length);
+        const partBodyEnd = k === parts.length - 1
+          ? bodyEnd
+          : bodyStart + Math.floor(((k + 1) * bodyLen) / parts.length);
+        results.push({
+          text: parts[k],
+          bodyStart: partBodyStart,
+          bodyEnd: Math.max(partBodyEnd, partBodyStart + 1),
+          tailStart: k === 0 && prevTail ? prevTailStart : -1,
+        });
       }
     }
   };

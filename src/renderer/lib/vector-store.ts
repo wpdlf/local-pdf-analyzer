@@ -50,11 +50,21 @@ function toNormalizedFloat32(v: number[]): Float32Array {
   return out;
 }
 
-/** 두 unit 벡터의 dot product = 코사인 유사도 */
+/**
+ * 두 unit 벡터의 dot product = 코사인 유사도.
+ *
+ * v0.18.5 B4 fix: Float32 정규화는 round-off 로 magnitude 가 정확히 1.0 이 아니라
+ * 1.0000001 처럼 미세하게 빗나가, 동일 벡터끼리의 dot product 가 1.0 을 초과할 수 있다.
+ * 이 경우 호출자가 `minScore = 1.0` 으로 "완전 일치만" 필터링하려 하면 round-off 노이즈가
+ * 통과하고, search 결과 정렬 비교에서도 값 비교가 미묘하게 어긋난다.
+ * 수학적으로 코사인 유사도는 [-1, 1] 범위가 보장되어야 하므로 명시적 clamp.
+ */
 function dotFloat32(a: Float32Array, b: Float32Array): number {
   let sum = 0;
   const len = a.length;
   for (let i = 0; i < len; i++) sum += a[i] * b[i];
+  if (sum > 1) return 1;
+  if (sum < -1) return -1;
   return sum;
 }
 
