@@ -113,11 +113,26 @@ export function selectRelevantChunks(
  * v0.18.6 D4 fix: 취소 placeholder(`meta='cancelled'`) 메시지는 LLM 컨텍스트에서 제외.
  * 이전에는 `(답변이 취소되었습니다)` 같은 i18n 안내문이 그대로 history 라인에 들어가
  * 다음 턴 답변에 "이전에 취소된 답변" 이라는 가상 컨텍스트가 주입돼 모델 응답이 흐려졌다.
- * 짝수쌍 불변(user→assistant) 유지를 위해 placeholder 자체는 store 에 남기되, 프롬프트에는 미포함.
+ *
+ * v0.18.7 R26-C1 fix: 단순 filter 만으로는 user→cancelled assistant 쌍에서 user 가
+ * orphan 으로 남아 LLM history 에 `[Q:Q1, Q:Q2, A:A2]` 처럼 답변 없는 연속 Q 라인이
+ * 만들어졌다. addQaMessage(store.ts:285-300) 의 짝수쌍 FIFO 불변과 어긋나는 프롬프트 투영.
+ * pair 단위 skip 으로 user + cancelled-assistant 쌍을 통째로 제외해 invariant 유지.
  */
 export function formatHistory(messages: QaMessage[]): string {
   if (messages.length === 0) return '';
-  const useable = messages.filter((m) => m.meta !== 'cancelled');
+  const useable: QaMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    // user → 다음이 cancelled assistant 면 쌍 통째로 skip (orphan Q 방지)
+    if (m.role === 'user' && messages[i + 1]?.meta === 'cancelled') {
+      i++; // 다음(cancelled) 도 함께 skip
+      continue;
+    }
+    // 페어 없이 떠있는 cancelled (예: 첫 메시지가 cancelled) — 본 페어 로직에서는 발생 불가하나 방어
+    if (m.meta === 'cancelled') continue;
+    useable.push(m);
+  }
   if (useable.length === 0) return '';
   const lines = useable.map((m) =>
     m.role === 'user' ? `Q: ${sanitizePromptInput(m.content)}` : `A: ${m.content}`,
@@ -675,9 +690,10 @@ export function useQa() {
           draft += token;
         }
 
-        // 사용자 abort 또는 empty draft → 그대로 종료 (finally 가 qaVerifying 해제).
+        // 사용자 abort 또는 empty draft → 그대로 종료.
+        // v0.18.7 R26-C2 fix: 명시적 setQaVerifying(false) 제거 — finally 의 ownership gate 가
+        // 처리. stale 핸들러가 ungated 호출로 새 세션 스피너를 끄던 race 방지.
         if (!useAppStore.getState().isQaGenerating || !draft.trim()) {
-          useAppStore.getState().setQaVerifying(false);
           answer = draft;
         } else {
           // Step 2. 문장 단위 RAG 대조 (내부 임베딩 호출).
@@ -685,14 +701,17 @@ export function useQa() {
           // (v0.17.12 embed abort 인프라와 연결) — 불필요 토큰 과금 방지.
           const verification = await verifyAnswerSentences(draft, verifyAbortRef.current?.signal);
 
-          // abort 재확인 — 검증 중 사용자가 취소했을 수 있음.
+          // abort 재확인 — 검증 중 사용자가 취소했을 수 있음. finally 가 qaVerifying 해제.
           if (!useAppStore.getState().isQaGenerating) {
-            useAppStore.getState().setQaVerifying(false);
             answer = draft;
           } else if (verification.needsRefine) {
             // Step 3b. Refine — 새 requestId 로 두번째 호출. 스트리밍으로 qaStream 에 바로 표시.
-            //         qaVerifying=false 로 전환하면 UI 가 스피너 → 스트리밍 답변으로 자연스럽게 이동.
-            useAppStore.getState().setQaVerifying(false);
+            //         qaVerifying=false 로 전환하여 UI 가 스피너 → 스트리밍 답변으로 자연스럽게 이동.
+            // v0.18.7 R26-C2 fix: ownership 체크 — stale 핸들러가 새 세션의 검증 스피너를
+            // mid-stream 에 끄는 것 방지. 이 setter 만 finally 외부에서 즉시 실행 필요한 (UX 전환).
+            const verifyState = useAppStore.getState();
+            const verifyOurs = verifyState.document?.id === doc.id && verifyState.qaRequestId === requestId;
+            if (verifyOurs) verifyState.setQaVerifying(false);
             const refineRequestId = client.prepareSummarize();
             useAppStore.getState().setQaRequestId(refineRequestId);
             requestId = refineRequestId; // 소유권 체크를 위해 갱신
@@ -715,7 +734,7 @@ export function useQa() {
             //          v0.18.3 M2: 기존의 appendQaStream(draft) 는 직후에 동기적으로 실행되는
             //          clearQaStream() (line ~665) 로 인해 React 가 렌더하지 못하는 dead code.
             //          최종 답변은 공통 경로의 addQaMessage(normalized) 로만 표시된다.
-            useAppStore.getState().setQaVerifying(false);
+            // v0.18.7 R26-C2 fix: 명시적 setQaVerifying(false) 제거 — finally 의 ownership gate 처리.
             answer = draft;
           }
         }

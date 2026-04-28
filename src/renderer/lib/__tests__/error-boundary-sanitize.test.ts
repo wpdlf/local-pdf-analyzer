@@ -142,4 +142,19 @@ describe('sanitizeErrorPath · 치환 순서 및 범위 (v0.18.5 Round 23 #2, #3
     // 두 번째 경로는 `\\` 두 번이라 UNC 가 아니지만 `B:\\x` 형태는 드라이브 경로로 매치될 수 있음
     // 실제 매치 여부보다 UNC 치환이 먼저 시도됐음이 중요
   });
+
+  // v0.18.7 R26-C9 regression — 소문자 드라이브 레터도 sanitize 되어야 한다.
+  // Node path 일부 API 가 경로를 normalize 할 때 드라이브 레터를 소문자로 변환할 수 있어
+  // 라인 39 의 일반 드라이브 패턴이 `gi` flag 없이 g 만 가지면 그대로 노출됨.
+  it('소문자 드라이브 레터(c:\\) 도 <path> 로 sanitize 된다', () => {
+    const out = sanitizeErrorPath('Error at c:\\projects\\app\\file.ts');
+    expect(out).not.toContain('c:\\projects');
+    expect(out).toContain('<path>');
+  });
+
+  it('대소문자 혼합 (D:\\foo, e:\\bar) 모두 sanitize', () => {
+    const out = sanitizeErrorPath('D:\\foo e:\\bar');
+    expect(out).not.toContain('D:\\foo');
+    expect(out).not.toContain('e:\\bar');
+  });
 });

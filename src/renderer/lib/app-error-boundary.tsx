@@ -36,7 +36,10 @@ export function sanitizeErrorPath(raw: string): string {
     .replace(/\/(?:etc|var|usr|opt|tmp|private|boot|sys|proc|dev|run|srv|mnt|media)(?:\/[^\s"'<>|?*]*)?/g, '<system>')
     // 남은 Windows 드라이브 절대경로 (일반화) — 사용자 홈·<share> 치환 이후에만 매치.
     // [^\s"'<>|?*]+ 로 한 토큰 경로만 소비 (에러 메시지 끝까지 과잉 매치 방지).
-    .replace(/[A-Z]:\\[^\s"'<>|?*]+/g, '<path>');
+    // v0.18.7 R26-C9 fix: 라인 28 의 Users 패턴은 `gi` flag 인 반면 일반 드라이브 패턴이
+    // `g` 만 가져 `c:\Users\…` 처럼 소문자 드라이브 레터로 시작하는 경로(Node 일부 API 가
+    // 정규화한 결과) 가 sanitize 되지 않고 노출되던 비대칭 해소.
+    .replace(/[A-Z]:\\[^\s"'<>|?*]+/gi, '<path>');
 }
 
 /**

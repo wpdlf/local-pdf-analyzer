@@ -598,6 +598,10 @@ export async function handlePdfData(
     store.setDocument(doc);
     store.setPdfBytes(pdfBytesCopy); // PdfViewer 가 참조할 원본
     store.setError(null);
+    // v0.18.7 D5 fix: notice 채널도 함께 정리. v0.18.6 D1 에서 notice 를 추가했지만
+    // 새 PDF 로드 성공 시 stale notice (예: 직전 multi-file 드롭 경고) 를 정리하지 않아
+    // 다른 단일 파일을 열어도 이전 경고가 잔존하던 lifecycle 갭 해소.
+    store.setNotice(null);
   } catch (err) {
     const error = err as Error & { code?: string };
     // 사용자 취소는 에러 배너로 표시하지 않음 (의도적 액션)

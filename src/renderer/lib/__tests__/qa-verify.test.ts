@@ -147,7 +147,9 @@ describe('formatHistory (v0.18.6 D4)', () => {
     expect(out).toContain('A: 답변1');
   });
 
-  it('meta="cancelled" 메시지는 history 에서 제외 (LLM 컨텍스트 오염 방지)', () => {
+  it('meta="cancelled" 메시지의 텍스트는 history 에서 제외 (LLM 컨텍스트 오염 방지)', () => {
+    // v0.18.7 R26-C1 동작: user→cancelled-assistant 페어는 통째로 skip 되어
+    // 질문1 도 함께 사라진다 (orphan Q 방지). 정상 페어(질문2/답변2)만 보존.
     const messages = [
       userMsg('1', '질문1'),
       cancelledMsg('2'),
@@ -155,7 +157,6 @@ describe('formatHistory (v0.18.6 D4)', () => {
       asstMsg('4', '답변2'),
     ];
     const out = formatHistory(messages);
-    expect(out).toContain('Q: 질문1');
     expect(out).toContain('Q: 질문2');
     expect(out).toContain('A: 답변2');
     // 핵심: 취소 placeholder 의 텍스트가 컨텍스트로 새지 않아야 한다
@@ -170,6 +171,45 @@ describe('formatHistory (v0.18.6 D4)', () => {
 
   it('빈 배열은 빈 문자열', () => {
     expect(formatHistory([])).toBe('');
+  });
+
+  // v0.18.7 R26-C1 regression — user 메시지와 cancelled assistant 가 페어를 이루는 경우
+  // user 까지 함께 skip 하여 LLM history 에 답변 없는 Q 라인이 남지 않도록 한다.
+  it('user → cancelled-assistant 페어는 함께 제외 (D4 회귀 가드)', () => {
+    const messages: QaMessage[] = [
+      userMsg('1', '질문1'),
+      cancelledMsg('2'),
+      userMsg('3', '질문2'),
+      asstMsg('4', '답변2'),
+    ];
+    const out = formatHistory(messages);
+    // 핵심: 질문1 도 함께 사라져야 한다 (orphan Q 방지)
+    expect(out).not.toContain('Q: 질문1');
+    // 정상 페어는 유지
+    expect(out).toContain('Q: 질문2');
+    expect(out).toContain('A: 답변2');
+    // 연속 Q 라인이 생기지 않아야 한다
+    expect(out).not.toMatch(/Q:.*\n\s*Q:/);
+  });
+
+  it('정상 페어 + 후속 cancelled 페어 + 정상 페어 — 정상 페어만 보존', () => {
+    const messages: QaMessage[] = [
+      userMsg('1', 'A질문'), asstMsg('2', 'A답변'),
+      userMsg('3', 'B질문'), cancelledMsg('4'),
+      userMsg('5', 'C질문'), asstMsg('6', 'C답변'),
+    ];
+    const out = formatHistory(messages);
+    expect(out).toContain('Q: A질문');
+    expect(out).toContain('A: A답변');
+    expect(out).not.toContain('Q: B질문');
+    expect(out).toContain('Q: C질문');
+    expect(out).toContain('A: C답변');
+    // pair 정렬 — Q 다음에는 A 가 와야 한다
+    const lines = out.split('\n').filter((l) => l.startsWith('Q:') || l.startsWith('A:'));
+    for (let i = 0; i < lines.length; i += 2) {
+      expect(lines[i].startsWith('Q:')).toBe(true);
+      expect(lines[i + 1]?.startsWith('A:')).toBe(true);
+    }
   });
 });
 
