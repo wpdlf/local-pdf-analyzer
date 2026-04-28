@@ -107,10 +107,19 @@ export function selectRelevantChunks(
   return selected.map((s) => s.chunk).join('\n\n');
 }
 
-/** 대화 이력을 프롬프트 텍스트로 변환 (사용자 입력은 구분자 이스케이프 적용) */
-function formatHistory(messages: QaMessage[]): string {
+/**
+ * 대화 이력을 프롬프트 텍스트로 변환 (사용자 입력은 구분자 이스케이프 적용).
+ *
+ * v0.18.6 D4 fix: 취소 placeholder(`meta='cancelled'`) 메시지는 LLM 컨텍스트에서 제외.
+ * 이전에는 `(답변이 취소되었습니다)` 같은 i18n 안내문이 그대로 history 라인에 들어가
+ * 다음 턴 답변에 "이전에 취소된 답변" 이라는 가상 컨텍스트가 주입돼 모델 응답이 흐려졌다.
+ * 짝수쌍 불변(user→assistant) 유지를 위해 placeholder 자체는 store 에 남기되, 프롬프트에는 미포함.
+ */
+export function formatHistory(messages: QaMessage[]): string {
   if (messages.length === 0) return '';
-  const lines = messages.map((m) =>
+  const useable = messages.filter((m) => m.meta !== 'cancelled');
+  if (useable.length === 0) return '';
+  const lines = useable.map((m) =>
     m.role === 'user' ? `Q: ${sanitizePromptInput(m.content)}` : `A: ${m.content}`,
   );
   return `\n[이전 대화]\n${lines.join('\n')}\n`;
@@ -343,12 +352,13 @@ async function ragSearch(question: string, signal?: AbortSignal): Promise<string
  */
 export function splitIntoSentences(text: string): string[] {
   const normalized = text.replace(/\s+/g, ' ').trim();
-  // v0.18.5 C-M1 fix: CJK 종결부호(`。！？`) 뒤에 공백이 없어도 분할.
-  // 이전 정규식은 `\s+` 가 필수라 `"입니다。다음으로…"` 처럼 공백 없는 한국어/일본어/중국어
-  // 답변이 단일 문장으로 처리됐고, 1문장에 대한 top-1 cosine 검증이 거의 항상 ≥0.5 라
-  // hallucination 감지가 무력화됐다. CJK 종결부호는 zero-width 분할 (lookbehind+lookahead) 로,
-  // 라틴 종결부호는 기존처럼 공백 필수로 유지 (소수점 ".5" / 약어 "Mr." 등 오탐 방지).
-  const sentences = normalized.split(/(?<=[.!?])\s+(?=\S)|(?<=[。！？])(?=\S)/);
+  // v0.18.5 C-M1 / v0.18.6 C25-M1 fix: CJK 종결부호(`。！？`) 뒤가 공백이거나 즉시 다음 문자 든 모두 분할.
+  // 이전 정규식은 `\s+` 필수 → `"입니다。다음으로…"` 같은 공백 없는 케이스 처리 못함 (v0.18.5 fix 영역).
+  // v0.18.5 fix 후에도 `(?=\S)` 만 있어 `"문장1。 문장2"` 처럼 CJK 종결부호 + 공백 케이스에선
+  // 두 분기 모두 미적중하여 단일 문장 처리되던 잔여 갭이 있었다 (Round 25 C25-M1 발견).
+  // 새 분기 `(?<=[。！？])\s*(?=\S)` 는 공백 0+개를 허용해 zero-width 와 whitespace-padded 케이스를 모두 커버.
+  // Latin 분기는 여전히 `\s+` 필수 (소수점 "3.14" / 약어 "Mr." 오탐 방지).
+  const sentences = normalized.split(/(?<=[.!?])\s+(?=\S)|(?<=[。！？])\s*(?=\S)/);
   return sentences
     .map((s) => s.trim())
     .filter((s) => s.length >= VERIFY_MIN_SENTENCE_CHARS);
@@ -570,7 +580,8 @@ export function useQa() {
       // M3 짝수 FIFO drop 이 그 쌍을 함께 제거해 윈도우 선두가 assistant 로
       // 시작하는 orphan 을 만들 수 있었다. placeholder assistant 를 명시 주입해
       // "user→assistant 짝" 불변식을 전 경로에서 유지.
-      store.addQaMessage({ role: 'assistant', content: t('qa.answerCancelled') });
+      // v0.18.6 D4: meta='cancelled' 표식으로 formatHistory 에서 LLM 컨텍스트 제외.
+      store.addQaMessage({ role: 'assistant', content: t('qa.answerCancelled'), meta: 'cancelled' });
     }
     store.clearQaStream();
     store.setIsQaGenerating(false);
@@ -749,14 +760,26 @@ export function useQa() {
       }
     } finally {
       clientRef.current = null;
-      if (!completed && !abortedRef.current) {
+      // v0.18.6 C25-M2 fix: stillOurs 체크를 finally 에도 적용.
+      // 이전: 무조건 setIsQaGenerating(false)/setQaRequestId(null)/setQaVerifying(false) 실행.
+      // 시나리오: Stop+resume 레이스에서 stale 핸들러의 for-await 루프가 다음 토큰까지
+      // 도달했을 때 새 handleAsk 가 isQaGenerating=true 로 세팅한 직후 stale 핸들러의
+      // finally 가 false 로 클로버링하여 새 세션의 UI 가 mid-stream 에 꺼짐.
+      // 새 동작: 현재 store 의 qaRequestId 와 document 가 우리 것일 때만 글로벌 UI 상태를 리셋.
+      // stale 한 핸들러는 자기 로컬 cleanup(clientRef, qaStream flush) 만 수행한다.
+      const finalState = useAppStore.getState();
+      const finallyStillOurs = finalState.document?.id === doc.id
+        && (requestId === null || finalState.qaRequestId === requestId);
+      if (!completed && !abortedRef.current && finallyStillOurs) {
         useAppStore.getState().flushQaStream();
         useAppStore.getState().clearQaStream();
       }
-      useAppStore.getState().setIsQaGenerating(false);
-      useAppStore.getState().setQaRequestId(null);
-      // 검증 인디케이터는 항상 해제 — 예외/abort 어느 경로든 스피너 잔존 방지.
-      useAppStore.getState().setQaVerifying(false);
+      if (finallyStillOurs) {
+        useAppStore.getState().setIsQaGenerating(false);
+        useAppStore.getState().setQaRequestId(null);
+        // 검증 인디케이터는 ownership 일 때만 해제 — stale 핸들러가 새 세션의 검증 스피너를 끄는 것 방지.
+        useAppStore.getState().setQaVerifying(false);
+      }
     }
   }, []);
 

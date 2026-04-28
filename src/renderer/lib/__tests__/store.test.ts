@@ -201,3 +201,26 @@ describe('citationPanelWidth clamp + persist', () => {
     expect(lsStore['citationPanelWidth']).toBe('0.55');
   });
 });
+
+// v0.18.6 D1 — notice 채널이 error 와 분리되어 있어 setError(null) 이 notice 를 클리어하지 않음.
+describe('notice channel (D1)', () => {
+  it('setError(null) 은 notice 를 건드리지 않는다', () => {
+    const s = useAppStore.getState();
+    s.setNotice({ message: '다중 파일 경고' });
+    s.setError({ code: 'PDF_PARSE_FAIL', message: '에러 발생' });
+    expect(useAppStore.getState().notice?.message).toBe('다중 파일 경고');
+    s.setError(null);
+    // 핵심: error 가 지워져도 notice 는 그대로
+    expect(useAppStore.getState().error).toBeNull();
+    expect(useAppStore.getState().notice?.message).toBe('다중 파일 경고');
+  });
+
+  it('setNotice(null) 은 error 를 건드리지 않는다 (대칭)', () => {
+    const s = useAppStore.getState();
+    s.setError({ code: 'PDF_PARSE_FAIL', message: '에러' });
+    s.setNotice({ message: 'notice' });
+    s.setNotice(null);
+    expect(useAppStore.getState().error?.message).toBe('에러');
+    expect(useAppStore.getState().notice).toBeNull();
+  });
+});

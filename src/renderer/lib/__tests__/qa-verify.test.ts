@@ -16,7 +16,8 @@ vi.stubGlobal('window', {
 });
 vi.stubGlobal('crypto', { randomUUID: () => 'test-uuid' });
 
-import { splitIntoSentences, buildRefinePrompt, verifyAnswerSentences, sanitizePromptInput } from '../use-qa';
+import { splitIntoSentences, buildRefinePrompt, verifyAnswerSentences, sanitizePromptInput, formatHistory } from '../use-qa';
+import type { QaMessage } from '../../types';
 import { useAppStore } from '../store';
 
 function resetRag(): void {
@@ -78,6 +79,25 @@ describe('splitIntoSentences (v0.18)', () => {
     const out = splitIntoSentences(input);
     expect(out).toHaveLength(1);
   });
+
+  // v0.18.6 C25-M1 regression — CJK 종결부호 뒤에 공백이 있는 케이스도 분할되어야 한다.
+  // v0.18.5 fix 의 잔여 갭: lookahead `(?=\S)` 가 공백 직후만 보던 한계로
+  // 두 분기 모두 미적중. 새 fix 는 `\s*` 로 공백 0+개를 허용.
+  it('CJK 종결부호 뒤에 공백이 있어도 분할한다 (Round 25 잔여 갭)', () => {
+    const input = '첫 번째 문장이 충분히 길게 있다。 두 번째 문장이 충분히 길게 있다。 세 번째 문장이 충분히 길게 있다。';
+    const out = splitIntoSentences(input);
+    expect(out).toHaveLength(3);
+    expect(out[0]).toContain('첫 번째');
+    expect(out[1]).toContain('두 번째');
+    expect(out[2]).toContain('세 번째');
+  });
+
+  it('CJK 종결부호 뒤 zero-width / whitespace 혼합도 정상 분할', () => {
+    // `。다음`(zero-width) 과 `。 다음`(공백) 두 패턴이 한 답변에 섞여 있는 케이스
+    const input = '첫째 주장이 충분히 길게 있다。둘째 주장이 충분히 길게 있다。 셋째 주장이 충분히 길게 있다。';
+    const out = splitIntoSentences(input);
+    expect(out).toHaveLength(3);
+  });
 });
 
 describe('buildRefinePrompt (v0.18)', () => {
@@ -108,6 +128,48 @@ describe('buildRefinePrompt (v0.18)', () => {
     // 구조상의 실제 [질문] 섹션은 buildRefinePrompt 자체가 생성한 것 1회만 존재해야 함
     const questionMarkerOccurrences = (out.match(/^\[질문\]$/gm) || []).length;
     expect(questionMarkerOccurrences).toBe(1);
+  });
+});
+
+describe('formatHistory (v0.18.6 D4)', () => {
+  // Round 25 D4 — 취소 placeholder 가 LLM 컨텍스트에 들어가 다음 턴 답변을 오염하던 문제.
+  // meta='cancelled' 메시지는 history 빌더에서 제외되어야 한다.
+  const userMsg = (id: string, content: string): QaMessage => ({ id, role: 'user', content });
+  const asstMsg = (id: string, content: string): QaMessage => ({ id, role: 'assistant', content });
+  const cancelledMsg = (id: string): QaMessage => ({
+    id, role: 'assistant', content: '(답변이 취소되었습니다)', meta: 'cancelled',
+  });
+
+  it('일반 메시지는 모두 포함', () => {
+    const messages = [userMsg('1', '질문1'), asstMsg('2', '답변1')];
+    const out = formatHistory(messages);
+    expect(out).toContain('Q: 질문1');
+    expect(out).toContain('A: 답변1');
+  });
+
+  it('meta="cancelled" 메시지는 history 에서 제외 (LLM 컨텍스트 오염 방지)', () => {
+    const messages = [
+      userMsg('1', '질문1'),
+      cancelledMsg('2'),
+      userMsg('3', '질문2'),
+      asstMsg('4', '답변2'),
+    ];
+    const out = formatHistory(messages);
+    expect(out).toContain('Q: 질문1');
+    expect(out).toContain('Q: 질문2');
+    expect(out).toContain('A: 답변2');
+    // 핵심: 취소 placeholder 의 텍스트가 컨텍스트로 새지 않아야 한다
+    expect(out).not.toContain('답변이 취소');
+    expect(out).not.toContain('cancelled');
+  });
+
+  it('전부 취소 메시지면 빈 문자열', () => {
+    const messages = [cancelledMsg('1'), cancelledMsg('2')];
+    expect(formatHistory(messages)).toBe('');
+  });
+
+  it('빈 배열은 빈 문자열', () => {
+    expect(formatHistory([])).toBe('');
   });
 });
 

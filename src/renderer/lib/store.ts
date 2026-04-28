@@ -164,6 +164,11 @@ interface AppState {
   setView: (view: 'main' | 'settings' | 'setup') => void;
   error: AppError | null;
   setError: (error: AppError | null) => void;
+  // v0.18.6 D1 fix: 에러와 분리된 정보성 notice 채널.
+  // 다중 파일 드롭 등 "처리는 정상, 사용자에게 안내만" 케이스에서 setError 채널을 쓰면
+  // 후속 setError(null) (파싱 성공 시 pdf-parser 가 호출) 으로 경고가 즉시 지워졌다.
+  notice: { message: string } | null;
+  setNotice: (notice: { message: string } | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -418,4 +423,6 @@ export const useAppStore = create<AppState>((set) => ({
   setView: (view) => set({ view }),
   error: null,
   setError: (error) => set({ error }),
+  notice: null,
+  setNotice: (notice) => set({ notice }),
 }));

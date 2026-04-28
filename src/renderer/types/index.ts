@@ -13,6 +13,14 @@ export interface QaMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  /**
+   * v0.18.6 D4: 시스템성 메타 메시지 표식.
+   * - `'cancelled'` — 사용자가 답변 생성을 취소해 placeholder 로 추가된 메시지.
+   *   formatHistory 빌더가 LLM 컨텍스트에서 제외해야 한다 (취소 안내 문구가 다음 턴
+   *   답변에 컨텍스트로 주입되는 오염 방지).
+   * 일반 LLM 응답이나 사용자 입력에는 설정되지 않는다.
+   */
+  meta?: 'cancelled';
 }
 
 // PDF 문서 정보

@@ -29,6 +29,8 @@ export default function App() {
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
   const error = useAppStore((s) => s.error);
   const setError = useAppStore((s) => s.setError);
+  const notice = useAppStore((s) => s.notice);
+  const setNotice = useAppStore((s) => s.setNotice);
   const isParsing = useAppStore((s) => s.isParsing);
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
   const [modelHint, setModelHint] = useState<string | null>(null);
@@ -179,10 +181,11 @@ export default function App() {
         useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.cannotRead') });
         return;
       }
-      // 다중 파일 드롭 시 첫 번째만 처리함을 알림 (silent drop 방지)
+      // 다중 파일 드롭 시 첫 번째만 처리함을 알림 (silent drop 방지).
+      // v0.18.6 D1 fix: 정보성 notice 로 분리. setError 채널로 보내면 후속 파싱 성공 시
+      // pdf-parser 의 setError(null) 이 경고를 즉시 지워 사용자가 못 봤다.
       if (files.length > 1) {
-        useAppStore.getState().setError({
-          code: 'PDF_PARSE_FAIL',
+        useAppStore.getState().setNotice({
           message: t('uploader.multipleFiles', { name: file.name }),
         });
       }
@@ -344,6 +347,20 @@ export default function App() {
               onClick={() => setError(null)}
               className="text-red-400 hover:text-red-600 dark:hover:text-red-300 ml-2 shrink-0"
               aria-label={tr('app.closeError')}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* v0.18.6 D1: 정보성 notice (에러와 분리). 다중 파일 드롭 등 silent-drop 알림용. */}
+        {notice && (
+          <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start justify-between">
+            <p className="text-amber-700 dark:text-amber-400 text-sm">{notice.message}</p>
+            <button
+              onClick={() => setNotice(null)}
+              className="text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 ml-2 shrink-0"
+              aria-label={tr('common.close')}
             >
               ✕
             </button>
