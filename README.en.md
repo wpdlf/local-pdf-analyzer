@@ -10,6 +10,7 @@ Unlike cloud-based AI summarization services that require uploading PDFs to exte
 - **Text + image analysis** — Analyzes text, charts, diagrams, and tables in any PDF using Vision AI
 - **Scanned PDF OCR** — Vision AI recognizes text page-by-page even in image-based scanned PDFs
 - **RAG-based Q&A chat** — Embedding vector semantic search finds the most relevant parts of your PDF to answer questions accurately
+- **Automatic answer verification (new in v0.18.0)** — Each sentence of a Q&A answer is scored against the PDF embedding index. If too many low-confidence sentences are detected, the LLM silently refines the answer to remove unsupported claims — no user interaction required
 - **Page citations + side PDF viewer (new in v0.17.0)** — Summary/Q&A answers automatically include source-page citations like `[p.12]`. Click a citation to open a PDF viewer panel on the right that instantly jumps to that page — verify AI hallucinations in one click
 - **Safe for sensitive documents** — Exam materials, internal documents, draft papers — summarize with confidence
 - **Korean/English UI** — Switch app interface language in Settings
@@ -32,6 +33,21 @@ Unlike cloud-based AI summarization services that require uploading PDFs to exte
 4. On first launch, the AI engine (Ollama), Korean-specialized models (gemma3, exaone3.5), and RAG embedding model (nomic-embed-text) are installed automatically — follow the on-screen instructions
 
 > **Note**: AI model downloads require approximately 8GB of disk space and a few minutes.
+
+### Installer integrity verification (new in v0.18.8)
+
+Every release attaches the installer's **SHA-256 hash** as an asset (`SHA256SUMS-windows.txt` / `SHA256SUMS-mac.txt`) and also embeds it in the release notes. Builds are additionally signed with a **Sigstore build provenance attestation** issued by GitHub Actions, so you can verify the artifact actually came from this repository's CI.
+
+```bash
+# Windows (PowerShell)
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.8.exe
+
+# macOS / Linux
+shasum -a 256 ./Local-PDF-Analyzer-0.18.8.dmg
+
+# Verify the Sigstore attestation via GitHub CLI (optional)
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.8.exe --repo wpdlf/local-pdf-analyzer
+```
 
 ## How to Use
 
@@ -59,6 +75,7 @@ Unlike cloud-based AI summarization services that require uploading PDFs to exte
 - Ask questions and the AI finds the most relevant parts of the PDF using embedding vector similarity
 - Falls back to keyword-based search automatically if no embedding model is available
 - Maintains context across up to 10 conversation turns
+- **Automatic answer verification (v0.18.0)** — The draft answer is split into sentences (multi-language sentence boundaries; mixed Latin/CJK in v0.18.8) and each sentence's top-1 cosine similarity is checked against the PDF embedding index. If 2+ sentences score below the weak threshold, or the weak ratio exceeds 20%, or the average score falls below the threshold, the LLM is invoked once more to refine the answer and drop unsupported claims. The whole flow is silent — only the more accurate result is shown. Toggle off in Settings if you prefer raw drafts
 - `Enter`: send / `Shift+Enter`: new line
 
 ### 5. Page Citations + PDF Viewer (new in v0.17.0, extended in v0.17.2)
@@ -160,10 +177,12 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Render-error recovery** — Unexpected UI crashes offer a "Try again" button without a full reload (paths auto-masked)
 - **Instant language switch** — Toggling Korean/English in Settings reflects across the whole UI immediately (no restart required)
 - **Magic-byte PDF validation** — `%PDF-` signature is verified before the file is fully loaded into memory, rejecting fakes early
-- **Unit test coverage** — **82 regression tests** for RAG/citation core paths (+13 in v0.17.x)
+- **Unit test coverage** — **243 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +148 cumulative across v0.18.x)
+- **Build integrity (v0.18.8)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds
 - **Page citations + side PDF viewer (v0.17.0)** — Summary/Q&A answers automatically carry `[p.N]` source-page citations at almost every key sentence. Click to open a right-side PDF viewer panel that scrolls to the cited page. Built on page-aware RAG chunks + LLM prompt injection (5 languages) + lazy pdfjs-dist viewer + react-markdown text-block overrides. Citation frequency significantly improved in v0.17.1 via paragraph-level inline labels
 - **Horizontal resize handle (v0.17.2)** — when the PDF viewer panel is open, drag the central divider to freely adjust the left/right ratio between 20~80%. Pointer + keyboard (← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage persistence. PDF pages auto re-render via `ResizeObserver` + 200ms debounce
 - **Citation placement normalization (v0.17.1)** — LLM mistakes like `([p.5])` wrapping or standalone list items `- [p.44]` are automatically re-attached to the preceding sentence
+- **Automatic answer verification (v0.18.0)** — Q&A draft answers are sentence-split with multi-language terminator awareness (mixed CJK in v0.18.8) → each sentence scored against the PDF embedding (top-1 cosine). When weakCount / weakRatio / avgScore exceed thresholds, the LLM refines the answer once. A single boilerplate weak sentence is allowed (v0.18.3) to avoid unnecessary refine costs
 
 ## System Requirements
 
@@ -200,6 +219,10 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | PDF viewer looks too zoomed in a narrow panel | Fixed in v0.17.1 — container-width-based dynamic scale fits the PDF to the panel automatically |
 | Want to change the PDF viewer panel width | v0.17.2 new — drag the central divider or Tab-focus it and use ← → Home End to adjust between 20~80% |
 | PDF stays stretched after resizing | Fixed in v0.17.2 — `ResizeObserver` triggers re-render at the new scale ~200ms after the drag ends |
+| Q&A answers still show hallucinations | v0.18.0 automatic verification rewrites the answer once when too many sentences lack RAG support. Disable via the "Answer verification" toggle in Settings if you prefer the raw draft |
+| Q&A answer feels like it generates twice (extra delay) | v0.18.0 may issue one extra LLM call when the draft fails verification. A single boilerplate weak sentence is allowed (v0.18.3) so most answers still finish in a single pass |
+| Mixed Korean/English answers slip past hallucination detection | Fixed in v0.18.8 — `splitIntoSentences` now also splits at a Latin terminator immediately followed by a CJK character (no space), so mixed-language drafts are scored sentence-by-sentence |
+| How do I verify the installer hasn't been tampered with | v0.18.8 new — compare against `SHA256SUMS-*.txt` (or the hash printed in the release notes), or run `gh attestation verify` against the Sigstore provenance |
 
 ---
 
@@ -217,7 +240,7 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | State Management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS + macOS DMG) |
-| Testing | Vitest (82 unit tests) + `tsc --noEmit` strict type check |
+| Testing | Vitest (243 unit tests) + `tsc --noEmit` strict type check (`noUncheckedIndexedAccess` enabled, v0.18.8) |
 | i18n | Custom (i18n.ts) — 172+ keys, useT() hook, template interpolation |
 | API Key Security | Electron safeStorage (OS keychain encryption), decrypted only in Main process, in-memory cache for hot-path |
 | Shared constants | `src/shared/constants.ts` — Main/Renderer shared (MAX_PDF_SIZE etc.) to prevent drift |
@@ -265,7 +288,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, conversation history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity search, dimension validation)
     │   ├── store.ts           # Zustand state management (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (82)
+    │   └── __tests__/         # Unit tests (243)
     └── types/
         └── index.ts       # Type definitions + Provider model constants
 ```
@@ -446,6 +469,11 @@ PDF File
 | Malicious full-file allocation | `PdfUploader` reads only the first 5 bytes via `file.slice(0,5)` to verify the `%PDF-` magic — rejects fakes before materializing the full buffer |
 | UTF-16 surrogate pair splits | Chunker and RAG overlap both split on codepoint boundaries (safe for emoji and supplementary CJK) |
 | Prompt injection via URL schemes | Markdown allowlist: `https/http/mailto/#`, blocklist: `javascript:`/`data:`/`vbscript:`/`file:` |
+| Installer tamper detection (v0.18.8) | Build artifacts ship with auto-generated SHA-256 hashes and a Sigstore `attest-build-provenance` — verifiable via `gh attestation verify` to confirm builds came from this repo's CI |
+| Supply chain (CI injection, v0.18.8) | All third-party GitHub Actions (`actions/checkout`, `setup-node`, `softprops/action-gh-release`, `attest-build-provenance`) pinned by full SHA — blocks arbitrary code injection if a maintainer account is compromised |
+| Build non-determinism (v0.18.8) | CI uses `npm ci` (not `npm install`) with a synced lockfile — prevents transitive-dep drift from changing NSIS/asar hashes between identical tags |
+| Array OOB regressions (v0.18.8) | TypeScript `noUncheckedIndexedAccess: true` narrows array access to `T \| undefined`, catching OOB-class defects at compile time |
+| Hallucination (v0.18.0) | Q&A drafts are sentence-split → cosine-scored against the RAG index → LLM-refined when weak-sentence thresholds are exceeded. Multi-language terminator handling + Latin/CJK mixed boundary split (v0.18.8) |
 
 ## License
 

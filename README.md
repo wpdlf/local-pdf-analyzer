@@ -10,6 +10,7 @@
 - **텍스트 + 이미지 통합 분석** — 논문, 보고서, 매뉴얼 등 어떤 PDF든 텍스트는 물론 차트, 다이어그램, 표 등 삽입 이미지까지 Vision AI로 분석합니다
 - **스캔 PDF OCR 지원** — 이미지 기반 스캔 PDF도 Vision AI가 페이지별로 텍스트를 인식하여 분석합니다
 - **RAG 기반 Q&A 채팅** — 임베딩 벡터 시맨틱 검색으로 PDF에서 질문과 가장 관련 높은 부분을 정확히 찾아 AI가 답변합니다
+- **답변 자동 검증 (v0.18.0 신규)** — Q&A 답변의 각 문장을 PDF 임베딩에 대조하여 환각이 의심되는 문장이 일정 비율을 넘으면 LLM 이 한 번 더 다듬어서 출력 — 사용자 개입 없이 silent 로 동작합니다
 - **페이지 인용 + 사이드 PDF 뷰어 (v0.17.0 신규)** — 요약/Q&A 답변에 자동으로 `[p.12]` 같은 출처 페이지 인용이 붙고, 클릭하면 우측 패널에 PDF 원문이 열려 해당 페이지로 즉시 이동 — AI 환각 여부를 1-click으로 검증
 - **개인 자료 걱정 없이 사용** — 시험자료, 사내 문서, 논문 초고 등 민감한 자료도 안심하고 요약할 수 있습니다
 - **한국어/English UI** — 설정에서 앱 인터페이스 언어를 한국어 또는 영어로 전환할 수 있습니다
@@ -32,6 +33,21 @@
 4. 첫 실행 시 AI 엔진(Ollama)과 한국어 특화 모델(gemma3, exaone3.5) + RAG 임베딩 모델(nomic-embed-text)이 자동 설치됩니다 — 안내를 따라 진행해주세요
 
 > **참고**: AI 모델 다운로드에 약 8GB의 디스크 공간과 수 분의 시간이 필요합니다.
+
+### 인스톨러 무결성 검증 (v0.18.8 신규)
+
+각 릴리즈에는 인스톨러의 **SHA-256 해시**(`SHA256SUMS-windows.txt` / `SHA256SUMS-mac.txt`)가 자산으로 첨부되며, 릴리즈 노트 본문에도 함께 게시됩니다. 또한 GitHub Actions 가 발급하는 **Sigstore build provenance attestation** 으로 빌드 출처를 검증할 수 있습니다.
+
+```bash
+# Windows (PowerShell)
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.8.exe
+
+# macOS / Linux
+shasum -a 256 ./Local-PDF-Analyzer-0.18.8.dmg
+
+# GitHub CLI 로 attestation 검증 (선택)
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.8.exe --repo wpdlf/local-pdf-analyzer
+```
 
 ## 사용 방법
 
@@ -59,6 +75,7 @@
 - 질문하면 임베딩 벡터 유사도로 PDF에서 가장 관련 높은 부분을 찾아 AI가 답변합니다
 - 임베딩 모델이 없으면 키워드 기반 검색으로 자동 전환됩니다 (기능 동일, 정확도 차이)
 - 최대 10턴까지 이전 대화 맥락을 이해하며 답변합니다
+- **답변 자동 검증 (v0.18.0)** — 답변 초안을 문장 단위로 분할 후 각 문장의 코사인 유사도(top-1)를 PDF 임베딩에 대조해 평가합니다. 약한 문장(<0.5)이 2개 이상이거나 비율이 20% 를 넘거나 평균 점수가 임계 미만이면, 동일 답변을 LLM 이 한 번 더 다듬어서 근거 없는 주장을 제거합니다. 모든 과정은 silent — UI 변화 없이 더 정확한 답변만 표시됩니다. 설정에서 비활성화 가능
 - `Enter`: 전송 / `Shift+Enter`: 줄바꿈
 
 ### 5. 페이지 인용 + PDF 뷰어 (v0.17.0 신규, v0.17.2 확장)
@@ -160,10 +177,12 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - **렌더 에러 복구** — 예기치 못한 UI 오류 발생 시 "다시 시도" 버튼으로 새로고침 없이 복구 시도 (민감 경로 자동 마스킹)
 - **언어 즉시 전환** — 설정에서 한국어/English 변경 시 전체 화면이 즉시 반영 (재시작 불필요)
 - **매직바이트 기반 PDF 검증** — 파일 전체를 메모리에 로드하기 전에 `%PDF-` 시그니처를 선행 확인하여 잘못된 파일 즉시 거부
-- **단위 테스트 커버리지** — 핵심 RAG/citation 경로 회귀 방지 테스트 **82건** (v0.17.x 에서 +13)
+- **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **243건** (v0.17.x 에서 +13, v0.18.x 누적 +148)
+- **빌드 무결성 (v0.18.8)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보
 - **페이지 인용 + 사이드 PDF 뷰어 (v0.17.0)** — 요약/Q&A 답변의 각 핵심 사실에 출처 페이지 `[p.N]` 자동 생성, 클릭 시 우측 패널에서 해당 페이지 즉시 확인. RAG 청크에 page 메타데이터 전파 + LLM 프롬프트 CITATION_RULES(5 언어) 주입 + pdfjs-dist lazy 뷰어 + react-markdown text-block 오버라이드로 구현. v0.17.1 에서 단락별 inline 라벨로 인용 빈도 대폭 향상
 - **가로 리사이즈 핸들 (v0.17.2)** — PDF 뷰어 패널 열렸을 때 중앙 구분선 드래그로 좌/우 비율 20~80% 자유 조정. Pointer + 키보드(← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage 영속화. PDF 는 `ResizeObserver` + 200ms debounce 로 자동 재렌더
 - **인용 후처리 정규화 (v0.17.1)** — LLM 이 간혹 생성하는 괄호 감싸기 `([p.5])` 나 독립 목록 항목 `- [p.44]` 을 자동으로 본문 문장 끝에 부착
+- **답변 자동 검증 (v0.18.0)** — Q&A 답변 초안을 문장 단위(다국어 종결부호 인식, mixed-CJK 분리 v0.18.8)로 분할 → 각 문장의 코사인 유사도(top-1)를 PDF 임베딩에 대조 → weakCount/weakRatio/avgScore 임계 초과 시 LLM 으로 한 번 더 refine. 단일 boilerplate 약문장은 허용해 refine 비용 최적화 (v0.18.3)
 
 ## 시스템 요구 사항
 
@@ -201,6 +220,10 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | PDF 뷰어가 너무 크게 표시됨 (좁은 패널) | v0.17.1 에서 수정 — 컨테이너 너비 기반 동적 scale 로 자동 fit |
 | PDF 뷰어 패널 크기를 바꾸고 싶음 | v0.17.2 신규 — 중앙 구분선 드래그 또는 키보드 (Tab 포커스 후 ← → Home End) 로 20~80% 조정 |
 | 리사이즈 후 PDF 가 늘어난 상태로 남음 | v0.17.2 에서 `ResizeObserver` 로 자동 재렌더 — 드래그 종료 200ms 후 새 scale 로 다시 그려짐 |
+| Q&A 답변에서 환각이 자주 보임 | v0.18.0 답변 자동 검증으로 약한 근거의 문장 다수 발견 시 LLM 재정리. 비활성화하려면 설정에서 "답변 검증" 토글을 끌 수 있습니다 |
+| 답변이 두 번 생성되는 듯한 지연이 있음 | v0.18.0 검증 후 refine 트리거 시 한 번 더 LLM 호출이 발생합니다. 단일 약문장은 허용(v0.18.3)되어 대부분의 답변에서는 한 번에 끝납니다 |
+| 한·영 섞인 답변에서 환각이 한 문장으로 합쳐져 검출이 안 됨 | v0.18.8 에서 수정 — `splitIntoSentences` 가 Latin 종결부호 직후 공백 없이 CJK 가 따라오는 mixed 케이스도 분리합니다 |
+| 인스톨러가 변조됐는지 확인하고 싶음 | v0.18.8 신규 — 릴리즈 페이지의 `SHA256SUMS-*.txt` 또는 본문 해시와 비교하거나, `gh attestation verify` 로 Sigstore provenance 를 검증할 수 있습니다 |
 
 ---
 
@@ -218,7 +241,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS + macOS DMG) |
-| 테스트 | Vitest (82개 단위 테스트) + `tsc --noEmit` strict 타입 체크 |
+| 테스트 | Vitest (243개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화, 메모리 캐시로 hot path 최적화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -266,7 +289,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (82개)
+    │   └── __tests__/         # 단위 테스트 (243개)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -469,6 +492,11 @@ PDF 파일
 | 악성 파일 전량 로드 유도 | `PdfUploader` 가 `file.slice(0,5)` 로 `%PDF-` 매직바이트만 먼저 검사 — 전량 메모리 로드 전에 거부 |
 | UTF-16 surrogate pair split | 청커·RAG 오버랩 모두 codepoint 단위 분할 (이모지/확장 CJK 안전) |
 | 프롬프트 인젝션 (URL scheme) | Markdown allowlist: `https/http/mailto/#`, blocklist: `javascript:`/`data:`/`vbscript:`/`file:` |
+| 인스톨러 변조 감지 (v0.18.8) | 빌드 산출물에 SHA-256 해시 자동 첨부 + Sigstore `attest-build-provenance` 발급 — `gh attestation verify` 로 빌드 출처 검증 가능 |
+| Supply chain (CI 주입, v0.18.8) | GitHub Actions 의 third-party action (`actions/checkout`, `setup-node`, `softprops/action-gh-release`, `attest-build-provenance`) 을 모두 SHA pin — maintainer 계정 탈취 시 임의 코드 주입 차단 |
+| 빌드 비결정성 (v0.18.8) | CI 가 `npm install` 대신 `npm ci` + lockfile 동기화 사용 — 동일 태그에서 transitive dep 변동으로 인한 NSIS/asar 해시 표류 차단 |
+| Array OOB 회귀 (v0.18.8) | TypeScript `noUncheckedIndexedAccess: true` — 배열 인덱싱 결과를 `T \| undefined` 로 좁혀 컴파일 타임에 OOB 류 결함 차단 |
+| Hallucination (v0.18.0) | Q&A 답변을 문장 단위로 분할 → RAG 인덱스 코사인 유사도 평가 → 약문장 다수 시 LLM 재정리. 다국어 종결부호 인식 + Latin/CJK mixed 경계 분리(v0.18.8) |
 
 ## 라이선스
 
