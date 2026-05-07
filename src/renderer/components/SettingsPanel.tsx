@@ -104,12 +104,17 @@ export function SettingsPanel() {
     prevProviderRef.current = draft.provider;
     if (!providerChanged) return;
 
+    // noUncheckedIndexedAccess: 인덱싱 결과가 T|undefined 라 fallback 처리.
+    // PROVIDER_MODELS 는 const 정의로 항상 ≥1 이지만 컴파일러는 좁히지 못함.
+    const claudeFirst = PROVIDER_MODELS.claude[0]?.value ?? '';
+    const openaiFirst = PROVIDER_MODELS.openai[0]?.value ?? '';
     if (draft.provider === 'claude') {
-      setDraft((d) => ({ ...d, model: PROVIDER_MODELS.claude[0].value }));
+      setDraft((d) => ({ ...d, model: claudeFirst }));
     } else if (draft.provider === 'openai') {
-      setDraft((d) => ({ ...d, model: PROVIDER_MODELS.openai[0].value }));
+      setDraft((d) => ({ ...d, model: openaiFirst }));
     } else if (draft.provider === 'ollama' && ollamaModels.length > 0) {
-      setDraft((d) => ({ ...d, model: ollamaModels[0] }));
+      const first = ollamaModels[0];
+      if (first) setDraft((d) => ({ ...d, model: first }));
     }
   }, [draft.provider, ollamaModels]);
 

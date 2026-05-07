@@ -612,7 +612,7 @@ function registerIpcHandlers(): void {
     if (provider === 'ollama' && !OLLAMA_VISION_MODELS.some((v) => model.startsWith(v))) {
       const installed = await ollamaManager.listModels();
       const available = installed.filter((m: string) => OLLAMA_VISION_MODELS.some((v) => m.startsWith(v)));
-      if (available.length === 0) {
+      if (available.length === 0 || !available[0]) {
         throw new Error(`${errorPrefix} Vision 모델이 필요합니다. 설정에서 llava 모델을 설치해주세요.`);
       }
       model = available[0];
@@ -793,6 +793,8 @@ function registerIpcHandlers(): void {
       });
       if (filePaths.length === 0) return null;
       const filePath = filePaths[0];
+      // noUncheckedIndexedAccess: length 검사 후에도 좁힘 안됨. 명시적 가드.
+      if (!filePath) return null;
       // drop 핸들러와 동일한 방어 — 심볼릭 링크/비정규 파일 거부.
       const lstat = await fsp.lstat(filePath);
       if (lstat.isSymbolicLink()) {

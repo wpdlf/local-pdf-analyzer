@@ -65,8 +65,8 @@ describe('chunkTextWithOverlap', () => {
     const noOverlap = chunkTextWithOverlap(text, 50, 0);
     // 청크 경계 이웃 간 공유 tail 이 없어야 함
     for (let i = 1; i < noOverlap.length; i++) {
-      const prevEnd = noOverlap[i - 1].slice(-20);
-      const currStart = noOverlap[i].slice(0, 20);
+      const prevEnd = noOverlap[i - 1]!.slice(-20);
+      const currStart = noOverlap[i]!.slice(0, 20);
       expect(currStart).not.toBe(prevEnd);
     }
   });
@@ -110,8 +110,8 @@ describe('chunkTextWithOverlap', () => {
     expect(chunks.length).toBeGreaterThan(1);
     let atLeastOneOverlap = false;
     for (let i = 1; i < chunks.length; i++) {
-      const prev = chunks[i - 1];
-      const curr = chunks[i];
+      const prev = chunks[i - 1]!;
+      const curr = chunks[i]!;
       if (prev.length === 0 || curr.length === 0) continue;
       // curr 의 시작 일부 (첫 10자) 가 prev 의 어딘가에 존재하면 overlap 으로 간주
       const currHead = curr.slice(0, Math.min(10, curr.length));
@@ -151,8 +151,8 @@ describe('chunkChapters', () => {
     ];
     const result = chunkChapters(chapters, 4000);
     expect(result).toHaveLength(2);
-    expect(result[0].chapter.title).toBe('1장');
-    expect(result[0].chunks).toHaveLength(1);
+    expect(result[0]!.chapter.title).toBe('1장');
+    expect(result[0]!.chunks).toHaveLength(1);
   });
 
   it('큰 챕터는 여러 청크로 분할한다', () => {
@@ -164,7 +164,7 @@ describe('chunkChapters', () => {
       { index: 1, title: '대형 챕터', startPage: 1, endPage: 50, text: longText },
     ];
     const result = chunkChapters(chapters, 10);
-    expect(result[0].chunks.length).toBeGreaterThan(1);
+    expect(result[0]!.chunks.length).toBeGreaterThan(1);
   });
 });
 
@@ -177,9 +177,9 @@ describe('chunkTextWithOverlapByPage', () => {
   it('단일 짧은 페이지는 하나의 청크로 반환하고 pageStart/pageEnd 모두 1', () => {
     const result = chunkTextWithOverlapByPage(['짧은 페이지 내용'], 500, 0.1);
     expect(result).toHaveLength(1);
-    expect(result[0].pageStart).toBe(1);
-    expect(result[0].pageEnd).toBe(1);
-    expect(result[0].text).toContain('짧은');
+    expect(result[0]!.pageStart).toBe(1);
+    expect(result[0]!.pageEnd).toBe(1);
+    expect(result[0]!.text).toContain('짧은');
   });
 
   it('여러 페이지에 걸친 큰 문서를 청크로 분할하고 각 청크의 페이지 범위를 반환', () => {
@@ -215,18 +215,18 @@ describe('chunkTextWithOverlapByPage', () => {
     expect(bChunks.length).toBeGreaterThan(0);
     expect(cChunks.length).toBeGreaterThan(0);
     // Aaa 를 포함하는 청크는 페이지 1 에서 시작
-    expect(aChunks[0].pageStart).toBe(1);
+    expect(aChunks[0]!.pageStart).toBe(1);
     // Bbb 를 포함하는 청크는 페이지 2 를 포함
-    expect(bChunks[0].pageStart).toBeLessThanOrEqual(2);
-    expect(bChunks[0].pageEnd).toBeGreaterThanOrEqual(2);
+    expect(bChunks[0]!.pageStart).toBeLessThanOrEqual(2);
+    expect(bChunks[0]!.pageEnd).toBeGreaterThanOrEqual(2);
     // Ccc 를 포함하는 청크는 페이지 3 을 포함
-    expect(cChunks[0].pageEnd).toBeGreaterThanOrEqual(3);
+    expect(cChunks[0]!.pageEnd).toBeGreaterThanOrEqual(3);
   });
 
   it('청크의 pageStart/pageEnd 가 1-based 인지 검증', () => {
     const result = chunkTextWithOverlapByPage(['single page content'], 500, 0.1);
-    expect(result[0].pageStart).toBeGreaterThanOrEqual(1);
-    expect(result[0].pageEnd).toBeGreaterThanOrEqual(1);
+    expect(result[0]!.pageStart).toBeGreaterThanOrEqual(1);
+    expect(result[0]!.pageEnd).toBeGreaterThanOrEqual(1);
   });
 
   // v0.18.5 B2 regression — 누적 단락이 effectiveMax 를 초과해 splitByCodepoint 에 들어가는 경우,
@@ -250,7 +250,7 @@ describe('chunkTextWithOverlapByPage', () => {
     expect(uniqueStarts.size).toBeGreaterThan(1);
     // 모든 청크의 pageStart <= pageEnd
     for (let i = 0; i < result.length; i++) {
-      expect(pageStarts[i]).toBeLessThanOrEqual(pageEnds[i]);
+      expect(pageStarts[i]!).toBeLessThanOrEqual(pageEnds[i]!);
     }
     // 첫 청크의 pageStart 는 1, 마지막 청크의 pageEnd 는 6 이어야 (전체 커버)
     expect(pageStarts[0]).toBe(1);

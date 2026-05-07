@@ -124,6 +124,7 @@ export function formatHistory(messages: QaMessage[]): string {
   const useable: QaMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
+    if (!m) continue;
     // user → 다음이 cancelled assistant 면 쌍 통째로 skip (orphan Q 방지)
     if (m.role === 'user' && messages[i + 1]?.meta === 'cancelled') {
       i++; // 다음(cancelled) 도 함께 skip
@@ -279,11 +280,14 @@ async function buildRagIndex(
       }
 
       for (let j = 0; j < result.embeddings.length; j++) {
+        const text = batch[j];
+        const emb = result.embeddings[j];
+        if (text === undefined || emb === undefined) continue;
         // page-aware 모드면 page 메타데이터 동반 — SearchResult 로 전파되어 LLM 프롬프트 라벨링에 사용
         const meta = usePageAware
           ? { pageStart: pageChunks[i + j]?.pageStart, pageEnd: pageChunks[i + j]?.pageEnd }
           : undefined;
-        ragIndex.addChunk(batch[j], result.embeddings[j], i + j, meta);
+        ragIndex.addChunk(text, emb, i + j, meta);
       }
 
       store.setRagState({ progress: { current: Math.min(i + RAG_BATCH_SIZE, total), total } });
@@ -330,6 +334,7 @@ async function ragSearch(question: string, signal?: AbortSignal): Promise<string
     }
 
     const queryEmbedding = result.embeddings[0];
+    if (!queryEmbedding) return null;
     const results = ragIndex.search(queryEmbedding, RAG_TOP_K, RAG_MIN_SCORE);
 
     if (results.length === 0) return null;
@@ -367,13 +372,19 @@ async function ragSearch(question: string, signal?: AbortSignal): Promise<string
  */
 export function splitIntoSentences(text: string): string[] {
   const normalized = text.replace(/\s+/g, ' ').trim();
-  // v0.18.5 C-M1 / v0.18.6 C25-M1 fix: CJK 종결부호(`。！？`) 뒤가 공백이거나 즉시 다음 문자 든 모두 분할.
-  // 이전 정규식은 `\s+` 필수 → `"입니다。다음으로…"` 같은 공백 없는 케이스 처리 못함 (v0.18.5 fix 영역).
-  // v0.18.5 fix 후에도 `(?=\S)` 만 있어 `"문장1。 문장2"` 처럼 CJK 종결부호 + 공백 케이스에선
-  // 두 분기 모두 미적중하여 단일 문장 처리되던 잔여 갭이 있었다 (Round 25 C25-M1 발견).
-  // 새 분기 `(?<=[。！？])\s*(?=\S)` 는 공백 0+개를 허용해 zero-width 와 whitespace-padded 케이스를 모두 커버.
-  // Latin 분기는 여전히 `\s+` 필수 (소수점 "3.14" / 약어 "Mr." 오탐 방지).
-  const sentences = normalized.split(/(?<=[.!?])\s+(?=\S)|(?<=[。！？])\s*(?=\S)/);
+  // v0.18.5 C-M1 / v0.18.6 C25-M1 / v0.18.8 R27-I1 fix: CJK 종결부호(`。！？`) 뒤가 공백이거나
+  // 즉시 다음 문자 든 모두 분할. 이전 정규식은 `\s+` 필수 → `"입니다。다음으로…"` 같은 공백 없는
+  // 케이스 처리 못함 (v0.18.5 fix 영역). v0.18.5 fix 후에도 `(?=\S)` 만 있어 `"문장1。 문장2"` 처럼
+  // CJK 종결부호 + 공백 케이스에선 두 분기 모두 미적중 (Round 25 C25-M1 fix).
+  //
+  // v0.18.8 R27-I1: Latin 종결부호 직후 공백 없이 CJK 가 따라오는 mixed 케이스 추가.
+  // 예: `"This is wrong.다음 주장은 환각입니다."` → 이전엔 단일 문장으로 처리되어
+  //     verify 통계 평균화 → 환각 문장이 refine 트리거를 못 받았다.
+  // 약어("Mr.") / 소수점("3.14") 오탐 방지 위해 다음 글자가 CJK 일 때만 zero-width split 허용.
+  // CJK Unicode 블록: 한글(AC00-D7AF), 히라가나(3040-309F), 가타카나(30A0-30FF), CJK 통합(4E00-9FFF).
+  const sentences = normalized.split(
+    /(?<=[.!?])\s+(?=\S)|(?<=[.!?])(?=[가-힯぀-ヿ一-鿿])|(?<=[。！？])\s*(?=\S)/,
+  );
   return sentences
     .map((s) => s.trim())
     .filter((s) => s.length >= VERIFY_MIN_SENTENCE_CHARS);
@@ -413,9 +424,11 @@ export async function verifyAnswerSentences(
   let weakCount = 0;
   for (let i = 0; i < result.embeddings.length; i++) {
     if (signal?.aborted) break;
+    const emb = result.embeddings[i];
+    if (!emb) continue;
     // minScore=0 으로 호출 — top-1 의 실제 유사도가 해당 문장의 최대 근거 점수.
-    const hits = ragIndex.search(result.embeddings[i], 1, 0);
-    const maxScore = hits.length > 0 ? hits[0].score : 0;
+    const hits = ragIndex.search(emb, 1, 0);
+    const maxScore = hits.length > 0 ? (hits[0]?.score ?? 0) : 0;
     totalScore += maxScore;
     if (maxScore < VERIFY_WEAK_SCORE) weakCount++;
   }

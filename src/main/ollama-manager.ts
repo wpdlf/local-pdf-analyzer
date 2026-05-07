@@ -579,7 +579,8 @@ export class OllamaManager {
       const extractLastLine = (raw: string): string => {
         const cleaned = stripAnsi(raw);
         const parts = cleaned.split(/[\r\n]+/).map(s => s.trim()).filter(Boolean);
-        return parts.length > 0 ? parts[parts.length - 1] : '';
+        // noUncheckedIndexedAccess: parts[parts.length - 1] 은 length>0 에도 T|undefined.
+        return parts.length > 0 ? (parts[parts.length - 1] ?? '') : '';
       };
 
       // ollama pull 원본 출력을 사용자 친화적 메시지로 변환

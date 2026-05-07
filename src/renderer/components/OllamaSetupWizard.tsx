@@ -28,12 +28,13 @@ export function OllamaSetupWizard() {
     'pending',
     ...INITIAL_INSTALL_MODELS.map(() => 'pending' as SetupItemStatus),
   ]);
+  // noUncheckedIndexedAccess: itemStatuses[N] 은 T|undefined 로 좁혀지므로 'pending' fallback.
   const items = [
-    { label: t('setup.ollamaCheck'), status: itemStatuses[0] },
-    { label: t('setup.ollamaStart'), status: itemStatuses[1] },
+    { label: t('setup.ollamaCheck'), status: itemStatuses[0] ?? 'pending' },
+    { label: t('setup.ollamaStart'), status: itemStatuses[1] ?? 'pending' },
     ...INITIAL_INSTALL_MODELS.map((m, i) => ({
       label: m === 'nomic-embed-text' ? t('setup.downloadEmbed', { model: m }) : t('setup.downloadKorean', { model: m }),
-      status: itemStatuses[2 + i],
+      status: itemStatuses[2 + i] ?? 'pending',
     })),
   ];
 
@@ -112,6 +113,8 @@ export function OllamaSetupWizard() {
       for (let i = 0; i < INITIAL_INSTALL_MODELS.length; i++) {
         if (cancelledRef.current) return;
         const modelName = INITIAL_INSTALL_MODELS[i];
+        // noUncheckedIndexedAccess: 인덱스 가드 — i < length 이미 검사했으나 컴파일러 좁힘 안됨.
+        if (!modelName) continue;
         const itemIndex = 2 + i;
         updateItem(itemIndex, 'running');
 

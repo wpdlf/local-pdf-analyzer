@@ -823,7 +823,8 @@ async function embedOllama(
 ): Promise<EmbeddingResult> {
   validateOllamaUrl(ollamaBaseUrl);
   const url = new URL('/api/embed', ollamaBaseUrl);
-  const useModel = model || OLLAMA_EMBED_MODELS[0];
+  // noUncheckedIndexedAccess: OLLAMA_EMBED_MODELS 는 const 정의로 항상 ≥1 이지만 좁힘 안됨.
+  const useModel = model || OLLAMA_EMBED_MODELS[0] || 'nomic-embed-text';
   const body = JSON.stringify({ model: useModel, input: texts });
   const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, 120000, signal);
   const parsed = JSON.parse(result);
@@ -1393,7 +1394,9 @@ Example: "Memory leaks occur due to missing backpressure[p.12]. The fix is respo
 
 function buildPrompt(text: string, type: 'full' | 'chapter' | 'keywords' | 'qa', language?: string): string {
   const lang = language || 'ko';
-  const prompts = LANG_PROMPTS[lang] || LANG_PROMPTS['ko'];
+  // noUncheckedIndexedAccess: dictionary 인덱싱 fallback. LANG_PROMPTS['ko'] 는 const 정의로 보장됨.
+  const prompts = LANG_PROMPTS[lang] || LANG_PROMPTS['ko'] || LANG_PROMPTS.ko;
+  if (!prompts) throw new Error(`No prompts for language: ${lang}`);
   const raw = prompts[type](text);
   // keywords 타입은 테이블 포맷이라 인용 규칙을 주입하지 않는다.
   if (type === 'keywords') return raw;

@@ -46,6 +46,7 @@ export function parseCitations(text: string): CitationSegment[] {
   for (const match of text.matchAll(re)) {
     const raw = match[0];
     const pageStr = match[1];
+    if (!pageStr) continue;
     const start = match.index ?? 0;
     if (start > lastIdx) {
       segments.push({ type: 'text', content: text.slice(lastIdx, start) });
@@ -96,9 +97,9 @@ export function normalizeCitationPlacement(text: string): string {
       // 바로 위 비어있지 않은 라인 찾기 (역방향)
       let attached = false;
       for (let k = stripped.length - 1; k >= 0; k--) {
-        if (stripped[k].trim().length > 0) {
+        const prev = stripped[k];
+        if (prev && prev.trim().length > 0) {
           // 이전 라인 끝의 구두점 앞에 삽입하거나 끝에 추가
-          const prev = stripped[k];
           const trailingPuncMatch = prev.match(/[.!?。！？]\s*$/);
           if (trailingPuncMatch && trailingPuncMatch.index !== undefined) {
             stripped[k] = prev.slice(0, trailingPuncMatch.index) + citations.join('') + prev.slice(trailingPuncMatch.index);

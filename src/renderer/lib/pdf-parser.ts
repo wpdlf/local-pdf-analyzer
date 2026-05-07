@@ -291,7 +291,9 @@ function detectChapters(pages: string[]): Chapter[] {
   let preChapterText = '';
 
   for (let i = 0; i < pages.length; i++) {
-    const firstLine = pages[i].trim().split('\n')[0] || '';
+    const page = pages[i];
+    if (page === undefined) continue;
+    const firstLine = page.trim().split('\n')[0] || '';
     const match = firstLine.match(headingPattern);
 
     if (match) {
@@ -305,13 +307,13 @@ function detectChapters(pages: string[]): Chapter[] {
         title: firstLine.substring(0, 80).trim(),
         startPage: i + 1,
         endPage: i + 1,
-        text: pages[i],
+        text: page,
       };
     } else if (currentChapter) {
-      currentChapter.text += '\n\n' + pages[i];
+      currentChapter.text += '\n\n' + page;
     } else {
       // 첫 챕터 이전 페이지 수집
-      preChapterText += (preChapterText ? '\n\n' : '') + pages[i];
+      preChapterText += (preChapterText ? '\n\n' : '') + page;
     }
   }
 
@@ -321,7 +323,7 @@ function detectChapters(pages: string[]): Chapter[] {
   }
 
   // 첫 챕터 이전 페이지(서론/목차 등)를 첫 챕터에 포함
-  if (preChapterText && chapters.length > 0) {
+  if (preChapterText && chapters.length > 0 && chapters[0]) {
     chapters[0].text = preChapterText + '\n\n' + chapters[0].text;
     chapters[0].startPage = 1;
   }

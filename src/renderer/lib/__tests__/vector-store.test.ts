@@ -38,7 +38,7 @@ describe('VectorStore', () => {
       const result = store.search([1, 0, 0], 5, 0);
       expect(result.map((r) => r.text)).toEqual(['close', 'mid', 'far']);
       // 첫 번째 결과는 완벽한 매칭 (dot product 1.0)
-      expect(result[0].score).toBeCloseTo(1.0, 5);
+      expect(result[0]!.score).toBeCloseTo(1.0, 5);
     });
 
     it('topK 수를 초과하지 않는다', () => {
@@ -56,7 +56,7 @@ describe('VectorStore', () => {
       store.addChunk('low', [0, 1, 0], 1);  // 코사인 0.0
       const result = store.search([1, 0, 0], 5, 0.5);
       expect(result).toHaveLength(1);
-      expect(result[0].text).toBe('high');
+      expect(result[0]!.text).toBe('high');
     });
 
     it('쿼리 차원이 인덱스 차원과 불일치하면 빈 배열 반환', () => {
@@ -70,8 +70,8 @@ describe('VectorStore', () => {
       store.addChunk('first', [1, 0, 0], 42);
       store.addChunk('second', [0.5, 0.5, 0], 43);
       const result = store.search([1, 0, 0], 5, 0);
-      expect(result[0].index).toBe(42);
-      expect(result[1].index).toBe(43);
+      expect(result[0]!.index).toBe(42);
+      expect(result[1]!.index).toBe(43);
     });
 
     it('unit-norm 정규화로 벡터 크기에 관계없이 동일한 코사인 유사도', () => {
@@ -79,8 +79,8 @@ describe('VectorStore', () => {
       store.addChunk('small', [1, 0, 0], 0);
       store.addChunk('large', [100, 0, 0], 1);
       const result = store.search([1, 0, 0], 5, 0);
-      expect(result[0].score).toBeCloseTo(1.0, 5);
-      expect(result[1].score).toBeCloseTo(1.0, 5);
+      expect(result[0]!.score).toBeCloseTo(1.0, 5);
+      expect(result[1]!.score).toBeCloseTo(1.0, 5);
     });
 
     // v0.18.5 B4 regression — Float32 정규화 round-off 가 dot product 를 1.0 초과로 만들지 않음을 보장.
@@ -92,8 +92,8 @@ describe('VectorStore', () => {
       store.addChunk('a', vec, 0);
       const result = store.search(vec, 1, 0);
       expect(result).toHaveLength(1);
-      expect(result[0].score).toBeLessThanOrEqual(1);
-      expect(result[0].score).toBeGreaterThanOrEqual(-1);
+      expect(result[0]!.score).toBeLessThanOrEqual(1);
+      expect(result[0]!.score).toBeGreaterThanOrEqual(-1);
     });
 
     it('반대 방향 임베딩의 score 도 -1 미만으로 떨어지지 않는다', () => {
@@ -105,8 +105,8 @@ describe('VectorStore', () => {
       // minScore=-1 로 호출해 음수 결과도 통과시키도록
       const result = store.search(vec, 1, -1);
       expect(result).toHaveLength(1);
-      expect(result[0].score).toBeGreaterThanOrEqual(-1);
-      expect(result[0].score).toBeLessThanOrEqual(1);
+      expect(result[0]!.score).toBeGreaterThanOrEqual(-1);
+      expect(result[0]!.score).toBeLessThanOrEqual(1);
     });
   });
 
@@ -137,9 +137,9 @@ describe('VectorStore', () => {
       const store = new VectorStore();
       store.addChunk('a', [1, 0, 0], 0);
       const result = store.search([1, 0, 0], 5, 0);
-      expect(result[0].text).toBe('a');
-      expect(result[0].pageStart).toBeUndefined();
-      expect(result[0].pageEnd).toBeUndefined();
+      expect(result[0]!.text).toBe('a');
+      expect(result[0]!.pageStart).toBeUndefined();
+      expect(result[0]!.pageEnd).toBeUndefined();
     });
 
     it('addChunk metadata 가 있으면 search 결과에 pageStart/pageEnd 전파', () => {
@@ -147,10 +147,10 @@ describe('VectorStore', () => {
       store.addChunk('first page', [1, 0, 0], 0, { pageStart: 1, pageEnd: 1 });
       store.addChunk('span pages', [0.9, 0.1, 0], 1, { pageStart: 2, pageEnd: 4 });
       const result = store.search([1, 0, 0], 5, 0);
-      expect(result[0].pageStart).toBe(1);
-      expect(result[0].pageEnd).toBe(1);
-      expect(result[1].pageStart).toBe(2);
-      expect(result[1].pageEnd).toBe(4);
+      expect(result[0]!.pageStart).toBe(1);
+      expect(result[0]!.pageEnd).toBe(1);
+      expect(result[1]!.pageStart).toBe(2);
+      expect(result[1]!.pageEnd).toBe(4);
     });
 
     it('일부 청크만 metadata 가 있어도 정상 동작 (혼합)', () => {
@@ -158,8 +158,8 @@ describe('VectorStore', () => {
       store.addChunk('no meta', [1, 0, 0], 0);
       store.addChunk('with meta', [0.8, 0.2, 0], 1, { pageStart: 5, pageEnd: 5 });
       const result = store.search([1, 0, 0], 5, 0);
-      expect(result[0].pageStart).toBeUndefined();
-      expect(result[1].pageStart).toBe(5);
+      expect(result[0]!.pageStart).toBeUndefined();
+      expect(result[1]!.pageStart).toBe(5);
     });
   });
 });

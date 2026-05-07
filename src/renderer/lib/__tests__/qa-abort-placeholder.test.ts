@@ -13,7 +13,10 @@ vi.stubGlobal('window', {
   },
 });
 vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} });
-vi.stubGlobal('crypto', { randomUUID: () => `id-${Math.random()}` });
+// v0.18.8 R27-I4: 결정적 stub. Math.random 기반 ID 는 worker pool 병렬 / snapshot diff /
+// `--seed` reproducer 에서 비결정적이라 message-ordering assertion 추가 시 flaky 회귀 위험.
+let _testIdCounter = 0;
+vi.stubGlobal('crypto', { randomUUID: () => `id-${++_testIdCounter}` });
 
 import { useAppStore } from '../store';
 
@@ -60,9 +63,9 @@ describe('handleQaAbort pair invariant (Round 23 #1)', () => {
     simulateAbort();
     const msgs = useAppStore.getState().qaMessages;
     expect(msgs).toHaveLength(2);
-    expect(msgs[0].role).toBe('user');
-    expect(msgs[1].role).toBe('assistant');
-    expect(msgs[1].content).toContain('취소');
+    expect(msgs[0]!.role).toBe('user');
+    expect(msgs[1]!.role).toBe('assistant');
+    expect(msgs[1]!.content).toContain('취소');
   });
 
   it('partial 이 있으면 기존 동작대로 partial 을 assistant 로 저장 (placeholder 없음)', () => {
@@ -73,7 +76,7 @@ describe('handleQaAbort pair invariant (Round 23 #1)', () => {
     simulateAbort();
     const msgs = useAppStore.getState().qaMessages;
     expect(msgs).toHaveLength(2);
-    expect(msgs[1].content).toBe('부분 답변 내용');
+    expect(msgs[1]!.content).toBe('부분 답변 내용');
   });
 
   it('연속 abort (빈 partial × 2) 도 isQaGenerating 가드로 중복 placeholder 방지', () => {
@@ -84,7 +87,7 @@ describe('handleQaAbort pair invariant (Round 23 #1)', () => {
     simulateAbort(); // 2nd abort — isQaGenerating=false 라 no-op
     const msgs = useAppStore.getState().qaMessages;
     expect(msgs).toHaveLength(2);
-    expect(msgs[1].role).toBe('assistant');
+    expect(msgs[1]!.role).toBe('assistant');
   });
 
   it('R23 #1 시나리오: 빈 abort 후 새 질문 + FIFO 누적 — 윈도우 선두 user 불변식', () => {
@@ -102,7 +105,7 @@ describe('handleQaAbort pair invariant (Round 23 #1)', () => {
     const msgs = useAppStore.getState().qaMessages;
     // cap 20 이하 + 선두는 user
     expect(msgs.length).toBeLessThanOrEqual(20);
-    expect(msgs[0].role).toBe('user');
+    expect(msgs[0]!.role).toBe('user');
   });
 
   it('placeholder 주입 후 즉시 새 질문이 와도 연속 user 가 만들어지지 않는다', () => {

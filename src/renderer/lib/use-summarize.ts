@@ -293,7 +293,9 @@ async function summarizeFull(
       estimatedRemainingMs,
     });
     let chunkResult = '';
-    for await (const token of track(chunks[i], summaryType)) {
+    const chunkText = chunks[i];
+    if (chunkText === undefined) continue;
+    for await (const token of track(chunkText, summaryType)) {
       if (checkTimeout()) break;
       append(token);
       chunkResult += token;
@@ -318,7 +320,11 @@ async function summarizeFull(
       auto: { heading: 'Integrated Summary', instruction: 'The following are per-section summaries of the document. Consolidate them into a single integrated summary.', truncated: '[... truncated]' },
     };
     const lang = settings.summaryLanguage || 'ko';
-    const labels = integrationLabels[lang] || integrationLabels['ko'];
+    const labels = integrationLabels[lang] || integrationLabels['ko'] || integrationLabels.ko;
+    if (!labels) {
+      setProgress(100);
+      return;
+    }
     append(`\n\n---\n\n## ${labels.heading}\n\n`);
     const combined = chunkSummaries.join('\n\n');
     // chunker.ts 와 동일한 추정식을 재사용 — 중복 구현 제거 (유지보수 일관성)
@@ -443,7 +449,10 @@ export function useSummarize() {
           claude: 'Claude API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
           openai: 'OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
         };
-        setError({ code: currentSettings.provider === 'ollama' ? 'OLLAMA_NOT_RUNNING' : 'API_KEY_MISSING', message: providerMessages[currentSettings.provider] });
+        setError({
+          code: currentSettings.provider === 'ollama' ? 'OLLAMA_NOT_RUNNING' : 'API_KEY_MISSING',
+          message: providerMessages[currentSettings.provider] ?? 'AI 서비스를 사용할 수 없습니다.',
+        });
         // 중복 cleanup 제거 — outer finally에서 setIsGenerating, flushStream 일괄 처리
         return;
       }

@@ -180,12 +180,14 @@ function chunkTextWithOverlapOffsets(
       const parts = splitByCodepoint(trimmed, effectiveMax);
       const bodyLen = bodyEnd - bodyStart;
       for (let k = 0; k < parts.length; k++) {
+        const part = parts[k];
+        if (part === undefined) continue;
         const partBodyStart = bodyStart + Math.floor((k * bodyLen) / parts.length);
         const partBodyEnd = k === parts.length - 1
           ? bodyEnd
           : bodyStart + Math.floor(((k + 1) * bodyLen) / parts.length);
         results.push({
-          text: parts[k],
+          text: part,
           bodyStart: partBodyStart,
           bodyEnd: Math.max(partBodyEnd, partBodyStart + 1),
           tailStart: k === 0 && prevTail ? prevTailStart : -1,
@@ -302,7 +304,8 @@ export function chunkTextWithOverlapByPage(
     let best = 0;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (pageOffsets[mid] <= offset) {
+      // noUncheckedIndexedAccess: pageOffsets[mid] 는 lo<=mid<=hi<length 로 항상 정의됨.
+      if (pageOffsets[mid]! <= offset) {
         best = mid;
         lo = mid + 1;
       } else {

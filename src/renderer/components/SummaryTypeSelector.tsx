@@ -20,7 +20,7 @@ export function SummaryTypeSelector() {
   ];
 
   const lang = settings.summaryLanguage || 'ko';
-  const modelBase = settings.model.split(':')[0];
+  const modelBase = settings.model.split(':')[0] ?? '';
   const isKoreanOnlyModel = settings.provider === 'ollama'
     && KOREAN_ONLY_MODELS.some((m) => modelBase.startsWith(m));
   const showModelWarning = lang !== 'ko' && isKoreanOnlyModel;

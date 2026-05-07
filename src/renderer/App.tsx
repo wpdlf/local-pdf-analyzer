@@ -151,6 +151,8 @@ export default function App() {
       const files = e.dataTransfer?.files;
       if (!files || files.length === 0) return;
       const file = files[0];
+      // noUncheckedIndexedAccess: files[0] 은 length 검사 후에도 T|undefined 로 좁혀지지 않음.
+      if (!file) return;
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       if (!isPdf) {
         useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('uploader.notPdf') });
@@ -271,7 +273,9 @@ export default function App() {
     }
 
     if (koreanRatio > 0.15) {
-      const currentModel = settings.model.split(':')[0];
+      // split(':')[0] 은 input 이 빈 문자열이어도 빈 문자열 한 개 원소를 가진 배열을 반환하지만,
+      // noUncheckedIndexedAccess 는 인덱싱 후 string|undefined 로 본다. fallback ''.
+      const currentModel = settings.model.split(':')[0] ?? '';
       const isKoreanModel = KOREAN_RECOMMENDED_MODELS.some(
         (m) => currentModel.startsWith(m),
       );

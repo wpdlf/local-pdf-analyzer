@@ -98,6 +98,29 @@ describe('splitIntoSentences (v0.18)', () => {
     const out = splitIntoSentences(input);
     expect(out).toHaveLength(3);
   });
+
+  // v0.18.8 R27-I1 regression — Latin 종결부호 직후 공백 없이 CJK 가 따라오는 mixed 케이스.
+  // 이전 정규식은 Latin 분기에 `\s+` 필수라 단일 문장 처리되어 verify 통계가 평균화되었다.
+  it('Latin 종결부호(.) 직후 공백 없이 한글이 오면 분할한다 (mixed-language hallucination 가드)', () => {
+    const input = 'This statement is correct enough.다음 주장은 환각이며 충분히 길게 있다.';
+    const out = splitIntoSentences(input);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain('This statement');
+    expect(out[1]).toContain('다음 주장');
+  });
+
+  it('Latin 종결부호 직후 공백 없이 일본어/중국어가 와도 분할', () => {
+    const input = 'First sentence is long enough here.これは二番目の十分に長い文章になっています。';
+    const out = splitIntoSentences(input);
+    expect(out).toHaveLength(2);
+  });
+
+  it('Latin 종결부호 직후 ASCII 가 따라올 때는 공백 없이 분할되지 않는다 (소수점/약어 오탐 방지)', () => {
+    // "3.14abc" 같은 케이스는 소수점일 가능성이 있어 분할하면 안 됨.
+    const input = '소수점 값은 3.14abc 라는 의미를 가지고 있다는 점이 매우 중요하다.';
+    const out = splitIntoSentences(input);
+    expect(out).toHaveLength(1);
+  });
 });
 
 describe('buildRefinePrompt (v0.18)', () => {
@@ -207,7 +230,7 @@ describe('formatHistory (v0.18.6 D4)', () => {
     // pair 정렬 — Q 다음에는 A 가 와야 한다
     const lines = out.split('\n').filter((l) => l.startsWith('Q:') || l.startsWith('A:'));
     for (let i = 0; i < lines.length; i += 2) {
-      expect(lines[i].startsWith('Q:')).toBe(true);
+      expect(lines[i]!.startsWith('Q:')).toBe(true);
       expect(lines[i + 1]?.startsWith('A:')).toBe(true);
     }
   });

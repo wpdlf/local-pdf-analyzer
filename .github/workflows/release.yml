@@ -7,19 +7,23 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/setup-node@v4
+      # actions/setup-node@v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
           cache: npm
 
-      - run: npm install
+      - run: npm ci
 
       - run: npm test
 
@@ -27,38 +31,87 @@ jobs:
     needs: test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
           cache: npm
 
-      - run: npm install
+      - run: npm ci
 
       - run: npm run build && npx electron-builder --publish never
 
-      - name: Upload installer to release
-        uses: softprops/action-gh-release@v2
+      - name: Compute SHA256 for installer
+        id: hash
+        shell: pwsh
+        run: |
+          $file = (Get-ChildItem dist/*Setup*.exe | Select-Object -First 1).FullName
+          $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower()
+          $name = (Split-Path $file -Leaf)
+          "filename=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sha256=$hash"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "$hash  $name" | Out-File -FilePath dist/SHA256SUMS-windows.txt -Encoding ascii
+
+      # actions/attest-build-provenance@v4.1.0
+      - name: Attest build provenance (Windows)
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
-          files: dist/*Setup*.exe
+          subject-path: dist/*Setup*.exe
+
+      # softprops/action-gh-release@v2.6.2
+      - name: Upload installer to release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          files: |
+            dist/*Setup*.exe
+            dist/SHA256SUMS-windows.txt
+          append_body: true
+          body: |
+            ### Windows installer SHA-256
+            ```
+            ${{ steps.hash.outputs.sha256 }}  ${{ steps.hash.outputs.filename }}
+            ```
 
   build-mac:
     needs: test
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 20
           cache: npm
 
-      - run: npm install
+      - run: npm ci
 
       - run: npm run build && npx electron-builder --publish never
 
-      - name: Upload installer to release
-        uses: softprops/action-gh-release@v2
+      - name: Compute SHA256 for dmg
+        id: hash
+        run: |
+          file=$(ls dist/*.dmg | head -n1)
+          name=$(basename "$file")
+          sum=$(shasum -a 256 "$file" | awk '{print $1}')
+          echo "filename=$name" >> "$GITHUB_OUTPUT"
+          echo "sha256=$sum"    >> "$GITHUB_OUTPUT"
+          echo "$sum  $name" > dist/SHA256SUMS-mac.txt
+
+      - name: Attest build provenance (macOS)
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
         with:
-          files: dist/*.dmg
+          subject-path: dist/*.dmg
+
+      - name: Upload installer to release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          files: |
+            dist/*.dmg
+            dist/SHA256SUMS-mac.txt
+          append_body: true
+          body: |
+            ### macOS dmg SHA-256
+            ```
+            ${{ steps.hash.outputs.sha256 }}  ${{ steps.hash.outputs.filename }}
+            ```

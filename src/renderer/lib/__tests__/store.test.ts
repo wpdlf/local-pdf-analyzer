@@ -15,7 +15,9 @@ vi.stubGlobal('window', {
     ai: { embed: vi.fn(), abort: vi.fn(() => Promise.resolve()) },
   },
 });
-vi.stubGlobal('crypto', { randomUUID: () => `id-${Math.random()}` });
+// v0.18.8 R27-I4: 결정적 stub (다른 테스트와 통일).
+let _testIdCounter = 0;
+vi.stubGlobal('crypto', { randomUUID: () => `id-${++_testIdCounter}` });
 
 import { useAppStore } from '../store';
 
@@ -113,8 +115,8 @@ describe('addQaMessage FIFO cap (10 turns = 20 messages)', () => {
     }
     const msgs = useAppStore.getState().qaMessages;
     expect(msgs).toHaveLength(20);
-    expect(msgs[0].content).toBe('u0');
-    expect(msgs[19].content).toBe('a9');
+    expect(msgs[0]!.content).toBe('u0');
+    expect(msgs[19]!.content).toBe('a9');
   });
 
   it('v0.18.5 M3: 21번째(홀수 excess) 메시지 추가 시 짝수(2개) drop — 윈도우는 19개로 수축하되 user 로 시작', () => {
@@ -128,9 +130,9 @@ describe('addQaMessage FIFO cap (10 turns = 20 messages)', () => {
     const msgs = useAppStore.getState().qaMessages;
     // excess=1 → dropCount=2 → u0/a0 쌍 drop. 첫 메시지는 u1 (user→assistant 짝 유지).
     expect(msgs).toHaveLength(19);
-    expect(msgs[0].role).toBe('user');
-    expect(msgs[0].content).toBe('u1');
-    expect(msgs[msgs.length - 1].content).toBe('u10');
+    expect(msgs[0]!.role).toBe('user');
+    expect(msgs[0]!.content).toBe('u1');
+    expect(msgs[msgs.length - 1]!.content).toBe('u10');
   });
 
   it('v0.18.5 M3: 22번째(짝수 excess) 메시지까지 추가되면 윈도우 20개 회복 + user→assistant 불변식 유지', () => {
@@ -143,9 +145,9 @@ describe('addQaMessage FIFO cap (10 turns = 20 messages)', () => {
     s.addQaMessage({ role: 'assistant', content: 'a10' });
     const msgs = useAppStore.getState().qaMessages;
     expect(msgs).toHaveLength(20);
-    expect(msgs[0].role).toBe('user');
-    expect(msgs[0].content).toBe('u1');
-    expect(msgs[msgs.length - 1].content).toBe('a10');
+    expect(msgs[0]!.role).toBe('user');
+    expect(msgs[0]!.content).toBe('u1');
+    expect(msgs[msgs.length - 1]!.content).toBe('a10');
   });
 
   it('v0.18.5 M3 불변식: FIFO 동작 중 윈도우 선두는 항상 user 역할', () => {
@@ -154,10 +156,10 @@ describe('addQaMessage FIFO cap (10 turns = 20 messages)', () => {
     for (let i = 0; i < 13; i++) {
       s.addQaMessage({ role: 'user', content: `u${i}` });
       const afterUser = useAppStore.getState().qaMessages;
-      if (afterUser.length > 0) expect(afterUser[0].role).toBe('user');
+      if (afterUser.length > 0) expect(afterUser[0]!.role).toBe('user');
       s.addQaMessage({ role: 'assistant', content: `a${i}` });
       const afterAssistant = useAppStore.getState().qaMessages;
-      if (afterAssistant.length > 0) expect(afterAssistant[0].role).toBe('user');
+      if (afterAssistant.length > 0) expect(afterAssistant[0]!.role).toBe('user');
     }
   });
 
@@ -166,9 +168,9 @@ describe('addQaMessage FIFO cap (10 turns = 20 messages)', () => {
     s.addQaMessage({ role: 'user', content: 'q' });
     s.addQaMessage({ role: 'assistant', content: 'a' });
     const msgs = useAppStore.getState().qaMessages;
-    expect(msgs[0].id).toBeTruthy();
-    expect(msgs[1].id).toBeTruthy();
-    expect(msgs[0].id).not.toBe(msgs[1].id);
+    expect(msgs[0]!.id).toBeTruthy();
+    expect(msgs[1]!.id).toBeTruthy();
+    expect(msgs[0]!.id).not.toBe(msgs[1]!.id);
   });
 });
 
