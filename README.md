@@ -41,10 +41,10 @@
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.10.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.11.exe
 
 # GitHub CLI 로 attestation 검증 (선택)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.10.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.11.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## 사용 방법
@@ -176,7 +176,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - **언어 즉시 전환** — 설정에서 한국어/English 변경 시 전체 화면이 즉시 반영 (재시작 불필요)
 - **매직바이트 기반 PDF 검증** — 파일 전체를 메모리에 로드하기 전에 `%PDF-` 시그니처를 선행 확인하여 잘못된 파일 즉시 거부
 - **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **246건** (v0.17.x 에서 +13, v0.18.x 누적 +151)
-- **빌드 무결성 (v0.18.8 / v0.18.9 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, 그리고 `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함
+- **빌드 무결성 (v0.18.8 ~ v0.18.11 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.10, npm ≥ 10)를 추가
 - **페이지 인용 + 사이드 PDF 뷰어 (v0.17.0)** — 요약/Q&A 답변의 각 핵심 사실에 출처 페이지 `[p.N]` 자동 생성, 클릭 시 우측 패널에서 해당 페이지 즉시 확인. RAG 청크에 page 메타데이터 전파 + LLM 프롬프트 CITATION_RULES(5 언어) 주입 + pdfjs-dist lazy 뷰어 + react-markdown text-block 오버라이드로 구현. v0.17.1 에서 단락별 inline 라벨로 인용 빈도 대폭 향상
 - **가로 리사이즈 핸들 (v0.17.2)** — PDF 뷰어 패널 열렸을 때 중앙 구분선 드래그로 좌/우 비율 20~80% 자유 조정. Pointer + 키보드(← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage 영속화. PDF 는 `ResizeObserver` + 200ms debounce 로 자동 재렌더
 - **인용 후처리 정규화 (v0.17.1)** — LLM 이 간혹 생성하는 괄호 감싸기 `([p.5])` 나 독립 목록 항목 `- [p.44]` 을 자동으로 본문 문장 끝에 부착
@@ -242,7 +242,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG 는 v0.18.9 부터 공증 자격 추가 시까지 일시 중단) |
-| 테스트 | Vitest (246개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9) |
+| 테스트 | Vitest (246개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9; `vitest.config.mts` + `test/setup.ts` 진입점 도입, v0.18.11) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화, 메모리 캐시로 hot path 최적화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -502,6 +502,10 @@ PDF 파일
 | IPC listener leak (v0.18.9) | `ai-client.summarize` 의 `onToken`/`onDone`/timer 등록을 `try/finally` 안으로 이동 — `generate()` 동기 throw 등 등록 도중 예외 발생 시에도 unsub 과 서버측 `abort` 가 반드시 호출 |
 | CI 회귀 게이트 (v0.18.9) | 모든 workflow job 에 `timeout-minutes` 설정 (hung build 가 360분 burn 하던 가능성 차단), test job 에 Ubuntu+Windows OS matrix 적용 (Windows 경로/pwsh 회귀 사전 차단), `npx tsc --noEmit` 단계 PR/release 양쪽 강제 (strict 옵션 회귀 방지) |
 | 미공증 macOS dmg 배포 (v0.18.9) | 코드사인/공증 자격 미구비 상태에서는 `build-mac` job 비활성화 — Gatekeeper 가 차단하는 unsigned dmg 가 사용자에게 배포되어 `xattr -d` 강제하는 상황을 사전 차단 |
+| 셸 인용 fragility (v0.18.11) | `package.json` build 스크립트의 인라인 `node -e "..."` heredoc 을 `scripts/postbuild.mjs` 로 분리 — Windows PowerShell 인용 처리 표면 제거 + pdfjs-dist cmaps 경로 변경 시 진단 메시지 노출 |
+| 알려진 취약점 가시성 (v0.18.11) | `test.yml` 에 `npm audit --audit-level=high` advisory 단계 추가 — 알려진 vulnerable 의존성(`vite`, `postcss`, `xmldom`, `ip-address` 등 dev-only)이 PR/push 마다 가시화되도록 함 (빌드는 막지 않는 advisory 출력) |
+| GitHub Actions Node 20 deprecation (v0.18.11) | `actions/checkout` v4.2.2 → v6.0.2 / `actions/setup-node` v4.4.0 → v6.4.0 으로 SHA pin 갱신 — 2026-06-02 강제 마이그레이션 시한 이전에 Node.js 24 호환 메이저로 이전 |
+| contributor 환경 ABI/lockfile drift (v0.18.11) | `package.json` 에 `engines: { node: ">=20.10 <23", npm: ">=10" }` 추가 — electron 41 node-gyp ABI 불일치나 npm v9 lockfile 포맷 차이로 인한 silent failure 사전 차단 |
 
 ## 라이선스
 
