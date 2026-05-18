@@ -41,10 +41,10 @@
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.9.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.10.exe
 
 # GitHub CLI 로 attestation 검증 (선택)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.9.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.10.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## 사용 방법

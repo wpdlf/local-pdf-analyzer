@@ -42,10 +42,10 @@ Every release attaches the installer's **SHA-256 hash** as an asset (`SHA256SUMS
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.9.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.10.exe
 
 # Verify the Sigstore attestation via GitHub CLI (optional)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.9.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.10.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## How to Use
