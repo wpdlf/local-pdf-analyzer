@@ -97,4 +97,57 @@ describe('AiClient', () => {
     client.abort('request-123');
     expect(mockElectronAPI.ai.abort).toHaveBeenCalledWith('request-123');
   });
+
+  // R28 회귀: 소비자가 첫 토큰만 받고 break 해도 listener/timer/abort가 모두 정리되어야 함.
+  it('summarize() 소비자가 조기 break 해도 onToken/onDone unsub과 abort가 호출된다', async () => {
+    const unsubToken = vi.fn();
+    const unsubDone = vi.fn();
+    let tokenCallback: ((id: string, token: string) => void) | null = null;
+
+    mockElectronAPI.ai.onToken.mockImplementation((cb) => {
+      tokenCallback = cb;
+      return unsubToken;
+    });
+    mockElectronAPI.ai.onDone.mockImplementation(() => unsubDone);
+    mockElectronAPI.ai.generate.mockImplementation(async (requestId: string) => {
+      setTimeout(() => {
+        tokenCallback?.(requestId, 'first');
+        tokenCallback?.(requestId, 'second');
+      }, 5);
+      // generate 자체는 영원히 await 상태 — 소비자 break 후에도 done 미수신 상태가 유지됨
+      return new Promise(() => { /* never resolves */ });
+    });
+
+    const client = new AiClient(DEFAULT_SETTINGS);
+    for await (const _token of client.summarize('text', 'full')) {
+      break; // 첫 토큰에서 즉시 중단
+    }
+
+    expect(unsubToken).toHaveBeenCalledTimes(1);
+    expect(unsubDone).toHaveBeenCalledTimes(1);
+    // done=false 상태에서 break했으므로 서버 측 abort가 호출되어야 함
+    expect(mockElectronAPI.ai.abort).toHaveBeenCalledWith('test-uuid');
+  });
+
+  // R28 회귀: generate가 동기적으로 throw해도 (예: electronAPI 손상) listener는 정리되어야 함.
+  it('summarize() 도중 generate가 동기 throw 해도 listener가 정리된다', async () => {
+    const unsubToken = vi.fn();
+    const unsubDone = vi.fn();
+
+    mockElectronAPI.ai.onToken.mockImplementation(() => unsubToken);
+    mockElectronAPI.ai.onDone.mockImplementation(() => unsubDone);
+    mockElectronAPI.ai.generate.mockImplementation(() => {
+      throw new Error('synchronous IPC failure');
+    });
+
+    const client = new AiClient(DEFAULT_SETTINGS);
+    await expect(async () => {
+      for await (const _ of client.summarize('text', 'full')) {
+        // consume
+      }
+    }).rejects.toThrow();
+
+    expect(unsubToken).toHaveBeenCalledTimes(1);
+    expect(unsubDone).toHaveBeenCalledTimes(1);
+  });
 });

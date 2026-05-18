@@ -11,6 +11,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       # actions/checkout@v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -22,5 +23,8 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # R28: tsconfig strict 게이트(noUncheckedIndexedAccess 등)가 PR/push 단계에서 항상 검증되도록 함.
+      - run: npx tsc --noEmit
 
       - run: npm test

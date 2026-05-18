@@ -94,3 +94,50 @@ describe('PDF Parser - parsePdf success', () => {
     expect(doc.chapters.length).toBeGreaterThan(0);
   });
 });
+
+// R28 회귀: MAX_TOTAL_IMAGES=50 캡이 배치 동시성으로 우회되지 않는지 확인.
+// 모든 페이지가 병렬로 이미지를 푸시하더라도 결과의 images.length는 캡을 넘지 않아야 한다.
+describe('PDF Parser - MAX_TOTAL_IMAGES cap enforcement', () => {
+  it('한 배치 내 다수 페이지가 이미지를 동시에 추출해도 캡을 초과하지 않는다', async () => {
+    // 10페이지가 각각 100장의 이미지를 가진 PDF를 시뮬레이션 — 캡 우회 시 1000장이 push됨.
+    const PAGES = 10;
+    const IMAGES_PER_PAGE = 100;
+
+    const fakeImage = {
+      objId: 'img1',
+      width: 1,
+      height: 1,
+      data: new Uint8ClampedArray(4),
+    };
+
+    const mockPage = {
+      getTextContent: vi.fn().mockResolvedValue({
+        items: [{ str: '프로세스는 실행 중인 프로그램의 인스턴스이다. 운영체제는 프로세스를 관리한다.' }],
+      }),
+      // extractPageImages 내부에서 호출되는 메소드들을 최대한 모킹.
+      // 실제 extractPageImages는 getOperatorList/objs.get 등을 사용하므로 안전 모킹.
+      getOperatorList: vi.fn().mockResolvedValue({
+        fnArray: new Array(IMAGES_PER_PAGE).fill(85), // OPS.paintImageXObject = 85
+        argsArray: new Array(IMAGES_PER_PAGE).fill(['img1']),
+      }),
+      objs: { get: vi.fn().mockReturnValue(fakeImage) },
+      commonObjs: { get: vi.fn().mockReturnValue(fakeImage) },
+      cleanup: vi.fn(),
+    };
+
+    const mockPdf = {
+      numPages: PAGES,
+      getPage: vi.fn().mockResolvedValue(mockPage),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    (pdfjsLib.getDocument as ReturnType<typeof vi.fn>).mockReturnValue({
+      promise: Promise.resolve(mockPdf),
+    });
+
+    const { parsePdf } = await import('../pdf-parser');
+    const doc = await parsePdf(new ArrayBuffer(10), 'big.pdf', '/big.pdf');
+
+    // extractPageImages가 실패하든 성공하든 images.length는 50을 넘으면 안 됨.
+    expect(doc.images.length).toBeLessThanOrEqual(50);
+  });
+});

@@ -30,61 +30,65 @@ export class AiClient {
     let error: Error | null = null;
     let resolver: (() => void) | null = null;
 
-    const unsubToken = window.electronAPI.ai.onToken((id, token) => {
-      if (id !== requestId) return;
-      tokenQueue.push(token);
-      resolver?.();
-    });
+    // R28: listener/timer 등록을 try/finally로 감싸 — onToken/onDone/generate가 동기 throw하거나
+    // try 진입 전에 예외가 발생해도 unsub이 보장되도록 함.
+    let unsubToken: (() => void) | null = null;
+    let unsubDone: (() => void) | null = null;
+    const IPC_TIMEOUT_MS = 120000; // 2분 — IPC 연결 해제 감지
+    let ipcTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const unsubDone = window.electronAPI.ai.onDone((id) => {
-      if (id !== requestId) return;
-      done = true;
-      resolver?.();
-    });
+    try {
+      unsubToken = window.electronAPI.ai.onToken((id, token) => {
+        if (id !== requestId) return;
+        tokenQueue.push(token);
+        resolver?.();
+      });
 
-    // Main 프로세스에 생성 요청 (API 키는 Main에서 처리)
-    const resultPromise = window.electronAPI.ai.generate(requestId, {
-      text,
-      type,
-      provider: this.settings.provider,
-      model: this.settings.model,
-      ollamaBaseUrl: this.settings.ollamaBaseUrl,
-      temperature: 0.3,
-      language: this.settings.summaryLanguage || 'ko',
-    });
-
-    // 에러 감지를 위해 비동기로 결과 확인
-    resultPromise.then((result) => {
-      if (!result.success) {
-        error = Object.assign(new Error(result.error || t('ai.generateFail')), {
-          code: result.code || 'GENERATE_FAIL',
-        });
+      unsubDone = window.electronAPI.ai.onDone((id) => {
+        if (id !== requestId) return;
         done = true;
         resolver?.();
-      }
-    }).catch((err) => {
-      error = Object.assign(new Error(err instanceof Error ? err.message : t('ai.requestFail')), {
-        code: 'GENERATE_FAIL',
       });
-      done = true;
-      resolver?.();
-    });
 
-    // IPC 연결 해제 감지: 일정 시간 토큰 없으면 안전하게 종료
-    const IPC_TIMEOUT_MS = 120000; // 2분
-    let ipcTimer: ReturnType<typeof setTimeout> | null = null;
-    const resetIpcTimer = () => {
-      if (ipcTimer) clearTimeout(ipcTimer);
-      ipcTimer = setTimeout(() => {
-        if (!done) {
-          error = new Error(t('ai.streamInterrupted'));
+      // Main 프로세스에 생성 요청 (API 키는 Main에서 처리)
+      const resultPromise = window.electronAPI.ai.generate(requestId, {
+        text,
+        type,
+        provider: this.settings.provider,
+        model: this.settings.model,
+        ollamaBaseUrl: this.settings.ollamaBaseUrl,
+        temperature: 0.3,
+        language: this.settings.summaryLanguage || 'ko',
+      });
+
+      // 에러 감지를 위해 비동기로 결과 확인
+      resultPromise.then((result) => {
+        if (!result.success) {
+          error = Object.assign(new Error(result.error || t('ai.generateFail')), {
+            code: result.code || 'GENERATE_FAIL',
+          });
           done = true;
           resolver?.();
         }
-      }, IPC_TIMEOUT_MS);
-    };
+      }).catch((err) => {
+        error = Object.assign(new Error(err instanceof Error ? err.message : t('ai.requestFail')), {
+          code: 'GENERATE_FAIL',
+        });
+        done = true;
+        resolver?.();
+      });
 
-    try {
+      const resetIpcTimer = (): void => {
+        if (ipcTimer) clearTimeout(ipcTimer);
+        ipcTimer = setTimeout(() => {
+          if (!done) {
+            error = new Error(t('ai.streamInterrupted'));
+            done = true;
+            resolver?.();
+          }
+        }, IPC_TIMEOUT_MS);
+      };
+
       resetIpcTimer();
       while (tokenQueue.length > 0 || !done) {
         if (tokenQueue.length > 0) {
@@ -105,8 +109,8 @@ export class AiClient {
       if (error) throw error;
     } finally {
       if (ipcTimer) clearTimeout(ipcTimer);
-      unsubToken();
-      unsubDone();
+      unsubToken?.();
+      unsubDone?.();
       // break/return으로 중단 시 서버 측 요청도 abort
       if (!done && requestId) {
         window.electronAPI.ai.abort(requestId);

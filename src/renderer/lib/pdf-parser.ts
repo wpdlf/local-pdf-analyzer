@@ -67,8 +67,6 @@ export async function parsePdf(
     for (let batchStart = 0; batchStart < pageCount; batchStart += BATCH_SIZE) {
       // 취소 체크 — 배치 사이에 조기 종료
       throwIfAborted(signal);
-      // 이미지 상한 도달 여부를 배치 시작 시점에 캡처 (레이스 컨디션 방지)
-      const skipImages = allImages.length >= MAX_TOTAL_IMAGES;
       const batchEnd = Math.min(batchStart + BATCH_SIZE, pageCount);
       const promises = [];
       for (let i = batchStart; i < batchEnd; i++) {
@@ -77,10 +75,16 @@ export async function parsePdf(
         // ABORTED 는 상위 취소 흐름이 처리하므로 재throw.
         promises.push(
           pdf.getPage(i + 1).then(async (page) => {
-            // 이미지 추출 (배치 단위로 상한 체크 — 병렬 Promise 내 레이스 방지)
-            const imagePromise = !skipImages
-              ? extractPageImages(page, i).catch(() => [] as PageImage[])
-              : Promise.resolve([] as PageImage[]);
+            // 이미지 추출 — 캡 검사를 Promise 진입 시점에 수행 (R28: 배치 동시성으로 캡이 우회되지 않도록)
+            // 같은 배치의 다른 페이지 promise가 이미 캡을 채웠을 수 있으므로 await 진입 직전에 재확인.
+            const imagePromise = (async (): Promise<PageImage[]> => {
+              if (allImages.length >= MAX_TOTAL_IMAGES) return [];
+              try {
+                return await extractPageImages(page, i);
+              } catch {
+                return [];
+              }
+            })();
 
             const textContent = await page.getTextContent();
             // 텍스트 아이템 간 위치 기반 공백/줄바꿈 삽입 (한글 깨짐 방지)
@@ -121,7 +125,12 @@ export async function parsePdf(
             pages[i] = parts.join('');
 
             const pageImages = await imagePromise;
-            allImages.push(...pageImages);
+            // 푸시 직전 잔여 슬롯 확인 — 다른 페이지 promise가 그동안 푸시했을 수 있으므로
+            // 슬롯을 초과하지 않도록 잘라낸 후 추가 (이미지 1장당 base64 수 MB → OOM 방지)
+            const remainingSlots = MAX_TOTAL_IMAGES - allImages.length;
+            if (remainingSlots > 0 && pageImages.length > 0) {
+              allImages.push(...pageImages.slice(0, remainingSlots));
+            }
 
             // 페이지 내부 리소스 해제 — 대용량 PDF에서 누적 메모리 상승 방지
             // (텍스트/이미지 추출이 모두 끝난 시점에 호출해야 안전)

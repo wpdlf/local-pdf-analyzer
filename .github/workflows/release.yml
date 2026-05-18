@@ -12,7 +12,14 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # R28: Windows 회귀(경로 구분자, pwsh 인용, cpSync 동작)를 사전 차단하기 위해 OS matrix 도입.
+    # macOS는 release 빌드에서 제외했으므로 test에서도 제외.
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       # actions/checkout@v4.2.2
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -25,11 +32,15 @@ jobs:
 
       - run: npm ci
 
+      # R28: noUncheckedIndexedAccess 등 tsconfig strict 게이트가 CI에서 항상 검증되도록 함.
+      - run: npx tsc --noEmit
+
       - run: npm test
 
   build-windows:
     needs: test
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
@@ -73,45 +84,13 @@ jobs:
             ${{ steps.hash.outputs.sha256 }}  ${{ steps.hash.outputs.filename }}
             ```
 
-  build-mac:
-    needs: test
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 20
-          cache: npm
-
-      - run: npm ci
-
-      - run: npm run build && npx electron-builder --publish never
-
-      - name: Compute SHA256 for dmg
-        id: hash
-        run: |
-          file=$(ls dist/*.dmg | head -n1)
-          name=$(basename "$file")
-          sum=$(shasum -a 256 "$file" | awk '{print $1}')
-          echo "filename=$name" >> "$GITHUB_OUTPUT"
-          echo "sha256=$sum"    >> "$GITHUB_OUTPUT"
-          echo "$sum  $name" > dist/SHA256SUMS-mac.txt
-
-      - name: Attest build provenance (macOS)
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
-        with:
-          subject-path: dist/*.dmg
-
-      - name: Upload installer to release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
-        with:
-          files: |
-            dist/*.dmg
-            dist/SHA256SUMS-mac.txt
-          append_body: true
-          body: |
-            ### macOS dmg SHA-256
-            ```
-            ${{ steps.hash.outputs.sha256 }}  ${{ steps.hash.outputs.filename }}
-            ```
+  # R28: macOS dmg는 코드사인/공증 자격이 없어 Gatekeeper에 차단됨 (사용자가 `xattr -d`를
+  # 직접 실행해야 열 수 있는 상태로 출시되던 문제). Apple Developer ID + APPLE_ID/PASSWORD/TEAM_ID
+  # 시크릿 + `mac.notarize` electron-builder 구성을 추가하기 전까지 macOS 빌드를 비활성화한다.
+  # 복구 방법: 위 시크릿을 등록한 뒤 build-mac 잡과 package.json 의 build.mac 블록에 notarize 설정을 추가하고
+  # test.yml matrix에 macos-latest를 다시 포함하면 된다.
+  #
+  # build-mac:
+  #   needs: test
+  #   runs-on: macos-latest
+  #   ...
