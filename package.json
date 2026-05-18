@@ -1,12 +1,16 @@
 {
   "name": "summary-lecture-material",
-  "version": "0.18.10",
+  "version": "0.18.11",
   "description": "PDF 자료 분석 데스크톱 앱",
   "license": "MIT",
   "main": "./out/main/index.js",
+  "engines": {
+    "node": ">=20.10 <23",
+    "npm": ">=10"
+  },
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build && node -e \"require('fs').cpSync('node_modules/pdfjs-dist/cmaps','out/renderer/cmaps',{recursive:true})\"",
+    "build": "electron-vite build && node scripts/postbuild.mjs",
     "preview": "electron-vite preview",
     "package": "npm run build && electron-builder",
     "test": "vitest run",
