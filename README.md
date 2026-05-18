@@ -41,10 +41,10 @@
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.11.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.12.exe
 
 # GitHub CLI 로 attestation 검증 (선택)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.11.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.12.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## 사용 방법
@@ -175,8 +175,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - **렌더 에러 복구** — 예기치 못한 UI 오류 발생 시 "다시 시도" 버튼으로 새로고침 없이 복구 시도 (민감 경로 자동 마스킹)
 - **언어 즉시 전환** — 설정에서 한국어/English 변경 시 전체 화면이 즉시 반영 (재시작 불필요)
 - **매직바이트 기반 PDF 검증** — 파일 전체를 메모리에 로드하기 전에 `%PDF-` 시그니처를 선행 확인하여 잘못된 파일 즉시 거부
-- **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **246건** (v0.17.x 에서 +13, v0.18.x 누적 +151)
-- **빌드 무결성 (v0.18.8 ~ v0.18.11 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.10, npm ≥ 10)를 추가
+- **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **254건** (v0.17.x 에서 +13, v0.18.x 누적 +159)
+- **빌드 무결성 (v0.18.8 ~ v0.18.12 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.10, npm ≥ 10)를 추가
 - **페이지 인용 + 사이드 PDF 뷰어 (v0.17.0)** — 요약/Q&A 답변의 각 핵심 사실에 출처 페이지 `[p.N]` 자동 생성, 클릭 시 우측 패널에서 해당 페이지 즉시 확인. RAG 청크에 page 메타데이터 전파 + LLM 프롬프트 CITATION_RULES(5 언어) 주입 + pdfjs-dist lazy 뷰어 + react-markdown text-block 오버라이드로 구현. v0.17.1 에서 단락별 inline 라벨로 인용 빈도 대폭 향상
 - **가로 리사이즈 핸들 (v0.17.2)** — PDF 뷰어 패널 열렸을 때 중앙 구분선 드래그로 좌/우 비율 20~80% 자유 조정. Pointer + 키보드(← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage 영속화. PDF 는 `ResizeObserver` + 200ms debounce 로 자동 재렌더
 - **인용 후처리 정규화 (v0.17.1)** — LLM 이 간혹 생성하는 괄호 감싸기 `([p.5])` 나 독립 목록 항목 `- [p.44]` 을 자동으로 본문 문장 끝에 부착
@@ -242,7 +242,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG 는 v0.18.9 부터 공증 자격 추가 시까지 일시 중단) |
-| 테스트 | Vitest (246개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9; `vitest.config.mts` + `test/setup.ts` 진입점 도입, v0.18.11) |
+| 테스트 | Vitest (254개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9; `vitest.config.mts` + `test/setup.ts` 진입점 도입, v0.18.11) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화, 메모리 캐시로 hot path 최적화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -290,7 +290,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (246개)
+    │   └── __tests__/         # 단위 테스트 (254개)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -506,6 +506,12 @@ PDF 파일
 | 알려진 취약점 가시성 (v0.18.11) | `test.yml` 에 `npm audit --audit-level=high` advisory 단계 추가 — 알려진 vulnerable 의존성(`vite`, `postcss`, `xmldom`, `ip-address` 등 dev-only)이 PR/push 마다 가시화되도록 함 (빌드는 막지 않는 advisory 출력) |
 | GitHub Actions Node 20 deprecation (v0.18.11) | `actions/checkout` v4.2.2 → v6.0.2 / `actions/setup-node` v4.4.0 → v6.4.0 으로 SHA pin 갱신 — 2026-06-02 강제 마이그레이션 시한 이전에 Node.js 24 호환 메이저로 이전 |
 | contributor 환경 ABI/lockfile drift (v0.18.11) | `package.json` 에 `engines: { node: ">=20.10 <23", npm: ">=10" }` 추가 — electron 41 node-gyp ABI 불일치나 npm v9 lockfile 포맷 차이로 인한 silent failure 사전 차단 |
+| API 키 캐시 prototype pollution (v0.18.12) | `apiKeysCache` 를 `Object.create(null)` 위에 알려진 provider 키(`ollama`, `claude`, `openai`)만 화이트리스트 복사 — 디스크 변조 JSON 의 `__proto__` 키가 Object.prototype 을 오염시키는 경로 차단 |
+| 임베딩 비용 amp DoS (v0.18.12) | `ai:embed` 핸들러에 `MAX_CONCURRENT_EMBED_REQUESTS=4` 캡 도입 — 손상/폭주 renderer 가 OpenAI 토큰 비용을 amp 하거나 Ollama 백엔드를 마비시키는 자기-DoS 경로 차단. 정상 RAG 인덱스 빌드(동시 in-flight 1~2개) 에는 영향 없음 |
+| Ollama 인증서 검증 wildcard 오해석 (v0.18.12) | `Get-AuthenticodeSignature -FilePath` → `-LiteralPath` — 임시 경로/사용자명에 `[`, `*`, `?` 가 포함될 때 wildcard 로 해석되어 검증이 잘못된 경로를 보거나 설치가 DoS 되는 견고성 결함 해결 |
+| 새 PDF 로드 시 stale 상태 누출 (v0.18.12) | `setDocument(newDoc)` 비-null 분기에서도 `resetSummaryState` 를 호출 — 호출자가 reset 가드를 잊는 새 호출 경로에서도 이전 문서의 `summary`/`qaMessages`/`pdfBytes`/RAG 인덱스가 누출되지 않도록 함 |
+| 언어 전환 시 stale 라벨 (v0.18.12) | `ProgressBar` 의 모듈 레벨 `t()` → `useT()` 마이그레이션 — 진행 중 언어를 전환해도 다음 progress 업데이트를 기다리지 않고 즉시 새 언어로 라벨이 재렌더 |
+| Markdown 링크 visual spoofing (v0.18.12) | `safe-markdown` 의 href 에 제어문자(`U+0000~U+001F`, `U+007F`) / bidi override(`U+202A~U+202E`, `U+2066~U+2069`) 포함 시 일률 차단 — LLM 응답이 표시 텍스트와 destination 을 시각적으로 위장하는 경로 차단 |
 
 ## 라이선스
 

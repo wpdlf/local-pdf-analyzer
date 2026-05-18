@@ -42,10 +42,10 @@ Every release attaches the installer's **SHA-256 hash** as an asset (`SHA256SUMS
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.11.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.12.exe
 
 # Verify the Sigstore attestation via GitHub CLI (optional)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.11.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.12.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## How to Use
@@ -176,8 +176,8 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Render-error recovery** — Unexpected UI crashes offer a "Try again" button without a full reload (paths auto-masked)
 - **Instant language switch** — Toggling Korean/English in Settings reflects across the whole UI immediately (no restart required)
 - **Magic-byte PDF validation** — `%PDF-` signature is verified before the file is fully loaded into memory, rejecting fakes early
-- **Unit test coverage** — **246 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +151 cumulative across v0.18.x)
-- **Build integrity (cumulatively hardened across v0.18.8 ~ v0.18.11)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds. v0.18.9 adds `timeout-minutes` on every job, an Ubuntu/Windows OS matrix on the test job, and a mandatory `npx tsc --noEmit` gate on both PR and release pipelines so strict flags like `noUncheckedIndexedAccess` cannot silently regress. v0.18.10 pins the Windows runner from `windows-latest` to `windows-2025` ahead of the June 2026 migration. v0.18.11 bumps `actions/checkout` and `actions/setup-node` to their Node.js 24-compatible majors (v6), adds an advisory `npm audit --audit-level=high` step, and declares an `engines` field in `package.json` (node ≥ 20.10, npm ≥ 10)
+- **Unit test coverage** — **254 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +159 cumulative across v0.18.x)
+- **Build integrity (cumulatively hardened across v0.18.8 ~ v0.18.12)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds. v0.18.9 adds `timeout-minutes` on every job, an Ubuntu/Windows OS matrix on the test job, and a mandatory `npx tsc --noEmit` gate on both PR and release pipelines so strict flags like `noUncheckedIndexedAccess` cannot silently regress. v0.18.10 pins the Windows runner from `windows-latest` to `windows-2025` ahead of the June 2026 migration. v0.18.11 bumps `actions/checkout` and `actions/setup-node` to their Node.js 24-compatible majors (v6), adds an advisory `npm audit --audit-level=high` step, and declares an `engines` field in `package.json` (node ≥ 20.10, npm ≥ 10)
 - **Page citations + side PDF viewer (v0.17.0)** — Summary/Q&A answers automatically carry `[p.N]` source-page citations at almost every key sentence. Click to open a right-side PDF viewer panel that scrolls to the cited page. Built on page-aware RAG chunks + LLM prompt injection (5 languages) + lazy pdfjs-dist viewer + react-markdown text-block overrides. Citation frequency significantly improved in v0.17.1 via paragraph-level inline labels
 - **Horizontal resize handle (v0.17.2)** — when the PDF viewer panel is open, drag the central divider to freely adjust the left/right ratio between 20~80%. Pointer + keyboard (← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage persistence. PDF pages auto re-render via `ResizeObserver` + 200ms debounce
 - **Citation placement normalization (v0.17.1)** — LLM mistakes like `([p.5])` wrapping or standalone list items `- [p.44]` are automatically re-attached to the preceding sentence
@@ -242,7 +242,7 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | State Management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused since v0.18.9 pending notarization credentials) |
-| Testing | Vitest (246 unit tests) + `tsc --noEmit` strict type check (`noUncheckedIndexedAccess` enabled in v0.18.8; enforced on both PR and release CI in v0.18.9; `vitest.config.mts` + `test/setup.ts` entry point added in v0.18.11) |
+| Testing | Vitest (254 unit tests) + `tsc --noEmit` strict type check (`noUncheckedIndexedAccess` enabled in v0.18.8; enforced on both PR and release CI in v0.18.9; `vitest.config.mts` + `test/setup.ts` entry point added in v0.18.11) |
 | i18n | Custom (i18n.ts) — 172+ keys, useT() hook, template interpolation |
 | API Key Security | Electron safeStorage (OS keychain encryption), decrypted only in Main process, in-memory cache for hot-path |
 | Shared constants | `src/shared/constants.ts` — Main/Renderer shared (MAX_PDF_SIZE etc.) to prevent drift |
@@ -290,7 +290,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, conversation history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity search, dimension validation)
     │   ├── store.ts           # Zustand state management (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (246)
+    │   └── __tests__/         # Unit tests (254)
     └── types/
         └── index.ts       # Type definitions + Provider model constants
 ```
@@ -484,6 +484,12 @@ PDF File
 | Known-vulnerability visibility (v0.18.11) | An advisory `npm audit --audit-level=high` step is added to `test.yml` — known vulnerable dev-only dependencies (`vite`, `postcss`, `xmldom`, `ip-address` etc.) become visible on every PR/push without blocking the build |
 | GitHub Actions Node 20 deprecation (v0.18.11) | `actions/checkout` v4.2.2 → v6.0.2 and `actions/setup-node` v4.4.0 → v6.4.0 SHA pins refreshed — migrated to Node.js 24-compatible majors ahead of the 2026-06-02 forced-migration deadline |
 | Contributor ABI/lockfile drift (v0.18.11) | An `engines: { node: ">=20.10 <23", npm: ">=10" }` field was added to `package.json` — prevents silent failures from electron 41 node-gyp ABI mismatches or npm v9 lockfile format differences |
+| API key cache prototype pollution (v0.18.12) | `apiKeysCache` is now built on `Object.create(null)` with only known provider keys (`ollama`, `claude`, `openai`) whitelisted — a tampered on-disk JSON containing `__proto__` can no longer reach `Object.prototype` |
+| Embedding cost-amp DoS (v0.18.12) | `MAX_CONCURRENT_EMBED_REQUESTS=4` cap added to the `ai:embed` handler — blocks a compromised or runaway renderer from amplifying OpenAI token costs or pinning the local Ollama backend via a self-DoS. Normal RAG indexing (1~2 in-flight) is unaffected |
+| Ollama signature-check wildcard glob (v0.18.12) | `Get-AuthenticodeSignature -FilePath` → `-LiteralPath` — temp paths or usernames containing `[`, `*`, or `?` were being interpreted as PowerShell wildcards, so the verifier could end up checking the wrong file or the install could DoS. Switching to `-LiteralPath` disables globbing |
+| Stale state leak on new PDF (v0.18.12) | The non-null branch of `setDocument(newDoc)` now also calls `resetSummaryState` — even if a new caller forgets the reset guard, the previous document's `summary`/`qaMessages`/`pdfBytes`/RAG index can no longer leak into the new document view |
+| Stale labels after language switch (v0.18.12) | `ProgressBar` migrated from module-level `t()` to `useT()` — switching the UI language mid-summary now updates labels immediately instead of waiting for the next progress tick |
+| Markdown link visual spoofing (v0.18.12) | `safe-markdown` rejects any href containing control characters (`U+0000~U+001F`, `U+007F`) or bidi override codepoints (`U+202A~U+202E`, `U+2066~U+2069`) — LLM-emitted links that disguise the visible label as a different destination than the actual URL are now blocked |
 
 ## License
 
