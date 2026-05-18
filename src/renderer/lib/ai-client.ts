@@ -61,8 +61,13 @@ export class AiClient {
         language: this.settings.summaryLanguage || 'ko',
       });
 
-      // 에러 감지를 위해 비동기로 결과 확인
-      resultPromise.then((result) => {
+      // 에러 감지를 위해 비동기로 결과 확인.
+      // R29 (v0.18.13): 마이크로태스크 race 방지를 위해 .catch 만 등록하고
+      // 메인 루프 종료 후 `await resultPromise` 로 재확인한다. 이전 구현은
+      // onDone 에 의해 main loop 가 빠져나간 다음 generate() 의 거절 마이크로태스크가
+      // 실행되면, `if (error) throw` 가 동기 실행돼 거절이 누락되고 사용자가
+      // 빈/부분 요약을 "성공" 으로 보는 경로가 있었다.
+      const captureResult = (result: { success: boolean; error?: string; code?: string }): void => {
         if (!result.success) {
           error = Object.assign(new Error(result.error || t('ai.generateFail')), {
             code: result.code || 'GENERATE_FAIL',
@@ -70,13 +75,15 @@ export class AiClient {
           done = true;
           resolver?.();
         }
-      }).catch((err) => {
+      };
+      const captureRejection = (err: unknown): void => {
         error = Object.assign(new Error(err instanceof Error ? err.message : t('ai.requestFail')), {
           code: 'GENERATE_FAIL',
         });
         done = true;
         resolver?.();
-      });
+      };
+      resultPromise.then(captureResult, captureRejection);
 
       const resetIpcTimer = (): void => {
         if (ipcTimer) clearTimeout(ipcTimer);
@@ -105,6 +112,12 @@ export class AiClient {
       }
       // done=true 후 큐에 남은 토큰 소진
       while (tokenQueue.length > 0) yield tokenQueue.shift()!;
+
+      // R29 (v0.18.13): generate() 의 거절 마이크로태스크가 메인 루프 종료 직후에야
+      // 도착하는 경우가 있어 throw 전에 명시적으로 재확인. 이미 captureRejection 이
+      // 처리한 거절은 여기서 await 가 같은 값으로 한 번 더 거절되지만, 동일 변수에
+      // 덮어쓰는 것이라 idempotent.
+      await resultPromise.then(captureResult, captureRejection);
 
       if (error) throw error;
     } finally {

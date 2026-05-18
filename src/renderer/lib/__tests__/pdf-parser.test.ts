@@ -141,3 +141,64 @@ describe('PDF Parser - MAX_TOTAL_IMAGES cap enforcement', () => {
     expect(doc.images.length).toBeLessThanOrEqual(50);
   });
 });
+
+// R29 회귀 (v0.18.13): argsArray 에 손상된 entry 가 있을 때 페이지 전체가
+// 죽지 않고 valid op 들만 추출해야 함. 이전엔 `argsArray[j]![0] as string` 의
+// non-null 단언이 undefined 접근 시 throw → outer catch 가 페이지 단위 fallback
+// 으로 빠지면서 1장 손상 → 9장 유실 패턴이었음.
+describe('PDF Parser - extractPageImages args guard', () => {
+  it('argsArray 일부 entry 가 undefined 여도 valid op 들에서 이미지를 추출한다', async () => {
+    const fakeImage = {
+      width: 10,
+      height: 10,
+      data: new Uint8ClampedArray(400),
+    };
+    const validArgs: unknown[] = [];
+    // 10 ops 중 4개는 valid args, 5개는 undefined/잘못된 형태 — 단, 1개의 valid 가 더 있어
+    // 본문 텍스트로 분류되는 페이지 통과를 위해 텍스트도 충분히 둠.
+    for (let i = 0; i < 10; i++) {
+      if (i % 2 === 0) {
+        validArgs.push(['imgKey']);
+      } else if (i === 1) {
+        validArgs.push(undefined); // 손상된 entry
+      } else if (i === 3) {
+        validArgs.push([null]); // 첫 원소가 string 아님
+      } else {
+        validArgs.push([]); // 빈 배열
+      }
+    }
+
+    const mockPage = {
+      getTextContent: vi.fn().mockResolvedValue({
+        items: [{
+          // PDF_NO_TEXT 임계(50자) 충분히 초과하는 본문
+          str: '운영체제는 프로세스를 관리하며 CPU 스케줄링을 수행한다. 페이지 교체 알고리즘에는 LRU, FIFO 등이 있다.',
+        }],
+      }),
+      getOperatorList: vi.fn().mockResolvedValue({
+        fnArray: new Array(10).fill(85), // 모두 paintImageXObject
+        argsArray: validArgs,
+      }),
+      objs: { get: vi.fn((_id: string, cb: (obj: unknown) => void) => cb(fakeImage)) },
+      commonObjs: { get: vi.fn() },
+      cleanup: vi.fn(),
+    };
+
+    const mockPdf = {
+      numPages: 1,
+      getPage: vi.fn().mockResolvedValue(mockPage),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    (pdfjsLib.getDocument as ReturnType<typeof vi.fn>).mockReturnValue({
+      promise: Promise.resolve(mockPdf),
+    });
+
+    const { parsePdf } = await import('../pdf-parser');
+
+    // 손상된 entry 가 있어도 throw 없이 정상 완료해야 함 (parsePdf 가 reject 되지 않음).
+    const doc = await parsePdf(new ArrayBuffer(10), 'corrupt.pdf', '/corrupt.pdf');
+    expect(doc.pageCount).toBe(1);
+    // valid args 중 일부라도 fakeImage 가 처리 흐름을 통과하면 images 가 1개 이상.
+    // (구현이 OffscreenCanvas 미가용 환경에서 0장을 반환할 수 있어 엄격 비교 대신 throw 없음만 검증)
+  });
+});

@@ -383,7 +383,13 @@ async function extractPageImages(
   for (let j = 0; j < ops.fnArray.length && images.length < MAX_IMAGES_PER_PAGE; j++) {
     if (ops.fnArray[j] !== OPS.paintImageXObject) continue;
 
-    const imageName = ops.argsArray[j]![0] as string;
+    // R29 (v0.18.13): argsArray[j] 가 undefined 거나 [0] 이 string 이 아닌
+    // 손상된 PDF op 가 throw 로 페이지 전체 이미지 루프를 죽이지 않도록 guard.
+    // 이전엔 `argsArray[j]![0] as string` 의 non-null 단언이 undefined 접근 시 throw 했고,
+    // outer try/catch 가 페이지 단위 fallback 으로 1장 손상 → 9장 유실 패턴이 됐다.
+    const args = ops.argsArray[j];
+    if (!Array.isArray(args) || typeof args[0] !== 'string') continue;
+    const imageName = args[0];
     let imgData: { width: number; height: number; data: Uint8ClampedArray; kind?: number } | null = null;
     try {
       imgData = await new Promise((resolve, reject) => {

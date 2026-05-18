@@ -700,18 +700,21 @@ function registerIpcHandlers(): void {
     if (activeEmbedRequests >= MAX_CONCURRENT_EMBED_REQUESTS) {
       return { success: false, error: '동시 임베딩 요청 한도 초과. 잠시 후 다시 시도해주세요.' };
     }
-    activeEmbedRequests++;
-    // requestId 는 선택적 — 제공되면 ai:abort IPC 로 진행 중 배치 취소 가능.
-    // 형식/길이 검증 후 activeRequests 에 AbortController 등록.
+    // R29 (v0.18.13): 카운터 증가를 try 블록 *안*으로 이동.
+    // 이전엔 controller/registerEmbedRequest 등록이 동기 throw 할 경우 카운터가
+    // 증가만 되고 finally 에 도달하지 못해 영구 leak 됐다. 4 회 leak 후 self-DoS 발생.
     const validRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
       ? requestId
       : null;
+    let counted = false;
     let controller: AbortController | undefined;
-    if (validRequestId) {
-      controller = new AbortController();
-      registerEmbedRequest(validRequestId, controller);
-    }
     try {
+      activeEmbedRequests++;
+      counted = true;
+      if (validRequestId) {
+        controller = new AbortController();
+        registerEmbedRequest(validRequestId, controller);
+      }
       const settings = await loadSettings();
       const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
       const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
@@ -738,8 +741,13 @@ function registerIpcHandlers(): void {
       const isAbort = msg === 'Aborted' || (err as Error & { code?: string })?.code === 'ABORT_ERR';
       return { success: false, error: isAbort ? 'Aborted' : msg };
     } finally {
-      if (validRequestId) unregisterEmbedRequest(validRequestId);
-      activeEmbedRequests--;
+      // R29 (v0.18.13): controller identity 로 owner check —
+      // 같은 requestId 가 in-flight 중 재진입했을 때, 본 finally 는 자신의 controller
+      // 일 때만 entry 를 삭제해야 한다 (ai-service 내부에서 이미 registerEmbedRequest
+      // 가 prev abort 후 새 controller 로 덮어쓰기 때문). identity 가 다르면 새 요청의
+      // entry 가 살아남아 ai:abort 가 정상 작동.
+      if (validRequestId && controller) unregisterEmbedRequest(validRequestId, controller);
+      if (counted) activeEmbedRequests--;
     }
   });
 

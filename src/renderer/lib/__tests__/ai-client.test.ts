@@ -150,4 +150,41 @@ describe('AiClient', () => {
     expect(unsubToken).toHaveBeenCalledTimes(1);
     expect(unsubDone).toHaveBeenCalledTimes(1);
   });
+
+  // R29 회귀 (v0.18.13): onDone 후에 도착하는 generate 거절이 누락되지 않아야 함.
+  // 이전엔 onDone 으로 main loop 가 빠져나간 다음 generate 의 거절 마이크로태스크가
+  // 도착하면, `if (error) throw` 가 동기 실행돼 거절을 못 보고 사용자가 빈/부분 요약을
+  // "성공"으로 보는 경로가 있었음.
+  it('summarize() generate 가 onDone 직후 reject 해도 에러가 throw 된다', async () => {
+    let tokenCallback: ((id: string, token: string) => void) | null = null;
+    let doneCallback: ((id: string) => void) | null = null;
+
+    mockElectronAPI.ai.onToken.mockImplementation((cb) => {
+      tokenCallback = cb;
+      return vi.fn();
+    });
+    mockElectronAPI.ai.onDone.mockImplementation((cb) => {
+      doneCallback = cb;
+      return vi.fn();
+    });
+    // generate 는 onDone 직후에야 거절되도록 setup: 토큰 → done → 다음 tick 에 reject
+    mockElectronAPI.ai.generate.mockImplementation((requestId: string) => {
+      // 토큰 1개 + done 을 같은 macrotask 에 dispatch
+      setTimeout(() => {
+        tokenCallback?.(requestId, 'partial');
+        doneCallback?.(requestId);
+      }, 5);
+      // 그 뒤 한 tick 후에 거절 — main loop 가 이미 빠져나간 시점에 마이크로태스크 dispatch
+      return new Promise((_resolve, reject) => {
+        setTimeout(() => reject(new Error('post-done failure')), 20);
+      });
+    });
+
+    const client = new AiClient(DEFAULT_SETTINGS);
+    await expect(async () => {
+      for await (const _ of client.summarize('text', 'full')) {
+        // consume tokens
+      }
+    }).rejects.toThrow();
+  });
 });

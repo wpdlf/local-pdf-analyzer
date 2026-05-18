@@ -1,11 +1,11 @@
 {
   "name": "summary-lecture-material",
-  "version": "0.18.12",
+  "version": "0.18.13",
   "description": "PDF 자료 분석 데스크톱 앱",
   "license": "MIT",
   "main": "./out/main/index.js",
   "engines": {
-    "node": ">=20.10 <23",
+    "node": ">=20.11 <23",
     "npm": ">=10"
   },
   "scripts": {
@@ -45,6 +45,10 @@
     "productName": "PDF 자료 분석기",
     "files": [
       "out/**/*"
+    ],
+    "//asarUnpack": "R29 (v0.18.13): pdfjs-dist cmaps 디렉터리(.bcmap)는 renderer 가 런타임에 cMapUrl 로 fetch 한다. asar 내부에서 fetch 되지 않는 환경(electron 41 기본 동작에 의존)에 대비해 asarUnpack 으로 풀어둠. 누락 시 CJK PDF 만 silently 깨짐.",
+    "asarUnpack": [
+      "**/cmaps/**"
     ],
     "extraResources": [
       {

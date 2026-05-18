@@ -8,8 +8,11 @@
 
 import { afterEach, vi } from 'vitest';
 
-// 각 테스트 사이에 stub/mock 상태가 누적되지 않도록 자동 정리.
-// 개별 테스트가 `vi.clearAllMocks()` 를 호출하더라도 멱등하므로 안전.
+// R29 (v0.18.13): `restoreAllMocks` → `clearAllMocks` 로 교체.
+// restoreAllMocks 는 vi.spyOn 으로 만든 spy 의 원본 구현까지 되돌려 file 레벨 module
+// mock 과 collision 을 일으킬 수 있다 (특히 vi.stubGlobal 이 모듈 hoist 와 상호작용
+// 하는 경우 후속 test 가 stale 한 상태로 시작). clearAllMocks 는 call state 만
+// 비우고 구현/return value 는 보존 → 기존 테스트 동작 보존 + 누적 state 격리.
 afterEach(() => {
-  vi.restoreAllMocks();
+  vi.clearAllMocks();
 });

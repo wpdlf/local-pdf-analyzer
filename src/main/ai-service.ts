@@ -69,6 +69,16 @@ export function abortGenerate(requestId: string): void {
  * RAG 인덱스 재빌드 시 renderer 가 in-flight 배치를 진짜 취소하도록 — 특히
  * OpenAI 사용자의 불필요한 토큰 과금 방지.
  */
+// R29 (v0.18.13): owner 식별을 위해 controller 자체를 entry 에 저장.
+// 같은 requestId 가 in-flight 중 재진입할 때, 이전 요청의 finally 가 새 요청의
+// entry 를 무차별 삭제하지 않도록 unregister 시 controller identity 를 확인한다.
+interface EmbedRequestEntry {
+  abort: () => void;
+  createdAt: number;
+  startedAt: number;
+  controller: AbortController;
+}
+
 export function registerEmbedRequest(requestId: string, controller: AbortController): void {
   // 이전 동일 requestId 방어 — 구 배치 취소 후 등록
   if (activeRequests.has(requestId)) {
@@ -76,15 +86,26 @@ export function registerEmbedRequest(requestId: string, controller: AbortControl
     activeRequests.delete(requestId);
   }
   const now = Date.now();
-  activeRequests.set(requestId, {
+  const entry: EmbedRequestEntry = {
     abort: () => controller.abort(),
     createdAt: now,
     startedAt: now,
-  });
+    controller,
+  };
+  activeRequests.set(requestId, entry);
 }
 
-export function unregisterEmbedRequest(requestId: string): void {
-  activeRequests.delete(requestId);
+export function unregisterEmbedRequest(requestId: string, controller?: AbortController): void {
+  if (!controller) {
+    // legacy 호출자 (controller 미전달) — 무조건 삭제
+    activeRequests.delete(requestId);
+    return;
+  }
+  const entry = activeRequests.get(requestId) as EmbedRequestEntry | undefined;
+  // identity 일치할 때만 삭제 — 다른 요청이 같은 requestId 로 덮어쓴 경우 보호.
+  if (entry && entry.controller === controller) {
+    activeRequests.delete(requestId);
+  }
 }
 
 export async function generate(
