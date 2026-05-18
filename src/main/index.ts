@@ -263,19 +263,40 @@ const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');
 // 렌더러에는 절대 전달되지 않으며 (기존과 동일), 앱 종료 시 자연히 소멸.
 let apiKeysCache: Record<string, string> | null = null;
 
+// R28 P2 (v0.18.12): prototype pollution 가드용 알려진 provider 목록.
+// 디스크에 변조된 JSON 이 `__proto__` 같은 키를 포함해도 알려진 키만 안전하게 복사한다.
+const KNOWN_API_KEY_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
+
+// R28 P2 (v0.18.12): ai:embed 동시성 캡 — 비용/리소스 amp DoS 차단용.
+// 정상 RAG 인덱스 빌드 시 동시 in-flight 는 1~2이라 4 면 헤드룸 충분.
+const MAX_CONCURRENT_EMBED_REQUESTS = 4;
+let activeEmbedRequests = 0;
+
 function readApiKeys(): Record<string, string> {
   if (apiKeysCache) return apiKeysCache;
+  // null-prototype 객체로 캐시 — 변조된 JSON 의 `__proto__` 키가 Object.prototype 을
+  // 오염시키는 경로 차단. 일반 객체 spread/lookup 은 그대로 동작한다.
+  const fresh: Record<string, string> = Object.create(null);
   if (!safeStorage.isEncryptionAvailable()) {
-    apiKeysCache = {};
-    return apiKeysCache;
+    apiKeysCache = fresh;
+    return fresh;
   }
   try {
     const encrypted = fs.readFileSync(apiKeysPath);
-    apiKeysCache = JSON.parse(safeStorage.decryptString(encrypted));
-    return apiKeysCache!;
+    const parsed: unknown = JSON.parse(safeStorage.decryptString(encrypted));
+    // 알려진 provider 키만 추출 — 그 외(prototype 키, 미지 provider 등)는 폐기.
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      for (const k of KNOWN_API_KEY_PROVIDERS) {
+        const v = obj[k];
+        if (typeof v === 'string') fresh[k] = v;
+      }
+    }
+    apiKeysCache = fresh;
+    return fresh;
   } catch {
-    apiKeysCache = {};
-    return apiKeysCache;
+    apiKeysCache = fresh;
+    return fresh;
   }
 }
 
@@ -297,8 +318,14 @@ function writeApiKeys(keys: Record<string, string>): void {
   try {
     fs.writeFileSync(tmpPath, encrypted);
     fs.renameSync(tmpPath, apiKeysPath);
-    // 쓰기 성공 후 캐시에 최신값 반영 — 다음 읽기에서 파일 I/O 회피
-    apiKeysCache = { ...keys };
+    // 쓰기 성공 후 캐시에 최신값 반영 — 다음 읽기에서 파일 I/O 회피.
+    // R28 P2 (v0.18.12): null-prototype 객체로 캐시하여 readApiKeys 와 일관성 유지.
+    const fresh: Record<string, string> = Object.create(null);
+    for (const k of KNOWN_API_KEY_PROVIDERS) {
+      const v = keys[k];
+      if (typeof v === 'string') fresh[k] = v;
+    }
+    apiKeysCache = fresh;
   } catch (err) {
     // rename 실패 시 tmp 파일 정리 + 캐시 무효화 (디스크와 메모리 불일치 방지)
     try { fs.unlinkSync(tmpPath); } catch { /* 이미 삭제됨 */ }
@@ -666,6 +693,14 @@ function registerIpcHandlers(): void {
         return { success: false, error: 'Each text must be 1-32000 chars' };
       }
     }
+    // R28 P2 (v0.18.12): 동시 임베딩 호출 캡 —
+    // 손상되거나 폭주하는 renderer 가 단시간에 다수 요청을 발사해 OpenAI 토큰 비용을
+    // amp 하거나 Ollama 백엔드를 마비시키는 자기-DoS 경로 차단. 정상 사용 (RAG 인덱스
+    // 빌드 시 50개씩 배치) 에서는 동시 in-flight 가 1~2개라 4 이면 헤드룸이 충분하다.
+    if (activeEmbedRequests >= MAX_CONCURRENT_EMBED_REQUESTS) {
+      return { success: false, error: '동시 임베딩 요청 한도 초과. 잠시 후 다시 시도해주세요.' };
+    }
+    activeEmbedRequests++;
     // requestId 는 선택적 — 제공되면 ai:abort IPC 로 진행 중 배치 취소 가능.
     // 형식/길이 검증 후 activeRequests 에 AbortController 등록.
     const validRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
@@ -704,6 +739,7 @@ function registerIpcHandlers(): void {
       return { success: false, error: isAbort ? 'Aborted' : msg };
     } finally {
       if (validRequestId) unregisterEmbedRequest(validRequestId);
+      activeEmbedRequests--;
     }
   });
 

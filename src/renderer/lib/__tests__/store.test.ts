@@ -226,3 +226,66 @@ describe('notice channel (D1)', () => {
     expect(useAppStore.getState().notice).toBeNull();
   });
 });
+
+// R28 P2 (v0.18.12): setDocument 비-null 분기에서도 resetSummaryState 가 호출되어
+// 이전 문서의 stale 상태가 새 문서로 누출되지 않아야 함.
+describe('setDocument(newDoc) — stale state cleanup', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetStreams();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('새 문서 로드 시 이전 문서의 summaryStream / qaMessages / summary 가 모두 비워진다', () => {
+    const s = useAppStore.getState();
+    // 이전 문서 + stale 데이터 시뮬레이션
+    s.setDocument({
+      id: 'old',
+      fileName: 'old.pdf',
+      filePath: '/old.pdf',
+      pageCount: 1,
+      extractedText: 'a'.repeat(50),
+      pageTexts: ['a'.repeat(50)],
+      chapters: [],
+      images: [],
+      createdAt: new Date(),
+    });
+    useAppStore.setState({
+      summaryStream: '이전 요약 본문',
+      summary: {
+        id: 'sum-old',
+        documentId: 'old',
+        type: 'full',
+        content: '이전 요약',
+        model: 'gemma3',
+        provider: 'ollama',
+        createdAt: new Date(),
+        durationMs: 1000,
+      },
+      qaMessages: [{ id: 'msg-old', role: 'user', content: '이전 질문' }],
+    });
+    expect(useAppStore.getState().summaryStream).toBe('이전 요약 본문');
+
+    // 새 문서 로드
+    s.setDocument({
+      id: 'new',
+      fileName: 'new.pdf',
+      filePath: '/new.pdf',
+      pageCount: 1,
+      extractedText: 'b'.repeat(50),
+      pageTexts: ['b'.repeat(50)],
+      chapters: [],
+      images: [],
+      createdAt: new Date(),
+    });
+
+    const after = useAppStore.getState();
+    expect(after.document?.fileName).toBe('new.pdf');
+    expect(after.summaryStream).toBe('');
+    expect(after.summary).toBeNull();
+    expect(after.qaMessages).toEqual([]);
+    expect(after.enrichedPageTexts).toBeNull();
+  });
+});

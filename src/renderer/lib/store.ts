@@ -182,9 +182,14 @@ export const useAppStore = create<AppState>((set) => ({
       // 새 문서 없이 이전 요약이 재표시되는 문제가 있었음.
       useAppStore.getState().resetSummaryState();
     } else {
-      // 새 문서 로드 시 이전 문서의 enrichedPageTexts 는 무효 — 반드시 초기화.
-      // resetSummaryState 경로(setDocument(null))와 달리 여기서는 document 만 교체하므로
-      // 명시적으로 null 세팅.
+      // R28 P2 (v0.18.12): 새 문서 로드 시에도 resetSummaryState 를 먼저 호출해
+      // 이전 문서의 summary / summaryStream / qaMessages / pdfBytes / RAG 인덱스가 stale
+      // 상태로 누출되지 않도록 함. 이전에는 호출자가 reset 을 미리 호출하는 것에 암묵적으로
+      // 의존했고, 새로운 호출 경로(예: 추후 추가될 IPC drag-drop) 가 그 가드를 잊으면
+      // 이전 문서의 요약이 새 문서에 따라붙는 회귀가 가능했다.
+      useAppStore.getState().resetSummaryState();
+      // resetSummaryState 가 document 를 null 로 비운 직후 새 document 로 교체.
+      // Zustand set 은 synchronous 라 두 호출은 같은 batch 로 단일 re-render 만 유발.
       set({ document, enrichedPageTexts: null });
     }
   },

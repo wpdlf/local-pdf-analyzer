@@ -117,8 +117,13 @@ export class OllamaManager {
     return new Promise((resolve) => {
       // PowerShell single-quote escape (installWindows 와 동일 규칙)
       const psQuotedPath = `'${filePath.replace(/'/g, "''")}'`;
+      // R28 P2 (v0.18.12): -FilePath → -LiteralPath
+      //   `-FilePath` 는 wildcard ([], *, ?) 를 해석해 사용자명/임시경로에 그런 문자가
+      //   포함된 경우 (예: "C:\Users\foo[bar]\...\OllamaSetup.exe") 검증이 잘못된 경로를
+      //   대상으로 하거나 실패해 설치가 DoS 된다. `-LiteralPath` 는 글로빙을 끄고
+      //   문자열을 그대로 파일 경로로 취급한다. 보안 자체보다는 견고성 fix.
       // Status 가 'Valid' 여야 하고, Subject 에 Ollama 발행자 CN 이 포함되어야 함
-      const script = `$s = Get-AuthenticodeSignature -FilePath ${psQuotedPath}; if ($s.Status -ne 'Valid') { Write-Output "STATUS:$($s.Status)"; exit } $subj = $s.SignerCertificate.Subject; Write-Output "OK:$subj"`;
+      const script = `$s = Get-AuthenticodeSignature -LiteralPath ${psQuotedPath}; if ($s.Status -ne 'Valid') { Write-Output "STATUS:$($s.Status)"; exit } $subj = $s.SignerCertificate.Subject; Write-Output "OK:$subj"`;
       execFile(
         'powershell',
         ['-NoProfile', '-NonInteractive', '-Command', script],
