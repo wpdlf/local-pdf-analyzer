@@ -25,28 +25,27 @@ Unlike cloud-based AI summarization services that require uploading PDFs to exte
 | Platform | File |
 |---|---|
 | **Windows** | `Local-PDF-Analyzer-Setup-x.x.x.exe` |
-| **macOS** | `Local-PDF-Analyzer-x.x.x.dmg` |
+| **macOS** | _Temporarily suspended starting v0.18.9_ (will return once Apple notarization credentials are in place) |
 
-1. Download the installer for your OS from the link above
-2. Run the installer (macOS: mount the dmg and drag to Applications)
-3. Launch the app from the desktop shortcut / Start menu (Windows) or Launchpad (macOS)
+1. Download the Windows installer from the link above
+2. Run the installer
+3. Launch the app from the desktop shortcut or Start menu
+
 4. On first launch, the AI engine (Ollama), Korean-specialized models (gemma3, exaone3.5), and RAG embedding model (nomic-embed-text) are installed automatically — follow the on-screen instructions
 
 > **Note**: AI model downloads require approximately 8GB of disk space and a few minutes.
+> **macOS users**: Starting v0.18.9, the dmg artifact is temporarily not shipped because we do not currently hold an Apple Developer ID for notarization. We chose to pause rather than publish an unsigned dmg that Gatekeeper quarantines (forcing users to run `xattr -d`). The dmg target will return as soon as notarization credentials are registered. In the meantime you can build from source with `npm run package`.
 
 ### Installer integrity verification (new in v0.18.8)
 
-Every release attaches the installer's **SHA-256 hash** as an asset (`SHA256SUMS-windows.txt` / `SHA256SUMS-mac.txt`) and also embeds it in the release notes. Builds are additionally signed with a **Sigstore build provenance attestation** issued by GitHub Actions, so you can verify the artifact actually came from this repository's CI.
+Every release attaches the installer's **SHA-256 hash** as an asset (`SHA256SUMS-windows.txt`) and also embeds it in the release notes. Builds are additionally signed with a **Sigstore build provenance attestation** issued by GitHub Actions, so you can verify the artifact actually came from this repository's CI.
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.8.exe
-
-# macOS / Linux
-shasum -a 256 ./Local-PDF-Analyzer-0.18.8.dmg
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.9.exe
 
 # Verify the Sigstore attestation via GitHub CLI (optional)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.8.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.9.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## How to Use
@@ -177,8 +176,8 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Render-error recovery** — Unexpected UI crashes offer a "Try again" button without a full reload (paths auto-masked)
 - **Instant language switch** — Toggling Korean/English in Settings reflects across the whole UI immediately (no restart required)
 - **Magic-byte PDF validation** — `%PDF-` signature is verified before the file is fully loaded into memory, rejecting fakes early
-- **Unit test coverage** — **243 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +148 cumulative across v0.18.x)
-- **Build integrity (v0.18.8)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds
+- **Unit test coverage** — **246 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +151 cumulative across v0.18.x)
+- **Build integrity (v0.18.8, hardened in v0.18.9)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds. v0.18.9 adds `timeout-minutes` on every job, an Ubuntu/Windows OS matrix on the test job, and a mandatory `npx tsc --noEmit` gate on both PR and release pipelines so strict flags like `noUncheckedIndexedAccess` cannot silently regress
 - **Page citations + side PDF viewer (v0.17.0)** — Summary/Q&A answers automatically carry `[p.N]` source-page citations at almost every key sentence. Click to open a right-side PDF viewer panel that scrolls to the cited page. Built on page-aware RAG chunks + LLM prompt injection (5 languages) + lazy pdfjs-dist viewer + react-markdown text-block overrides. Citation frequency significantly improved in v0.17.1 via paragraph-level inline labels
 - **Horizontal resize handle (v0.17.2)** — when the PDF viewer panel is open, drag the central divider to freely adjust the left/right ratio between 20~80%. Pointer + keyboard (← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage persistence. PDF pages auto re-render via `ResizeObserver` + 200ms debounce
 - **Citation placement normalization (v0.17.1)** — LLM mistakes like `([p.5])` wrapping or standalone list items `- [p.44]` are automatically re-attached to the preceding sentence
@@ -222,7 +221,10 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | Q&A answers still show hallucinations | v0.18.0 automatic verification rewrites the answer once when too many sentences lack RAG support. Disable via the "Answer verification" toggle in Settings if you prefer the raw draft |
 | Q&A answer feels like it generates twice (extra delay) | v0.18.0 may issue one extra LLM call when the draft fails verification. A single boilerplate weak sentence is allowed (v0.18.3) so most answers still finish in a single pass |
 | Mixed Korean/English answers slip past hallucination detection | Fixed in v0.18.8 — `splitIntoSentences` now also splits at a Latin terminator immediately followed by a CJK character (no space), so mixed-language drafts are scored sentence-by-sentence |
-| How do I verify the installer hasn't been tampered with | v0.18.8 new — compare against `SHA256SUMS-*.txt` (or the hash printed in the release notes), or run `gh attestation verify` against the Sigstore provenance |
+| How do I verify the installer hasn't been tampered with | v0.18.8 new — compare against `SHA256SUMS-windows.txt` (or the hash printed in the release notes), or run `gh attestation verify` against the Sigstore provenance |
+| Where is the macOS download | Suspended since v0.18.9 — we do not currently hold an Apple Developer ID for notarization, and we declined to publish an unsigned dmg that Gatekeeper would quarantine (forcing users to run `xattr -d`). The dmg target will return as soon as credentials are registered. In the meantime, build from source via `npm run package` |
+| Memory blows up on very large PDFs | Fixed in v0.18.9 — the `MAX_TOTAL_IMAGES=50` cap was bypassed by batch-concurrent promises pushing simultaneously. The page promise now re-checks the remaining slot count both on entry and immediately before pushing, preventing dozens of base64 conversions from running in parallel and exhausting memory |
+| Cancelling a summary/Q&A leaves token listeners hanging for a moment | Fixed in v0.18.9 — listener/timer registration in `ai-client.summarize` was moved inside a `try/finally` block so that unsubscribe and server-side `abort` are guaranteed to run even if `generate()` throws synchronously or a registration step errors |
 
 ---
 
@@ -239,8 +241,8 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | PDF Parsing | pdfjs-dist (position-based text extraction + image extraction, Korean optimized) |
 | State Management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
-| Build | electron-vite + electron-builder (Windows NSIS + macOS DMG) |
-| Testing | Vitest (243 unit tests) + `tsc --noEmit` strict type check (`noUncheckedIndexedAccess` enabled, v0.18.8) |
+| Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused since v0.18.9 pending notarization credentials) |
+| Testing | Vitest (246 unit tests) + `tsc --noEmit` strict type check (`noUncheckedIndexedAccess` enabled in v0.18.8; enforced on both PR and release CI in v0.18.9) |
 | i18n | Custom (i18n.ts) — 172+ keys, useT() hook, template interpolation |
 | API Key Security | Electron safeStorage (OS keychain encryption), decrypted only in Main process, in-memory cache for hot-path |
 | Shared constants | `src/shared/constants.ts` — Main/Renderer shared (MAX_PDF_SIZE etc.) to prevent drift |
@@ -288,7 +290,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, conversation history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity search, dimension validation)
     │   ├── store.ts           # Zustand state management (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (243)
+    │   └── __tests__/         # Unit tests (246)
     └── types/
         └── index.ts       # Type definitions + Provider model constants
 ```
@@ -474,6 +476,10 @@ PDF File
 | Build non-determinism (v0.18.8) | CI uses `npm ci` (not `npm install`) with a synced lockfile — prevents transitive-dep drift from changing NSIS/asar hashes between identical tags |
 | Array OOB regressions (v0.18.8) | TypeScript `noUncheckedIndexedAccess: true` narrows array access to `T \| undefined`, catching OOB-class defects at compile time |
 | Hallucination (v0.18.0) | Q&A drafts are sentence-split → cosine-scored against the RAG index → LLM-refined when weak-sentence thresholds are exceeded. Multi-language terminator handling + Latin/CJK mixed boundary split (v0.18.8) |
+| Image-extraction OOM (v0.18.9) | The `MAX_TOTAL_IMAGES=50` cap was bypassed by concurrent batch promises — fixed by re-checking remaining slots both on page-promise entry and immediately before pushing, preventing dozens of base64 image conversions from running in parallel |
+| IPC listener leak (v0.18.9) | Listener/timer registration in `ai-client.summarize` (`onToken`/`onDone`/timer) moved inside the `try/finally` block — unsubscribe and server-side `abort` are guaranteed to fire even when `generate()` throws synchronously or registration errors |
+| CI regression gates (v0.18.9) | Every workflow job now has `timeout-minutes` (preventing hung builds from burning 360 minutes), the test job runs on an Ubuntu+Windows OS matrix (catches Windows-specific path / pwsh regressions), and `npx tsc --noEmit` is enforced on both PR and release pipelines to prevent strict-flag regressions |
+| Unsigned macOS dmg shipping (v0.18.9) | The `build-mac` job is disabled until Apple Developer ID + notarization credentials are configured — prevents publishing dmgs that Gatekeeper quarantines and force users to run `xattr -d` |
 
 ## License
 
