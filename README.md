@@ -41,10 +41,10 @@
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.12.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.15.exe
 
 # GitHub CLI 로 attestation 검증 (선택)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.12.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.15.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## 사용 방법
@@ -175,8 +175,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - **렌더 에러 복구** — 예기치 못한 UI 오류 발생 시 "다시 시도" 버튼으로 새로고침 없이 복구 시도 (민감 경로 자동 마스킹)
 - **언어 즉시 전환** — 설정에서 한국어/English 변경 시 전체 화면이 즉시 반영 (재시작 불필요)
 - **매직바이트 기반 PDF 검증** — 파일 전체를 메모리에 로드하기 전에 `%PDF-` 시그니처를 선행 확인하여 잘못된 파일 즉시 거부
-- **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **254건** (v0.17.x 에서 +13, v0.18.x 누적 +159)
-- **빌드 무결성 (v0.18.8 ~ v0.18.12 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.10, npm ≥ 10)를 추가
+- **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **256건** (v0.17.x 에서 +13, v0.18.x 누적 +161)
+- **빌드 무결성 (v0.18.8 ~ v0.18.15 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.11, npm ≥ 10)를 추가. v0.18.13 에서 `asarUnpack: ["**/cmaps/**"]` 도입(packaged build 의 CJK CMap 안전 보장) + R29 P1 회귀 픽스 9건. v0.18.15 에서 Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware 동시성 (Ollama 3 / cloud 8) — 성능 트랙 1라운드
 - **페이지 인용 + 사이드 PDF 뷰어 (v0.17.0)** — 요약/Q&A 답변의 각 핵심 사실에 출처 페이지 `[p.N]` 자동 생성, 클릭 시 우측 패널에서 해당 페이지 즉시 확인. RAG 청크에 page 메타데이터 전파 + LLM 프롬프트 CITATION_RULES(5 언어) 주입 + pdfjs-dist lazy 뷰어 + react-markdown text-block 오버라이드로 구현. v0.17.1 에서 단락별 inline 라벨로 인용 빈도 대폭 향상
 - **가로 리사이즈 핸들 (v0.17.2)** — PDF 뷰어 패널 열렸을 때 중앙 구분선 드래그로 좌/우 비율 20~80% 자유 조정. Pointer + 키보드(← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage 영속화. PDF 는 `ResizeObserver` + 200ms debounce 로 자동 재렌더
 - **인용 후처리 정규화 (v0.17.1)** — LLM 이 간혹 생성하는 괄호 감싸기 `([p.5])` 나 독립 목록 항목 `- [p.44]` 을 자동으로 본문 문장 끝에 부착
@@ -242,7 +242,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG 는 v0.18.9 부터 공증 자격 추가 시까지 일시 중단) |
-| 테스트 | Vitest (254개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9; `vitest.config.mts` + `test/setup.ts` 진입점 도입, v0.18.11) |
+| 테스트 | Vitest (256개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9; `vitest.config.mts` + `test/setup.ts` 진입점 도입, v0.18.11) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화, 메모리 캐시로 hot path 최적화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -290,7 +290,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (254개)
+    │   └── __tests__/         # 단위 테스트 (256개)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -512,6 +512,19 @@ PDF 파일
 | 새 PDF 로드 시 stale 상태 누출 (v0.18.12) | `setDocument(newDoc)` 비-null 분기에서도 `resetSummaryState` 를 호출 — 호출자가 reset 가드를 잊는 새 호출 경로에서도 이전 문서의 `summary`/`qaMessages`/`pdfBytes`/RAG 인덱스가 누출되지 않도록 함 |
 | 언어 전환 시 stale 라벨 (v0.18.12) | `ProgressBar` 의 모듈 레벨 `t()` → `useT()` 마이그레이션 — 진행 중 언어를 전환해도 다음 progress 업데이트를 기다리지 않고 즉시 새 언어로 라벨이 재렌더 |
 | Markdown 링크 visual spoofing (v0.18.12) | `safe-markdown` 의 href 에 제어문자(`U+0000~U+001F`, `U+007F`) / bidi override(`U+202A~U+202E`, `U+2066~U+2069`) 포함 시 일률 차단 — LLM 응답이 표시 텍스트와 destination 을 시각적으로 위장하는 경로 차단 |
+| onDone-후 거절 마이크로태스크 누락 (v0.18.13) | `ai-client.summarize` 의 메인 루프 종료 후 `await resultPromise.then(...)` 로 재확인 — `generate()` 의 거절이 `onDone` 직후 도착할 때 throw 가 동기 실행돼 사용자가 빈/부분 요약을 "성공" 으로 보던 race 차단 |
+| 손상된 PDF op 의 페이지 단위 사일런트 손실 (v0.18.13) | `extractPageImages` 의 `argsArray[j]![0]` non-null 단언을 `Array.isArray + typeof` 가드로 교체 — 손상된 op 1개로 해당 페이지 이미지 9장이 silently 손실되던 결함 해결 |
+| `activeEmbedRequests` 카운터 leak (v0.18.13) | 카운터 증가를 `try` 블록 안으로 이동 + `counted` 플래그 — controller 등록이 동기 throw 할 경우 카운터가 leak (4회 후 self-DoS) 되던 경로 차단 |
+| 임베딩 `requestId` 재진입 시 `ai:abort` 무력화 (v0.18.13) | `registerEmbedRequest`/`unregisterEmbedRequest` 에 controller identity 체크 — 같은 `requestId` 재진입 시 이전 요청의 `finally` 가 새 요청 entry 를 무차별 삭제해 abort 가 작동하지 않던 결함 해결 |
+| 제어바이트 정규식 가시성 결함 (v0.18.13) | `safe-markdown` 의 raw 제어바이트 정규식을 `new RegExp(...)` + `String.fromCharCode(...)` 로 교체 — grep 의 binary 분류와 에디터/linter normalization 으로 silently 보호가 사라질 risk 제거 |
+| Postbuild 호환성 (v0.18.13) | `engines.node` `>=20.10` → `>=20.11` — `scripts/postbuild.mjs` 의 `import.meta.dirname` 요구를 충족하지 못해 Node 20.10 정확 매칭 시 throw 되던 결함 해결 |
+| Packaged build CJK 글리프 (v0.18.13) | `electron-builder.asarUnpack: ["**/cmaps/**"]` 추가 — pdfjs CMap (`.bcmap`) 이 asar 내부에서 fetch 되지 않는 환경에서도 정상 동작하도록 보장 |
+| .gitignore tracked+ignored 모순 (v0.18.13) | `CLAUDE.md` 를 `.gitignore` 에서 제거 — 체크인된 문서가 동시에 ignore 돼 contributor 가 `git status` 로 변경을 못 보던 모순 해소 |
+| Vitest setup file collision (v0.18.13) | `test/setup.ts` 의 `vi.restoreAllMocks()` → `vi.clearAllMocks()` — file 레벨 mock 의 구현이 매 테스트마다 reset 되어 의도치 않은 collision 가능성 차단 |
+| electron-builder schema 미준수 (v0.18.14) | 코멘트성 `//asarUnpack` 키 제거 — electron-builder 26.x 의 strict schema validation 이 알려지지 않은 키(`//` prefix 포함)를 거부해 v0.18.13 빌드가 실패했던 핫픽스 |
+| Ollama cold-load 페널티 (v0.18.15, 성능) | `/api/generate` (텍스트 + Vision) / `/api/embed` 3곳 모두 `keep_alive: '30m'` 명시 — 기본 5분 후 모델 unload 로 발생하던 cold-load 페널티(수 초~수십 초) 제거. 한 세션의 청크 요약/통합/Q&A/검증/임베딩 연쇄 호출이 모두 warm cache |
+| 단일 808KB renderer chunk (v0.18.15, 성능) | `electron.vite.config.ts` 의 `manualChunks` 로 vendor 분리 — main chunk 808 KB → 304 KB (62% 감소). app 코드 변경 시 vendor cache 유지 |
+| 클라우드 Vision 동시성 부족 (v0.18.15, 성능) | `analyzeDocumentImages` provider-aware 동시성 (Ollama 3 / Claude·OpenAI 8) — 이미지 많은 PDF 의 클라우드 분석 시간 ~30-40% 단축 |
 
 ## 라이선스
 
