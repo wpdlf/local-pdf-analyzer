@@ -202,3 +202,51 @@ describe('PDF Parser - extractPageImages args guard', () => {
     // (구현이 OffscreenCanvas 미가용 환경에서 0장을 반환할 수 있어 엄격 비교 대신 throw 없음만 검증)
   });
 });
+
+// R30 회귀 (v0.18.17): extractPageImages 의 Promise.race 타이머가 race 가 빠르게 resolve 된
+// 후에도 살아남아 5초 뒤 "timeout" 경고가 fire 되던 leak 차단.
+describe('PDF Parser - extractPageImages race timer cleared', () => {
+  it('getOperatorList 가 빠르게 resolve 되면 5초 race timer 가 발화하지 않는다', async () => {
+    vi.useFakeTimers();
+    try {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const mockPage = {
+        getTextContent: vi.fn().mockResolvedValue({
+          items: [{
+            str: '운영체제는 프로세스를 관리하며 CPU 스케줄링을 수행한다. 페이지 교체 알고리즘에는 LRU, FIFO 등이 있다.',
+          }],
+        }),
+        // 즉시 resolve — 5s 타이머가 발화하기 전에 race 결과 확정.
+        getOperatorList: vi.fn().mockResolvedValue({ fnArray: [], argsArray: [] }),
+        objs: { get: vi.fn() },
+        commonObjs: { get: vi.fn() },
+        cleanup: vi.fn(),
+      };
+      const mockPdf = {
+        numPages: 1,
+        getPage: vi.fn().mockResolvedValue(mockPage),
+        destroy: vi.fn().mockResolvedValue(undefined),
+      };
+      (pdfjsLib.getDocument as ReturnType<typeof vi.fn>).mockReturnValue({
+        promise: Promise.resolve(mockPdf),
+      });
+
+      const { parsePdf } = await import('../pdf-parser');
+      // parsePdf 를 즉시 시작 — getOperatorList 는 microtask 큐에서 resolve 됨.
+      // vi.runAllTimers 를 호출하지 않으므로 fake 타이머는 5s 가 흐르지 않는다.
+      const doc = await parsePdf(new ArrayBuffer(10), 'fast.pdf', '/fast.pdf');
+      expect(doc.pageCount).toBe(1);
+
+      // 이 시점에서 5s 타이머가 살아있다면 vi.advanceTimersByTime(5000) 으로 발화시킬 수 있다.
+      // race 가 끝난 직후 finally 의 clearTimeout 이 동작했다면, 5000ms 진행해도 경고 없음.
+      vi.advanceTimersByTime(5000);
+      const timeoutWarnCalls = warnSpy.mock.calls.filter(
+        (c) => typeof c[0] === 'string' && c[0].includes('getOperatorList timeout'),
+      );
+      expect(timeoutWarnCalls.length).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

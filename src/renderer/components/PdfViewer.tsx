@@ -71,6 +71,9 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   const [loadState, setLoadState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const renderedPagesRef = useRef<Set<number>>(new Set());
+  // R30 (v0.18.17): targetPage 폴링 / 외부 트리거에서 명시적으로 페이지 렌더를 enqueue
+  // 할 수 있도록 ref 로 노출. effect 가 재실행될 때마다 새 enqueue 로 덮어씌워짐.
+  const enqueueRenderRef = useRef<((pageNum: number) => void) | null>(null);
   // DR-01 리사이즈 재렌더: container 너비가 실제로 변할 때마다 증가 → 렌더 effect 재실행
   const [renderVersion, setRenderVersion] = useState(0);
   // 마지막으로 렌더된 width — 미세한 변동(스크롤바 등)에 반복 재렌더 방지
@@ -215,6 +218,8 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
       queue.push(pageNum);
       void pump();
     };
+    // R30: targetPage 폴링이 IO 발화에 의존하지 않고 직접 렌더를 요청할 수 있도록 노출.
+    enqueueRenderRef.current = enqueue;
     const pump = async (): Promise<void> => {
       if (pumping) return;
       pumping = true;
@@ -296,6 +301,22 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
         wrapper.dataset.pageIndex = String(i);
         observer.observe(wrapper);
       }
+      // R30 (v0.18.17): renderVersion 증가(리사이즈 등) 후 IO 가 첫 콜백을 비동기로 fire
+      // 하기까지 viewport 안 페이지가 잠깐 빈 placeholder 로 남는 race 를 방지하기 위해
+      // 현재 컨테이너와 교차하는 wrapper 들을 즉시 enqueue. IO 의 첫 notification 이
+      // 곧 도착해 동일 페이지를 다시 enqueue 시도해도 멱등(중복 차단).
+      const containerRect = container.getBoundingClientRect();
+      // rootMargin '100%' 와 동일하게 위/아래로 컨테이너 높이 1배 분 확장.
+      const expandedTop = containerRect.top - containerRect.height;
+      const expandedBottom = containerRect.bottom + containerRect.height;
+      for (let i = 0; i < totalPages; i++) {
+        const wrapper = pageRefs.current[i];
+        if (!wrapper) continue;
+        const r = wrapper.getBoundingClientRect();
+        if (r.bottom >= expandedTop && r.top <= expandedBottom) {
+          enqueue(i + 1);
+        }
+      }
     } else {
       // IO 미지원 환경(테스트) — 안전한 fallback: 모든 페이지 즉시 큐에 (기존 동작 보존).
       for (let i = 1; i <= totalPages; i++) enqueue(i);
@@ -303,6 +324,7 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
 
     return () => {
       cancelled = true;
+      enqueueRenderRef.current = null;
       if (observer) observer.disconnect();
       if (currentTask) {
         try { currentTask.cancel(); } catch { /* ignore */ }
@@ -328,6 +350,10 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
       scrollToPage();
       return;
     }
+    // R30 (v0.18.17): target wrapper 가 IO viewport 범위 밖이면 IO 가 발화하지 않아
+    // 폴링이 maxAttempts 까지 헛돌고 placeholder 200px 기준 부정확한 scrollIntoView 로
+    // 폴백하던 결함 해결. IO 발화 여부와 무관하게 직접 enqueue.
+    enqueueRenderRef.current?.(targetPage);
     let attempts = 0;
     const maxAttempts = 30;
     const interval = setInterval(() => {

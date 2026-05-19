@@ -368,15 +368,22 @@ async function extractPageImages(
 ): Promise<PageImage[]> {
   // getOperatorList 는 pdfjs 내부 content stream 파싱을 수행 — 손상된 PDF 에서 hang 가능.
   // 5초 타임아웃을 Promise.race 로 걸어 뒤의 이미지 페치 경로에서 페이지를 빈 배열로 스킵.
-  const opsOrEmpty = await Promise.race([
-    page.getOperatorList(),
-    new Promise<{ fnArray: number[]; argsArray: unknown[] }>((resolve) => {
-      setTimeout(() => {
-        console.warn(`[pdf-parser] page ${pageIndex + 1} getOperatorList timeout, skipping images`);
-        resolve({ fnArray: [], argsArray: [] });
-      }, 5000);
-    }),
-  ]);
+  // R30 (v0.18.17): timeoutId 를 finally 에서 명시적으로 clear — 이전엔 race 가 빠르게
+  // resolve 되어도 setTimeout 이 살아있어 200p PDF 에서 200개 pending timer + 200개의
+  // 오해 소지 있는 "timeout" 경고가 5초 뒤 폭주하던 leak 차단.
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<{ fnArray: number[]; argsArray: unknown[] }>((resolve) => {
+    timeoutId = setTimeout(() => {
+      console.warn(`[pdf-parser] page ${pageIndex + 1} getOperatorList timeout, skipping images`);
+      resolve({ fnArray: [], argsArray: [] });
+    }, 5000);
+  });
+  let opsOrEmpty: { fnArray: number[]; argsArray: unknown[] };
+  try {
+    opsOrEmpty = await Promise.race([page.getOperatorList(), timeoutPromise]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
   const ops = opsOrEmpty as Awaited<ReturnType<typeof page.getOperatorList>>;
   const images: PageImage[] = [];
 
@@ -388,7 +395,9 @@ async function extractPageImages(
     // 이전엔 `argsArray[j]![0] as string` 의 non-null 단언이 undefined 접근 시 throw 했고,
     // outer try/catch 가 페이지 단위 fallback 으로 1장 손상 → 9장 유실 패턴이 됐다.
     const args = ops.argsArray[j];
-    if (!Array.isArray(args) || typeof args[0] !== 'string') continue;
+    // R30 (v0.18.17): R29 가드를 더 좁힘. 빈 문자열은 page.objs.get('') 가 callback 을
+    // 호출하지 않아 1s 타임아웃까지 낭비하는 dead path 가 되므로 사전 거절.
+    if (!Array.isArray(args) || typeof args[0] !== 'string' || args[0].length === 0) continue;
     const imageName = args[0];
     let imgData: { width: number; height: number; data: Uint8ClampedArray; kind?: number } | null = null;
     try {
