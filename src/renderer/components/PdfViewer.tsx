@@ -162,44 +162,74 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     };
   }, []);
 
-  // 2. 각 페이지 canvas 렌더 (totalPages 설정 후 + 너비 변경 시 재렌더)
-  //    TODO v0.18: 가상 스크롤 도입. 현재는 마운트 즉시 전체 페이지를 순차 렌더하므로
-  //    100+ 페이지 문서에서 렌더 메모리 피크가 커진다 (Design §5.4 Phase 4 목표).
+  // 2. 페이지 canvas — on-demand 렌더 (v0.18.16 가상화).
+  //    이전 구현은 마운트 즉시 모든 페이지를 순차 렌더해 500p 문서에서 메모리 피크가
+  //    수백 MB 까지 치솟았다. 이제 IntersectionObserver 로 뷰포트(+ 위/아래 1배 분) 안에
+  //    들어오는 페이지만 렌더 큐에 등록하고 worker 가 한 번에 한 페이지씩 처리.
+  //    이미 렌더된 페이지는 (스크롤백 시 깜빡임 방지를 위해) 유지하므로 "lazy render"
+  //    수준이며, 메모리는 방문 페이지 수에 비례. 사용자는 보통 인용 페이지 ±수 페이지만
+  //    보므로 평균 메모리/렌더 시간 모두 큰 폭으로 감소.
   useEffect(() => {
     if (loadState !== 'loaded' || !pdfDocRef.current || !totalPages) return;
+    const container = containerRef.current;
+    if (!container) return;
+
     let cancelled = false;
-    // 진행 중인 RenderTask — 언마운트/리사이즈 시 cancel() 호출로 detached canvas 계속 그리는 것 방지
     let currentTask: { promise: Promise<void>; cancel: () => void } | null = null;
     const doc = pdfDocRef.current;
 
-    // 패널 너비 기반 동적 scale — 고정 scale 은 좁은 패널에서 확대 표시 문제.
-    const containerWidth = containerRef.current?.clientWidth ?? 800;
+    // 패널 너비 기반 동적 scale — 한 번 계산하고 effect 전체에서 공유.
+    const containerWidth = container.clientWidth;
     const availableWidth = Math.max(300, containerWidth - 24);
     lastRenderedWidthRef.current = containerWidth;
-    // v0.18.5 H1 fix: totalPages 가 작아지면 React 가 unmount 한 div 의 ref 는 null 로 정리되지만
-    // pageRefs.current.length 자체는 그대로다. 이후 renderVersion>0 wipe 가 high index 를 traverse 할 때
-    // 이미 null 인 항목을 건너뛰므로 functional 영향은 없으나, 길이를 totalPages 로 truncate 해
-    // 이후 코드/디버깅에서 stale slot 이 보이지 않도록 정리.
+    // v0.18.5 H1 fix: totalPages 가 작아지면 unmount 된 ref 는 null 이지만 length 는 유지된다.
+    // 길이를 totalPages 로 truncate 해 디버깅 시 stale slot 이 안 보이도록.
     if (pageRefs.current.length > totalPages) {
       pageRefs.current.length = totalPages;
     }
-    // renderVersion 이 증가하면 기존 canvas 를 모두 제거하고 재렌더
+    // renderVersion 증가 시 기존 canvas 모두 제거 + 렌더 set 비우기.
+    // (리사이즈로 scale 이 바뀌었을 가능성 → 다시 렌더 필요)
     if (renderVersion > 0) {
       for (const wrapper of pageRefs.current) {
-        if (wrapper) wrapper.querySelector('canvas')?.remove();
+        if (wrapper) {
+          wrapper.querySelector('canvas')?.remove();
+          // 기존에 actual height 가 인라인으로 박혀 있다면 placeholder min-height 로 복귀.
+          // 다음 렌더에서 새 scale 의 실제 높이로 다시 박힘.
+          wrapper.style.width = '';
+          wrapper.style.height = '';
+        }
       }
       renderedPagesRef.current.clear();
     }
 
-    (async () => {
-      for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-        if (cancelled) return;
+    // ─── 단일 렌더 큐 ───
+    // pdfjs worker 는 단일 스레드이므로 N개 페이지 병렬 요청은 결국 worker 큐로 직렬화된다.
+    // JS 측에서 직접 직렬화하면 첫 페이지가 가장 빨리 그려지고 가시성 우선순위 보존이 쉽다.
+    const queue: number[] = [];
+    let pumping = false;
+    const enqueue = (pageNum: number): void => {
+      if (cancelled) return;
+      if (pageNum < 1 || pageNum > totalPages) return;
+      if (renderedPagesRef.current.has(pageNum)) return;
+      if (queue.indexOf(pageNum) !== -1) return;
+      queue.push(pageNum);
+      void pump();
+    };
+    const pump = async (): Promise<void> => {
+      if (pumping) return;
+      pumping = true;
+      while (queue.length > 0 && !cancelled) {
+        const pageNum = queue.shift()!;
+        if (renderedPagesRef.current.has(pageNum)) continue;
         const wrapper = pageRefs.current[pageNum - 1];
         if (!wrapper) continue;
-        if (wrapper.querySelector('canvas')) continue;
+        if (wrapper.querySelector('canvas')) {
+          renderedPagesRef.current.add(pageNum);
+          continue;
+        }
         try {
           const page = await doc.getPage(pageNum);
-          if (cancelled) return;
+          if (cancelled) { pumping = false; return; }
           const naturalViewport = page.getViewport({ scale: 1 });
           const fitScale = availableWidth / naturalViewport.width;
           const scale = Math.min(MAX_RENDER_SCALE, Math.max(MIN_RENDER_SCALE, fitScale));
@@ -214,7 +244,7 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
           currentTask = task as unknown as { promise: Promise<void>; cancel: () => void };
           await task.promise;
           currentTask = null;
-          if (cancelled) return;
+          if (cancelled) { pumping = false; return; }
           wrapper.innerHTML = '';
           wrapper.style.width = `${canvas.width}px`;
           wrapper.style.height = `${canvas.height}px`;
@@ -224,9 +254,11 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
           try { page.cleanup(); } catch { /* ignore */ }
         } catch (err) {
           currentTask = null;
-          if (cancelled) return;
-          // cancel() 호출로 인한 RenderingCancelledException 은 정상 흐름 — 무시하고 다음 페이지로
-          if ((err as { name?: string })?.name === 'RenderingCancelledException') return;
+          if (cancelled) { pumping = false; return; }
+          if ((err as { name?: string })?.name === 'RenderingCancelledException') {
+            pumping = false;
+            return;
+          }
           console.warn(`[PdfViewer] page ${pageNum} render failed:`, err);
           if (wrapper) {
             wrapper.innerHTML = '';
@@ -237,10 +269,41 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
           }
         }
       }
-    })();
+      pumping = false;
+    };
+
+    // ─── IntersectionObserver 기반 가시성 트리거 ───
+    // rootMargin '100% 0px' = 위/아래로 컨테이너 높이 1배 분 미리 감지 → 스크롤 도중에도
+    // 다음 페이지가 부드럽게 준비되도록 lookahead. typeof 가드 = jsdom 미설치 노드 환경
+    // (또는 일부 vitest 셋업) 대비 안전망 — 환경에 IO 가 없으면 fallback 으로 전체 렌더.
+    let observer: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver !== 'undefined') {
+      observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const target = entry.target as HTMLElement;
+            const idx = Number(target.dataset.pageIndex);
+            if (!Number.isFinite(idx)) continue;
+            enqueue(idx + 1);
+          }
+        },
+        { root: container, rootMargin: '100% 0px', threshold: 0 },
+      );
+      for (let i = 0; i < totalPages; i++) {
+        const wrapper = pageRefs.current[i];
+        if (!wrapper) continue;
+        wrapper.dataset.pageIndex = String(i);
+        observer.observe(wrapper);
+      }
+    } else {
+      // IO 미지원 환경(테스트) — 안전한 fallback: 모든 페이지 즉시 큐에 (기존 동작 보존).
+      for (let i = 1; i <= totalPages; i++) enqueue(i);
+    }
 
     return () => {
       cancelled = true;
+      if (observer) observer.disconnect();
       if (currentTask) {
         try { currentTask.cancel(); } catch { /* ignore */ }
         currentTask = null;
