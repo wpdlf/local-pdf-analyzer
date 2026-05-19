@@ -558,6 +558,13 @@ export function useSummarize() {
       }
 
       const isCancelled = () => timedOut || !useAppStore.getState().isGenerating;
+      // R31 (v0.18.18 patch): timeoutTimerRef 콜백이 이미 발화해 timedOut=true 가 됐고
+      // handleAbort 가 이전 requestId 를 abort 한 상태에서, 이 시점에 도달하면 새 requestId 가
+      // 발급되어 abort 가 무력화되는 race 가 가능했다. 이미지 분석 완료 직후 / cancellation
+      // 미감지 사이의 짧은 window. 명시적 가드로 즉시 종료.
+      if (timedOut || !useAppStore.getState().isGenerating) {
+        return;
+      }
       // 이미지 분석이 진행된 경우 진행률 20%부터 이어서 시작 (역행 방지)
       const progressOffset = (doc.images.length > 0 && currentSettings.enableImageAnalysis) ? 20 : 0;
       if (currentSummaryType === 'chapter' && docWithImages.chapters.length > 1) {

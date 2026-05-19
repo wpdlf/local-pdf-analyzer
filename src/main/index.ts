@@ -609,6 +609,9 @@ function registerIpcHandlers(): void {
       return { success: false, error: 'Invalid requestId' };
     }
     abortGenerate(requestId);
+    // R31 (v0.18.18 patch): Vision 측은 `vision:${rid}` 로 namespacing 됐으므로 prefix
+    // 버전도 시도. renderer 는 bare id 만 알면 되도록 main 이 양쪽을 흡수.
+    abortGenerate(`vision:${requestId}`);
     return { success: true };
   });
 
@@ -657,17 +660,23 @@ function registerIpcHandlers(): void {
   // R30 P2 (v0.18.18): requestId 선택 인자 추가 — renderer 가 ai:abort 로 in-flight Vision
   // 호출을 즉시 취소할 수 있도록 함. 이전엔 사용자 Stop 도 in-flight Vision (특히 cloud) 을
   // 끊지 못해 토큰이 끝까지 청구되던 결함.
+  //
+  // R31 (v0.18.18 patch): activeRequests Map 이 generate/embed/vision 호출 사이에 공유되어
+  // requestId 충돌 시 (예: 손상된 renderer 가 같은 id 재사용) 다른 path 의 entry 가 controller
+  // identity 미일치로 leak 됐다. Vision 측에서만 `vision:` prefix 로 namespacing 해 충돌 차단.
+  // ai:abort 가 양쪽 모두 시도하므로 renderer 는 prefix 를 알 필요 없음.
   ipcMain.handle('ai:analyze-image', async (_event, imageBase64: string, requestId: unknown) => {
     if (!validateImageBase64(imageBase64)) {
       return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
     }
-    const validRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
+    const rawRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
       ? requestId
       : null;
+    const visionRequestId = rawRequestId ? `vision:${rawRequestId}` : null;
     let controller: AbortController | undefined;
-    if (validRequestId) {
+    if (visionRequestId) {
       controller = new AbortController();
-      registerEmbedRequest(validRequestId, controller);
+      registerEmbedRequest(visionRequestId, controller);
     }
     try {
       const { provider, model, ollamaBaseUrl, apiKey } = await resolveVisionModel('이미지 분석을 위해');
@@ -678,7 +687,7 @@ function registerIpcHandlers(): void {
       const isAbort = msg === 'Aborted' || (err as Error & { code?: string })?.code === 'ABORT_ERR';
       return { success: false, error: isAbort ? 'Aborted' : msg };
     } finally {
-      if (validRequestId && controller) unregisterEmbedRequest(validRequestId, controller);
+      if (visionRequestId && controller) unregisterEmbedRequest(visionRequestId, controller);
     }
   });
 

@@ -32,12 +32,17 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
+      // R31 (v0.18.18 patch): exclude 정책 명확화.
+      //   1) 표준 인프라/빌드 산출물: node_modules, out, dist, test, scripts, *.config, *.d.ts
+      //   2) 테스트 파일 자체: **/__tests__/** — coverage 의 분모에서 테스트 코드를 제외
+      //      (테스트 파일은 측정 대상이 아니라 측정 수단)
+      //   3) 단위 테스트 없는 영역: src/main/**, src/preload/**, src/renderer/components/**
+      //      — 0% coverage 가 분모를 비현실적으로 만들어 미래 임계 게이트를 방해하므로
+      //      "아직 측정하지 않는" 영역으로 명시. 각 영역에 테스트가 도입되면 라인 제거.
       exclude: [
         'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
         '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
-        // main/preload 는 아직 단위 테스트가 없어 coverage 계산에서 제외 (R30 후보).
-        // 향후 main/preload 테스트 도입 시 이 라인 제거.
-        'src/main/**', 'src/preload/**',
+        'src/main/**', 'src/preload/**', 'src/renderer/components/**',
       ],
     },
   },

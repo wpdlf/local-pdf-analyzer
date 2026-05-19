@@ -24,6 +24,21 @@ jobs:
 
       - run: npm ci
 
+      # R31 (v0.18.18 patch): package-lock.json root version 이 package.json 과
+      # drift 됐는지 검증. v0.18.17 → v0.18.18 로 넘어갈 때 자동화 미구현으로
+      # drift 가 재발생한 사례 (R30 발견) → 매 PR/release 에서 강제.
+      - name: Verify lockfile version sync
+        shell: bash
+        run: |
+          pkg_ver=$(node -p "require('./package.json').version")
+          lock_ver=$(node -p "require('./package-lock.json').version")
+          if [ "$pkg_ver" != "$lock_ver" ]; then
+            echo "::error::package.json version ($pkg_ver) != package-lock.json version ($lock_ver)"
+            echo "Run 'npm install --package-lock-only' and commit the result."
+            exit 1
+          fi
+          echo "lockfile sync OK: $pkg_ver"
+
       # R28: tsconfig strict 게이트(noUncheckedIndexedAccess 등)가 PR/push 단계에서 항상 검증되도록 함.
       - run: npx tsc --noEmit
 

@@ -32,6 +32,17 @@ jobs:
 
       - run: npm ci
 
+      # R31 (v0.18.18 patch): package-lock.json drift 게이트 — test.yml 과 동일 로직.
+      - name: Verify lockfile version sync
+        shell: bash
+        run: |
+          pkg_ver=$(node -p "require('./package.json').version")
+          lock_ver=$(node -p "require('./package-lock.json').version")
+          if [ "$pkg_ver" != "$lock_ver" ]; then
+            echo "::error::package.json version ($pkg_ver) != package-lock.json version ($lock_ver)"
+            exit 1
+          fi
+
       # R28: noUncheckedIndexedAccess 등 tsconfig strict 게이트가 CI에서 항상 검증되도록 함.
       - run: npx tsc --noEmit
 

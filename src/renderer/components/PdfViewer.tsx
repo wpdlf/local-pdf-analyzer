@@ -190,20 +190,21 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     if (pageRefs.current.length > totalPages) {
       pageRefs.current.length = totalPages;
     }
-    // renderVersion 증가 시 기존 canvas 모두 제거 + 렌더 set 비우기.
-    // (리사이즈로 scale 이 바뀌었을 가능성 → 다시 렌더 필요)
-    if (renderVersion > 0) {
-      for (const wrapper of pageRefs.current) {
-        if (wrapper) {
-          wrapper.querySelector('canvas')?.remove();
-          // 기존에 actual height 가 인라인으로 박혀 있다면 placeholder min-height 로 복귀.
-          // 다음 렌더에서 새 scale 의 실제 높이로 다시 박힘.
-          wrapper.style.width = '';
-          wrapper.style.height = '';
-        }
+    // R31 (v0.18.18 patch): canvas 재사용 버그 수정.
+    // 이전엔 `renderVersion > 0` 일 때만 canvas 를 청소했는데, 새 문서 로드 (pdfBytes 변경)
+    // 시 totalPages 가 같으면 React 가 wrapper DOM 을 재사용해 이전 문서의 canvas 가 남아
+    // 새 문서에 표시되는 회귀 발생. effect 진입 시점에 무조건 정리하면 회귀 차단 + 비용 미미.
+    // (canvas 재할당 비용은 어차피 즉시 enqueue 로 다시 발생하므로 사실상 동일.)
+    for (const wrapper of pageRefs.current) {
+      if (wrapper) {
+        wrapper.querySelector('canvas')?.remove();
+        // 기존에 actual height 가 인라인으로 박혀 있다면 placeholder min-height 로 복귀.
+        // 다음 렌더에서 새 scale 의 실제 높이로 다시 박힘.
+        wrapper.style.width = '';
+        wrapper.style.height = '';
       }
-      renderedPagesRef.current.clear();
     }
+    renderedPagesRef.current.clear();
 
     // ─── 단일 렌더 큐 ───
     // pdfjs worker 는 단일 스레드이므로 N개 페이지 병렬 요청은 결국 worker 큐로 직렬화된다.

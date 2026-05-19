@@ -261,6 +261,30 @@ describe('notice channel (D1)', () => {
       vi.useRealTimers();
     }
   });
+
+  // R31 회귀 (v0.18.18 patch): setNotice(null) 호출 시 pending 타이머 cancel.
+  it('setNotice(null) 호출 시 pending dismiss 타이머는 cancel 된다', () => {
+    vi.useFakeTimers();
+    try {
+      const s = useAppStore.getState();
+      s.setNotice({ message: 'pending' });
+      vi.advanceTimersByTime(3000);
+      // 사용자가 직접 닫기 → pending 6초 타이머는 cancel 되어야 함
+      s.setNotice(null);
+      expect(useAppStore.getState().notice).toBeNull();
+      // 추가로 3초 흘려도 stale 타이머가 발화해 다른 동작을 일으키지 않아야 함
+      vi.advanceTimersByTime(3000);
+      // 새 notice 를 설정해 6초 dismiss 가 정상 작동하는지 확인 — 이전 타이머가 cancel
+      // 안 됐다면 3초 후 (전 타이머 6초 도달) 잘못된 dismiss 발화 가능.
+      s.setNotice({ message: 'fresh' });
+      vi.advanceTimersByTime(5999);
+      expect(useAppStore.getState().notice?.message).toBe('fresh');
+      vi.advanceTimersByTime(1);
+      expect(useAppStore.getState().notice).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // R28 P2 (v0.18.12): setDocument 비-null 분기에서도 resetSummaryState 가 호출되어

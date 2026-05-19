@@ -71,6 +71,9 @@ if (_meta.hot) {
     qaStreamState.reset();
     if (settingsSaveTimer) { clearTimeout(settingsSaveTimer); settingsSaveTimer = null; }
     if (citationPanelWidthSaveTimer) { clearTimeout(citationPanelWidthSaveTimer); citationPanelWidthSaveTimer = null; }
+    // R31 (v0.18.18 patch): noticeDismissTimer HMR 누락 — 이전 store 인스턴스의 6초
+    // 타이머가 fire 하면 새 store 의 notice 를 잘못 dismiss 하려 시도하므로 같이 정리.
+    if (noticeDismissTimer) { clearTimeout(noticeDismissTimer); noticeDismissTimer = null; }
   });
 }
 
