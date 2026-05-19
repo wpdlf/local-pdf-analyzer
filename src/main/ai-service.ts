@@ -16,6 +16,15 @@ interface GenerateRequest {
 const activeRequests = new Map<string, { abort: () => void; createdAt: number; startedAt: number }>();
 let nextRequestSeq = 0; // 단조 증가 카운터 — 같은 requestId 구별용
 
+// R29 (v0.18.15): Ollama keep_alive 튜닝.
+// 기본값 5분이 지나면 모델이 GPU/메모리에서 unload 되어, 다음 호출 시 cold load 페널티
+// (수 초~수십 초, 모델 크기 의존) 가 발생한다. 한 PDF 요약 세션은 보통 청크 요약 +
+// 통합 요약 + Q&A + 답변 검증으로 짧은 간격에 다수 호출되고, 사용자가 잠시 PDF 를
+// 검토한 뒤 추가 질문을 던지는 패턴도 흔하므로 30분 유지가 sweet spot.
+// trade-off: 30분 동안 GPU/RAM 점유 유지 (단, 사용자가 앱을 닫으면 Ollama 가 자체 정리).
+// -1 (무한) 은 다중 모델 동시 점유로 VRAM 부족 환경에서 위험할 수 있어 보수적으로 30m.
+const OLLAMA_KEEP_ALIVE = '30m';
+
 // activeRequests TTL 정리 (10분 초과 항목 자동 제거)
 const ACTIVE_REQUEST_TTL_MS = 600000;
 const ttlCleanupInterval = setInterval(() => {
@@ -178,6 +187,7 @@ async function generateOllama(
     prompt: user,
     stream: true,
     options: { temperature: request.temperature ?? 0.3 },
+    keep_alive: OLLAMA_KEEP_ALIVE,
   });
 
   return streamRequest(requestId, {
@@ -579,6 +589,7 @@ async function callVision(
         prompt: config.prompt,
         images: [imageBase64],
         stream: false,
+        keep_alive: OLLAMA_KEEP_ALIVE,
       });
       const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, config.timeoutMs);
       return config.sanitize(JSON.parse(result).response || '');
@@ -846,7 +857,7 @@ async function embedOllama(
   const url = new URL('/api/embed', ollamaBaseUrl);
   // noUncheckedIndexedAccess: OLLAMA_EMBED_MODELS 는 const 정의로 항상 ≥1 이지만 좁힘 안됨.
   const useModel = model || OLLAMA_EMBED_MODELS[0] || 'nomic-embed-text';
-  const body = JSON.stringify({ model: useModel, input: texts });
+  const body = JSON.stringify({ model: useModel, input: texts, keep_alive: OLLAMA_KEEP_ALIVE });
   const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, 120000, signal);
   const parsed = JSON.parse(result);
   if (!parsed.embeddings || !Array.isArray(parsed.embeddings)) {
