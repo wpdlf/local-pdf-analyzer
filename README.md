@@ -175,7 +175,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - **렌더 에러 복구** — 예기치 못한 UI 오류 발생 시 "다시 시도" 버튼으로 새로고침 없이 복구 시도 (민감 경로 자동 마스킹)
 - **언어 즉시 전환** — 설정에서 한국어/English 변경 시 전체 화면이 즉시 반영 (재시작 불필요)
 - **매직바이트 기반 PDF 검증** — 파일 전체를 메모리에 로드하기 전에 `%PDF-` 시그니처를 선행 확인하여 잘못된 파일 즉시 거부
-- **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **259건** (v0.17.x 에서 +13, v0.18.x 누적 +164)
+- **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **260건** (v0.17.x 에서 +13, v0.18.x 누적 +165)
 - **빌드 무결성 (v0.18.8 ~ v0.18.18 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.11, npm ≥ 10)를 추가. v0.18.13 에서 `asarUnpack: ["**/cmaps/**"]` 도입(packaged build 의 CJK CMap 안전 보장) + R29 P1 회귀 픽스 9건. v0.18.15 에서 Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware 동시성 (Ollama 3 / cloud 8) — 성능 트랙 1라운드. v0.18.16 에서 PdfViewer 페이지 가상화 (IntersectionObserver lazy render, 100p PDF 렌더 canvas 95% 감소) — 성능 트랙 2라운드. v0.18.17 에서 R30 풀-QA P1 6건 (Promise.race 타이머 leak / PdfViewer viewport race / lockfile drift / 빈 image name 가드 / targetPage 폴링 stuck / workflow node-version drift) 정리. v0.18.18 에서 R30 P2 + R29 QA P2 잔여 small-fix 6건 묶음 (Vision in-flight abort / setNotice 자동 dismiss / vitest coverage / LOCALHOST_HOSTS 통합 / Bearer regex `~` / shell:open-external 길이 캡)
 - **페이지 인용 + 사이드 PDF 뷰어 (v0.17.0)** — 요약/Q&A 답변의 각 핵심 사실에 출처 페이지 `[p.N]` 자동 생성, 클릭 시 우측 패널에서 해당 페이지 즉시 확인. RAG 청크에 page 메타데이터 전파 + LLM 프롬프트 CITATION_RULES(5 언어) 주입 + pdfjs-dist lazy 뷰어 + react-markdown text-block 오버라이드로 구현. v0.17.1 에서 단락별 inline 라벨로 인용 빈도 대폭 향상
 - **가로 리사이즈 핸들 (v0.17.2)** — PDF 뷰어 패널 열렸을 때 중앙 구분선 드래그로 좌/우 비율 20~80% 자유 조정. Pointer + 키보드(← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage 영속화. PDF 는 `ResizeObserver` + 200ms debounce 로 자동 재렌더
@@ -242,7 +242,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG 는 v0.18.9 부터 공증 자격 추가 시까지 일시 중단) |
-| 테스트 | Vitest (259개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9; `vitest.config.mts` + `test/setup.ts` 진입점 도입, v0.18.11) |
+| 테스트 | Vitest (260개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9; `vitest.config.mts` + `test/setup.ts` 진입점 도입, v0.18.11) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화, 메모리 캐시로 hot path 최적화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -290,7 +290,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (259개)
+    │   └── __tests__/         # 단위 테스트 (260개)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -537,6 +537,11 @@ PDF 파일
 | `LOCALHOST_HOSTS` 4곳 drift 위험 (v0.18.18) | `['localhost','127.0.0.1','::1']` 인라인 리터럴 4곳을 `src/shared/constants.ts` 의 `LOCALHOST_HOSTS` + `isLocalhostHost` 헬퍼로 통합. 한쪽만 수정 시 SSRF 우회 발생할 수 있는 drift 위험 차단 |
 | Bearer 토큰 redaction 누락 char (v0.18.18) | redaction regex 에 `~` 추가 — RFC 6750 token68 char class 와 일치시켜 토큰 접미부 누출 가능성 차단 (defense-in-depth) |
 | `shell:open-external` 입력 길이 무캡 (v0.18.18) | URL parser 진입 전 2048 chars cap — 손상된 renderer 가 multi-MB URL 을 보내 parser 에 부담을 주는 경로 사전 차단 |
+| 새 문서 로드 시 이전 페이지 잔존 (v0.18.18 patch) | PdfViewer 의 `pdfBytes` 변경 + `totalPages` 동일 시 React 가 wrapper DOM 을 재사용해 이전 문서 canvas 가 새 문서에 잠시 표시되던 회귀. render effect 진입 시 무조건 canvas 청소로 차단 |
+| timedOut 후 summarize 재진입 race (v0.18.18 patch) | timeout 콜백이 abort 한 직후 summarize 가 새 requestId 를 발급하면 abort 가 무력화되던 race. 명시 가드로 즉시 종료 |
+| `noticeDismissTimer` HMR 누락 (v0.18.18 patch) | 이전 store 인스턴스의 6초 타이머가 새 store 의 notice 를 잘못 dismiss 시도하던 leak. dispose 콜백에 `clearTimeout` 추가 |
+| `ai:analyze-image` requestId 충돌 (v0.18.18 patch) | generate/embed/vision 이 같은 `activeRequests` Map 공유로 requestId 충돌 시 entry leak 가능. Vision 측을 `vision:` prefix 로 namespacing, `ai:abort` 가 양쪽 시도 |
+| package-lock.json drift 재발 (v0.18.18 patch) | v0.18.17 가 약속한 자동화가 미구현으로 v0.18.18 도 drift 했던 결함. `test.yml`/`release.yml` 에 lockfile root version 검증 게이트 추가, 미일치 시 빌드 실패 |
 
 ## 라이선스
 

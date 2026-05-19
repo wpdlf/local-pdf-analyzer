@@ -176,7 +176,7 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Render-error recovery** — Unexpected UI crashes offer a "Try again" button without a full reload (paths auto-masked)
 - **Instant language switch** — Toggling Korean/English in Settings reflects across the whole UI immediately (no restart required)
 - **Magic-byte PDF validation** — `%PDF-` signature is verified before the file is fully loaded into memory, rejecting fakes early
-- **Unit test coverage** — **259 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +164 cumulative across v0.18.x)
+- **Unit test coverage** — **260 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +165 cumulative across v0.18.x)
 - **Build integrity (cumulatively hardened across v0.18.8 ~ v0.18.18)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds. v0.18.9 adds `timeout-minutes` on every job, an Ubuntu/Windows OS matrix on the test job, and a mandatory `npx tsc --noEmit` gate on both PR and release pipelines so strict flags like `noUncheckedIndexedAccess` cannot silently regress. v0.18.10 pins the Windows runner from `windows-latest` to `windows-2025` ahead of the June 2026 migration. v0.18.11 bumps `actions/checkout` and `actions/setup-node` to their Node.js 24-compatible majors (v6), adds an advisory `npm audit --audit-level=high` step, and declares an `engines` field in `package.json` (node ≥ 20.11, npm ≥ 10). v0.18.13 introduces `asarUnpack: ["**/cmaps/**"]` (so pdfjs CMap files survive asar packing) plus 9 R29 P1 hardening fixes. v0.18.15 adds Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware concurrency (Ollama 3 / cloud 8) — first performance-track round. v0.18.16 introduces PdfViewer page virtualization (IntersectionObserver-driven lazy render, ~95% fewer canvases for a 100-page citation click) — second performance-track round. v0.18.17 lands six R30 full-QA P1 fixes (Promise.race timer leak, PdfViewer viewport race, lockfile drift, empty image-name guard, targetPage polling stuck, workflow node-version drift). v0.18.18 bundles six R30 P2 + R29 QA P2 small-fixes (Vision in-flight abort, setNotice auto-dismiss, vitest coverage, LOCALHOST_HOSTS dedup, Bearer regex `~`, shell:open-external length cap)
 - **Page citations + side PDF viewer (v0.17.0)** — Summary/Q&A answers automatically carry `[p.N]` source-page citations at almost every key sentence. Click to open a right-side PDF viewer panel that scrolls to the cited page. Built on page-aware RAG chunks + LLM prompt injection (5 languages) + lazy pdfjs-dist viewer + react-markdown text-block overrides. Citation frequency significantly improved in v0.17.1 via paragraph-level inline labels
 - **Horizontal resize handle (v0.17.2)** — when the PDF viewer panel is open, drag the central divider to freely adjust the left/right ratio between 20~80%. Pointer + keyboard (← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage persistence. PDF pages auto re-render via `ResizeObserver` + 200ms debounce
@@ -242,7 +242,7 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | State Management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused since v0.18.9 pending notarization credentials) |
-| Testing | Vitest (259 unit tests) + `tsc --noEmit` strict type check (`noUncheckedIndexedAccess` enabled in v0.18.8; enforced on both PR and release CI in v0.18.9; `vitest.config.mts` + `test/setup.ts` entry point added in v0.18.11) |
+| Testing | Vitest (260 unit tests) + `tsc --noEmit` strict type check (`noUncheckedIndexedAccess` enabled in v0.18.8; enforced on both PR and release CI in v0.18.9; `vitest.config.mts` + `test/setup.ts` entry point added in v0.18.11) |
 | i18n | Custom (i18n.ts) — 172+ keys, useT() hook, template interpolation |
 | API Key Security | Electron safeStorage (OS keychain encryption), decrypted only in Main process, in-memory cache for hot-path |
 | Shared constants | `src/shared/constants.ts` — Main/Renderer shared (MAX_PDF_SIZE etc.) to prevent drift |
@@ -290,7 +290,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, conversation history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity search, dimension validation)
     │   ├── store.ts           # Zustand state management (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (259)
+    │   └── __tests__/         # Unit tests (260)
     └── types/
         └── index.ts       # Type definitions + Provider model constants
 ```
@@ -515,6 +515,11 @@ PDF File
 | `LOCALHOST_HOSTS` drift across 4 sites (v0.18.18) | The inline `['localhost','127.0.0.1','::1']` arrays in four main-process sites were consolidated into `src/shared/constants.ts` (`LOCALHOST_HOSTS` + `isLocalhostHost` helper) — closes the SSRF-bypass risk if a future maintainer edits only one site |
 | Bearer redaction missed char (v0.18.18) | Added `~` to the Bearer redaction regex — aligns with RFC 6750 token68 char class so token suffixes can't leak from error bodies (defense-in-depth) |
 | `shell:open-external` had no length cap (v0.18.18) | Capped at 2048 chars before `new URL()` parses, matching the input-cap pattern used elsewhere — prevents a compromised renderer from amplifying parser work with multi-MB strings |
+| Stale page lingering on new document load (v0.18.18 patch) | When `pdfBytes` changed but `totalPages` stayed identical, React reused wrapper DOM and the previous document's canvases briefly showed inside the new document. The render effect now unconditionally clears canvases on every entry |
+| `timedOut` summarize re-entry race (v0.18.18 patch) | A short window between the timeout callback firing and summarize entry allowed a new `requestId` to be issued, neutralizing the abort. An explicit guard now returns early when `timedOut` is true |
+| `noticeDismissTimer` HMR leak (v0.18.18 patch) | The 6 s dismiss timer from a previous store instance could fire and try to dismiss a notice in the new store. Added `clearTimeout(noticeDismissTimer)` to the HMR dispose callback |
+| `ai:analyze-image` requestId collision (v0.18.18 patch) | `generate`/`embed`/`vision` all share the same `activeRequests` Map; a requestId collision could leak an entry across IPC types. Vision now registers under a `vision:` prefix while `ai:abort` tries both forms — transparent to the renderer |
+| `package-lock.json` drift recurrence (v0.18.18 patch) | v0.18.17's promised automation was never implemented, so v0.18.18 drifted again. Added an explicit gate to both `test.yml` and `release.yml` that fails the build when lockfile root version diverges from `package.json` |
 
 ## License
 
