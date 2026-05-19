@@ -42,10 +42,10 @@ Every release attaches the installer's **SHA-256 hash** as an asset (`SHA256SUMS
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.16.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.17.exe
 
 # Verify the Sigstore attestation via GitHub CLI (optional)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.16.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.17.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## How to Use
@@ -176,8 +176,8 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Render-error recovery** — Unexpected UI crashes offer a "Try again" button without a full reload (paths auto-masked)
 - **Instant language switch** — Toggling Korean/English in Settings reflects across the whole UI immediately (no restart required)
 - **Magic-byte PDF validation** — `%PDF-` signature is verified before the file is fully loaded into memory, rejecting fakes early
-- **Unit test coverage** — **256 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +161 cumulative across v0.18.x)
-- **Build integrity (cumulatively hardened across v0.18.8 ~ v0.18.16)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds. v0.18.9 adds `timeout-minutes` on every job, an Ubuntu/Windows OS matrix on the test job, and a mandatory `npx tsc --noEmit` gate on both PR and release pipelines so strict flags like `noUncheckedIndexedAccess` cannot silently regress. v0.18.10 pins the Windows runner from `windows-latest` to `windows-2025` ahead of the June 2026 migration. v0.18.11 bumps `actions/checkout` and `actions/setup-node` to their Node.js 24-compatible majors (v6), adds an advisory `npm audit --audit-level=high` step, and declares an `engines` field in `package.json` (node ≥ 20.11, npm ≥ 10). v0.18.13 introduces `asarUnpack: ["**/cmaps/**"]` (so pdfjs CMap files survive asar packing) plus 9 R29 P1 hardening fixes. v0.18.15 adds Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware concurrency (Ollama 3 / cloud 8) — first performance-track round. v0.18.16 introduces PdfViewer page virtualization (IntersectionObserver-driven lazy render, ~95% fewer canvases for a 100-page citation click) — second performance-track round
+- **Unit test coverage** — **257 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +162 cumulative across v0.18.x)
+- **Build integrity (cumulatively hardened across v0.18.8 ~ v0.18.17)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds. v0.18.9 adds `timeout-minutes` on every job, an Ubuntu/Windows OS matrix on the test job, and a mandatory `npx tsc --noEmit` gate on both PR and release pipelines so strict flags like `noUncheckedIndexedAccess` cannot silently regress. v0.18.10 pins the Windows runner from `windows-latest` to `windows-2025` ahead of the June 2026 migration. v0.18.11 bumps `actions/checkout` and `actions/setup-node` to their Node.js 24-compatible majors (v6), adds an advisory `npm audit --audit-level=high` step, and declares an `engines` field in `package.json` (node ≥ 20.11, npm ≥ 10). v0.18.13 introduces `asarUnpack: ["**/cmaps/**"]` (so pdfjs CMap files survive asar packing) plus 9 R29 P1 hardening fixes. v0.18.15 adds Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware concurrency (Ollama 3 / cloud 8) — first performance-track round. v0.18.16 introduces PdfViewer page virtualization (IntersectionObserver-driven lazy render, ~95% fewer canvases for a 100-page citation click) — second performance-track round. v0.18.17 lands six R30 full-QA P1 fixes (Promise.race timer leak, PdfViewer viewport race, lockfile drift, empty image-name guard, targetPage polling stuck, workflow node-version drift)
 - **Page citations + side PDF viewer (v0.17.0)** — Summary/Q&A answers automatically carry `[p.N]` source-page citations at almost every key sentence. Click to open a right-side PDF viewer panel that scrolls to the cited page. Built on page-aware RAG chunks + LLM prompt injection (5 languages) + lazy pdfjs-dist viewer + react-markdown text-block overrides. Citation frequency significantly improved in v0.17.1 via paragraph-level inline labels
 - **Horizontal resize handle (v0.17.2)** — when the PDF viewer panel is open, drag the central divider to freely adjust the left/right ratio between 20~80%. Pointer + keyboard (← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage persistence. PDF pages auto re-render via `ResizeObserver` + 200ms debounce
 - **Citation placement normalization (v0.17.1)** — LLM mistakes like `([p.5])` wrapping or standalone list items `- [p.44]` are automatically re-attached to the preceding sentence
@@ -242,7 +242,7 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 | State Management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused since v0.18.9 pending notarization credentials) |
-| Testing | Vitest (256 unit tests) + `tsc --noEmit` strict type check (`noUncheckedIndexedAccess` enabled in v0.18.8; enforced on both PR and release CI in v0.18.9; `vitest.config.mts` + `test/setup.ts` entry point added in v0.18.11) |
+| Testing | Vitest (257 unit tests) + `tsc --noEmit` strict type check (`noUncheckedIndexedAccess` enabled in v0.18.8; enforced on both PR and release CI in v0.18.9; `vitest.config.mts` + `test/setup.ts` entry point added in v0.18.11) |
 | i18n | Custom (i18n.ts) — 172+ keys, useT() hook, template interpolation |
 | API Key Security | Electron safeStorage (OS keychain encryption), decrypted only in Main process, in-memory cache for hot-path |
 | Shared constants | `src/shared/constants.ts` — Main/Renderer shared (MAX_PDF_SIZE etc.) to prevent drift |
@@ -290,7 +290,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, conversation history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity search, dimension validation)
     │   ├── store.ts           # Zustand state management (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (256)
+    │   └── __tests__/         # Unit tests (257)
     └── types/
         └── index.ts       # Type definitions + Provider model constants
 ```
@@ -504,6 +504,12 @@ PDF File
 | Single 808 KB renderer chunk (v0.18.15, performance) | Added `manualChunks` to the Vite renderer config splitting `react-vendor`, `pdfjs`, `markdown` into separate chunks — main app chunk dropped 808 KB → 304 KB (-62%). Vendor chunks survive app-code edits as cache |
 | Cloud Vision under-concurrency (v0.18.15, performance) | `analyzeDocumentImages` made provider-aware (Ollama 3 / Claude·OpenAI 8) — image-heavy PDFs analyzed via cloud providers complete ~30-40% faster |
 | PdfViewer bulk-render memory / latency (v0.18.16, performance) | Sequential bulk render replaced with `IntersectionObserver`-driven on-demand queue (rootMargin `'100% 0px'` lookahead). A 100-page citation click now keeps only ~5 active canvases (≈95% fewer than the previous full render); 500-page memory grows proportionally to visited pages, not document size |
+| pdf-parser Promise.race timer leak (v0.18.17) | `extractPageImages` would leave its 5-second race timer alive even when `getOperatorList()` resolved fast — a 200-page PDF accumulated 200 pending timers and 200 misleading "timeout" warnings firing 5 s later. The `timeoutId` is now cleared in a `finally` block |
+| PdfViewer viewport race after resize (v0.18.17) | When `renderVersion` increments (resize), the IntersectionObserver's first callback is asynchronous, so currently-visible pages briefly fell back to blank placeholders. We now also explicitly enqueue any wrapper intersecting the container + `rootMargin: 100%` band, independent of IO firing |
+| PdfViewer targetPage polling stuck (v0.18.17) | If the target wrapper is outside the IO viewport, polling waited for IO to fire and after 3 s fell back to an inaccurate `scrollIntoView` against a 200 px placeholder. `enqueueRenderRef` exposes the queue so the polling effect calls `enqueue(targetPage)` directly |
+| Empty image-name op wasted 1 s (v0.18.17) | `extractPageImages` R29 guard tightened with `length > 0` — `page.objs.get('')` never invokes the callback, so the loop previously burned its 1 s timeout for nothing |
+| `package-lock.json` root version drift (v0.18.17) | The lockfile root was pinned at `0.18.9` while `package.json` had advanced 7 releases. Risked `npm ci` failures for new contributors. Re-synced via `npm install --package-lock-only` and folded into the version-bump workflow |
+| Workflow node-version drift (v0.18.17) | Workflows had `node-version: 20` (bare) while `engines` requires `>=20.11`, so a future cache pinning to 20.10 would violate the engine range. Pinned to `'20.11'`. `test.yml`'s `npm audit` step switched from `\|\| true` to `continue-on-error: true` so real audit-execution failures stay visible while advisory output is non-blocking |
 
 ## License
 
