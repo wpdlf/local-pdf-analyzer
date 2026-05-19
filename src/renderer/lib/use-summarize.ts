@@ -84,12 +84,17 @@ function stripConversationalText(text: string): string {
 
 async function analyzeDocumentImages(
   doc: PdfDocument,
-  client: { analyzeImage: (base64: string) => Promise<string | null> },
+  client: { analyzeImage: (base64: string, requestId?: string) => Promise<string | null> },
   setProgress: (p: number) => void,
   setProgressInfo: ((info: ProgressInfo) => void) | null,
   startTime: number,
   isAborted: () => boolean,
   provider: 'ollama' | 'claude' | 'openai' = 'ollama',
+  // R30 P2 (v0.18.18): Stop / 문서 전환 시 in-flight Vision 호출을 즉시 abort 하기 위한
+  // hook. 호출자(use-summarize 메인 흐름) 가 in-flight requestId 들을 추적해 두면
+  // isAborted() 가 true 가 된 직후 abortInFlight() 한 번 호출로 모두 끊을 수 있다.
+  registerInFlight?: (requestId: string) => void,
+  unregisterInFlight?: (requestId: string) => void,
 ): Promise<Map<number, string[]>> {
   const imageDescriptions = new Map<number, string[]>();
 
@@ -97,7 +102,14 @@ async function analyzeDocumentImages(
   if (!firstImg) return imageDescriptions;
 
   // preflight도 client를 통해 호출 (일관된 에러 처리 경로)
-  const preflightResult = await client.analyzeImage(firstImg.base64);
+  const preflightRequestId = crypto.randomUUID();
+  registerInFlight?.(preflightRequestId);
+  let preflightResult: string | null;
+  try {
+    preflightResult = await client.analyzeImage(firstImg.base64, preflightRequestId);
+  } finally {
+    unregisterInFlight?.(preflightRequestId);
+  }
   if (preflightResult === null) {
     throw new Error('이미지 분석에 실패했습니다. Vision 모델을 확인해주세요.');
   }
@@ -118,9 +130,16 @@ async function analyzeDocumentImages(
       total: doc.images.length,
       elapsedMs: Date.now() - startTime,
     });
-    const results = await Promise.allSettled(
-      batch.map((img) => client.analyzeImage(img.base64)),
-    );
+    const batchIds = batch.map(() => crypto.randomUUID());
+    batchIds.forEach((id) => registerInFlight?.(id));
+    let results: PromiseSettledResult<string | null>[];
+    try {
+      results = await Promise.allSettled(
+        batch.map((img, idx) => client.analyzeImage(img.base64, batchIds[idx])),
+      );
+    } finally {
+      batchIds.forEach((id) => unregisterInFlight?.(id));
+    }
     for (let ri = 0; ri < results.length; ri++) {
       const r = results[ri]!;
       const img = batch[ri]!;
@@ -469,12 +488,34 @@ export function useSummarize() {
         setProgressInfo({
           percent: 0, phase: 'image', current: 0, total: doc.images.length, elapsedMs: 0,
         });
+        // R30 P2 (v0.18.18): in-flight Vision 호출 추적 — Stop / 문서 전환 / 타임아웃 시
+        // 즉시 ai.abort 로 끊어 cloud 토큰 비용 추가 청구를 막는다.
+        const visionInFlight = new Set<string>();
+        const abortAllVisionInFlight = (): void => {
+          if (visionInFlight.size === 0) return;
+          for (const id of visionInFlight) {
+            try { window.electronAPI.ai.abort(id); } catch { /* ignore */ }
+          }
+          visionInFlight.clear();
+        };
+        // isGenerating 이 false 가 되는 순간을 폴링으로 감지해 즉시 abort.
+        // store.subscribe 도 가능하나 isGenerating 외 다른 필드 변경에도 발화하므로
+        // 가벼운 셀프 폴링이 동등 효과 + 의존성 최소.
+        const stopWatch = setInterval(() => {
+          if (timedOut || !useAppStore.getState().isGenerating) {
+            abortAllVisionInFlight();
+            clearInterval(stopWatch);
+          }
+        }, 250);
         try {
           const imageDescriptions = await analyzeDocumentImages(
             doc, client, setProgress, setProgressInfo, startTime,
             () => timedOut || !useAppStore.getState().isGenerating,
             currentSettings.provider,
+            (id) => visionInFlight.add(id),
+            (id) => visionInFlight.delete(id),
           );
+          clearInterval(stopWatch);
           const enriched = enrichDocumentWithImages(doc, imageDescriptions);
           textForSummary = enriched.textForSummary;
           enrichedPagesRef = enriched.enrichedPages;
@@ -485,6 +526,8 @@ export function useSummarize() {
             useAppStore.getState().setEnrichedPageTexts(enrichedPagesRef);
           }
         } catch (imgErr) {
+          clearInterval(stopWatch);
+          abortAllVisionInFlight();
           setError({ code: 'GENERATE_FAIL', message: (imgErr as Error).message });
           // 중복 cleanup 제거 — outer finally에서 flushStream, setIsGenerating, timeout 정리 일괄 처리
           return;

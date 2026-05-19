@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     abort: (requestId: string) => ipcRenderer.invoke('ai:abort', requestId),
     checkAvailable: (provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) =>
       ipcRenderer.invoke('ai:check-available', provider, ollamaBaseUrl),
-    analyzeImage: (imageBase64: string) => ipcRenderer.invoke('ai:analyze-image', imageBase64),
+    analyzeImage: (imageBase64: string, requestId?: string) => ipcRenderer.invoke('ai:analyze-image', imageBase64, requestId),
     ocrPage: (imageBase64: string) => ipcRenderer.invoke('ai:ocr-page', imageBase64),
     embed: (texts: string[], requestId?: string) => ipcRenderer.invoke('ai:embed', texts, requestId),
     checkEmbedModel: () => ipcRenderer.invoke('ai:check-embed-model'),
@@ -94,7 +94,7 @@ export type ElectronAPI = {
       language?: string;
     }) => Promise<{ success: boolean; error?: string; code?: string }>;
     abort: (requestId: string) => Promise<{ success: boolean }>;
-    analyzeImage: (imageBase64: string) => Promise<{ success: boolean; description?: string; error?: string }>;
+    analyzeImage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; description?: string; error?: string }>;
     ocrPage: (imageBase64: string) => Promise<{ success: boolean; text?: string; error?: string }>;
     embed: (texts: string[], requestId?: string) => Promise<{ success: boolean; embeddings?: number[][]; model?: string; error?: string }>;
     checkEmbedModel: () => Promise<{ available: boolean; model?: string }>;

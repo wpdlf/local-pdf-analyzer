@@ -138,8 +138,10 @@ export class AiClient {
     );
   }
 
-  async analyzeImage(imageBase64: string): Promise<string | null> {
-    const result = await window.electronAPI.ai.analyzeImage(imageBase64);
+  async analyzeImage(imageBase64: string, requestId?: string): Promise<string | null> {
+    // R30 P2 (v0.18.18): 호출자가 requestId 를 제공하면 Stop 시 main 의 ai:abort 로
+    // in-flight Vision 호출을 끊을 수 있다 (특히 cloud 토큰 절약).
+    const result = await window.electronAPI.ai.analyzeImage(imageBase64, requestId);
     if (result.success && result.description) {
       return result.description;
     }

@@ -429,5 +429,27 @@ export const useAppStore = create<AppState>((set) => ({
   error: null,
   setError: (error) => set({ error }),
   notice: null,
-  setNotice: (notice) => set({ notice }),
+  // R30 P2 (v0.18.18): notice 는 사용자에게 영구 표시할 게 아닌 일시적 알림 (다중 파일 드롭
+  // 안내 등) 이라 자동 dismiss 가 자연스럽다. 새 setNotice 가 호출되면 이전 타이머는 cancel.
+  setNotice: (notice) => {
+    if (noticeDismissTimer !== null) {
+      clearTimeout(noticeDismissTimer);
+      noticeDismissTimer = null;
+    }
+    set({ notice });
+    if (notice !== null) {
+      noticeDismissTimer = setTimeout(() => {
+        // 타이머 fire 시점에 동일 notice 가 여전히 있는지 비교 — 사이에 새 notice 로 교체된
+        // 경우 그것의 타이머에 의존해야 하므로 dismiss 하지 않음.
+        if (useAppStore.getState().notice === notice) {
+          set({ notice: null });
+        }
+        noticeDismissTimer = null;
+      }, NOTICE_DISMISS_MS);
+    }
+  },
 }));
+
+// 모듈 스코프 타이머 — store 외부에서 set 호출이 들어와도 단일 타이머만 유지.
+const NOTICE_DISMISS_MS = 6000;
+let noticeDismissTimer: ReturnType<typeof setTimeout> | null = null;

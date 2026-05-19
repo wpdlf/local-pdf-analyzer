@@ -20,8 +20,25 @@ export default defineConfig({
     // environment: 'happy-dom',  // ← R30 에서 활성화 예정 (위 마이그레이션 노트 참고)
     setupFiles: ['./test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // 명시적 exclude — out/ 의 빌드 산출물에 source map 잔여물이 있어도 잡히지 않도록.
+    exclude: ['node_modules/**', 'out/**', 'dist/**'],
     // 회귀 안정성을 위해 alphanumeric 순서로 고정 — 테스트 파일 추가 순서에 의존하는
     // 우발적 통과를 줄인다.
     sequence: { shuffle: false },
+    // R30 P2 (v0.18.18): coverage 설정 도입.
+    // 현재는 임계치를 강제하지 않고 (사용자가 `npm run test:coverage` 직접 호출 시에만 동작),
+    // 향후 CI 통합 + 임계 게이트 도입 대비 베이스라인. 비측정 영역을 명시적으로 exclude 해
+    // 의미 있는 비율이 나오도록 한다.
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      exclude: [
+        'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
+        '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
+        // main/preload 는 아직 단위 테스트가 없어 coverage 계산에서 제외 (R30 후보).
+        // 향후 main/preload 테스트 도입 시 이 라인 제거.
+        'src/main/**', 'src/preload/**',
+      ],
+    },
   },
 });

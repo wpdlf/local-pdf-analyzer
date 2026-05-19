@@ -5,7 +5,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
 import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest } from './ai-service';
-import { MAX_PDF_SIZE_BYTES } from '../shared/constants';
+import { MAX_PDF_SIZE_BYTES, LOCALHOST_HOSTS } from '../shared/constants';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -431,7 +431,7 @@ function registerIpcHandlers(): void {
             if (typeof val === 'string') {
               try {
                 const parsed = new URL(val);
-                const allowedHosts = ['localhost', '127.0.0.1', '::1'];
+                const allowedHosts = LOCALHOST_HOSTS;
                 if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && allowedHosts.includes(parsed.hostname)) {
                   filtered[key] = val;
                 }
@@ -556,7 +556,7 @@ function registerIpcHandlers(): void {
     if (request.provider === 'ollama') {
       try {
         const parsed = new URL(request.ollamaBaseUrl);
-        const allowedHosts = ['localhost', '127.0.0.1', '::1'];
+        const allowedHosts = LOCALHOST_HOSTS;
         if (!['http:', 'https:'].includes(parsed.protocol) || !allowedHosts.includes(parsed.hostname)) {
           return { success: false, error: 'Invalid ollamaBaseUrl: localhost only' };
         }
@@ -619,7 +619,7 @@ function registerIpcHandlers(): void {
     if (provider === 'ollama') {
       try {
         const parsed = new URL(ollamaBaseUrl);
-        const allowedHosts = ['localhost', '127.0.0.1', '::1'];
+        const allowedHosts = LOCALHOST_HOSTS;
         if (!['http:', 'https:'].includes(parsed.protocol) || !allowedHosts.includes(parsed.hostname)) return false;
       } catch { return false; }
     }
@@ -654,16 +654,31 @@ function registerIpcHandlers(): void {
       && imageBase64.length <= 10 * 1024 * 1024 && /^[A-Za-z0-9+/]+={0,2}$/.test(imageBase64);
   }
 
-  ipcMain.handle('ai:analyze-image', async (_event, imageBase64: string) => {
+  // R30 P2 (v0.18.18): requestId 선택 인자 추가 — renderer 가 ai:abort 로 in-flight Vision
+  // 호출을 즉시 취소할 수 있도록 함. 이전엔 사용자 Stop 도 in-flight Vision (특히 cloud) 을
+  // 끊지 못해 토큰이 끝까지 청구되던 결함.
+  ipcMain.handle('ai:analyze-image', async (_event, imageBase64: string, requestId: unknown) => {
     if (!validateImageBase64(imageBase64)) {
       return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
     }
+    const validRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
+      ? requestId
+      : null;
+    let controller: AbortController | undefined;
+    if (validRequestId) {
+      controller = new AbortController();
+      registerEmbedRequest(validRequestId, controller);
+    }
     try {
       const { provider, model, ollamaBaseUrl, apiKey } = await resolveVisionModel('이미지 분석을 위해');
-      const description = await analyzeImage(imageBase64, provider, model, ollamaBaseUrl, apiKey);
+      const description = await analyzeImage(imageBase64, provider, model, ollamaBaseUrl, apiKey, controller?.signal);
       return { success: true, description };
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : 'Vision 분석 실패' };
+      const msg = err instanceof Error ? err.message : 'Vision 분석 실패';
+      const isAbort = msg === 'Aborted' || (err as Error & { code?: string })?.code === 'ABORT_ERR';
+      return { success: false, error: isAbort ? 'Aborted' : msg };
+    } finally {
+      if (validRequestId && controller) unregisterEmbedRequest(validRequestId, controller);
     }
   });
 
@@ -817,6 +832,9 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('shell:open-external', async (_event, url: string) => {
     if (typeof url !== 'string') return;
+    // R30 P2 (v0.18.18): 입력 길이 캡 — 다른 IPC 핸들러 패턴과 일치시키고,
+    // 손상된 renderer 가 multi-MB 문자열을 보내 URL parser 에 부담을 주는 경로를 사전 차단.
+    if (url.length > 2048) return;
     try {
       const parsed = new URL(url);
       if (parsed.protocol !== 'https:') return;

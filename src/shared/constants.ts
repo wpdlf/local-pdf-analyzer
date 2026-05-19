@@ -10,3 +10,18 @@
 
 /** PDF 업로드 최대 크기 (bytes). Main 의 drop/open 검증, Renderer 의 업로더 가드에 공유. */
 export const MAX_PDF_SIZE_BYTES = 100 * 1024 * 1024; // 100MB
+
+/**
+ * Ollama / 로컬 HTTP 엔드포인트 SSRF 방어용 허용 호스트.
+ *
+ * 4곳에 동일한 리터럴 배열 `['localhost', '127.0.0.1', '::1']` 이 중복 정의되어 있었고
+ * (settings:set / ai:generate / ai:check-available / validateOllamaUrl), 한쪽만 갱신
+ * (예: `[::ffff:127.0.0.1]` 추가) 되면 다른 사이트에서 우회가 발생할 위험이 있었다.
+ * v0.18.18 R30 P2: 단일 source of truth 로 통합.
+ */
+export const LOCALHOST_HOSTS: readonly string[] = ['localhost', '127.0.0.1', '::1'];
+
+/** 외부 hostname 이 로컬호스트로 평가되는지 검사 — SSRF 방어 헬퍼. */
+export function isLocalhostHost(hostname: string): boolean {
+  return LOCALHOST_HOSTS.includes(hostname);
+}

@@ -225,6 +225,42 @@ describe('notice channel (D1)', () => {
     expect(useAppStore.getState().error?.message).toBe('에러');
     expect(useAppStore.getState().notice).toBeNull();
   });
+
+  // R30 P2 (v0.18.18): setNotice 후 일정 시간(6초) 지나면 자동으로 dismiss.
+  it('setNotice 후 6초 경과하면 자동으로 notice 가 null 로 비워진다', () => {
+    vi.useFakeTimers();
+    try {
+      const s = useAppStore.getState();
+      s.setNotice({ message: '자동 dismiss 테스트' });
+      expect(useAppStore.getState().notice?.message).toBe('자동 dismiss 테스트');
+      // 6초 직전엔 남아 있어야 함
+      vi.advanceTimersByTime(5999);
+      expect(useAppStore.getState().notice).not.toBeNull();
+      // 6초 도달 시 비워짐
+      vi.advanceTimersByTime(1);
+      expect(useAppStore.getState().notice).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('setNotice 중복 호출 시 이전 타이머는 cancel 되고 마지막 notice 만 dismiss 대상', () => {
+    vi.useFakeTimers();
+    try {
+      const s = useAppStore.getState();
+      s.setNotice({ message: 'first' });
+      vi.advanceTimersByTime(3000);
+      s.setNotice({ message: 'second' });
+      // 'first' 의 타이머가 cancel 됐는지 — 3 + 3 = 6초 경과해도 'second' 는 살아 있어야 함
+      vi.advanceTimersByTime(3000);
+      expect(useAppStore.getState().notice?.message).toBe('second');
+      // 'second' 의 자체 6초 후엔 dismiss
+      vi.advanceTimersByTime(3000);
+      expect(useAppStore.getState().notice).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // R28 P2 (v0.18.12): setDocument 비-null 분기에서도 resetSummaryState 가 호출되어

@@ -2,6 +2,7 @@ import http from 'http';
 import https from 'https';
 import { StringDecoder } from 'string_decoder';
 import { BrowserWindow } from 'electron';
+import { LOCALHOST_HOSTS } from '../shared/constants';
 
 interface GenerateRequest {
   text: string;
@@ -53,8 +54,7 @@ function validateOllamaUrl(url: string): void {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error(`허용되지 않는 프로토콜: ${parsed.protocol}. http/https만 허용됩니다.`);
     }
-    const allowedHosts = ['localhost', '127.0.0.1', '::1'];
-    if (!allowedHosts.includes(parsed.hostname)) {
+    if (!LOCALHOST_HOSTS.includes(parsed.hostname)) {
       throw new Error(`허용되지 않는 Ollama 호스트: ${parsed.hostname}. localhost만 허용됩니다.`);
     }
   } catch (err) {
@@ -579,6 +579,9 @@ async function callVision(
   model: string,
   ollamaBaseUrl: string,
   apiKey: string | undefined,
+  // R30 P2 (v0.18.18): 사용자 Stop / 문서 전환 시 in-flight Vision 호출을 즉시 abort.
+  // 이전엔 batch loop 가 in-flight Promise.allSettled 가 끝날 때까지 대기 + cloud 토큰 계속 청구.
+  signal?: AbortSignal,
 ): Promise<string> {
   switch (provider) {
     case 'ollama': {
@@ -591,7 +594,7 @@ async function callVision(
         stream: false,
         keep_alive: OLLAMA_KEEP_ALIVE,
       });
-      const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, config.timeoutMs);
+      const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, config.timeoutMs, signal);
       return config.sanitize(JSON.parse(result).response || '');
     }
     case 'claude': {
@@ -612,7 +615,7 @@ async function callVision(
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
-      }, body, config.timeoutMs);
+      }, body, config.timeoutMs, signal);
       const parsed = JSON.parse(result);
       return config.sanitize(parsed.content?.[0]?.text || '');
     }
@@ -632,7 +635,7 @@ async function callVision(
       const result = await httpPost('https://api.openai.com/v1/chat/completions', {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
-      }, body, config.timeoutMs);
+      }, body, config.timeoutMs, signal);
       const parsed = JSON.parse(result);
       return config.sanitize(parsed.choices?.[0]?.message?.content || '');
     }
@@ -645,10 +648,11 @@ export async function analyzeImage(
   model: string,
   ollamaBaseUrl: string,
   apiKey: string | undefined,
+  signal?: AbortSignal,
 ): Promise<string> {
   return callVision(
     { prompt: IMAGE_ANALYSIS_PROMPT, maxTokens: 300, timeoutMs: 60000, sanitize: sanitizeVisionResponse },
-    imageBase64, provider, model, ollamaBaseUrl, apiKey,
+    imageBase64, provider, model, ollamaBaseUrl, apiKey, signal,
   );
 }
 
@@ -728,7 +732,8 @@ function httpPost(
           //            해 오탐과 단편 매칭을 방지.
           // - sk-ant-api... : Anthropic Claude 키 형식
           const sanitized = rawBody
-            .replace(/Bearer\s+[A-Za-z0-9._\-+/=]+/gi, 'Bearer [REDACTED]')
+            // R30 P2 (v0.18.18): RFC 6750 token68 char class 에 `~` 가 포함되므로 누락 회피
+            .replace(/Bearer\s+[A-Za-z0-9._~\-+/=]+/gi, 'Bearer [REDACTED]')
             .replace(/\bsk-ant-[A-Za-z0-9_\-]{20,}\b/g, 'sk-ant-[REDACTED]')
             .replace(/\bsk-(?:proj-|test-|live-)?[A-Za-z0-9_\-]{20,}\b/g, 'sk-[REDACTED]');
           let detail = sanitized.slice(0, 500);
