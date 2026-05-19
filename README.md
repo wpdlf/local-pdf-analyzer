@@ -41,10 +41,10 @@
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.17.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.18.exe
 
 # GitHub CLI 로 attestation 검증 (선택)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.17.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.18.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## 사용 방법
@@ -175,8 +175,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - **렌더 에러 복구** — 예기치 못한 UI 오류 발생 시 "다시 시도" 버튼으로 새로고침 없이 복구 시도 (민감 경로 자동 마스킹)
 - **언어 즉시 전환** — 설정에서 한국어/English 변경 시 전체 화면이 즉시 반영 (재시작 불필요)
 - **매직바이트 기반 PDF 검증** — 파일 전체를 메모리에 로드하기 전에 `%PDF-` 시그니처를 선행 확인하여 잘못된 파일 즉시 거부
-- **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **257건** (v0.17.x 에서 +13, v0.18.x 누적 +162)
-- **빌드 무결성 (v0.18.8 ~ v0.18.17 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.11, npm ≥ 10)를 추가. v0.18.13 에서 `asarUnpack: ["**/cmaps/**"]` 도입(packaged build 의 CJK CMap 안전 보장) + R29 P1 회귀 픽스 9건. v0.18.15 에서 Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware 동시성 (Ollama 3 / cloud 8) — 성능 트랙 1라운드. v0.18.16 에서 PdfViewer 페이지 가상화 (IntersectionObserver lazy render, 100p PDF 렌더 canvas 95% 감소) — 성능 트랙 2라운드. v0.18.17 에서 R30 풀-QA P1 6건 (Promise.race 타이머 leak / PdfViewer viewport race / lockfile drift / 빈 image name 가드 / targetPage 폴링 stuck / workflow node-version drift) 정리
+- **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **259건** (v0.17.x 에서 +13, v0.18.x 누적 +164)
+- **빌드 무결성 (v0.18.8 ~ v0.18.18 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.11, npm ≥ 10)를 추가. v0.18.13 에서 `asarUnpack: ["**/cmaps/**"]` 도입(packaged build 의 CJK CMap 안전 보장) + R29 P1 회귀 픽스 9건. v0.18.15 에서 Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware 동시성 (Ollama 3 / cloud 8) — 성능 트랙 1라운드. v0.18.16 에서 PdfViewer 페이지 가상화 (IntersectionObserver lazy render, 100p PDF 렌더 canvas 95% 감소) — 성능 트랙 2라운드. v0.18.17 에서 R30 풀-QA P1 6건 (Promise.race 타이머 leak / PdfViewer viewport race / lockfile drift / 빈 image name 가드 / targetPage 폴링 stuck / workflow node-version drift) 정리. v0.18.18 에서 R30 P2 + R29 QA P2 잔여 small-fix 6건 묶음 (Vision in-flight abort / setNotice 자동 dismiss / vitest coverage / LOCALHOST_HOSTS 통합 / Bearer regex `~` / shell:open-external 길이 캡)
 - **페이지 인용 + 사이드 PDF 뷰어 (v0.17.0)** — 요약/Q&A 답변의 각 핵심 사실에 출처 페이지 `[p.N]` 자동 생성, 클릭 시 우측 패널에서 해당 페이지 즉시 확인. RAG 청크에 page 메타데이터 전파 + LLM 프롬프트 CITATION_RULES(5 언어) 주입 + pdfjs-dist lazy 뷰어 + react-markdown text-block 오버라이드로 구현. v0.17.1 에서 단락별 inline 라벨로 인용 빈도 대폭 향상
 - **가로 리사이즈 핸들 (v0.17.2)** — PDF 뷰어 패널 열렸을 때 중앙 구분선 드래그로 좌/우 비율 20~80% 자유 조정. Pointer + 키보드(← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage 영속화. PDF 는 `ResizeObserver` + 200ms debounce 로 자동 재렌더
 - **인용 후처리 정규화 (v0.17.1)** — LLM 이 간혹 생성하는 괄호 감싸기 `([p.5])` 나 독립 목록 항목 `- [p.44]` 을 자동으로 본문 문장 끝에 부착
@@ -242,7 +242,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG 는 v0.18.9 부터 공증 자격 추가 시까지 일시 중단) |
-| 테스트 | Vitest (257개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9; `vitest.config.mts` + `test/setup.ts` 진입점 도입, v0.18.11) |
+| 테스트 | Vitest (259개 단위 테스트) + `tsc --noEmit` strict 타입 체크 (`noUncheckedIndexedAccess` 활성, v0.18.8; PR/release CI 양쪽에서 강제, v0.18.9; `vitest.config.mts` + `test/setup.ts` 진입점 도입, v0.18.11) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화, 메모리 캐시로 hot path 최적화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -290,7 +290,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (257개)
+    │   └── __tests__/         # 단위 테스트 (259개)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -532,6 +532,11 @@ PDF 파일
 | 빈 image name op 1초 낭비 (v0.18.17) | `extractPageImages` 의 R29 가드를 `length > 0` 까지 좁힘 — `page.objs.get('')` 가 callback 미호출로 1s 타임아웃 낭비하던 dead path 사전 거절 |
 | package-lock.json root version drift (v0.18.17) | lockfile root 가 `0.18.9` 에 박혀 7 릴리즈 불일치. 향후 contributor 의 `npm ci` 실패 위험. `npm install --package-lock-only` 로 동기화 + version-bump 워크플로에 반영 |
 | Workflow node-version drift (v0.18.17) | `node-version: 20` (bare) ↔ `engines >=20.11` 불일치 (미래 cache 가 20.10 으로 떨어지면 violation). `'20.11'` 명시. `test.yml` 의 `npm audit` step 을 `\|\| true` → `continue-on-error: true` 로 교체해 진짜 실행 실패와 advisory 출력 구분 |
+| Vision in-flight abort 미배선 (v0.18.18) | `analyzeImage` IPC 체인에 `requestId`/`AbortSignal` 추가 — Stop / 문서 전환 / 타임아웃 시 in-flight Vision (특히 Claude·OpenAI) 호출을 즉시 끊어 토큰 추가 청구 차단. `use-summarize` 가 in-flight requestId 추적 + `isGenerating` false 감지 시 폴링으로 `ai.abort` 전체 호출 |
+| 일시 notice 영구 잔류 (v0.18.18) | `setNotice` 후 6초 자동 dismiss + 새 호출 시 이전 타이머 cancel — 다중 파일 드롭 안내 등이 파싱 완료 후에도 화면에 남던 UX 문제 해결 |
+| `LOCALHOST_HOSTS` 4곳 drift 위험 (v0.18.18) | `['localhost','127.0.0.1','::1']` 인라인 리터럴 4곳을 `src/shared/constants.ts` 의 `LOCALHOST_HOSTS` + `isLocalhostHost` 헬퍼로 통합. 한쪽만 수정 시 SSRF 우회 발생할 수 있는 drift 위험 차단 |
+| Bearer 토큰 redaction 누락 char (v0.18.18) | redaction regex 에 `~` 추가 — RFC 6750 token68 char class 와 일치시켜 토큰 접미부 누출 가능성 차단 (defense-in-depth) |
+| `shell:open-external` 입력 길이 무캡 (v0.18.18) | URL parser 진입 전 2048 chars cap — 손상된 renderer 가 multi-MB URL 을 보내 parser 에 부담을 주는 경로 사전 차단 |
 
 ## 라이선스
 
