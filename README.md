@@ -41,10 +41,10 @@
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.15.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.16.exe
 
 # GitHub CLI 로 attestation 검증 (선택)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.15.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.16.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## 사용 방법
@@ -176,7 +176,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - **언어 즉시 전환** — 설정에서 한국어/English 변경 시 전체 화면이 즉시 반영 (재시작 불필요)
 - **매직바이트 기반 PDF 검증** — 파일 전체를 메모리에 로드하기 전에 `%PDF-` 시그니처를 선행 확인하여 잘못된 파일 즉시 거부
 - **단위 테스트 커버리지** — 핵심 RAG/citation/Q&A 경로 회귀 방지 테스트 **256건** (v0.17.x 에서 +13, v0.18.x 누적 +161)
-- **빌드 무결성 (v0.18.8 ~ v0.18.15 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.11, npm ≥ 10)를 추가. v0.18.13 에서 `asarUnpack: ["**/cmaps/**"]` 도입(packaged build 의 CJK CMap 안전 보장) + R29 P1 회귀 픽스 9건. v0.18.15 에서 Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware 동시성 (Ollama 3 / cloud 8) — 성능 트랙 1라운드
+- **빌드 무결성 (v0.18.8 ~ v0.18.16 누적 강화)** — 릴리즈마다 인스톨러 SHA-256 해시 자동 게시 + Sigstore build provenance attestation. GitHub Actions 워크플로의 third-party action 들은 SHA pin + `npm ci` + lockfile 동기화로 빌드 재현성 확보. v0.18.9 에서 모든 job 에 `timeout-minutes` 추가, test job 에 Ubuntu/Windows OS matrix 적용, `tsc --noEmit` 게이트를 PR/release 양쪽에 강제하여 `noUncheckedIndexedAccess` 류 strict 옵션이 회귀 없이 유지되도록 함. v0.18.10 에서 `windows-latest → windows-2025` 선제 pin. v0.18.11 에서 `actions/checkout` · `actions/setup-node` 를 Node.js 24 호환 메이저(v6)로 이전하고, `npm audit --audit-level=high` advisory 단계와 `package.json` `engines` 필드(node ≥ 20.11, npm ≥ 10)를 추가. v0.18.13 에서 `asarUnpack: ["**/cmaps/**"]` 도입(packaged build 의 CJK CMap 안전 보장) + R29 P1 회귀 픽스 9건. v0.18.15 에서 Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware 동시성 (Ollama 3 / cloud 8) — 성능 트랙 1라운드. v0.18.16 에서 PdfViewer 페이지 가상화 (IntersectionObserver lazy render, 100p PDF 렌더 canvas 95% 감소) — 성능 트랙 2라운드
 - **페이지 인용 + 사이드 PDF 뷰어 (v0.17.0)** — 요약/Q&A 답변의 각 핵심 사실에 출처 페이지 `[p.N]` 자동 생성, 클릭 시 우측 패널에서 해당 페이지 즉시 확인. RAG 청크에 page 메타데이터 전파 + LLM 프롬프트 CITATION_RULES(5 언어) 주입 + pdfjs-dist lazy 뷰어 + react-markdown text-block 오버라이드로 구현. v0.17.1 에서 단락별 inline 라벨로 인용 빈도 대폭 향상
 - **가로 리사이즈 핸들 (v0.17.2)** — PDF 뷰어 패널 열렸을 때 중앙 구분선 드래그로 좌/우 비율 20~80% 자유 조정. Pointer + 키보드(← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage 영속화. PDF 는 `ResizeObserver` + 200ms debounce 로 자동 재렌더
 - **인용 후처리 정규화 (v0.17.1)** — LLM 이 간혹 생성하는 괄호 감싸기 `([p.5])` 나 독립 목록 항목 `- [p.44]` 을 자동으로 본문 문장 끝에 부착
@@ -525,6 +525,7 @@ PDF 파일
 | Ollama cold-load 페널티 (v0.18.15, 성능) | `/api/generate` (텍스트 + Vision) / `/api/embed` 3곳 모두 `keep_alive: '30m'` 명시 — 기본 5분 후 모델 unload 로 발생하던 cold-load 페널티(수 초~수십 초) 제거. 한 세션의 청크 요약/통합/Q&A/검증/임베딩 연쇄 호출이 모두 warm cache |
 | 단일 808KB renderer chunk (v0.18.15, 성능) | `electron.vite.config.ts` 의 `manualChunks` 로 vendor 분리 — main chunk 808 KB → 304 KB (62% 감소). app 코드 변경 시 vendor cache 유지 |
 | 클라우드 Vision 동시성 부족 (v0.18.15, 성능) | `analyzeDocumentImages` provider-aware 동시성 (Ollama 3 / Claude·OpenAI 8) — 이미지 많은 PDF 의 클라우드 분석 시간 ~30-40% 단축 |
+| PdfViewer bulk-render 메모리/지연 (v0.18.16, 성능) | sequential bulk render → `IntersectionObserver` 기반 on-demand 큐 (rootMargin '100% 0px' lookahead). 100p PDF 인용 클릭 시 렌더 canvas 가 ~5장만 활성 (기존 100장 대비 95% 감소). 500p PDF 메모리도 방문 페이지 수에 비례 |
 
 ## 라이선스
 

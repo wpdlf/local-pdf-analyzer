@@ -42,10 +42,10 @@ Every release attaches the installer's **SHA-256 hash** as an asset (`SHA256SUMS
 
 ```bash
 # Windows (PowerShell)
-Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.15.exe
+Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-0.18.16.exe
 
 # Verify the Sigstore attestation via GitHub CLI (optional)
-gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.15.exe --repo wpdlf/local-pdf-analyzer
+gh attestation verify ./Local-PDF-Analyzer-Setup-0.18.16.exe --repo wpdlf/local-pdf-analyzer
 ```
 
 ## How to Use
@@ -177,7 +177,7 @@ Vision AI automatically recognizes text page-by-page in image-based/scanned PDFs
 - **Instant language switch** — Toggling Korean/English in Settings reflects across the whole UI immediately (no restart required)
 - **Magic-byte PDF validation** — `%PDF-` signature is verified before the file is fully loaded into memory, rejecting fakes early
 - **Unit test coverage** — **256 regression tests** for RAG / citation / Q&A core paths (+13 in v0.17.x, +161 cumulative across v0.18.x)
-- **Build integrity (cumulatively hardened across v0.18.8 ~ v0.18.15)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds. v0.18.9 adds `timeout-minutes` on every job, an Ubuntu/Windows OS matrix on the test job, and a mandatory `npx tsc --noEmit` gate on both PR and release pipelines so strict flags like `noUncheckedIndexedAccess` cannot silently regress. v0.18.10 pins the Windows runner from `windows-latest` to `windows-2025` ahead of the June 2026 migration. v0.18.11 bumps `actions/checkout` and `actions/setup-node` to their Node.js 24-compatible majors (v6), adds an advisory `npm audit --audit-level=high` step, and declares an `engines` field in `package.json` (node ≥ 20.11, npm ≥ 10). v0.18.13 introduces `asarUnpack: ["**/cmaps/**"]` (so pdfjs CMap files survive asar packing) plus 9 R29 P1 hardening fixes. v0.18.15 adds Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware concurrency (Ollama 3 / cloud 8) — first performance track round
+- **Build integrity (cumulatively hardened across v0.18.8 ~ v0.18.16)** — Each release auto-publishes installer SHA-256 hashes and a Sigstore build provenance attestation. CI workflows pin every third-party action by full SHA, use `npm ci`, and keep the lockfile in sync to guarantee reproducible builds. v0.18.9 adds `timeout-minutes` on every job, an Ubuntu/Windows OS matrix on the test job, and a mandatory `npx tsc --noEmit` gate on both PR and release pipelines so strict flags like `noUncheckedIndexedAccess` cannot silently regress. v0.18.10 pins the Windows runner from `windows-latest` to `windows-2025` ahead of the June 2026 migration. v0.18.11 bumps `actions/checkout` and `actions/setup-node` to their Node.js 24-compatible majors (v6), adds an advisory `npm audit --audit-level=high` step, and declares an `engines` field in `package.json` (node ≥ 20.11, npm ≥ 10). v0.18.13 introduces `asarUnpack: ["**/cmaps/**"]` (so pdfjs CMap files survive asar packing) plus 9 R29 P1 hardening fixes. v0.18.15 adds Ollama `keep_alive: '30m'` + renderer `manualChunks` (main chunk 808→304 KB, -62%) + Vision provider-aware concurrency (Ollama 3 / cloud 8) — first performance-track round. v0.18.16 introduces PdfViewer page virtualization (IntersectionObserver-driven lazy render, ~95% fewer canvases for a 100-page citation click) — second performance-track round
 - **Page citations + side PDF viewer (v0.17.0)** — Summary/Q&A answers automatically carry `[p.N]` source-page citations at almost every key sentence. Click to open a right-side PDF viewer panel that scrolls to the cited page. Built on page-aware RAG chunks + LLM prompt injection (5 languages) + lazy pdfjs-dist viewer + react-markdown text-block overrides. Citation frequency significantly improved in v0.17.1 via paragraph-level inline labels
 - **Horizontal resize handle (v0.17.2)** — when the PDF viewer panel is open, drag the central divider to freely adjust the left/right ratio between 20~80%. Pointer + keyboard (← → Home End) + ARIA (`role="separator"`, `aria-valuenow`) + localStorage persistence. PDF pages auto re-render via `ResizeObserver` + 200ms debounce
 - **Citation placement normalization (v0.17.1)** — LLM mistakes like `([p.5])` wrapping or standalone list items `- [p.44]` are automatically re-attached to the preceding sentence
@@ -503,6 +503,7 @@ PDF File
 | Ollama cold-load latency (v0.18.15, performance) | All three Ollama calls (`/api/generate` text + Vision, `/api/embed`) now send `keep_alive: '30m'` — the default 5-minute model TTL caused cold-load penalties (seconds to tens of seconds) on every fresh chunk-summary / Q&A / embed call within the same session. Now warm cache for the whole session |
 | Single 808 KB renderer chunk (v0.18.15, performance) | Added `manualChunks` to the Vite renderer config splitting `react-vendor`, `pdfjs`, `markdown` into separate chunks — main app chunk dropped 808 KB → 304 KB (-62%). Vendor chunks survive app-code edits as cache |
 | Cloud Vision under-concurrency (v0.18.15, performance) | `analyzeDocumentImages` made provider-aware (Ollama 3 / Claude·OpenAI 8) — image-heavy PDFs analyzed via cloud providers complete ~30-40% faster |
+| PdfViewer bulk-render memory / latency (v0.18.16, performance) | Sequential bulk render replaced with `IntersectionObserver`-driven on-demand queue (rootMargin `'100% 0px'` lookahead). A 100-page citation click now keeps only ~5 active canvases (≈95% fewer than the previous full render); 500-page memory grows proportionally to visited pages, not document size |
 
 ## License
 
