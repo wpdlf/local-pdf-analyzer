@@ -94,7 +94,7 @@ export type ElectronAPI = {
       language?: string;
     }) => Promise<{ success: boolean; error?: string; code?: string }>;
     abort: (requestId: string) => Promise<{ success: boolean }>;
-    analyzeImage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; description?: string; error?: string }>;
+    analyzeImage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; description?: string; error?: string; code?: string }>;
     ocrPage: (imageBase64: string) => Promise<{ success: boolean; text?: string; error?: string }>;
     embed: (texts: string[], requestId?: string) => Promise<{ success: boolean; embeddings?: number[][]; model?: string; error?: string }>;
     checkEmbedModel: () => Promise<{ available: boolean; model?: string }>;

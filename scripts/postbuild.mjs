@@ -20,5 +20,14 @@ if (!existsSync(src)) {
   process.exit(1);
 }
 
-cpSync(src, dest, { recursive: true });
+// R31 P2 (v0.18.19): cpSync 실패 시 친절한 메시지로 종료.
+// 이전엔 ENOENT/EACCES/EEXIST 등이 raw stack trace 로 노출돼 빌드 실패 원인 파악이 어려웠다.
+try {
+  cpSync(src, dest, { recursive: true });
+} catch (err) {
+  console.error(`[postbuild] cmaps copy failed: ${src} -> ${dest}`);
+  console.error(`[postbuild] reason: ${err instanceof Error ? err.message : String(err)}`);
+  console.error('[postbuild] dest 디렉터리에 read-only 파일이 남아 있거나 권한 문제일 수 있습니다. out/ 을 비우고 재시도하세요.');
+  process.exit(1);
+}
 console.log(`[postbuild] copied cmaps: ${src} -> ${dest}`);

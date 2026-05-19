@@ -56,13 +56,13 @@ export class AppErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean; error: Error | null }
 > {
-  state = { hasError: false, error: null as Error | null };
+  override state = { hasError: false, error: null as Error | null };
 
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error: Error, info: { componentStack?: string }) {
+  override componentDidCatch(error: Error, info: { componentStack?: string }) {
     // 개발 모드 콘솔 + Electron 메인 프로세스 로그로 전달 가능
     console.error('[AppErrorBoundary] Render error:', error, info.componentStack);
   }
@@ -77,7 +77,7 @@ export class AppErrorBoundary extends Component<
     this.setState({ hasError: false, error: null });
   };
 
-  render() {
+  override render() {
     if (this.state.hasError) {
       // i18n 사용 불가(렌더 트리 밖) — 한/영 동시 표기로 최소 장벽
       const rawMessage = this.state.error?.message || (this.state.error ? String(this.state.error) : '');

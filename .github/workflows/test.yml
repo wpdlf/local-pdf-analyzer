@@ -47,8 +47,35 @@ jobs:
       # R29 #1: supply-chain 가시성 — high 이상의 알려진 취약점을 PR/push 단계에서 빠르게 노출.
       # 현재 알려진 dev-only 의존성(vite/postcss/xmldom/ip-address) 은 major bump 가 필요해 별도 라운드 예정.
       # 그동안 회귀 도입을 막기 위해 high 이상만 경고로 출력하고 빌드는 막지 않는다.
-      # R30 (v0.18.17): `|| true` 대신 `continue-on-error: true` 사용 —
-      #   네트워크 실패 등 진짜 audit 실행 실패와 advisory 출력을 구분 가능하게 함.
+      # R31 P2 (v0.18.19): step summary 에 advisory 결과 명시 노출.
+      # `continue-on-error: true` 가 step 실패는 흡수했지만 결과가 raw 로그에만 묻혀
+      # 사용자가 advisory 존재를 인지하기 어려웠음. JSON 으로 파싱해 GITHUB_STEP_SUMMARY 에 카운트 출력.
       - name: npm audit (advisory, non-blocking)
         continue-on-error: true
-        run: npm audit --audit-level=high
+        shell: bash
+        run: |
+          set +e
+          AUDIT_JSON=$(npm audit --json 2>/dev/null || true)
+          if [ -z "$AUDIT_JSON" ]; then
+            echo "## npm audit" >> "$GITHUB_STEP_SUMMARY"
+            echo ":warning: audit 실행 실패 (네트워크 등)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          HIGH=$(node -e "const j=JSON.parse(process.argv[1]);const v=j.metadata?.vulnerabilities||{};console.log((v.high||0)+(v.critical||0));" "$AUDIT_JSON")
+          MODERATE=$(node -e "const j=JSON.parse(process.argv[1]);const v=j.metadata?.vulnerabilities||{};console.log(v.moderate||0);" "$AUDIT_JSON")
+          LOW=$(node -e "const j=JSON.parse(process.argv[1]);const v=j.metadata?.vulnerabilities||{};console.log(v.low||0);" "$AUDIT_JSON")
+          {
+            echo "## npm audit (advisory)"
+            echo ""
+            echo "| Severity | Count |"
+            echo "|---|---|"
+            echo "| high+critical | $HIGH |"
+            echo "| moderate | $MODERATE |"
+            echo "| low | $LOW |"
+            if [ "$HIGH" -gt 0 ]; then
+              echo ""
+              echo ":warning: **$HIGH** high/critical advisory 발견. 빌드는 통과하지만 review 필요 (`npm audit --audit-level=high` 로 상세).";
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          # human-readable 출력도 logs 에 남김 (기존 동작 보존).
+          npm audit --audit-level=high || true

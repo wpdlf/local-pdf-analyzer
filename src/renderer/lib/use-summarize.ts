@@ -490,6 +490,9 @@ export function useSummarize() {
         });
         // R30 P2 (v0.18.18): in-flight Vision 호출 추적 — Stop / 문서 전환 / 타임아웃 시
         // 즉시 ai.abort 로 끊어 cloud 토큰 비용 추가 청구를 막는다.
+        // R31 P2 (v0.18.19): stopWatch interval 을 try 안으로 이동 + finally 단일 출구화.
+        // 이전엔 catch/정상 경로에서 중복 `clearInterval` 호출 + 향후 동기 throw 가 setInterval
+        // 호출 직후에 끼면 interval leak 위험이 있었다. try/finally 패턴으로 통일.
         const visionInFlight = new Set<string>();
         const abortAllVisionInFlight = (): void => {
           if (visionInFlight.size === 0) return;
@@ -498,16 +501,18 @@ export function useSummarize() {
           }
           visionInFlight.clear();
         };
-        // isGenerating 이 false 가 되는 순간을 폴링으로 감지해 즉시 abort.
-        // store.subscribe 도 가능하나 isGenerating 외 다른 필드 변경에도 발화하므로
-        // 가벼운 셀프 폴링이 동등 효과 + 의존성 최소.
-        const stopWatch = setInterval(() => {
-          if (timedOut || !useAppStore.getState().isGenerating) {
-            abortAllVisionInFlight();
-            clearInterval(stopWatch);
-          }
-        }, 250);
+        let stopWatch: ReturnType<typeof setInterval> | null = null;
+        let imageAnalysisFailed = false;
         try {
+          // isGenerating 이 false 가 되는 순간을 폴링으로 감지해 즉시 abort.
+          // store.subscribe 도 가능하나 isGenerating 외 다른 필드 변경에도 발화하므로
+          // 가벼운 셀프 폴링이 동등 효과 + 의존성 최소.
+          stopWatch = setInterval(() => {
+            if (timedOut || !useAppStore.getState().isGenerating) {
+              abortAllVisionInFlight();
+              if (stopWatch !== null) { clearInterval(stopWatch); stopWatch = null; }
+            }
+          }, 250);
           const imageDescriptions = await analyzeDocumentImages(
             doc, client, setProgress, setProgressInfo, startTime,
             () => timedOut || !useAppStore.getState().isGenerating,
@@ -515,7 +520,6 @@ export function useSummarize() {
             (id) => visionInFlight.add(id),
             (id) => visionInFlight.delete(id),
           );
-          clearInterval(stopWatch);
           const enriched = enrichDocumentWithImages(doc, imageDescriptions);
           textForSummary = enriched.textForSummary;
           enrichedPagesRef = enriched.enrichedPages;
@@ -526,10 +530,14 @@ export function useSummarize() {
             useAppStore.getState().setEnrichedPageTexts(enrichedPagesRef);
           }
         } catch (imgErr) {
-          clearInterval(stopWatch);
-          abortAllVisionInFlight();
+          imageAnalysisFailed = true;
           setError({ code: 'GENERATE_FAIL', message: (imgErr as Error).message });
-          // 중복 cleanup 제거 — outer finally에서 flushStream, setIsGenerating, timeout 정리 일괄 처리
+        } finally {
+          if (stopWatch !== null) { clearInterval(stopWatch); stopWatch = null; }
+          abortAllVisionInFlight();
+        }
+        if (imageAnalysisFailed) {
+          // outer finally 에서 flushStream / setIsGenerating / timeout 정리 일괄 처리.
           return;
         }
       }

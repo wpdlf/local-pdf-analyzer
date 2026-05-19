@@ -685,7 +685,11 @@ function registerIpcHandlers(): void {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Vision 분석 실패';
       const isAbort = msg === 'Aborted' || (err as Error & { code?: string })?.code === 'ABORT_ERR';
-      return { success: false, error: isAbort ? 'Aborted' : msg };
+      // R31 P2 (v0.18.19): 매직 문자열 'Aborted' 대신 code 필드 사용 — generate path 의
+      // `code: 'ABORTED'` 와 일관, renderer 가 code 로 매핑 가능.
+      return isAbort
+        ? { success: false, error: 'Aborted', code: 'ABORTED' }
+        : { success: false, error: msg };
     } finally {
       if (visionRequestId && controller) unregisterEmbedRequest(visionRequestId, controller);
     }
