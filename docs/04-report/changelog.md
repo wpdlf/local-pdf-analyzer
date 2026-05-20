@@ -6,11 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [0.18.19 patch] - 2026-05-20
+## [0.18.20] - 2026-05-20
 
-> v0.18.19 릴리즈 자산 덮어쓰기. 버전 번호 미상승 — 이미 배포된 v0.18.19 가
-> R32 P1+P2+P3 누적 + R33 결과 R34 P1+P2 적용된 빌드로 교체된다.
-> (과거 v0.18.18 patch 와 동일 패턴, 5차 덮어쓰기)
+> v0.18.19 자산 덮어쓰기 패턴 (5차) 으로 누적되었던 R32 + R33 + R34 (P1+P2) 작업을
+> 정식 minor 로 승격. GitHub Actions 풀 CI (Ubuntu/Windows test matrix → tsc strict →
+> Vitest 322 → Windows-2025 NSIS 빌드 → Sigstore attestation) 가 단일 태그 push 에서
+> 처음으로 일괄 검증되는 사이클. 누적 변경 합산:
+> - R32: P2 5 + P3 8 + P4 12 + P5 8
+> - R33 4-에이전트 QA 가 R32 도입 회귀 4건 추가 검출
+> - R34 P1: R33 회귀 정리 4
+> - R34 P2: 커버리지 보강 + 동반 P4 7 (settings-keys/enrich-doc/preload snapshot 단위 가드 26)
+> - 회귀 테스트 누적 +60 (262 → 322, 13 → 18 파일)
+> - Critical 34R 연속 zero
 
 ### Hardened (R34 P2 — 커버리지 보강 + P4 동반)
 - **`VALID_SETTINGS_KEYS` 단일 출처 모듈화** (`src/main/settings-keys.ts` 신설): 이전엔 `main/index.ts` 의 두 곳에 같은 키 배열이 별도 리터럴로 유지되어 한쪽만 갱신 시 settings 저장/로드 silent drift 위험. 단일 모듈로 통합 + 6-case drift 가드 단위 테스트 (Surface 4 P3).
