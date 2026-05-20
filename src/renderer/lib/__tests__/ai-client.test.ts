@@ -55,11 +55,13 @@ describe('AiClient', () => {
     });
     mockElectronAPI.ai.generate.mockImplementation(async (requestId: string) => {
       // 비동기로 토큰 전송 시뮬레이션
+      // v0.18.19 patch R32 P3: 50ms 로 상향 (이전 10ms) — CI 러너의 일시 부하로 인한
+      // race flake 마진 확보 (Surface 4 P4). 향후 fake timers 마이그레이션 후보.
       setTimeout(() => {
         tokenCallback?.(requestId, 'Hello');
         tokenCallback?.(requestId, ' World');
         doneCallback?.(requestId);
-      }, 10);
+      }, 50);
       return { success: true };
     });
 
@@ -80,7 +82,7 @@ describe('AiClient', () => {
       return vi.fn();
     });
     mockElectronAPI.ai.generate.mockImplementation(async () => {
-      setTimeout(() => doneCallback?.('test-uuid'), 10);
+      setTimeout(() => doneCallback?.('test-uuid'), 50); // R32 P3: 10→50ms
       return { success: false, error: 'API 키가 없습니다', code: 'API_KEY_MISSING' };
     });
 
@@ -113,7 +115,7 @@ describe('AiClient', () => {
       setTimeout(() => {
         tokenCallback?.(requestId, 'first');
         tokenCallback?.(requestId, 'second');
-      }, 5);
+      }, 50); // R32 P3: 5→50ms
       // generate 자체는 영원히 await 상태 — 소비자 break 후에도 done 미수신 상태가 유지됨
       return new Promise(() => { /* never resolves */ });
     });
@@ -170,13 +172,14 @@ describe('AiClient', () => {
     // generate 는 onDone 직후에야 거절되도록 setup: 토큰 → done → 다음 tick 에 reject
     mockElectronAPI.ai.generate.mockImplementation((requestId: string) => {
       // 토큰 1개 + done 을 같은 macrotask 에 dispatch
+      // R32 P3: 5/20ms → 50/100ms — CI 부하 마진.
       setTimeout(() => {
         tokenCallback?.(requestId, 'partial');
         doneCallback?.(requestId);
-      }, 5);
+      }, 50);
       // 그 뒤 한 tick 후에 거절 — main loop 가 이미 빠져나간 시점에 마이크로태스크 dispatch
       return new Promise((_resolve, reject) => {
-        setTimeout(() => reject(new Error('post-done failure')), 20);
+        setTimeout(() => reject(new Error('post-done failure')), 100);
       });
     });
 

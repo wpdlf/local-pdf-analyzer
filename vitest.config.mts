@@ -25,6 +25,13 @@ export default defineConfig({
     // 회귀 안정성을 위해 alphanumeric 순서로 고정 — 테스트 파일 추가 순서에 의존하는
     // 우발적 통과를 줄인다.
     sequence: { shuffle: false },
+    // v0.18.19 patch R32 P3: pool 명시적 pinning. 다수의 테스트 파일이 모듈 init 시점에
+    // `vi.stubGlobal('window', { electronAPI: ... })` 를 호출하는데, default worker pool 의
+    // 다중 fork 가 happy-dom 미도입 환경에서 같은 global 을 동시 stub 할 때 race 위험이 있다.
+    // `pool: 'forks'` 고정 + 파일 격리 보장으로 향후 환경 변경 시 stub 충돌 차단 (Surface 4 P4).
+    // Vitest 4 에서 poolOptions 가 top-level 옵션으로 변경되어 별도 forks 옵션은 두지 않음
+    // (default 가 file-level 격리 + 병렬).
+    pool: 'forks',
     // R30 P2 (v0.18.18): coverage 설정 도입.
     // 현재는 임계치를 강제하지 않고 (사용자가 `npm run test:coverage` 직접 호출 시에만 동작),
     // 향후 CI 통합 + 임계 게이트 도입 대비 베이스라인. 비측정 영역을 명시적으로 exclude 해

@@ -518,6 +518,7 @@ export function useRagBuilder(): void {
   // RAG 인덱스에 이미지 설명이 함께 들어가도록 한다 — "요약에는 이미지 설명이 있지만
   // Q&A 검색은 못 보는" UX 비대칭 해소.
   const enrichedPageTexts = useAppStore((s) => s.enrichedPageTexts);
+  const enrichedVersion = useAppStore((s) => s.enrichedPageTextsVersion);
   const prevKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -526,10 +527,11 @@ export function useRagBuilder(): void {
       prevKeyRef.current = null;
       return;
     }
-    // key 에 enrichment 플래그 포함 — raw→enriched 전이 시 자동 재빌드.
-    // enrichedPageTexts 는 setEnrichedPageTexts 가 새 배열로 교체할 때마다 identity 가 바뀌므로
-    // 길이를 fingerprint 로 사용해 한 문서 내 여러 번의 enrichment 도 감지 (실무상 1회지만 방어).
-    const enrichTag = enrichedPageTexts ? `e${enrichedPageTexts.length}` : 'r';
+    // key 에 enrichment 플래그 + version 포함 — raw→enriched 전이 + 동일 길이 재-enrich 도 감지.
+    // v0.18.19 patch R32 P3: 이전엔 `e${pageTexts.length}` 라 두 번째 Vision 패스가 길이만
+    // 같으면 같은 fingerprint 로 떨어져 RAG 재빌드가 누락됐다. store 의 enrichedPageTextsVersion
+    // 단조 카운터를 끼워 내용 변화도 포착 (R32 Surface 1 P4).
+    const enrichTag = enrichedPageTexts ? `e${enrichedPageTexts.length}v${enrichedVersion}` : 'r';
     const key = `${document.id}:${provider}:${enrichTag}`;
     if (key === prevKeyRef.current) return;
     prevKeyRef.current = key;
@@ -568,7 +570,7 @@ export function useRagBuilder(): void {
         activeBuildController = null;
       }
     };
-  }, [document, provider, enrichedPageTexts]);
+  }, [document, provider, enrichedPageTexts, enrichedVersion]);
 }
 
 export function useQa() {
@@ -801,7 +803,6 @@ export function useQa() {
         });
       }
     } finally {
-      clientRef.current = null;
       // v0.18.6 C25-M2 fix: stillOurs 체크를 finally 에도 적용.
       // 이전: 무조건 setIsQaGenerating(false)/setQaRequestId(null)/setQaVerifying(false) 실행.
       // 시나리오: Stop+resume 레이스에서 stale 핸들러의 for-await 루프가 다음 토큰까지
@@ -817,6 +818,11 @@ export function useQa() {
         useAppStore.getState().clearQaStream();
       }
       if (finallyStillOurs) {
+        // v0.18.19 patch R32 P3: clientRef.current null 화를 ownership 가드 안으로 이동.
+        // 이전엔 finally 진입과 동시에 unconditionally null 처리해 stale 핸들러가 새 세션의
+        // clientRef 를 clobber 할 수 있었음 (실 영향은 handleQaAbort 의 cleanup 정도지만
+        // 미래 consumer 가 추가되면 silent 버그가 될 수 있는 latent 결함, Surface 1 P5).
+        clientRef.current = null;
         useAppStore.getState().setIsQaGenerating(false);
         useAppStore.getState().setQaRequestId(null);
         // 검증 인디케이터는 ownership 일 때만 해제 — stale 핸들러가 새 세션의 검증 스피너를 끄는 것 방지.

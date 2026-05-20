@@ -613,7 +613,11 @@ export function useSummarize() {
     } catch (err) {
       const rawCode = (err instanceof Error && 'code' in err ? (err as Error & { code?: string }).code : undefined);
       // 사용자 의도적 abort는 에러로 표시하지 않음 (timeout은 별도 메시지 이미 표시됨)
-      if (rawCode !== 'ABORTED' && !timedOut && useAppStore.getState().document) {
+      // v0.18.19 patch R32 P3: docId 비교 추가 — 이전엔 단순 truthy 체크라 사용자가 mid-summarize
+      // 에 문서를 전환하면 old run 의 streamInterrupted 같은 non-ABORTED 에러가 새 문서 banner
+      // 에 표시되던 ownership leak (R32 Surface 1 P4).
+      const currentDoc = useAppStore.getState().document;
+      if (rawCode !== 'ABORTED' && !timedOut && currentDoc && currentDoc.id === doc.id) {
         // 유효한 AppErrorCode만 허용, 그 외는 GENERATE_FAIL로 매핑
         const validCodes = new Set(['PDF_NO_TEXT', 'GENERATE_TIMEOUT', 'API_KEY_MISSING', 'API_KEY_INVALID', 'OLLAMA_NOT_RUNNING']);
         const code = (rawCode && validCodes.has(rawCode) ? rawCode : 'GENERATE_FAIL') as AppError['code'];

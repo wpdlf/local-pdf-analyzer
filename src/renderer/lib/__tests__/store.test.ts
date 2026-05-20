@@ -74,8 +74,14 @@ describe('stream batching — qaStream', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     resetStreams();
+    // v0.18.19 patch R32 P3: appendQaStream 이 isQaGenerating=true 일 때만 토큰을 받도록
+    // 가드 추가됨 (ghost token 차단). 기존 배치 테스트는 그 가드를 우회하기 위해 명시 활성화.
+    useAppStore.setState({ isQaGenerating: true });
   });
-  afterEach(() => { vi.useRealTimers(); });
+  afterEach(() => {
+    vi.useRealTimers();
+    useAppStore.setState({ isQaGenerating: false });
+  });
 
   it('appendQaStream 도 동일하게 50ms batched flush 동작', () => {
     const s = useAppStore.getState();
@@ -101,6 +107,15 @@ describe('stream batching — qaStream', () => {
     s.appendQaStream('second');
     vi.advanceTimersByTime(50);
     expect(useAppStore.getState().qaStream).toBe('first second');
+  });
+
+  // v0.18.19 patch R32 P3 회귀 가드: isQaGenerating=false 면 토큰 무시.
+  it('isQaGenerating=false 일 때 append 호출은 qaStream 을 건드리지 않는다 (R32 P3 ghost-token race)', () => {
+    useAppStore.setState({ isQaGenerating: false });
+    const s = useAppStore.getState();
+    s.appendQaStream('zombie');
+    vi.advanceTimersByTime(100);
+    expect(useAppStore.getState().qaStream).toBe('');
   });
 });
 

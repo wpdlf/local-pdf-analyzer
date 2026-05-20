@@ -30,4 +30,17 @@ try {
   console.error('[postbuild] dest 디렉터리에 read-only 파일이 남아 있거나 권한 문제일 수 있습니다. out/ 을 비우고 재시도하세요.');
   process.exit(1);
 }
-console.log(`[postbuild] copied cmaps: ${src} -> ${dest}`);
+
+// v0.18.19 patch R32 P3: cpSync 가 ENOSPC / 중간 실패로 부분 복사된 채 빠져나오면 NSIS 가
+// 깨진 cmap 세트로 패키징되어 사용자가 설치 후에야 CJK 글리프 깨짐을 발견하는 silent
+// 결함이 가능. 대표 cmap 파일 존재 확인을 smoke test 로 둠 (Surface 4 P5).
+const SMOKE_FILES = ['Adobe-Japan1-UCS2.bcmap', 'Adobe-Korea1-UCS2.bcmap', 'Adobe-GB1-UCS2.bcmap'];
+for (const name of SMOKE_FILES) {
+  const probe = resolve(dest, name);
+  if (!existsSync(probe)) {
+    console.error(`[postbuild] cmaps smoke check FAILED: missing ${probe}`);
+    console.error('[postbuild] cmaps 복사가 부분적으로 실패했을 가능성. out/ 을 비우고 재시도하세요.');
+    process.exit(1);
+  }
+}
+console.log(`[postbuild] copied cmaps: ${src} -> ${dest} (smoke check ok)`);

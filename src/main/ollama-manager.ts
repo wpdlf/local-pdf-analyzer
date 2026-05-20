@@ -498,11 +498,18 @@ export class OllamaManager {
 
     if (process.platform === 'win32' && proc.pid) {
       // Windows: detached 프로세스 트리 전체 종료
+      // v0.18.19 patch R32 P3: taskkill 실패(권한 거부, AV 간섭, PID 재사용 race) 시 silent
+      // 처리하면 ollama.exe serve 자식 트리가 살아남아 port 11434 squat. 실패 시 fallback
+      // SIGKILL + 콘솔 로그로 가시화 (R32 Surface 2 P4).
       try {
         await new Promise<void>((resolve) => {
-          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], () => resolve());
+          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], (err) => {
+            if (err) console.warn(`[Ollama] taskkill failed for pid ${proc.pid}: ${err.message} — fallback SIGKILL`);
+            resolve();
+          });
         });
       } catch { /* taskkill 실패 시 무시 */ }
+      try { proc.kill('SIGKILL'); } catch { /* 이미 종료됨 */ }
     } else {
       try { proc.kill('SIGTERM'); } catch { /* 이미 종료된 프로세스 */ }
     }
@@ -651,11 +658,16 @@ export class OllamaManager {
     if (!proc) return;
     this.pullProcess = null;
     if (process.platform === 'win32' && proc.pid) {
+      // v0.18.19 patch R32 P3: 위 stop() 과 동일 패턴 — taskkill 실패 시 SIGKILL fallback.
       try {
         await new Promise<void>((resolve) => {
-          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], () => resolve());
+          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], (err) => {
+            if (err) console.warn(`[Ollama pull] taskkill failed for pid ${proc.pid}: ${err.message} — fallback SIGKILL`);
+            resolve();
+          });
         });
       } catch { /* 무시 */ }
+      try { proc.kill('SIGKILL'); } catch { /* 무시 */ }
     } else {
       try { proc.kill('SIGTERM'); } catch { /* 무시 */ }
     }

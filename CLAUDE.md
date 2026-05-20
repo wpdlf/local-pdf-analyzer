@@ -26,8 +26,19 @@ npm run package      # 빌드 + electron-builder 패키징
 **중요**:
 - `gh release create`에 `--tag` 대신 태그 이름만 전달
 - 태그 푸시가 CI를 트리거하므로 수동 빌드/업로드 불필요
-- CI 빌드에 약 3분 소요 — 릴리즈 생성 직후에는 설치 파일 미첨부 상태가 정상
+- CI 빌드에 약 8~12분 소요 (Ubuntu/Windows test 매트릭스 → Windows-2025 cold cache → electron-builder NSIS 서명). 릴리즈 생성 직후에는 설치 파일 미첨부 상태가 정상.
 - 릴리즈 생성 후 `gh run watch <run-id> --exit-status`로 CI 완료를 확인하고, 설치 파일 첨부를 `gh release view` 로 검증할 것
+
+## Code Signing
+
+`package.json` 의 `forceCodeSigning: false` 는 의도적 설정. EV 인증서를 도입하기 전까지는
+NSIS 인스톨러가 "알 수 없는 게시자" SmartScreen 경고와 함께 배포된다. 사용자가 첫 설치 시
+"추가 정보" → "실행" 으로 진행하도록 README 에 안내. (v0.18.19 patch R32 P3 노트)
+
+향후 EV 인증서 도입 시 다음을 함께 처리:
+- `package.json` `win.certificateFile` / `certificatePassword` (또는 CI secret)
+- `forceCodeSigning: true` 로 변경하여 서명 누락 시 빌드 실패하도록 게이트화
+- README 의 SmartScreen 안내 제거
 
 ## Tech Stack
 

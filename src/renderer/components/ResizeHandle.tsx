@@ -56,13 +56,16 @@ export function ResizeHandle({ containerRef }: ResizeHandleProps) {
     let delta = 0;
     if (e.key === 'ArrowLeft') delta = KEYBOARD_STEP; // 좌측 → 우측 넓어짐
     else if (e.key === 'ArrowRight') delta = -KEYBOARD_STEP;
+    // v0.18.19 patch R32 P3: WAI-ARIA separator 관례에 맞춰 Home=MIN, End=MAX 로 정합.
+    // 이전엔 Home=MAX_RATIO, End=MIN_RATIO 로 invert 되어 있어 스크린리더 사용자가
+    // 예상과 반대 동작에 혼란을 겪던 결함 (R32 Surface 3 P4).
     else if (e.key === 'Home') {
       e.preventDefault();
-      setCitationPanelWidth(MAX_RATIO);
+      setCitationPanelWidth(MIN_RATIO);
       return;
     } else if (e.key === 'End') {
       e.preventDefault();
-      setCitationPanelWidth(MIN_RATIO);
+      setCitationPanelWidth(MAX_RATIO);
       return;
     } else {
       return;

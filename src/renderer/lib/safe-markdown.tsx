@@ -134,11 +134,20 @@ export const safeComponents: Components = {
   img: ({ alt }) => {
     return <span>{alt || t('common.imagePlaceholder')}</span>;
   },
-  // page-citation-viewer: 인용 렌더링 주입
+  // page-citation-viewer: 인용 렌더링 주입.
+  // v0.18.19 patch R32 P3: heading / blockquote 도 커버. LLM 이 종종 "## 결론 [p.12]" 같이
+  // 헤딩에 인용을 다는데 이전엔 literal text 로 렌더되어 클릭 불가였다 (Surface 3 P5).
   p: ({ children }) => <p>{renderWithCitations(children)}</p>,
   li: ({ children }) => <li>{renderWithCitations(children)}</li>,
   td: ({ children }) => <td>{renderWithCitations(children)}</td>,
   th: ({ children }) => <th>{renderWithCitations(children)}</th>,
   em: ({ children }) => <em>{renderWithCitations(children)}</em>,
   strong: ({ children }) => <strong>{renderWithCitations(children)}</strong>,
+  h1: ({ children }) => <h1>{renderWithCitations(children)}</h1>,
+  h2: ({ children }) => <h2>{renderWithCitations(children)}</h2>,
+  h3: ({ children }) => <h3>{renderWithCitations(children)}</h3>,
+  h4: ({ children }) => <h4>{renderWithCitations(children)}</h4>,
+  h5: ({ children }) => <h5>{renderWithCitations(children)}</h5>,
+  h6: ({ children }) => <h6>{renderWithCitations(children)}</h6>,
+  blockquote: ({ children }) => <blockquote>{renderWithCitations(children)}</blockquote>,
 };

@@ -259,7 +259,11 @@ function warnOnce(bucket: Set<string>, id: string, message: string): void {
 function interpolate(template: string, params?: Record<string, string | number>, key?: string): string {
   if (!params) return template;
   return template.replace(/\{(\w+)\}/g, (_, name) => {
-    if (params[name] === undefined) {
+    // v0.18.19 patch R32 P3: `params[name] === undefined` 는 inherited 속성에 대해 false 인데,
+    // `params['toString']` 같은 prototype 속성은 함수로 떨어져 `String(...)` 으로 함수 소스가
+    // 템플릿에 주입되는 UI 오염 경로가 있었음. `Object.prototype.hasOwnProperty.call` 로
+    // own property 만 카운트하여 prototype 누출 차단 (Surface 3 P4).
+    if (!Object.prototype.hasOwnProperty.call(params, name)) {
       warnOnce(_warnedMissingParams, `${key ?? ''}:${name}`, `[i18n] missing param "${name}" for key "${key ?? '?'}"`);
       return `{${name}}`;
     }
@@ -274,7 +278,10 @@ export function t(key: TranslationKey, params?: Record<string, string | number>)
   const entry = _translations[key];
   if (!entry) {
     warnOnce(_warnedMissingKeys, key, `[i18n] missing translation key "${key}"`);
-    return key;
+    // v0.18.19 patch R32 P3: production 에서도 raw 키가 UI 에 노출되던 결함 보완.
+    // 미정의 키는 키 자체로 fallback 하되, 적어도 dot-segment 의 마지막 부분만 노출하여
+    // 사용자가 `app.modelHint` 같은 내부 식별자 전체를 보는 경험을 약화. dev/prod 동일 동작.
+    return key.split('.').pop() ?? key;
   }
   return interpolate(entry[lang] || entry['ko'], params, key);
 }
@@ -295,7 +302,8 @@ export function useT(): (key: TranslationKey, params?: Record<string, string | n
       const entry = _translations[key];
       if (!entry) {
         warnOnce(_warnedMissingKeys, key, `[i18n] missing translation key "${key}"`);
-        return key;
+        // R32 P3 (위 t() 와 동일 정책): 마지막 segment 만 fallback.
+        return key.split('.').pop() ?? key;
       }
       return interpolate(entry[lang] || entry['ko'], params, key);
     };

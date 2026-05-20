@@ -129,9 +129,16 @@ function createWindow(): BrowserWindow {
   // 프로덕션 빌드에서는 ELECTRON_RENDERER_URL 가 undefined → 기존 코드의
   // `url.startsWith('')` 이 항상 true 가 되어 방어가 무력화되던 버그를 수정.
   const devRendererUrl = process.env['ELECTRON_RENDERER_URL'];
+  // v0.18.19 patch R32 P3: file:// re-navigation 을 무조건 허용하지 않는다. 패키지 빌드의
+  // 정상 진입점은 단일 index.html 이라, 정확히 그 URL 만 통과시키고 임의의 file:// 타겟은
+  // 차단한다 (Surface 2 P4). 현재 외부 URL 을 로드하는 경로는 없어 reachability 가 낮지만
+  // defense-in-depth.
+  const packagedRendererUrl = app.isPackaged
+    ? `file://${path.join(__dirname, '../renderer/index.html').replace(/\\/g, '/')}`
+    : null;
   win.webContents.on('will-redirect', (event, url) => {
-    if (url.startsWith('file://')) return;
     if (!app.isPackaged && devRendererUrl && url.startsWith(devRendererUrl)) return;
+    if (packagedRendererUrl && url === packagedRendererUrl) return;
     event.preventDefault();
   });
 

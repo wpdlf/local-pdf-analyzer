@@ -21,6 +21,9 @@ let cachedDoc: { bytes: Uint8Array; doc: pdfjsLib.PDFDocumentProxy } | null = nu
 
 // store.pdfBytes 가 null 로 전환되면(resetSummaryState / 문서 close) 캐시된 doc 즉시 해제.
 // 모듈 스코프 단일 구독 — 앱 수명과 동일. HMR 리로드 시 dispose 로 리스너 + 캐시 정리.
+// v0.18.19 patch R32 P3 주의: 본 PdfViewer 모듈을 lazy-import 로 전환하면, 사용자가
+// 1st PdfViewer 마운트 전에 pdfBytes 가 null 로 떨어지는 케이스에서 본 구독이 아직 등록되지
+// 않아 cleanup 누락 가능. 현재는 SummaryViewer 가 정적 import 하므로 latent (Surface 3 P5).
 const unsubscribeCacheCleanup = useAppStore.subscribe((state, prev) => {
   if (prev.pdfBytes && !state.pdfBytes && cachedDoc) {
     const stale = cachedDoc;

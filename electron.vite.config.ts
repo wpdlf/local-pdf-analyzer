@@ -32,6 +32,10 @@ export default defineConfig({
       // 병렬화/HMR 부분 무효화 효과가 있어 cold start 와 reload 모두 체감 개선.
       rollupOptions: {
         output: {
+          // v0.18.19 patch R32 P3: pdf.worker.min.mjs 는 `pdfjs-dist/build/pdf.worker.min.mjs?url`
+          // import 로 별도 정적 자산으로 emit 되어(`assets/pdf.worker.min-*.mjs`, ~1.3MB)
+          // 본 manualChunks 와 무관하게 lazy-loaded. 'pdfjs' 청크는 메인 thread 측 pdfjs API
+          // 만 담는다. 이 비대칭은 의도된 것 — worker 파일은 Worker constructor 가 URL 로 받음.
           manualChunks: {
             'react-vendor': ['react', 'react-dom'],
             'pdfjs': ['pdfjs-dist'],

@@ -9,7 +9,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.18.19 patch] - 2026-05-20
 
 > v0.18.19 릴리즈 자산 덮어쓰기. 버전 번호 미상승 — 이미 배포된 v0.18.19 가
-> R32 P1+P2 누적 적용된 빌드로 교체된다. (과거 v0.18.18 patch 와 동일 패턴)
+> R32 P1+P2+P3 누적 적용된 빌드로 교체된다. (과거 v0.18.18 patch 와 동일 패턴)
+
+### Fixed (Minor — R32 P3: P4 12건 + P5 10건 정리 라운드)
+- **handleSummarize 카치 블록에 docId guard** (`use-summarize.ts:616`): 문서 전환 후 stale summarize 가 streamInterrupted 같은 non-ABORTED 에러로 throw 하면 새 문서 banner 에 표시되던 ownership leak 해소 (Surface 1 P4).
+- **appendQaStream 입구에 isQaGenerating 가드** (`store.ts`): clearQaStream 직후 in-flight 루프가 추가 토큰을 흘려 ghost-token 이 cancelled placeholder 뒤에 나타나던 race 차단 (Surface 1 P4).
+- **`enrichedPageTexts` version counter 도입** (`store.ts`, `use-qa.ts`): useRagBuilder fingerprint 가 `e${length}` 만 사용해 길이가 같은 두 번째 Vision 패스가 재빌드 트리거 안 되던 결함을 monotonic 카운터로 해소 (Surface 1 P4).
+- **`clientRef.current` null 화를 ownership 가드 안으로 이동** (`use-qa.ts`): stale 핸들러의 unconditional null 이 새 세션의 ref 를 clobber 할 수 있던 latent 결함 (Surface 1 P5).
+- **`taskkill` 실패 시 SIGKILL fallback + 로그** (`ollama-manager.ts`): 권한 거부 / AV / PID re-use race 시 ollama 자식 트리가 살아남아 port squat 하던 silent 결함 가시화 (Surface 2 P4).
+- **`will-redirect` file:// 일괄 허용 → 정확히 packaged renderer URL 만 통과** (`main/index.ts`): defense-in-depth (Surface 2 P4).
+- **`generate()` placeholder controller 즉시 등록** (`ai-service.ts`): streamRequest 가 자기 controller 를 set 하기까지의 한 틱 갭에 도착한 ai:abort 가 no-op 으로 떨어지던 race 해소 (Surface 2 P5).
+- **i18n `hasOwnProperty.call` 사용** (`i18n.ts:interpolate`): `params['toString']` 같은 prototype 누출로 함수 소스가 템플릿에 주입되는 경로 차단 (Surface 3 P4).
+- **i18n 미정의 키 fallback — 마지막 dot-segment** (`i18n.ts:t/useT`): production 에서 raw 키 (`app.modelHint`) 가 그대로 노출되던 결함을 마지막 세그먼트로 약화 (Surface 3 P4).
+- **`ResizeHandle` Home/End ARIA 관례 정합** (`ResizeHandle.tsx`): Home=MIN, End=MAX 로 swap — 스크린리더 사용자 예상과 일치 (Surface 3 P4).
+- **`safe-markdown` 헤딩 / blockquote 도 citation 렌더링** (`safe-markdown.tsx`): "## 결론 [p.12]" 같이 헤딩에 인용이 들어간 경우 literal text 가 아니라 CitationButton 으로 렌더 (Surface 3 P5).
+- **PdfViewer 모듈-스코프 store.subscribe latent 주석** (`PdfViewer.tsx`): 향후 lazy-import 전환 시 cleanup 누락 가능성 마킹 (Surface 3 P5).
+- **vitest pool='forks' 명시 + Vitest 4 마이그레이션** (`vitest.config.mts`): 다중 fork 가 `vi.stubGlobal('window', ...)` 를 동시 stub 하는 race 차단. Vitest 4 의 deprecated `poolOptions.forks` 도 정리 (Surface 4 P4).
+- **`ai-client.test.ts` setTimeout 5/10/20ms → 50/100ms** : CI 러너 일시 부하 마진 (Surface 4 P4).
+- **release.yml `fail-fast: false`** : Ubuntu 플레이크가 Windows 빌드를 cancel 하지 않도록 (Surface 4 P5).
+- **`scripts/postbuild.mjs` cmap smoke check** : 부분 복사 silent failure 가드 — 대표 cmap 3개 (`Adobe-Japan1-UCS2.bcmap` 등) 존재 확인 (Surface 4 P5).
+- **`req.setTimeout` 5분 가드에 settled 체크 추가** (`ai-service.ts`): 응답 헤더 후 idle timer take-over 시점에 본 callback 이 fire 해도 no-op (Surface 2 P5).
+- **`CLAUDE.md` CI 3분 → 8~12분** : `gh release view` 조기 호출로 사용자가 빌드 미첨부를 실패로 오해하는 경우 방지.
+- **`CLAUDE.md` Code Signing 섹션 신설** : `forceCodeSigning: false` 가 의도적 trade-off 임과 향후 EV 인증서 도입 절차 명시.
+- **`electron.vite.config.ts` pdfjs worker chunking 주석** : worker 파일이 manualChunks 와 무관하게 별도 정적 자산으로 emit 되는 의도 명시.
+
+### Tests (R32 P3)
+- **회귀 테스트 +1 케이스** (291→292): `store.test.ts` `isQaGenerating=false` 일 때 `appendQaStream` 이 무시됨 (R32 P3 ghost-token race).
+
+### Skipped (의도적 보존)
+- `splitIntoSentences` Latin 약어 false-split (P5) — verify pipeline 이 fail-safe.
+- `stripConversationalText` 과도 trim 잠재성 (P5) — 실 사례 빈도 낮음.
+
+---
 
 ### Fixed (Medium — R32 P2: 4-에이전트 병렬 QA P3 8건)
 - **Vision partial-failure stale enrichment 해소** (`use-summarize.ts:529`): 이미지 분석이 켜진 채로 모든 이미지가 실패해 `enrichedPagesRef` 가 null 인 경우, 이전 run 에서 세팅된 `enrichedPageTexts` 가 store 에 남아 RAG 가 stale enriched 데이터로 검색하던 결함. 명시적 null 세팅으로 raw `pageTexts` 재빌드를 강제 (Surface 1 P3).

@@ -148,6 +148,11 @@ interface AppState {
   // RAG 인덱스를 재빌드한다 — 그 결과 "요약에는 이미지 설명이 있지만 Q&A 검색은 못 봄" 비대칭 해소.
   // 문서 전환(setDocument) 시 자동으로 null 로 초기화.
   enrichedPageTexts: string[] | null;
+  // v0.18.19 patch R32 P3: setEnrichedPageTexts 가 호출될 때마다 단조 증가하는 카운터.
+  // useRagBuilder 의 fingerprint 가 이전엔 `e${pageTexts.length}` 였는데 length 가 동일한
+  // 두 번째 Vision 패스는 동일 fingerprint → 재빌드 트리거 안 됨 (Surface 1 P4). 이 카운터를
+  // 사용해 같은 길이/다른 내용의 enrichment 도 감지한다.
+  enrichedPageTextsVersion: number;
   setEnrichedPageTexts: (pages: string[] | null) => void;
 
   // 설정
@@ -321,6 +326,12 @@ export const useAppStore = create<AppState>((set) => ({
     return { qaMessages: msgs };
   }),
   appendQaStream: (token) => {
+    // v0.18.19 patch R32 P3: 세션이 이미 종료된 상태(isQaGenerating=false)면 토큰을 무시한다.
+    // 이전엔 handleQaAbort 가 clearQaStream 으로 cleared=true 를 세팅한 직후라도, in-flight
+    // for-await 루프가 next iteration 의 isQaGenerating 체크 전에 추가 토큰을 append 하면
+    // cleared 가 false 로 reset 되어 50ms flush 가 ghost token 을 qaStream 에 흘리던 경로
+    // (R32 Surface 1 P4). 토큰 입구에서 한 번 더 게이트.
+    if (!useAppStore.getState().isQaGenerating) return;
     qaStreamState.cleared = false;
     qaStreamState.buffer += token;
     if (!qaStreamState.flushTimer) {
@@ -372,7 +383,13 @@ export const useAppStore = create<AppState>((set) => ({
   setPdfBytes: (bytes) => set({ pdfBytes: bytes }),
 
   enrichedPageTexts: null,
-  setEnrichedPageTexts: (pages) => set({ enrichedPageTexts: pages }),
+  enrichedPageTextsVersion: 0,
+  // R32 P3: 매 호출마다 version 증가 → useRagBuilder fingerprint 가 길이만 같고 내용이 다른
+  // enrichment 도 정확히 감지하여 재빌드 트리거.
+  setEnrichedPageTexts: (pages) => set((s) => ({
+    enrichedPageTexts: pages,
+    enrichedPageTextsVersion: s.enrichedPageTextsVersion + 1,
+  })),
   // DR-01: 패널 너비 비율 — localStorage 에서 복원, 기본 0.5
   citationPanelWidth: (() => {
     try {

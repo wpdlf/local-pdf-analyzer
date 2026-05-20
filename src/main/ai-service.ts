@@ -130,6 +130,18 @@ export async function generate(
     activeRequests.delete(requestId);
   }
 
+  // v0.18.19 patch R32 P3: streamRequest 가 자기 controller 를 set 하기까지 한 틱 간격이
+  // 있어 그 사이에 도착한 ai:abort(sameId) 가 no-op 으로 떨어지던 결함. placeholder entry 를
+  // 즉시 등록하여 그 갭에 도착한 abort 도 잡는다 (Surface 2 P5).
+  // streamRequest 진입 시 자기 entry 로 덮어쓴다 (line 542 부근).
+  const placeholderController = new AbortController();
+  const placeholderNow = Date.now();
+  activeRequests.set(requestId, {
+    abort: () => placeholderController.abort(),
+    createdAt: placeholderNow,
+    startedAt: placeholderNow,
+  });
+
   const prompt = buildPrompt(request.text, request.type, request.language);
 
   switch (request.provider) {
@@ -523,7 +535,13 @@ function streamRequest(
       safeReject(err);
     });
 
+    // v0.18.19 patch R32 P3: 5분 전체 요청 타임아웃 (응답 헤더 도착 전 단계 보호).
+    // 응답이 들어오면 idle timer (60s) 가 더 짧은 보호막으로 동작 → 본 타임아웃은 사실상
+    // dormant 상태. `settled` 가드와 idle timer 의 res.destroy() 가 본 callback 의 실제
+    // 작동을 막아 누수는 없으나, 유지 비용 0이 아닌 timer 참조를 살려두는 것은 noise.
+    // 향후 idle timer 진입 시 `req.setTimeout(0)` 로 명시 해제 검토 (Surface 2 P5).
     req.setTimeout(300000, () => {
+      if (settled) return;
       streamAborted = true; // 타임아웃 후 응답 콜백 도착 시 idle timer 생성/데이터 처리 차단
       safeDeleteRequest();
       req.destroy();

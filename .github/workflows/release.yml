@@ -15,7 +15,11 @@ jobs:
     # R28: Windows 회귀(경로 구분자, pwsh 인용, cpSync 동작)를 사전 차단하기 위해 OS matrix 도입.
     # macOS는 release 빌드에서 제외했으므로 test에서도 제외.
     strategy:
-      fail-fast: true
+      # v0.18.19 patch R32 P3: fail-fast false — Ubuntu 플레이크가 Windows 빌드를 cancel 하지
+      # 않도록. 태그가 이미 push 된 상태에서 cancel 되면 재빌드를 위해 재태깅이 필요한데,
+      # 플레이크 회수가 잦은 npm-cache miss 등으로 사용자가 release 흐름을 막히는 비용이
+      # Windows 빌드 1개 추가 실행 비용보다 크다. Ubuntu 시그널은 그대로 보존.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-2025]
     runs-on: ${{ matrix.os }}
