@@ -673,10 +673,12 @@ export async function analyzeImageForOcr(
   model: string,
   ollamaBaseUrl: string,
   apiKey: string | undefined,
+  // v0.18.20 R32 P2: in-flight OCR 호출 abort 지원. analyzeImage 와 동일.
+  signal?: AbortSignal,
 ): Promise<string> {
   return callVision(
     { prompt: OCR_PROMPT, maxTokens: 2000, timeoutMs: 90000, sanitize: sanitizeOcrResponse },
-    imageBase64, provider, model, ollamaBaseUrl, apiKey,
+    imageBase64, provider, model, ollamaBaseUrl, apiKey, signal,
   );
 }
 

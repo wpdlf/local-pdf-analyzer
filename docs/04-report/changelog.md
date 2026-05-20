@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.20] - 2026-05-20
+
+### Fixed (High — R32 P1: 4-에이전트 병렬 QA P2 5건)
+- **Q&A cross-session 토큰 contamination 차단** (`store.ts:resetSummaryState`): 문서 전환 시 `setDocument()` → `resetSummaryState()` 가 store 플래그만 비우고 main 의 in-flight AiClient generator 는 토큰을 계속 yield 하여, 사용자가 새 문서로 빠르게 질문하면 stale 세션 토큰이 새 세션의 `qaStream`/`appendQaStream` 에 인터리브되던 race. `resetSummaryState` 가 in-flight `qaRequestId`/`currentRequestId` 모두에 `ai.abort` 를 직접 전파하여 root cause 차단 (Surface 1 P2).
+- **프롬프트 인젝션 — summary + assistant history 추가 방어** (`use-qa.ts:666, 139`): `sanitizePromptInput` 이 사용자 질문/refine 질문/RAG 청크에만 적용되고 `[요약 내용]` 의 summary text 와 `formatHistory` 의 assistant 분기는 sanitize 되지 않아, 악성 PDF 가 LLM 을 유도해 답변/요약에 `\n[질문]\n` / `\n---\n` 마커를 포함시키면 후속 턴 프롬프트 구조가 오염되던 indirect prompt injection. 양쪽 모두 sanitize 통과 (Surface 1 P2).
+- **PDF parse 오류 banner 경로 누출 차단** (`store.ts:setError`, `error-sanitize.ts` 신설): `AppErrorBoundary` 의 `sanitizeErrorPath` 는 render-time exception 채널만 커버해, App.tsx drop/Ctrl+O, PdfUploader 에서 `setError({ message: err.message })` 로 직접 banner 에 들어가는 경로는 pdfjs/main 의 절대경로를 그대로 노출했음. `setError` 자체에 `sanitizeErrorPath` 를 자동 적용하여 미래 호출자도 자동 커버. `sanitizeErrorPath` 는 `error-sanitize.ts` 로 추출하여 store 가 React 트리를 끌어들이지 않도록 분리 (Surface 3 P2).
+- **OCR 클라우드 abort 미전파 복구** (`main/index.ts:ai:ocr-page`, `ai-service.ts:analyzeImageForOcr`, `preload/index.ts:ocrPage`, `pdf-parser.ts:ocrFallback`): R30 P2 가 `ai:analyze-image` 만 고치고 OCR 경로는 누락되어, 클라우드 OCR `BATCH_SIZE=8` 에서 사용자 Stop 클릭이 다음 배치만 차단하고 in-flight 8건 (~90s/call) 의 토큰 청구는 끝까지 진행되던 결함. preload `ocrPage(base64, requestId?)` 시그니처 확장, main `ai:ocr-page` 핸들러를 `ai:analyze-image` 동일 패턴(`vision:` prefix namespacing, registerEmbedRequest) 으로 정합, `analyzeImageForOcr` 가 `AbortSignal` 수용하도록 시그니처 확장, pdf-parser 가 per-page requestId 발급 + `signal.addEventListener('abort', ...)` 로 abort 시 즉시 `ai.abort` 전파 (Surface 2 P2).
+- **CI audit step 가시성 — red CI 에서도 노출** (`.github/workflows/test.yml:53`): 이전엔 `npm test` 실패 시 후속 audit step 이 통째로 skip 되어 supply-chain 신호가 `GITHUB_STEP_SUMMARY` 에서 사라졌음. red CI 상황에서 advisory 가 가장 봐야 하는데 가려지던 결함. `if: always()` 추가하여 test 실패와 독립적으로 항상 출력. step 자체는 여전히 `continue-on-error: true` 로 non-blocking (Surface 4 P2).
+
+### Tests
+- **회귀 테스트 +11 케이스** (262→273): `store.test.ts` resetSummaryState abort propagation 6 (qa/sum 각각, 양쪽, 둘다 null, reset 후 store 비움, IPC reject silent catch) + setError sanitize 5 (Win 홈/Linux 홈/Win 일반 드라이브/null/일반 메시지 보존). `qa-verify.test.ts` formatHistory assistant 분기 sanitize 2 (`[질문]` 마커, `---` 구분자).
+
+### QA Process
+- 32라운드 병렬 4-agent QA (AI/RAG core / main+PDF / UI / Build·CI·Tests) 결과 P2 5건 식별 — Critical 32R 연속 zero 유지. P3 8건, P4 12건, P5 10건은 다음 minor 라운드로 분리.
+- 273/273 pass.
+
+---
+
 ## [0.18.3] - 2026-04-21
 
 ### Fixed (High)

@@ -135,8 +135,14 @@ export function formatHistory(messages: QaMessage[]): string {
     useable.push(m);
   }
   if (useable.length === 0) return '';
+  // R32 P2: assistant 분기에도 sanitize 적용. 이전에는 LLM 출력이 그대로 history 라인에 들어가,
+  // 악성 PDF 가 LLM 을 유도해 답변에 `\n[질문]\n` / `\n---\n` 마커를 포함시키면 후속 턴
+  // 프롬프트 구조가 오염되는 indirect prompt-injection 벡터가 존재했다 (R32 Surface 1 P2).
+  // user 분기와 동일한 sanitizePromptInput 으로 마커 라인 이스케이프.
   const lines = useable.map((m) =>
-    m.role === 'user' ? `Q: ${sanitizePromptInput(m.content)}` : `A: ${m.content}`,
+    m.role === 'user'
+      ? `Q: ${sanitizePromptInput(m.content)}`
+      : `A: ${sanitizePromptInput(m.content)}`,
   );
   return `\n[이전 대화]\n${lines.join('\n')}\n`;
 }
@@ -663,7 +669,11 @@ export function useQa() {
       relevantChunks = sanitizePromptInput(relevantChunks);
 
       const contextParts = [];
-      if (summaryText) contextParts.push(`[요약 내용]\n${summaryText.slice(0, 3000)}`);
+      // R32 P2: summaryText 도 LLM 출력 → 악성 PDF 의 요약이 `\n[질문]\n` / `\n---\n`
+      // 마커를 품으면 후속 Q&A 프롬프트 구조가 오염된다. relevantChunks 와 동일하게 sanitize.
+      if (summaryText) {
+        contextParts.push(`[요약 내용]\n${sanitizePromptInput(summaryText.slice(0, 3000))}`);
+      }
       contextParts.push(`[원문 관련 부분]\n${relevantChunks}`);
       const context = contextParts.join('\n\n');
 

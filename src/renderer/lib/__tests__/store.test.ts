@@ -349,3 +349,99 @@ describe('setDocument(newDoc) — stale state cleanup', () => {
     expect(after.enrichedPageTexts).toBeNull();
   });
 });
+
+// v0.18.20 R32 P2: resetSummaryState 가 in-flight ai 요청을 abort 하지 않아 stale 토큰이
+// 새 세션에 인터리브되던 cross-session contamination 회귀 가드.
+describe('resetSummaryState abort propagation (R32 P2)', () => {
+  beforeEach(() => {
+    resetStreams();
+    // window.electronAPI.ai.abort 호출 카운트 리셋
+    const abortMock = window.electronAPI.ai.abort as ReturnType<typeof vi.fn>;
+    abortMock.mockClear();
+  });
+
+  it('qaRequestId 가 있으면 abort 가 호출된다', () => {
+    useAppStore.setState({ qaRequestId: 'qa-stale-123' });
+    useAppStore.getState().resetSummaryState();
+    const abortMock = window.electronAPI.ai.abort as ReturnType<typeof vi.fn>;
+    expect(abortMock).toHaveBeenCalledWith('qa-stale-123');
+  });
+
+  it('currentRequestId 가 있으면 abort 가 호출된다 (요약 중 문서 전환)', () => {
+    useAppStore.setState({ currentRequestId: 'sum-stale-456' });
+    useAppStore.getState().resetSummaryState();
+    const abortMock = window.electronAPI.ai.abort as ReturnType<typeof vi.fn>;
+    expect(abortMock).toHaveBeenCalledWith('sum-stale-456');
+  });
+
+  it('두 id 모두 있으면 둘 다 abort 한다', () => {
+    useAppStore.setState({ qaRequestId: 'qa-1', currentRequestId: 'sum-1' });
+    useAppStore.getState().resetSummaryState();
+    const abortMock = window.electronAPI.ai.abort as ReturnType<typeof vi.fn>;
+    expect(abortMock).toHaveBeenCalledWith('qa-1');
+    expect(abortMock).toHaveBeenCalledWith('sum-1');
+    expect(abortMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('id 가 모두 null 이면 abort 가 호출되지 않는다', () => {
+    useAppStore.setState({ qaRequestId: null, currentRequestId: null });
+    useAppStore.getState().resetSummaryState();
+    const abortMock = window.electronAPI.ai.abort as ReturnType<typeof vi.fn>;
+    expect(abortMock).not.toHaveBeenCalled();
+  });
+
+  it('reset 이후 store 의 qaRequestId/currentRequestId 는 null 로 비워진다', () => {
+    useAppStore.setState({ qaRequestId: 'q', currentRequestId: 'c' });
+    useAppStore.getState().resetSummaryState();
+    const after = useAppStore.getState();
+    expect(after.qaRequestId).toBeNull();
+    expect(after.currentRequestId).toBeNull();
+  });
+
+  it('ai.abort 가 reject 해도 reset 의 동기 동작은 유지된다 (silent catch)', () => {
+    const abortMock = window.electronAPI.ai.abort as ReturnType<typeof vi.fn>;
+    abortMock.mockReturnValueOnce(Promise.reject(new Error('IPC down')));
+    useAppStore.setState({ qaRequestId: 'q' });
+    expect(() => useAppStore.getState().resetSummaryState()).not.toThrow();
+    expect(useAppStore.getState().qaRequestId).toBeNull();
+  });
+});
+
+// v0.18.20 R32 P2: setError 가 sanitizeErrorPath 를 자동 적용해 PDF parse / file-dialog
+// 에러에 포함된 절대경로가 banner 로 새지 않도록 함. AppErrorBoundary 의 render-time 경로
+// 와 별도 채널 (App.tsx drop/Ctrl+O, PdfUploader 등) 의 정보 누출 회귀 가드.
+describe('setError path sanitization (R32 P2)', () => {
+  it('Windows 홈 경로가 message 에 포함되면 ~ 로 치환', () => {
+    const s = useAppStore.getState();
+    s.setError({ code: 'PDF_PARSE_FAIL', message: "ENOENT: 'C:\\Users\\jjw\\Documents\\private.pdf'" });
+    const msg = useAppStore.getState().error?.message ?? '';
+    expect(msg).not.toContain('jjw');
+    expect(msg).not.toContain('private.pdf');
+    expect(msg).toContain('~');
+  });
+
+  it('Linux 홈 경로도 치환', () => {
+    useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: 'cannot read /home/alice/work/a.pdf' });
+    const msg = useAppStore.getState().error?.message ?? '';
+    expect(msg).not.toContain('alice');
+    expect(msg).toContain('~');
+  });
+
+  it('Windows 일반 드라이브 경로는 <path> 로 치환', () => {
+    useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: 'failed at D:\\Projects\\secret\\plan.pdf' });
+    const msg = useAppStore.getState().error?.message ?? '';
+    expect(msg).not.toContain('secret');
+    expect(msg).toContain('<path>');
+  });
+
+  it('setError(null) 은 그대로 null', () => {
+    useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: 'pre' });
+    useAppStore.getState().setError(null);
+    expect(useAppStore.getState().error).toBeNull();
+  });
+
+  it('경로 없는 일반 message 는 원본 보존', () => {
+    useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: 'pdfjs internal error: invalid xref' });
+    expect(useAppStore.getState().error?.message).toBe('pdfjs internal error: invalid xref');
+  });
+});

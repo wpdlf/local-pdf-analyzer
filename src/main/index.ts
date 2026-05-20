@@ -697,16 +697,36 @@ function registerIpcHandlers(): void {
 
   // ─── OCR (스캔 PDF 텍스트 추출) ───
 
-  ipcMain.handle('ai:ocr-page', async (_event, imageBase64: string) => {
+  // v0.18.20 R32 P2: requestId 선택 인자 추가 — renderer 가 ai:abort 로 in-flight OCR 호출을
+  // 즉시 취소할 수 있도록 함. R30 P2 가 ai:analyze-image 만 고치고 OCR 경로는 누락되어 있었다.
+  // 클라우드 OCR 은 BATCH_SIZE=8 (cloud) × ~90s 호출이라 Stop 클릭 후에도 in-flight 8건이
+  // 끝까지 진행되며 토큰 비용 청구되던 결함 (R32 Surface 2 P2). analyze-image 와 동일한
+  // `vision:` prefix namespacing 으로 activeRequests 충돌 방지.
+  ipcMain.handle('ai:ocr-page', async (_event, imageBase64: string, requestId: unknown) => {
     if (!validateImageBase64(imageBase64)) {
       return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
     }
+    const rawRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
+      ? requestId
+      : null;
+    const visionRequestId = rawRequestId ? `vision:${rawRequestId}` : null;
+    let controller: AbortController | undefined;
+    if (visionRequestId) {
+      controller = new AbortController();
+      registerEmbedRequest(visionRequestId, controller);
+    }
     try {
       const { provider, model, ollamaBaseUrl, apiKey } = await resolveVisionModel('OCR을 위해');
-      const text = await analyzeImageForOcr(imageBase64, provider, model, ollamaBaseUrl, apiKey);
+      const text = await analyzeImageForOcr(imageBase64, provider, model, ollamaBaseUrl, apiKey, controller?.signal);
       return { success: true, text };
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : 'OCR 실패' };
+      const msg = err instanceof Error ? err.message : 'OCR 실패';
+      const isAbort = msg === 'Aborted' || (err as Error & { code?: string })?.code === 'ABORT_ERR';
+      return isAbort
+        ? { success: false, error: 'Aborted', code: 'ABORTED' }
+        : { success: false, error: msg };
+    } finally {
+      if (visionRequestId && controller) unregisterEmbedRequest(visionRequestId, controller);
     }
   });
 

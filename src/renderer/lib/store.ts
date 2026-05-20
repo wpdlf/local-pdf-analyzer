@@ -12,6 +12,7 @@ import type {
 } from '../types';
 import { DEFAULT_SETTINGS } from '../types';
 import { VectorStore } from './vector-store';
+import { sanitizeErrorPath } from './error-sanitize';
 
 // 설정 저장 IPC 디바운스 타이머
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -258,8 +259,21 @@ export const useAppStore = create<AppState>((set) => ({
   resetSummaryState: () => {
     streamState.reset();
     qaStreamState.reset();
+    // v0.18.20 R32 P2: in-flight ai 요청 abort. 이전에는 setDocument(newDoc) → resetSummaryState
+    // 가 store 플래그만 비우고 main 의 AiClient.summarize generator 는 계속 토큰을 yield 했다.
+    // 사용자가 새 문서로 빠르게 질문하면 stale 루프가 새 세션의 qaStream / appendQaStream 으로
+    // 토큰을 흘려보내 두 세션 토큰이 인터리브되는 cross-session contamination 발생
+    // (R32 Surface 1 P2). 여기서 IPC 를 즉시 끊어 root cause 차단 — 비용(클라우드 토큰)도
+    // 같이 절약. window.electronAPI 가 없는 테스트 환경에서는 silent no-op.
+    const prevState = useAppStore.getState();
+    const electronAPI = (globalThis as { window?: { electronAPI?: { ai?: { abort?: (id: string) => Promise<unknown> } } } })
+      .window?.electronAPI;
+    if (electronAPI?.ai?.abort) {
+      if (prevState.qaRequestId) electronAPI.ai.abort(prevState.qaRequestId).catch(() => {});
+      if (prevState.currentRequestId) electronAPI.ai.abort(prevState.currentRequestId).catch(() => {});
+    }
     // RAG 인덱스 초기화
-    const { ragIndex } = useAppStore.getState();
+    const { ragIndex } = prevState;
     ragIndex.clear();
     set({
       document: null,
@@ -430,7 +444,15 @@ export const useAppStore = create<AppState>((set) => ({
   view: 'main',
   setView: (view) => set({ view }),
   error: null,
-  setError: (error) => set({ error }),
+  // v0.18.20 R32 P2: 모든 setError 호출에 sanitizeErrorPath 자동 적용.
+  // 이전에는 AppErrorBoundary 의 render-time exception 경로만 sanitize 되고,
+  // setError({ message: err.message }) 식으로 직접 banner 에 들어가는 경로(App.tsx
+  // drop/Ctrl+O, PdfUploader handleFileSelect, store 자체의 SETTINGS_SAVE_FAIL 등)는
+  // pdfjs / main process 의 절대경로를 그대로 노출했다 (R32 Surface 3 P2). 중앙집중
+  // sanitize 로 미래에 추가될 호출자도 자동 커버.
+  setError: (error) => set({
+    error: error ? { ...error, message: sanitizeErrorPath(error.message) } : null,
+  }),
   notice: null,
   // R30 P2 (v0.18.18): notice 는 사용자에게 영구 표시할 게 아닌 일시적 알림 (다중 파일 드롭
   // 안내 등) 이라 자동 dismiss 가 자연스럽다. 새 setNotice 가 호출되면 이전 타이머는 cancel.

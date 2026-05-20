@@ -30,6 +30,20 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
+/**
+ * v0.18.20 R32 P2: OCR per-page requestId 발급. 클라우드 OCR (Claude/OpenAI) 경로에서
+ * 사용자가 Stop 을 눌렀을 때 in-flight IPC 호출을 main 측에서 즉시 끊을 수 있도록 함.
+ * 이전엔 다음 배치만 차단되고 진행 중인 8건은 ~90s 까지 토큰 청구가 계속됐다.
+ */
+function generateOcrRequestId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `ocr-${crypto.randomUUID()}`;
+    }
+  } catch { /* fallthrough */ }
+  return `ocr-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
 export async function parsePdf(
   data: ArrayBuffer,
   fileName: string,
@@ -253,7 +267,7 @@ async function ocrFallback(
   const scale = pageCount > 100 ? 1.0 : pageCount > 50 ? 1.5 : 2.0;
 
   for (let i = 0; i < pageCount; i += BATCH_SIZE) {
-    // 취소 체크 — 배치 사이에 조기 종료 (in-flight IPC 는 취소 불가하지만 다음 배치 진입 차단)
+    // 취소 체크 — 배치 사이에 조기 종료
     throwIfAborted(signal);
     const batch: Promise<string>[] = [];
     for (let j = i; j < Math.min(i + BATCH_SIZE, pageCount); j++) {
@@ -262,9 +276,30 @@ async function ocrFallback(
         renderPageToImage(pdf, pageIdx + 1, scale).then(async (base64) => {
           // IPC 전에 한 번 더 체크 — 렌더링이 끝났으나 취소된 경우 API 비용 절감
           throwIfAborted(signal);
-          const result = await window.electronAPI.ai.ocrPage(base64);
-          throwIfAborted(signal);
-          return (result.success && result.text) ? result.text : '';
+          // v0.18.20 R32 P2: per-page requestId 발급 + signal abort 시 main 에 즉시 전파.
+          // 클라우드 OCR (BATCH_SIZE=8, ~90s/call) 에서 사용자 Stop 클릭 시 다음 배치만
+          // 막던 결함을 해소 — 진행 중 8건의 토큰 청구도 함께 차단.
+          const requestId = generateOcrRequestId();
+          const onAbort = () => {
+            // ai.abort 는 idempotent. main 측 controller.abort() 가 httpPost 의 abort listener
+            // 를 트리거해 in-flight 소켓을 즉시 파괴 → callVision Promise reject('Aborted').
+            window.electronAPI.ai.abort(requestId).catch(() => {});
+          };
+          if (signal) {
+            if (signal.aborted) { onAbort(); throwIfAborted(signal); }
+            signal.addEventListener('abort', onAbort);
+          }
+          try {
+            const result = await window.electronAPI.ai.ocrPage(base64, requestId);
+            throwIfAborted(signal);
+            // main 이 ABORTED code 로 응답하면 throw 하여 상위 정리 경로 진입.
+            if (!result.success && result.code === 'ABORTED') {
+              throw Object.assign(new Error('OCR 취소'), { code: 'ABORTED' });
+            }
+            return (result.success && result.text) ? result.text : '';
+          } finally {
+            if (signal) signal.removeEventListener('abort', onAbort);
+          }
         }).catch((err: unknown) => {
           // 방어적 re-throw: ABORTED 는 상위로 전파되어 parsePdf finally의 정리 경로를 탐.
           // 다른 에러(렌더링 실패, IPC 실패)는 페이지 단위로 무음 처리하여 나머지 페이지를

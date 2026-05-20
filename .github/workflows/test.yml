@@ -50,7 +50,13 @@ jobs:
       # R31 P2 (v0.18.19): step summary 에 advisory 결과 명시 노출.
       # `continue-on-error: true` 가 step 실패는 흡수했지만 결과가 raw 로그에만 묻혀
       # 사용자가 advisory 존재를 인지하기 어려웠음. JSON 으로 파싱해 GITHUB_STEP_SUMMARY 에 카운트 출력.
+      #
+      # v0.18.20 R32 P2: `if: always()` 추가 — 이전엔 npm test (line 45) 실패 시 audit step
+      # 이 통째로 skip 되어 supply-chain 신호가 GITHUB_STEP_SUMMARY 에서 사라졌다. red CI
+      # 상황에서 advisory 가 가장 봐야 하는데 가려지던 결함 (R32 Surface 4 P2). step 자체는
+      # 여전히 `continue-on-error: true` 라 non-blocking 성질 유지.
       - name: npm audit (advisory, non-blocking)
+        if: always()
         continue-on-error: true
         shell: bash
         run: |
