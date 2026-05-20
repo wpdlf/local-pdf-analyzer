@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [0.18.20] - 2026-05-20
+## [0.18.19 patch] - 2026-05-20
+
+> v0.18.19 릴리즈 자산 덮어쓰기. 버전 번호 미상승 — 이미 배포된 v0.18.19 가
+> R32 P1 5건 적용된 빌드로 교체된다. (과거 v0.18.18 patch 와 동일 패턴)
 
 ### Fixed (High — R32 P1: 4-에이전트 병렬 QA P2 5건)
 - **Q&A cross-session 토큰 contamination 차단** (`store.ts:resetSummaryState`): 문서 전환 시 `setDocument()` → `resetSummaryState()` 가 store 플래그만 비우고 main 의 in-flight AiClient generator 는 토큰을 계속 yield 하여, 사용자가 새 문서로 빠르게 질문하면 stale 세션 토큰이 새 세션의 `qaStream`/`appendQaStream` 에 인터리브되던 race. `resetSummaryState` 가 in-flight `qaRequestId`/`currentRequestId` 모두에 `ai.abort` 를 직접 전파하여 root cause 차단 (Surface 1 P2).
