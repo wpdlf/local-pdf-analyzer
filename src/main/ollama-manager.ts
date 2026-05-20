@@ -5,6 +5,11 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { app, BrowserWindow } from 'electron';
+// v0.18.19 patch R32 P2: PowerShell single-quote escape 헬퍼를 별도 모듈로 분리.
+// `ollama-manager.ts` 가 electron 을 import 하므로 vitest 에서 직접 import 불가했고,
+// 그래서 escape 로직에 회귀 테스트가 0건이었다 (R15 H1 / R28 P2 발생 영역). 분리하여
+// `__tests__/ollama-psquote.test.ts` 가 검증.
+import { psQuotePath } from './ps-quote';
 
 interface OllamaStatusResult {
   installed: boolean;
@@ -115,8 +120,8 @@ export class OllamaManager {
    */
   private async verifyInstallerSignature(filePath: string): Promise<{ valid: boolean; subject?: string; reason?: string }> {
     return new Promise((resolve) => {
-      // PowerShell single-quote escape (installWindows 와 동일 규칙)
-      const psQuotedPath = `'${filePath.replace(/'/g, "''")}'`;
+      // PowerShell single-quote escape (installWindows 와 동일 규칙) — 공통 헬퍼 사용.
+      const psQuotedPath = psQuotePath(filePath);
       // R28 P2 (v0.18.12): -FilePath → -LiteralPath
       //   `-FilePath` 는 wildcard ([], *, ?) 를 해석해 사용자명/임시경로에 그런 문자가
       //   포함된 경우 (예: "C:\Users\foo[bar]\...\OllamaSetup.exe") 검증이 잘못된 경로를
@@ -186,8 +191,8 @@ export class OllamaManager {
         // installerPath 에 공백/한글이 있으면 quote 정보가 소실되어 인스톨러 경로가 여러 토큰으로
         // 쪼개질 수 있다 (예: C:\Users\John Doe\...\OllamaSetup.exe). 이를 방지하기 위해
         // path 를 PowerShell single-quote literal 로 직접 감싸 하나의 command 문자열로 전달한다.
-        // PowerShell single-quote 규칙: 내부 `'` 는 `''` 로 escape (path injection 방어).
-        const psQuotedPath = `'${installerPath.replace(/'/g, "''")}'`;
+        // PowerShell single-quote 규칙: 내부 `'` 는 `''` 로 escape (path injection 방어) — 공통 헬퍼 사용.
+        const psQuotedPath = psQuotePath(installerPath);
         execFile(
           'powershell',
           [

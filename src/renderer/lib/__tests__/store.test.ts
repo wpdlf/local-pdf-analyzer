@@ -445,3 +445,22 @@ describe('setError path sanitization (R32 P2)', () => {
     expect(useAppStore.getState().error?.message).toBe('pdfjs internal error: invalid xref');
   });
 });
+
+// v0.18.19 patch R32 P2 회귀: setEnrichedPageTexts 는 단순 setter 지만, use-summarize 의
+// Vision-partial-failure 경로에서 명시적으로 null 호출해야 stale enriched 데이터가 RAG 에
+// 남지 않는다. 이 store-level 동작은 setter 자체가 idempotent 임을 확인하는 가드.
+describe('setEnrichedPageTexts idempotent null reset (R32 P2)', () => {
+  it('이전에 enriched 값이 있어도 null 호출 시 정확히 null 로 비워진다', () => {
+    const s = useAppStore.getState();
+    s.setEnrichedPageTexts(['page1 + image desc', 'page2 + image desc']);
+    expect(useAppStore.getState().enrichedPageTexts).not.toBeNull();
+    s.setEnrichedPageTexts(null);
+    expect(useAppStore.getState().enrichedPageTexts).toBeNull();
+  });
+
+  it('이미 null 인 상태에서 null 재호출도 안전 (멱등)', () => {
+    useAppStore.getState().setEnrichedPageTexts(null);
+    useAppStore.getState().setEnrichedPageTexts(null);
+    expect(useAppStore.getState().enrichedPageTexts).toBeNull();
+  });
+});

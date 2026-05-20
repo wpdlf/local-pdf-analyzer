@@ -261,8 +261,14 @@ async function ocrFallback(
   // Provider-aware 배치 크기. 클라우드 API(Claude/OpenAI)는 네트워크 레이턴시 지배적이어서
   // 큰 배치가 throughput에 유리. 로컬 Ollama는 단일 GPU/CPU에 제한되므로 작게 유지.
   // 읽기 시점에 store에서 provider를 조회 — 파싱 중 provider가 바뀔 일은 없음.
+  //
+  // v0.18.19 patch R32 P2: 클라우드 BATCH_SIZE=8 + 3000×3000 캔버스(2-페이지에서 ~36MB RGBA)
+  // 가 동시에 in-flight 상태로 잡혀 피크 메모리가 ~250-300MB 까지 일시 점유되던 결함.
+  // 페이지 수가 많아 어차피 scale 이 축소되는 큰 PDF (101+) 에서는 캔버스가 작아 8 유지가
+  // 안전하지만, 50-100 페이지 PDF 는 scale=1.5 라 캔버스가 여전히 크므로 4 로 축소하여
+  // 저사양 환경(4GB RAM 노트북) 에서의 OOM 위험을 낮춘다. (R32 Surface 2 P3)
   const provider = useAppStore.getState().settings.provider;
-  const BATCH_SIZE = provider === 'ollama' ? 3 : 8;
+  const BATCH_SIZE = provider === 'ollama' ? 3 : (pageCount > 50 && pageCount <= 100 ? 4 : 8);
   // 대용량 PDF: 50+ 페이지 시 scale 자동 축소
   const scale = pageCount > 100 ? 1.0 : pageCount > 50 ? 1.5 : 2.0;
 

@@ -33,13 +33,17 @@ jobs:
       - run: npm ci
 
       # R31 (v0.18.18 patch): package-lock.json drift 게이트 — test.yml 과 동일 로직.
+      # v0.18.19 patch R32 P2: lockfileVersion 3 은 root `version` 과 `packages[""].version`
+      # 두 곳에 버전이 박혀 있다. 이전 게이트는 root 만 봤기 때문에 hand-edit 으로 둘이 어긋
+      # 나면 `npm ci` 가 경고 + cache 무효화를 일으키는 채로 CI 가 그린이었다. 둘 다 검사.
       - name: Verify lockfile version sync
         shell: bash
         run: |
           pkg_ver=$(node -p "require('./package.json').version")
-          lock_ver=$(node -p "require('./package-lock.json').version")
-          if [ "$pkg_ver" != "$lock_ver" ]; then
-            echo "::error::package.json version ($pkg_ver) != package-lock.json version ($lock_ver)"
+          lock_root_ver=$(node -p "require('./package-lock.json').version")
+          lock_pkgs_ver=$(node -p "require('./package-lock.json').packages[''].version")
+          if [ "$pkg_ver" != "$lock_root_ver" ] || [ "$pkg_ver" != "$lock_pkgs_ver" ]; then
+            echo "::error::package.json version ($pkg_ver) drift — lock root=$lock_root_ver packages['']=$lock_pkgs_ver"
             exit 1
           fi
 

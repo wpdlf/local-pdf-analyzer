@@ -27,17 +27,21 @@ jobs:
       # R31 (v0.18.18 patch): package-lock.json root version 이 package.json 과
       # drift 됐는지 검증. v0.18.17 → v0.18.18 로 넘어갈 때 자동화 미구현으로
       # drift 가 재발생한 사례 (R30 발견) → 매 PR/release 에서 강제.
+      # v0.18.19 patch R32 P2: lockfileVersion 3 의 `packages[""].version` 도 같이 검증.
+      # 둘 중 하나만 손으로 수정해도 `npm ci` 가 cache 키 무효화 + 경고를 발생시키지만
+      # 직전 게이트는 root 만 봐서 silent 통과하던 결함 (R32 Surface 4 P3).
       - name: Verify lockfile version sync
         shell: bash
         run: |
           pkg_ver=$(node -p "require('./package.json').version")
-          lock_ver=$(node -p "require('./package-lock.json').version")
-          if [ "$pkg_ver" != "$lock_ver" ]; then
-            echo "::error::package.json version ($pkg_ver) != package-lock.json version ($lock_ver)"
+          lock_root_ver=$(node -p "require('./package-lock.json').version")
+          lock_pkgs_ver=$(node -p "require('./package-lock.json').packages[''].version")
+          if [ "$pkg_ver" != "$lock_root_ver" ] || [ "$pkg_ver" != "$lock_pkgs_ver" ]; then
+            echo "::error::package.json version ($pkg_ver) drift — lock root=$lock_root_ver packages['']=$lock_pkgs_ver"
             echo "Run 'npm install --package-lock-only' and commit the result."
             exit 1
           fi
-          echo "lockfile sync OK: $pkg_ver"
+          echo "lockfile sync OK: $pkg_ver (root + packages[''])"
 
       # R28: tsconfig strict 게이트(noUncheckedIndexedAccess 등)가 PR/push 단계에서 항상 검증되도록 함.
       - run: npx tsc --noEmit
@@ -67,9 +71,11 @@ jobs:
             echo ":warning: audit 실행 실패 (네트워크 등)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          HIGH=$(node -e "const j=JSON.parse(process.argv[1]);const v=j.metadata?.vulnerabilities||{};console.log((v.high||0)+(v.critical||0));" "$AUDIT_JSON")
-          MODERATE=$(node -e "const j=JSON.parse(process.argv[1]);const v=j.metadata?.vulnerabilities||{};console.log(v.moderate||0);" "$AUDIT_JSON")
-          LOW=$(node -e "const j=JSON.parse(process.argv[1]);const v=j.metadata?.vulnerabilities||{};console.log(v.low||0);" "$AUDIT_JSON")
+          # v0.18.19 patch R32 P2: 단일 node 호출로 세 값을 한 번에 추출.
+          # 이전엔 동일 audit JSON 을 세 번 spawn 으로 재파싱했고, set +e + ARG_MAX edge 에서
+          # 한 호출이 실패하면 빈 문자열로 떨어져 다음 `[ "$X" -gt 0 ]` 가 silent 산식 오류
+          # 를 일으키는 fragility 가 있었음. read 로 묶어 1회 spawn 으로 합친다.
+          read HIGH MODERATE LOW <<< "$(node -e "const j=JSON.parse(process.argv[1]);const v=j.metadata?.vulnerabilities||{};console.log((v.high||0)+(v.critical||0),v.moderate||0,v.low||0);" "$AUDIT_JSON")"
           {
             echo "## npm audit (advisory)"
             echo ""

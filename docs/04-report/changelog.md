@@ -9,7 +9,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.18.19 patch] - 2026-05-20
 
 > v0.18.19 릴리즈 자산 덮어쓰기. 버전 번호 미상승 — 이미 배포된 v0.18.19 가
-> R32 P1 5건 적용된 빌드로 교체된다. (과거 v0.18.18 patch 와 동일 패턴)
+> R32 P1+P2 누적 적용된 빌드로 교체된다. (과거 v0.18.18 patch 와 동일 패턴)
+
+### Fixed (Medium — R32 P2: 4-에이전트 병렬 QA P3 8건)
+- **Vision partial-failure stale enrichment 해소** (`use-summarize.ts:529`): 이미지 분석이 켜진 채로 모든 이미지가 실패해 `enrichedPagesRef` 가 null 인 경우, 이전 run 에서 세팅된 `enrichedPageTexts` 가 store 에 남아 RAG 가 stale enriched 데이터로 검색하던 결함. 명시적 null 세팅으로 raw `pageTexts` 재빌드를 강제 (Surface 1 P3).
+- **테마 라이브 preview localStorage drift 차단** (`theme.ts:applyTheme`, `SettingsPanel.tsx:97-99`): `applyTheme` 가 매 호출마다 `localStorage.setItem('theme', ...)` 를 동기 호출하여 SettingsPanel 라디오만 만져보고 X(창 닫기) 로 종료한 경우 dirty preview 값이 영구 저장되어 settings.json 과 drift 가 발생. `applyTheme(theme, { persist?: boolean })` 시그니처로 persist 분리, SettingsPanel 은 `persist:false` 로 호출. 본 저장 경로(App.tsx 의 settings 구독 effect) 만 localStorage 갱신 (Surface 3 P3).
+- **MarkdownErrorBoundary children 변경 시 reset** (`safe-markdown.tsx:9-22`): 스트리밍 중 일시적 마크다운 파싱 오류(예: 미완 `[bracket`) 한 번으로 `hasError=true` 가 latch 되어 후속 토큰으로 완성된 답변까지 raw-text fallback 모드가 유지되던 결함. `componentDidUpdate` 에서 `prevProps.children !== this.props.children` 면 `hasError` 를 reset 하여 자연스러운 재시도 가능 (Surface 3 P3).
+- **OCR 클라우드 피크 메모리 캡** (`pdf-parser.ts:251`): 클라우드 `BATCH_SIZE=8` + 3000×3000 캔버스(~36MB RGBA each) 가 50–100 페이지 PDF (`scale=1.5`) 에서 피크 ~250–300MB 일시 점유로 저사양 노트북(4GB RAM) OOM 위험. 50–100p 구간만 BATCH_SIZE=4 로 축소 (Surface 2 P3).
+- **`streamRequest` MAX_LINE_SIZE silent skip 차단** (`ai-service.ts:434`): 1MB 초과 라인을 `continue` 로 건너뛰면 손상된 응답이 빈 답변으로 "성공" 보고되어 사용자가 빈 화면만 보던 결함. `safeReject` 로 명시 중단하여 ai-client 가 `streamInterrupted` 로 변환해 사용자에게 표시 (Surface 2 P3).
+- **lockfile drift gate `packages[""]` 까지 검사** (`.github/workflows/test.yml`, `release.yml`): lockfileVersion 3 은 root `version` 과 `packages[""].version` 두 곳에 버전이 박혀 있는데, 게이트는 root 만 검사하여 hand-edit 으로 둘이 어긋나면 `npm ci` 가 cache 키 무효화 + 경고를 발생시키는 채로 CI 그린이었음. 두 곳 모두 검증 (Surface 4 P3).
+- **`audit` JSON 3× 재파싱 통합** (`.github/workflows/test.yml:64`): 동일 audit JSON 을 3개 node 호출로 재파싱했고 `set +e` 와 결합돼 한 호출이 빈 문자열 반환 시 `[ "" -gt 0 ]` 가 silent 산식 오류를 일으키던 fragility. `read HIGH MODERATE LOW <<<` 로 단일 spawn 으로 묶음 (Surface 4 P3).
+- **PowerShell quote escape 헬퍼 추출 + 단위 테스트** (`main/ps-quote.ts` 신설, `ollama-manager.ts` 두 호출처 정합): R15 H1 / R28 P2 가 발생했던 영역인데도 escape 로직에 unit test 0건이었음. `ollama-manager.ts` 는 electron 을 import 하여 vitest 에서 직접 import 불가능 → 헬퍼만 native 의존성 없는 별도 모듈로 분리하여 9 케이스 회귀 테스트 (Surface 4 P3).
+
+### Tests (R32 P2)
+- **회귀 테스트 +18 케이스** (273→291): `ollama-psquote.test.ts` 신규 9 (ASCII/공백/single-quote escape/연속 quote/CJK/wildcard 보존/빈 문자열/백슬래시/혼합), `theme.test.ts` 신규 7 (persist 기본/true/false/멱등/cleanup/dark add/light remove), `store.test.ts` enrichedPageTexts 멱등 2.
+
+---
 
 ### Fixed (High — R32 P1: 4-에이전트 병렬 QA P2 5건)
 - **Q&A cross-session 토큰 contamination 차단** (`store.ts:resetSummaryState`): 문서 전환 시 `setDocument()` → `resetSummaryState()` 가 store 플래그만 비우고 main 의 in-flight AiClient generator 는 토큰을 계속 yield 하여, 사용자가 새 문서로 빠르게 질문하면 stale 세션 토큰이 새 세션의 `qaStream`/`appendQaStream` 에 인터리브되던 race. `resetSummaryState` 가 in-flight `qaRequestId`/`currentRequestId` 모두에 `ai.abort` 를 직접 전파하여 root cause 차단 (Surface 1 P2).

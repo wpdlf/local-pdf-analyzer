@@ -12,6 +12,16 @@ export class MarkdownErrorBoundary extends Component<
 > {
   override state = { hasError: false };
   static getDerivedStateFromError() { return { hasError: true }; }
+  // v0.18.19 patch R32 P2: children 참조가 바뀌면 hasError 를 리셋한다.
+  // 이전엔 스트리밍 도중 일시적 마크다운 파싱 오류(예: 미완 [bracket) 한 번으로 hasError=true
+  // 가 latch 되어 후속 토큰으로 답변이 완성된 뒤에도 raw-text fallback 모드가 유지됐다.
+  // children 식별성이 바뀐다는 것은 부모(예: SummaryViewer, QaChat) 가 새 콘텐츠로 다시
+  // 렌더 시도한다는 의미라 boundary 를 재시도 모드로 전환하는 것이 안전.
+  override componentDidUpdate(prevProps: { children: ReactNode }) {
+    if (this.state.hasError && prevProps.children !== this.props.children) {
+      this.setState({ hasError: false });
+    }
+  }
   override render() {
     if (this.state.hasError) {
       // t()는 store에서 현재 uiLanguage를 읽음 — 렌더 시점 언어로 표시됨

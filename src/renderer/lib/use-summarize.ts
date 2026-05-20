@@ -525,9 +525,14 @@ export function useSummarize() {
           enrichedPagesRef = enriched.enrichedPages;
           // Q&A RAG 가 이미지 분석 결과를 함께 인덱싱하도록 store 에 공유.
           // useRagBuilder 는 이 값이 세팅되면 key 에 enrichment 플래그가 바뀌어 재빌드.
-          // 이미지 분석이 있었으나 결과가 비어있는 경우(enrichedPages === null)는 세팅 생략.
           if (enrichedPagesRef) {
             useAppStore.getState().setEnrichedPageTexts(enrichedPagesRef);
+          } else if (useAppStore.getState().enrichedPageTexts !== null) {
+            // v0.18.19 patch R32 P2: 이미지 분석은 켜져 돌았으나 모든 이미지가 실패하여 결과가
+            // null 인 경우, 이전 run 에서 세팅된 enrichedPageTexts 가 그대로 남아 RAG 가 stale
+            // enriched 데이터로 검색을 수행하던 결함. raw pageTexts 재빌드를 강제하기 위해 명시적
+            // null 세팅. (R32 Surface 1 P3)
+            useAppStore.getState().setEnrichedPageTexts(null);
           }
         } catch (imgErr) {
           imageAnalysisFailed = true;

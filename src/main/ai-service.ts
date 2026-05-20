@@ -431,7 +431,18 @@ function streamRequest(
           const MAX_LINE_SIZE = 1024 * 1024; // 1MB per JSON line
           for (const line of lines) {
             if (!line.trim()) continue;
-            if (line.length > MAX_LINE_SIZE) continue; // 거대 JSON 라인 방어
+            if (line.length > MAX_LINE_SIZE) {
+              // v0.18.19 patch R32 P2: 1MB 초과 라인을 silent `continue` 로 건너뛰면, 손상된
+              // 응답이 빈 답변으로 "성공" 보고되어 사용자가 빈 화면만 보게 된다. 명시적으로
+              // 스트림을 중단하고 에러를 surface 하여 ai-client 가 streamInterrupted 로
+              // 변환해 사용자에게 표시하도록 한다. (R32 Surface 2 P3)
+              streamAborted = true;
+              clearIdleTimer();
+              safeDeleteRequest();
+              res.destroy();
+              safeReject(new Error('AI 응답에서 비정상적으로 큰 라인이 감지되어 중단되었습니다 (>1MB).'));
+              return;
+            }
 
             let jsonStr = line;
             if (config.isSSE) {

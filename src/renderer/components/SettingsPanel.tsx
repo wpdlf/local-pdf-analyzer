@@ -95,7 +95,11 @@ export function SettingsPanel() {
   }, []);
 
   useEffect(() => {
-    return applyTheme(draft.theme);
+    // v0.18.19 patch R32 P2: SettingsPanel 의 라이브 preview 는 localStorage 에 쓰지 않는다.
+    // 이전에는 사용자가 라디오만 만져보고 "취소" 가 아닌 X(창 닫기) 로 종료하면 dirty 값이
+    // localStorage 에 영구 저장되어 settings.json 과 drift 가 발생했다. 본 저장 경로는
+    // App.tsx 의 `settings.theme` 구독 effect 가 담당한다.
+    return applyTheme(draft.theme, { persist: false });
   }, [draft.theme]);
 
   const prevProviderRef = useRef(draft.provider);
