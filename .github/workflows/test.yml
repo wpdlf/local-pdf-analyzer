@@ -65,6 +65,18 @@ jobs:
         shell: bash
         run: |
           set +e
+          # v0.18.19 patch R34 P1 (R33 회귀 fix): `if: always()` 가 npm ci 실패 후에도 본 step 을
+          # 실행하는데, node_modules 부재 시 npm audit 은 error JSON 을 반환해 이전 파서가 모든
+          # 값을 0 으로 떨어뜨려 "취약점 없음" 으로 거짓 보고하던 결함 (R33 Surface 4 P3).
+          # node_modules 존재 여부를 선행 검사하고, 부재 시 명시적으로 "audit 미실행" 으로 분기.
+          if [ ! -d node_modules ]; then
+            {
+              echo "## npm audit"
+              echo ""
+              echo ":warning: audit 미실행 — \`node_modules\` 디렉터리 부재 (선행 \`npm ci\` 실패 가능성). 본 단계는 advisory 라 빌드는 통과하지만 supply-chain 가시성이 일시 후퇴함."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           AUDIT_JSON=$(npm audit --json 2>/dev/null || true)
           if [ -z "$AUDIT_JSON" ]; then
             echo "## npm audit" >> "$GITHUB_STEP_SUMMARY"
@@ -75,7 +87,27 @@ jobs:
           # 이전엔 동일 audit JSON 을 세 번 spawn 으로 재파싱했고, set +e + ARG_MAX edge 에서
           # 한 호출이 실패하면 빈 문자열로 떨어져 다음 `[ "$X" -gt 0 ]` 가 silent 산식 오류
           # 를 일으키는 fragility 가 있었음. read 로 묶어 1회 spawn 으로 합친다.
-          read HIGH MODERATE LOW <<< "$(node -e "const j=JSON.parse(process.argv[1]);const v=j.metadata?.vulnerabilities||{};console.log((v.high||0)+(v.critical||0),v.moderate||0,v.low||0);" "$AUDIT_JSON")"
+          # R34 P1 (R33 회귀 fix): node 측에서 audit JSON 의 error 분기 (예: { error: {...} }) 도
+          # 처리. 또 read 가 빈 stdin 받아 변수가 비는 경우 `: ${VAR:=0}` 디폴트로 shell 산식
+          # 에러 (`[: -gt: unary operator expected`) 차단.
+          AUDIT_PARSED=$(node -e "
+            try {
+              const j = JSON.parse(process.argv[1]);
+              if (j && j.error) { console.log('ERROR'); process.exit(0); }
+              const v = (j && j.metadata && j.metadata.vulnerabilities) || {};
+              console.log((v.high||0)+(v.critical||0), v.moderate||0, v.low||0);
+            } catch { console.log('ERROR'); }
+          " "$AUDIT_JSON")
+          if [ "$AUDIT_PARSED" = "ERROR" ]; then
+            {
+              echo "## npm audit"
+              echo ""
+              echo ":warning: audit JSON 파싱 실패 또는 npm 측 error 응답 — supply-chain 신호 일시 부재."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          read HIGH MODERATE LOW <<< "$AUDIT_PARSED"
+          : "${HIGH:=0}" "${MODERATE:=0}" "${LOW:=0}"
           {
             echo "## npm audit (advisory)"
             echo ""

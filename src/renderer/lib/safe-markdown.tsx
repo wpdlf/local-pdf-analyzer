@@ -12,13 +12,20 @@ export class MarkdownErrorBoundary extends Component<
 > {
   override state = { hasError: false };
   static getDerivedStateFromError() { return { hasError: true }; }
-  // v0.18.19 patch R32 P2: children 참조가 바뀌면 hasError 를 리셋한다.
-  // 이전엔 스트리밍 도중 일시적 마크다운 파싱 오류(예: 미완 [bracket) 한 번으로 hasError=true
-  // 가 latch 되어 후속 토큰으로 답변이 완성된 뒤에도 raw-text fallback 모드가 유지됐다.
-  // children 식별성이 바뀐다는 것은 부모(예: SummaryViewer, QaChat) 가 새 콘텐츠로 다시
-  // 렌더 시도한다는 의미라 boundary 를 재시도 모드로 전환하는 것이 안전.
-  override componentDidUpdate(prevProps: { children: ReactNode }) {
-    if (this.state.hasError && prevProps.children !== this.props.children) {
+  // v0.18.19 patch R34 P1 (R33 회귀 fix): 비교 대상을 `children` 에서 `fallbackText` 로 교체.
+  //
+  // R32 P2 가 추가한 본 hook 은 "스트리밍 도중 한번 latch 된 hasError 가 콘텐츠 완성 후에도
+  // 풀리지 않던 결함" 을 해결하려 했으나, 부모(SummaryViewer / QaChat) 가 매 렌더마다 JSX 로
+  // `<ReactMarkdown>` 을 새로 생성하기 때문에 `prevProps.children !== this.props.children` 은
+  // 매 렌더 true. 결과적으로 hasError 가 latch 되더라도 다음 렌더에서 즉시 reset → 같은
+  // throw 발생 → 다시 latch 의 thrash 루프 가능 (R33 Surface 3 P2).
+  //
+  // 올바른 신호는 "콘텐츠 문자열이 바뀌었는가" — 양쪽 호출자가 `fallbackText` 에 본 콘텐츠
+  // (`debouncedContent` 또는 메시지 본문) 를 전달하므로 이 prop 의 변화만이 "새 시도 가치가
+  // 있다" 는 표시. 일시적 mid-stream 오류가 다음 debounced content 로 자연 회복되는 의도된
+  // 동작은 그대로 유지하면서, 영구 오류 컨텐츠에서의 thrash 만 차단.
+  override componentDidUpdate(prevProps: { children: ReactNode; fallbackText?: string }) {
+    if (this.state.hasError && prevProps.fallbackText !== this.props.fallbackText) {
       this.setState({ hasError: false });
     }
   }

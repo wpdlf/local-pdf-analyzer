@@ -178,3 +178,80 @@ describe('safe-markdown — dangerous unicode in href', () => {
     expect(isRealAnchor(el, 'https://example.com/path?q=1')).toBe(true);
   });
 });
+
+// v0.18.19 patch R34 P1: MarkdownErrorBoundary 의 componentDidUpdate 동작 회귀 가드.
+//
+// R32 P2 가 추가한 componentDidUpdate 는 hasError=true latch 후 콘텐츠가 변경되면 reset
+// 하여 자연 회복을 시도하는 의도였다. 그러나 R33 Surface 3 에서 발견된 결함은 비교 prop 이
+// 잘못 선택된 것: parent (SummaryViewer / QaChat) 가 매 렌더마다 JSX 로 <ReactMarkdown> 을
+// 새로 생성하므로 `prevProps.children !== this.props.children` 은 매 렌더 true → hasError 가
+// latch 되어도 즉시 reset → 같은 throw 발생 → thrash. R34 fix 는 비교 대상을 fallbackText
+// (실제 content 문자열) 로 교체.
+import { MarkdownErrorBoundary } from '../safe-markdown';
+
+describe('MarkdownErrorBoundary reset gating (R34 P1)', () => {
+  // React component 의 라이프사이클 메서드를 직접 호출해 검증 — 렌더링 없이.
+  it('fallbackText 동일 + children identity 변경 시 hasError 유지 (R32→R33 회귀 fix)', () => {
+    const boundary = new MarkdownErrorBoundary({
+      children: { unique: 1 } as unknown as ReactElement,
+      fallbackText: 'same content',
+    });
+    boundary.state = { hasError: true };
+    let nextState: { hasError: boolean } | null = null;
+    boundary.setState = (s: { hasError: boolean }) => { nextState = s; };
+
+    // children 이 새 객체이지만 fallbackText 는 동일 → reset 하지 않아야 함
+    boundary.componentDidUpdate({
+      children: { unique: 0 } as unknown as ReactElement,
+      fallbackText: 'same content',
+    });
+    expect(nextState).toBeNull();
+  });
+
+  it('fallbackText 가 실제로 바뀌면 hasError 를 reset', () => {
+    const boundary = new MarkdownErrorBoundary({
+      children: 'unused' as unknown as ReactElement,
+      fallbackText: 'new content',
+    });
+    boundary.state = { hasError: true };
+    let nextState: { hasError: boolean } | null = null;
+    boundary.setState = (s: { hasError: boolean }) => { nextState = s; };
+
+    boundary.componentDidUpdate({
+      children: 'unused' as unknown as ReactElement,
+      fallbackText: 'old content',
+    });
+    expect(nextState).toEqual({ hasError: false });
+  });
+
+  it('hasError=false 상태에선 fallbackText 가 바뀌어도 setState 호출 안 함 (무관 trigger 차단)', () => {
+    const boundary = new MarkdownErrorBoundary({
+      children: 'x' as unknown as ReactElement,
+      fallbackText: 'new',
+    });
+    boundary.state = { hasError: false };
+    let setStateCalled = false;
+    boundary.setState = () => { setStateCalled = true; };
+
+    boundary.componentDidUpdate({
+      children: 'x' as unknown as ReactElement,
+      fallbackText: 'old',
+    });
+    expect(setStateCalled).toBe(false);
+  });
+
+  it('fallbackText 가 양쪽 undefined 면 reset 하지 않음 (불필요 thrash 방지)', () => {
+    const boundary = new MarkdownErrorBoundary({
+      children: { x: 1 } as unknown as ReactElement,
+      // fallbackText omitted both
+    });
+    boundary.state = { hasError: true };
+    let nextState: { hasError: boolean } | null = null;
+    boundary.setState = (s: { hasError: boolean }) => { nextState = s; };
+
+    boundary.componentDidUpdate({
+      children: { x: 2 } as unknown as ReactElement,
+    });
+    expect(nextState).toBeNull();
+  });
+});

@@ -134,25 +134,41 @@ export async function generate(
   // 있어 그 사이에 도착한 ai:abort(sameId) 가 no-op 으로 떨어지던 결함. placeholder entry 를
   // 즉시 등록하여 그 갭에 도착한 abort 도 잡는다 (Surface 2 P5).
   // streamRequest 진입 시 자기 entry 로 덮어쓴다 (line 542 부근).
+  //
+  // R34 P1 (R33 회귀 fix): 동기 throw (validateOllamaUrl / new URL() / API_KEY_MISSING) 시
+  // placeholder 가 activeRequests 에 남아 10분 TTL 까지 leak 되던 결함. try 블록으로 감싸
+  // sync throw 도 cleanup 보장. streamRequest 도착 후엔 자기 entry 로 덮어써 정상 흐름.
   const placeholderController = new AbortController();
   const placeholderNow = Date.now();
-  activeRequests.set(requestId, {
+  const placeholderEntry = {
     abort: () => placeholderController.abort(),
     createdAt: placeholderNow,
     startedAt: placeholderNow,
-  });
+  };
+  activeRequests.set(requestId, placeholderEntry);
 
   const prompt = buildPrompt(request.text, request.type, request.language);
 
-  switch (request.provider) {
-    case 'ollama':
-      return generateOllama(requestId, prompt, request, win);
-    case 'claude':
-      if (!apiKey) throw Object.assign(new Error('Claude API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING' });
-      return generateClaude(requestId, prompt, request, apiKey, win);
-    case 'openai':
-      if (!apiKey) throw Object.assign(new Error('OpenAI API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING' });
-      return generateOpenAi(requestId, prompt, request, apiKey, win);
+  try {
+    switch (request.provider) {
+      case 'ollama':
+        return await generateOllama(requestId, prompt, request, win);
+      case 'claude':
+        if (!apiKey) throw Object.assign(new Error('Claude API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING' });
+        return await generateClaude(requestId, prompt, request, apiKey, win);
+      case 'openai':
+        if (!apiKey) throw Object.assign(new Error('OpenAI API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING' });
+        return await generateOpenAi(requestId, prompt, request, apiKey, win);
+    }
+  } catch (err) {
+    // sync 또는 async throw 시 placeholder 가 streamRequest 의 자기 entry 로 아직 교체되지
+    // 않았을 수 있다. identity 비교로 placeholder 만 정리 (이미 streamRequest 가 교체했다면
+    // 그쪽 finally 가 자기 entry 를 책임).
+    const current = activeRequests.get(requestId);
+    if (current === placeholderEntry) {
+      activeRequests.delete(requestId);
+    }
+    throw err;
   }
 }
 

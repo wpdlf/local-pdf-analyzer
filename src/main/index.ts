@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
@@ -133,8 +133,13 @@ function createWindow(): BrowserWindow {
   // 정상 진입점은 단일 index.html 이라, 정확히 그 URL 만 통과시키고 임의의 file:// 타겟은
   // 차단한다 (Surface 2 P4). 현재 외부 URL 을 로드하는 경로는 없어 reachability 가 낮지만
   // defense-in-depth.
+  //
+  // R34 P1 (R33 회귀 fix): 이전 구현은 `file://${path}` (2 슬래시) 로 만들었는데 Electron 의
+  // 실제 loadFile() URL 은 `file:///${path}` (3 슬래시, RFC 8089) 라 `===` 비교가 항상 false.
+  // `pathToFileURL().href` 로 정확한 표준 file URL 을 만들어 비교. Windows 의 소문자 드라이브,
+  // UNC, 백슬래시 정규화도 함께 처리됨.
   const packagedRendererUrl = app.isPackaged
-    ? `file://${path.join(__dirname, '../renderer/index.html').replace(/\\/g, '/')}`
+    ? pathToFileURL(path.join(__dirname, '../renderer/index.html')).href
     : null;
   win.webContents.on('will-redirect', (event, url) => {
     if (!app.isPackaged && devRendererUrl && url.startsWith(devRendererUrl)) return;

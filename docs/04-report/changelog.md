@@ -9,7 +9,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.18.19 patch] - 2026-05-20
 
 > v0.18.19 릴리즈 자산 덮어쓰기. 버전 번호 미상승 — 이미 배포된 v0.18.19 가
-> R32 P1+P2+P3 누적 적용된 빌드로 교체된다. (과거 v0.18.18 patch 와 동일 패턴)
+> R32 P1+P2+P3 누적 + R33 결과 R34 P1 적용된 빌드로 교체된다.
+> (과거 v0.18.18 patch 와 동일 패턴, 4차 덮어쓰기)
+
+### Fixed (R34 P1 — R33 4-에이전트 병렬 QA 결과 P2 1 + P3 2 + P4 1 회귀 정리)
+- **MarkdownErrorBoundary reset 비교 정합** (`safe-markdown.tsx:23-25`): R32 P2 가 추가한 `componentDidUpdate` 가 `prevProps.children !== this.props.children` 비교를 했는데, 부모(SummaryViewer / QaChat) 가 매 렌더마다 JSX 로 `<ReactMarkdown>` 을 새로 생성하므로 children identity 가 매 렌더 다름 → hasError 가 latch 되어도 즉시 reset → 같은 throw → thrash. 비교 대상을 `fallbackText` (실제 content 문자열) 로 교체 (Surface 3 P2).
+- **`generate()` placeholder leak cleanup** (`ai-service.ts:147-172`): R32 P3 가 도입한 placeholder controller 가 `validateOllamaUrl` / `new URL()` / `API_KEY_MISSING` 등 동기 throw 시 `activeRequests` Map 에 남아 10분 TTL 까지 잔존하던 결함. try/catch 로 감싸 identity 일치 시에만 정리 (Surface 2 P3).
+- **`will-redirect` Windows file:// 정합** (`main/index.ts:136-142`): R32 P3 가 추가한 `file://${path}` (2 슬래시) 비교가 Electron 의 실제 loadFile URL `file:///${path}` (3 슬래시, RFC 8089) 와 매치되지 않아 항상 false. `pathToFileURL(...).href` 로 표준 file URL 생성 (소문자 드라이브 / UNC / 백슬래시 정규화도 함께 처리됨) (Surface 2 P4).
+- **CI audit step `node_modules` 부재 분기** (`.github/workflows/test.yml`): R32 P2 가 도입한 `if: always()` 가 `npm ci` 실패 후에도 step 을 실행하는데, node_modules 부재 시 npm audit 이 error JSON 을 내고 이전 파서가 `0 0 0` 으로 떨어뜨려 "취약점 없음" 으로 거짓 보고. 선행 `[ -d node_modules ]` 검사 + audit JSON 의 `j.error` 분기 + `: "${VAR:=0}"` 디폴트로 가시성 회복 (Surface 4 P3).
+
+### Tests (R34 P1)
+- **회귀 테스트 +4 케이스** (292→296): `safe-markdown.test.tsx` MarkdownErrorBoundary reset 가드 4 (fallbackText 동일 시 reset 안 함 / 변경 시 reset / hasError=false 시 미트리거 / 양쪽 undefined 안전).
+
+---
 
 ### Fixed (Minor — R32 P3: P4 12건 + P5 10건 정리 라운드)
 - **handleSummarize 카치 블록에 docId guard** (`use-summarize.ts:616`): 문서 전환 후 stale summarize 가 streamInterrupted 같은 non-ABORTED 에러로 throw 하면 새 문서 banner 에 표시되던 ownership leak 해소 (Surface 1 P4).
