@@ -294,6 +294,11 @@ async function ocrFallback(
           if (signal) {
             if (signal.aborted) { onAbort(); throwIfAborted(signal); }
             signal.addEventListener('abort', onAbort);
+            // v0.18.19 patch R34 P2 (R33 P4 fix): addEventListener 와 직전 aborted 체크 사이에
+            // abort 가 발화하면 late-attached listener 가 fire 안 한다 (AbortSignal 규약).
+            // 결과: 우리는 IPC 호출을 그대로 진행해 ~90s 비용 발생 + 사용자가 인지 못함.
+            // listener attach 직후 한 번 더 확인해 그 사이 abort 도 catch.
+            throwIfAborted(signal);
           }
           try {
             const result = await window.electronAPI.ai.ocrPage(base64, requestId);

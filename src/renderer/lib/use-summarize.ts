@@ -3,6 +3,7 @@ import { useAppStore } from './store';
 import { AiClient } from './ai-client';
 import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
 import { normalizeCitationPlacement } from './citation';
+import { enrichDocumentWithImages } from './enrich-doc';
 
 /**
  * 페이지별 텍스트 배열을 받아, 각 단락 앞에 `[p.N] ` inline 마커를 붙여 단일 문자열로 반환.
@@ -155,31 +156,10 @@ async function analyzeDocumentImages(
   return imageDescriptions;
 }
 
-function enrichDocumentWithImages(
-  doc: PdfDocument,
-  imageDescriptions: Map<number, string[]>,
-): { textForSummary: string; enrichedPages: string[] | null } {
-  if (imageDescriptions.size === 0) return { textForSummary: doc.extractedText, enrichedPages: null };
-
-  const enrichedPages = [...doc.pageTexts];
-  for (const [pageIdx, descriptions] of imageDescriptions) {
-    if (pageIdx < enrichedPages.length) {
-      const desc = descriptions.map((d) => `[이미지 분석: ${d}]`).join('\n');
-      enrichedPages[pageIdx] = enrichedPages[pageIdx] + '\n' + desc;
-    }
-  }
-  // 방어적 불변식: enrichedPages.length 는 반드시 pageTexts.length 와 같아야 한다.
-  // 현재 구현(spread + index-only 쓰기)은 이를 만족하지만, 향후 리팩토링이 실수로
-  // 길이를 바꾸면 summarizeByChapter 의 slice(startPage-1, endPage) 가 short array 를
-  // 반환하고 챕터 tail 이 조용히 누락된다. 조기 실패 유도.
-  if (enrichedPages.length !== doc.pageTexts.length) {
-    throw new Error(
-      `enrichDocumentWithImages 불변식 위반: enrichedPages.length=${enrichedPages.length}, ` +
-      `doc.pageTexts.length=${doc.pageTexts.length}`,
-    );
-  }
-  return { textForSummary: enrichedPages.join('\n\n'), enrichedPages };
-}
+// v0.18.19 patch R34 P2: enrichDocumentWithImages 는 enrich-doc.ts 로 추출. use-summarize.ts
+// 가 무거운 의존성을 가져 vitest 가 본 함수만 단위 테스트하기 어려웠다 — pure 한 부분만
+// 별도 모듈로 분리하여 R34 회귀 가드 추가.
+// 기존 호출자 (line 523 부근) 는 import 만 바꾸면 시그니처 동일.
 
 async function summarizeByChapter(
   doc: PdfDocument, settings: AppSettings, track: TrackFn,

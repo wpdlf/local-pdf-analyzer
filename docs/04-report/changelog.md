@@ -9,8 +9,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [0.18.19 patch] - 2026-05-20
 
 > v0.18.19 릴리즈 자산 덮어쓰기. 버전 번호 미상승 — 이미 배포된 v0.18.19 가
-> R32 P1+P2+P3 누적 + R33 결과 R34 P1 적용된 빌드로 교체된다.
-> (과거 v0.18.18 patch 와 동일 패턴, 4차 덮어쓰기)
+> R32 P1+P2+P3 누적 + R33 결과 R34 P1+P2 적용된 빌드로 교체된다.
+> (과거 v0.18.18 patch 와 동일 패턴, 5차 덮어쓰기)
+
+### Hardened (R34 P2 — 커버리지 보강 + P4 동반)
+- **`VALID_SETTINGS_KEYS` 단일 출처 모듈화** (`src/main/settings-keys.ts` 신설): 이전엔 `main/index.ts` 의 두 곳에 같은 키 배열이 별도 리터럴로 유지되어 한쪽만 갱신 시 settings 저장/로드 silent drift 위험. 단일 모듈로 통합 + 6-case drift 가드 단위 테스트 (Surface 4 P3).
+- **`enrichDocumentWithImages` 분리 + 단위 테스트** (`src/renderer/lib/enrich-doc.ts` 신설): R32 P3 의 "Vision partial-failure 시 enrichedPages null 정책" 이 use-summarize.ts 내부 헬퍼라 단위 테스트 0건이었음. pure 함수만 별도 모듈로 추출 + 11-case 회귀 가드 (Surface 4 P3).
+- **preload contextBridge shape snapshot 테스트** (`__tests__/preload-shape.test.ts` 신설): `src/preload/index.ts` 가 electron 의존성으로 직접 import 불가했으나, source 텍스트 정적 검사로 노출 키 집합 + IPC channel 이름 + 핵심 시그니처 (ocrPage / embed / analyzeImage requestId) 의 drift 가드 9-case 추가 (Surface 4 P3).
+- **i18n own-undefined 가드 보강** (`i18n.ts:interpolate`): R32 P3 의 hasOwnProperty 전환이 own property 값이 `undefined` 인 경우 `String(undefined) = "undefined"` 가 UI 에 박히는 corner 발생. AND 결합으로 보완 (Surface 3 P4).
+- **pdf-parser OCR signal abort race 차단** (`pdf-parser.ts:294`): `addEventListener('abort', ...)` 와 직전 `signal.aborted` 체크 사이에 abort 발화 시 late-attached listener 가 fire 안 해 IPC 가 그대로 진행되며 ~90s 토큰 비용 발생. listener 등록 직후 `throwIfAborted` 한 번 더 (Surface 2 P4).
+- **preload `ai.abort` 반환 타입에 `error?` 추가** (`preload/index.ts`): main 측 invalid requestId 검증 실패 시 `{ success: false, error: '...' }` 반환하지만 타입은 `error` 누락. 호출자 식별 가능하도록 정합 (Surface 2 P5).
+- **`scripts/postbuild.mjs` SMOKE_FILES 에 `Adobe-CNS1-UCS2.bcmap` 추가** : 번체 중국어(대만/홍콩) cmap 부분 누락 케이스 catch (Surface 4 P5).
+
+### Tests (R34 P2)
+- **회귀 테스트 +26 케이스** (296→322): `settings-keys.test.ts` 신규 6 (드리프트 가드 — Set/Array 동치, AppSettings type subset, DEFAULT_SETTINGS 커버, 양방향 슈퍼셋 금지, prototype 차단, readonly 검증), `enrich-doc.test.ts` 신규 11 (빈 description / 단일 / 다중 / 순서 / textForSummary join / out-of-range / 불변식 / mutation / partial-failure 핵심 계약), `preload-shape.test.ts` 신규 9 (expose target / top keys / IPC channels / ocrPage signature / embed / analyzeImage / openExternal / ElectronAPI type / declare global / listeners removeListener).
+
+---
 
 ### Fixed (R34 P1 — R33 4-에이전트 병렬 QA 결과 P2 1 + P3 2 + P4 1 회귀 정리)
 - **MarkdownErrorBoundary reset 비교 정합** (`safe-markdown.tsx:23-25`): R32 P2 가 추가한 `componentDidUpdate` 가 `prevProps.children !== this.props.children` 비교를 했는데, 부모(SummaryViewer / QaChat) 가 매 렌더마다 JSX 로 `<ReactMarkdown>` 을 새로 생성하므로 children identity 가 매 렌더 다름 → hasError 가 latch 되어도 즉시 reset → 같은 throw → thrash. 비교 대상을 `fallbackText` (실제 content 문자열) 로 교체 (Surface 3 P2).

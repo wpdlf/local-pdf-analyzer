@@ -6,6 +6,9 @@ import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
 import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest } from './ai-service';
 import { MAX_PDF_SIZE_BYTES, LOCALHOST_HOSTS } from '../shared/constants';
+// v0.18.19 patch R34 P2: settings 키 단일 출처. 이전엔 본 파일 두 곳에 별도 리터럴이 있었고
+// R33 Surface 4 P3 가 drift 가드 부재를 지적. settings-keys.ts 가 양쪽을 derive 함.
+import { VALID_SETTINGS_KEYS, VALID_SETTINGS_KEYS_SET } from './settings-keys';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -35,9 +38,7 @@ const defaultSettings = {
   enableAnswerVerification: true,
 } as const;
 
-const VALID_SETTINGS_KEYS_SET = new Set([
-  'provider', 'model', 'ollamaBaseUrl', 'theme', 'uiLanguage', 'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage', 'enableAnswerVerification',
-]);
+// R34 P2: VALID_SETTINGS_KEYS_SET 은 settings-keys.ts 에서 import (단일 출처).
 
 async function loadSettings(): Promise<Record<string, unknown>> {
   try {
@@ -369,11 +370,8 @@ function registerIpcHandlers(): void {
   });
 
   const VALID_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
-  const VALID_SETTINGS_KEYS = [
-    'provider', 'model', 'ollamaBaseUrl', 'theme', 'uiLanguage',
-    'defaultSummaryType', 'maxChunkSize', 'enableImageAnalysis', 'enableOcrFallback', 'summaryLanguage',
-    'enableAnswerVerification',
-  ] as const;
+  // R34 P2: VALID_SETTINGS_KEYS 는 settings-keys.ts 에서 import (단일 출처).
+  // 이전엔 본 함수 안과 모듈 상단에 같은 키 배열이 두 번 박혀 있어 drift 위험.
 
   ipcMain.handle('apikey:save', (_event, provider: string, key: string) => {
     if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {

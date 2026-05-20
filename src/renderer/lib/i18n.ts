@@ -263,7 +263,11 @@ function interpolate(template: string, params?: Record<string, string | number>,
     // `params['toString']` 같은 prototype 속성은 함수로 떨어져 `String(...)` 으로 함수 소스가
     // 템플릿에 주입되는 UI 오염 경로가 있었음. `Object.prototype.hasOwnProperty.call` 로
     // own property 만 카운트하여 prototype 누출 차단 (Surface 3 P4).
-    if (!Object.prototype.hasOwnProperty.call(params, name)) {
+    //
+    // v0.18.19 patch R34 P2 (R33 회귀 fix): hasOwnProperty 만 검사하면 own property 의 값이
+    // `undefined` 인 경우 `String(undefined)` = `"undefined"` 가 UI 에 박혀 사용자가 missing
+    // param 임을 식별 못함. 두 가드를 AND 로 결합 (Surface 3 P4).
+    if (!Object.prototype.hasOwnProperty.call(params, name) || params[name] === undefined) {
       warnOnce(_warnedMissingParams, `${key ?? ''}:${name}`, `[i18n] missing param "${name}" for key "${key ?? '?'}"`);
       return `{${name}}`;
     }

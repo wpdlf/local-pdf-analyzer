@@ -34,7 +34,9 @@ try {
 // v0.18.19 patch R32 P3: cpSync 가 ENOSPC / 중간 실패로 부분 복사된 채 빠져나오면 NSIS 가
 // 깨진 cmap 세트로 패키징되어 사용자가 설치 후에야 CJK 글리프 깨짐을 발견하는 silent
 // 결함이 가능. 대표 cmap 파일 존재 확인을 smoke test 로 둠 (Surface 4 P5).
-const SMOKE_FILES = ['Adobe-Japan1-UCS2.bcmap', 'Adobe-Korea1-UCS2.bcmap', 'Adobe-GB1-UCS2.bcmap'];
+// R34 P2: Adobe-CNS1-UCS2.bcmap (번체 중국어 — 대만/홍콩 PDF) 추가.
+// 부분 복사가 정확히 CNS1 만 빠뜨리는 ENOSPC edge 에서도 smoke 가 catch 하도록.
+const SMOKE_FILES = ['Adobe-Japan1-UCS2.bcmap', 'Adobe-Korea1-UCS2.bcmap', 'Adobe-GB1-UCS2.bcmap', 'Adobe-CNS1-UCS2.bcmap'];
 for (const name of SMOKE_FILES) {
   const probe = resolve(dest, name);
   if (!existsSync(probe)) {
