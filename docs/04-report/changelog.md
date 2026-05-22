@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [0.18.21] - 2026-05-22
+
+> R35 — page-citation-viewer 전체 로직 4-에이전트 병렬 QA. Main 프로세스 / AI·상태 /
+> UI·CI 3개 표면은 R16~R34 누적 감사로 diminishing-returns (신규 결함 0), citation/RAG
+> 파이프라인에서 런타임 결함 2건 검출·수정. 정적 갭 분석이 "Decision #6 준수"로 판정했던
+> 단일-인용 정책이 실제로는 프롬프트에 범위 라벨을 넣고 LLM 의 확률적 변환에 의존하던
+> 결함을 코드 레벨에서 제거. 대시보드 88.8% 는 v1.0 stale 스냅샷이며 기능은 v1.1(~98%)
+> 에서 이미 archive-resolved 상태였음을 갭 재분석으로 확인. 회귀 테스트 +1 (322 → 323).
+
+### Fixed (R35 — citation 범위 라벨 인용 소실)
+- **`formatPageLabel` 단일 라벨 강제** (`citation.ts:137`, `use-qa.ts:357`): 멀티페이지 RAG 청크에 범위 라벨 `[p.N-M]` 을 프롬프트 컨텍스트에 주입하고, 최종 출력 파서 `CITATION_REGEX` (단일 `[p.N]` 만 인식) 와의 변환을 LLM 지시 준수에 의존하던 결함. `RAG_CHUNK_SIZE=500` 토큰 청크가 일반 PDF 페이지를 상시 가로질러 범위 라벨이 항상 발생 → 로컬 소형 모델이 단일 변환에 실패하면 `[p.5-7]` 가 `-7]` 에서 매칭 실패해 인용이 일반 텍스트로 렌더되며 소실 (HIGH — citation 정확도 결함의 1차 원인). 시그니처를 `(page?: number)` 로 축소해 항상 단일 `[p.N]` 만 방출, Decision Record #6("단일 [p.N] 형식")을 코드로 강제.
+- **청크 페이지 귀속을 body 좌표 기준으로 정정** (`chunker.ts:320-329`): `chunkTextWithOverlapByPage` 가 overlap tail (`c.tailStart`) 을 pageStart 산정에 포함해, 이전 페이지 출신 tail 이 pageStart 를 앞 페이지로 끌어당기던 결함 (예: page 8 본문 청크가 page 7 tail 때문에 `[p.7-8]`). 범위 라벨을 추가 양산하고 인용을 실제 근거보다 앞 페이지로 편향시킴 (MEDIUM). 귀속을 `c.bodyStart` 기준으로 전환 — tail 은 검색 recall 용으로만 `text` 에 잔류, retrieval 좌표계와 attribution 좌표계 분리.
+- **CITATION_RULES 5개 로케일 정리** (`ai-service.ts`): 이제 프롬프트에 범위 라벨이 도달하지 않으므로, ko/en/ja/zh/auto 의 "범위 라벨→단일 변환" 지시(dead instruction) 제거. 핵심 "단일 페이지 인용" 규칙은 유지.
+
+### Docs (R35)
+- **설계 §3.3 드리프트 정리** (`docs/archive/2026-04/page-citation-viewer/page-citation-viewer.design.md`): R35 가 구현을 Decision #6 쪽으로 통일한 결과 §3.3 의 프롬프트 라벨 명세(`[p.N-M]`, 6곳)·`formatPageLabel` 시그니처·청크 귀속 주석이 구현과 모순 → 단일 라벨 + body 좌표 귀속으로 갱신해 설계-구현 일치 복원.
+
+### Tests (R35)
+- **회귀 테스트 +1 케이스** (322→323): `citation.test.ts` formatPageLabel 단일-라벨/범위-미방출 가드 (출력이 CITATION_REGEX 로 재파싱 가능함 — 생산-소비 포맷 정합성), `chunker.test.ts` overlap tail 이 pageStart 를 이전 페이지로 끌어당기지 않음 가드.
+
+---
+
 ## [0.18.20] - 2026-05-20
 
 > v0.18.19 자산 덮어쓰기 패턴 (5차) 으로 누적되었던 R32 + R33 + R34 (P1+P2) 작업을

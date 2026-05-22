@@ -101,7 +101,7 @@ status: Draft
                            ┌──────────────────────┐
                            │  use-qa / use-sum    │
                            │  buildContext()      │  (extended)
-                           │  → "[p.5-7]\n..."    │
+                           │  → "[p.5]\n..."      │
                            └──────────┬───────────┘
                                       │
                                       ▼
@@ -165,13 +165,13 @@ status: Draft
 3. Q&A 검색 (use-qa.handleAsk)
    store.search(queryEmbedding, 5)
    → SearchResult[] { text, score, index, pageStart?, pageEnd? }
-   → context = formatContextWithPages(results)
-     "[p.5-7]\n{text}\n\n[p.12]\n{text}"
+   → context = formatContextWithPages(results)   // R35: 항상 단일 라벨
+     "[p.5]\n{text}\n\n[p.12]\n{text}"
    → ai.generate(prompt + context)
 
 4. 요약 (use-summarize)
    chunks = chunkChaptersByPage(...)  // 청크별 page 보존
-   각 청크를 [p.N-M]\n{chunk} 형태로 프롬프트에 포함
+   각 청크를 [p.N]\n{chunk} 형태로 프롬프트에 포함   // R35: body 시작 페이지 단일 라벨
 
 5. LLM 응답 (한글 예시)
    "메모리 누수는 백그래피런 백프레셔 부재로 발생한다[p.12]. 이 문제는 response.pipe(file)로 해결된다[p.13]."
@@ -281,7 +281,7 @@ VectorChunk  { text, embedding, index, pageStart, pageEnd }
 SearchResult[]  { text, score, index, pageStart, pageEnd }
      │
      ▼ (use-qa.handleAsk → prompt context)
-string  "[p.5-7]\n...\n\n[p.12]\n..."
+string  "[p.5]\n...\n\n[p.12]\n..."   // R35: 항상 단일 라벨
      │
      ▼ (LLM + ai-service prompt w/ instruction)
 string  "...문장[p.12]. 다음 문장[p.13]."
@@ -315,8 +315,10 @@ export function chunkTextWithOverlapByPage(
   // 3. 각 결과 chunk 의 시작/끝 오프셋을 구해, pageOffsets 에서
   //    binary search → pageStart / pageEnd 산출
   //
-  // 4. overlap 영역은 pageStart = min(before, after), pageEnd = max(...)
-  //    → 경계 청크는 자연스럽게 범위가 넓어짐
+  // 4. R35: 페이지 귀속은 body 좌표(bodyStart) 기준. overlap tail 은 검색 recall 용으로만
+  //    text 에 포함되고 pageStart 산정에서 제외 → 인용이 앞 페이지로 편향되지 않음.
+  //    body 가 페이지 경계를 가로지르면 pageStart < pageEnd 가 될 수 있으나, 프롬프트
+  //    라벨은 formatPageLabel 이 항상 단일(pageStart)로 방출한다.
 }
 ```
 
@@ -350,11 +352,15 @@ export function parseCitations(text: string): CitationSegment[] {
 
 #### 3.3.3 `formatPageLabel` (prompt context 빌더)
 
+> **R35 갱신**: 멀티페이지 청크라도 **항상 단일 `[p.N]`** 만 방출한다. 과거엔 범위 라벨
+> `[p.N-M]` 을 방출하고 LLM 이 단일로 변환하도록 프롬프트로 지시했으나, 최종 출력 파서
+> (`CITATION_REGEX`)가 단일만 인식해 로컬 소형 모델이 변환에 실패하면 인용이 소실됐다.
+> 라벨 생성 단계에서 body 시작 페이지로 고정해 Decision Record #6("단일 [p.N]")을 코드로 강제.
+
 ```typescript
-export function formatPageLabel(pageStart?: number, pageEnd?: number): string {
-  if (!pageStart) return '';
-  if (!pageEnd || pageEnd === pageStart) return `[p.${pageStart}]`;
-  return `[p.${pageStart}-${pageEnd}]`;
+export function formatPageLabel(page?: number): string {
+  if (!page || page < 1) return '';
+  return `[p.${Math.floor(page)}]`;
 }
 ```
 
@@ -369,7 +375,7 @@ export function formatPageLabel(pageStart?: number, pageEnd?: number): string {
 | Symbol | Signature | Purpose |
 |---|---|---|
 | `parseCitations` | `(text: string) => CitationSegment[]` | 마크다운 텍스트에서 `[p.N]` 추출 |
-| `formatPageLabel` | `(pageStart?: number, pageEnd?: number) => string` | 컨텍스트 빌더용 라벨 생성 |
+| `formatPageLabel` | `(page?: number) => string` | 컨텍스트 빌더용 단일 `[p.N]` 라벨 생성 (R35) |
 | `clampCitationPage` | `(page: number, maxPage: number) => number \| null` | 잘못된 페이지 방어 (음수/초과) |
 
 ### 4.2 Store API
@@ -575,8 +581,8 @@ background: #bfdbfe;  /* blue-200 */
 | 5 | `parseCitations` | 빈 문자열 | 빈 배열 |
 | 6 | `parseCitations` | 잘못된 형식 `"[p.abc]"` | 전체가 text (not matched) |
 | 7 | `parseCitations` | 0 또는 음수 페이지 `"[p.0]"`, `"[p.-1]"` | 0: text 그대로, 음수: text 그대로 |
-| 8 | `formatPageLabel` | (5, 5) → `"[p.5]"`, (5, 7) → `"[p.5-7]"` | 두 케이스 모두 |
-| 9 | `formatPageLabel` | undefined 처리 | `""` |
+| 8 | `formatPageLabel` | (5) → `"[p.5]"` / R35: 범위 미방출, 출력은 CITATION_REGEX 재파싱 가능 | 단일 라벨만 |
+| 9 | `formatPageLabel` | undefined / 0 / 음수 처리 | `""` |
 | 10 | `chunkTextWithOverlapByPage` | 3-page PDF, 짧은 청크 크기 | 각 청크의 pageStart/End 가 올바른 범위 |
 | 11 | `chunkTextWithOverlapByPage` | overlap 경계 청크 | pageStart ≤ pageEnd, 범위 union |
 | 12 | `chunkTextWithOverlapByPage` | 빈 pageTexts | 빈 배열 |

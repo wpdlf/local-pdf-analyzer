@@ -178,21 +178,31 @@ describe('normalizeCitationPlacement', () => {
 
 describe('formatPageLabel', () => {
   it('단일 페이지', () => {
-    expect(formatPageLabel(5, 5)).toBe('[p.5]');
     expect(formatPageLabel(5)).toBe('[p.5]');
+    expect(formatPageLabel(1)).toBe('[p.1]');
   });
 
-  it('범위', () => {
-    expect(formatPageLabel(5, 7)).toBe('[p.5-7]');
-  });
-
-  it('pageStart 없으면 빈 문자열', () => {
-    expect(formatPageLabel(undefined, 5)).toBe('');
+  it('page 없거나 1 미만이면 빈 문자열', () => {
+    expect(formatPageLabel(undefined)).toBe('');
     expect(formatPageLabel(0)).toBe('');
+    expect(formatPageLabel(-3)).toBe('');
   });
 
-  it('잘못된 범위(pageEnd < pageStart)는 단일 페이지로 fallback', () => {
-    expect(formatPageLabel(10, 5)).toBe('[p.10]');
+  it('소수 페이지는 floor 처리', () => {
+    expect(formatPageLabel(5.9)).toBe('[p.5]');
+  });
+
+  // R35 회귀 가드: formatPageLabel 은 멀티페이지 청크라도 절대 범위 라벨 `[p.N-M]` 을
+  // 방출하지 않아야 한다. 범위 라벨은 CITATION_REGEX 가 인식하지 못해 인용이 소실되며,
+  // 이것이 citation 매치율 88.8% 미달의 1차 원인이었다. 단일 라벨만 생산하므로,
+  // 그 출력은 항상 CITATION_REGEX 로 다시 파싱 가능해야 한다(생산-소비 포맷 정합성).
+  it('범위 라벨을 방출하지 않으며, 출력은 CITATION_REGEX 로 재파싱 가능하다', () => {
+    const label = formatPageLabel(7);
+    expect(label).not.toMatch(/-/);
+    const re = new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags);
+    const matches = Array.from(label.matchAll(re));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.[1]).toBe('7');
   });
 });
 

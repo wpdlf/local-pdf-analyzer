@@ -1410,7 +1410,6 @@ const CITATION_RULES: Record<string, string> = {
 
 **잘못된 예 (절대 금지)**:
 - "이 문서는 메모리 관리에 대해 설명한다." (구체적 사실인데 인용 없음 ✗)
-- "backpressure 에 관한 내용이다[p.5-7]." (범위 라벨 그대로 사용 ✗ — 단일로 변환해야 함)
 - "메모리 누수가 발생한다 ([p.12])." **(괄호 금지 ✗ — 인용 앞뒤에 \`(\` \`)\` 절대 쓰지 마세요)**
 - "- [p.44]" **(목록의 단독 항목 금지 ✗ — 인용은 반드시 본문 문장 끝에 붙여야 함)**
 - "결론은 다음과 같다\\n[p.3]" **(줄바꿈 후 단독 금지 ✗ — 같은 줄 문장 끝에 붙여야 함)**`,
@@ -1431,7 +1430,6 @@ const CITATION_RULES: Record<string, string> = {
 
 **Wrong (STRICTLY forbidden)**:
 - "This document discusses memory management." (concrete claim without citation ✗)
-- "It covers backpressure[p.5-7]." (range label copied as-is ✗ — must pick single page)
 - "Memory leaks occur ([p.12])." **(parentheses FORBIDDEN ✗ — never wrap citations in \`(\` \`)\`)**
 - "- [p.44]" **(standalone list item FORBIDDEN ✗ — citations must attach to a sentence)**
 - "The conclusion:\\n[p.3]" **(newline then citation FORBIDDEN ✗ — must be on the same line as the sentence)**`,
@@ -1450,8 +1448,7 @@ const CITATION_RULES: Record<string, string> = {
 
 **避けるべき例**:
 - 「\`([p.12])\`」(括弧で囲むのは禁止 ✗)
-- 「- [p.44]」(独立した箇条書き項目は禁止 ✗)
-- 「[p.5-7]」 (範囲ラベル ✗)`,
+- 「- [p.44]」(独立した箇条書き項目は禁止 ✗)`,
   zh: `## 引用规则 (最重要的输出规则)
 
 **输入文本的每个段落以 \`[p.N]\` 形式的页码标签开头。**
@@ -1467,11 +1464,10 @@ const CITATION_RULES: Record<string, string> = {
 
 **错误示例 (避免)**:
 - "\`([p.12])\`" (括号包裹 ✗)
-- "- [p.44]" (独立列表项 ✗)
-- "[p.5-7]" (范围标签 ✗)`,
+- "- [p.44]" (独立列表项 ✗)`,
   auto: `## Citation rule (MOST IMPORTANT OUTPUT RULE)
 
-**Each paragraph in the input begins with a \`[p.N]\` page label.** Attach \`[p.N]\` at the end of almost every key sentence, copying the label verbatim. List items need citations too. For range labels pick a single page. Never wrap in parentheses like \`([p.5])\`. Never put citations on a standalone line like \`- [p.5]\`. Omit when uncertain.
+**Each paragraph in the input begins with a \`[p.N]\` page label.** Attach \`[p.N]\` at the end of almost every key sentence, copying the label verbatim. List items need citations too. Never wrap in parentheses like \`([p.5])\`. Never put citations on a standalone line like \`- [p.5]\`. Omit when uncertain.
 
 Example: "Memory leaks occur due to missing backpressure[p.12]. The fix is response.pipe(file)[p.13]."`,
 };

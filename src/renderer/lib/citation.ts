@@ -129,16 +129,19 @@ export function normalizeCitationPlacement(text: string): string {
 }
 
 /**
- * 프롬프트 컨텍스트 빌더에서 사용할 페이지 라벨 생성.
- * - pageStart 가 없으면 빈 문자열 (라벨 미첨부)
- * - pageStart === pageEnd 이거나 pageEnd 가 없으면 `[p.N]`
- * - 범위면 `[p.N-M]` (프롬프트 전용, 최종 출력은 항상 단일 인용)
+ * 프롬프트 컨텍스트 빌더에서 사용할 페이지 라벨 생성. **항상 단일 `[p.N]`** 만 방출한다.
+ * - page 가 없거나 1 미만이면 빈 문자열 (라벨 미첨부)
+ *
+ * v0.18.21 R35: 과거에는 멀티페이지 청크에 `[p.N-M]` 범위 라벨을 방출하고, LLM 이 이를
+ * 단일 페이지로 변환하도록 시스템 프롬프트로 지시했다. 그러나 최종 출력 파서
+ * (`CITATION_REGEX`)는 단일 `[p.N]` 만 인식하므로, LLM 이 `[p.5-7]` 을 그대로 복사하면
+ * `-7]` 에서 매칭에 실패해 인용이 일반 텍스트로 렌더되며 소실됐다. 범위→단일 변환을
+ * 로컬 소형 모델의 지시 준수에 의존한 것이 citation 매치율 88.8% 미달의 1차 원인이었다.
+ * 라벨 생성 단계에서 청크 body 시작 페이지로 고정해 근본 원인을 제거한다.
  */
-export function formatPageLabel(pageStart?: number, pageEnd?: number): string {
-  if (!pageStart || pageStart < 1) return '';
-  if (!pageEnd || pageEnd === pageStart) return `[p.${pageStart}]`;
-  if (pageEnd < pageStart) return `[p.${pageStart}]`; // 잘못된 범위 방어
-  return `[p.${pageStart}-${pageEnd}]`;
+export function formatPageLabel(page?: number): string {
+  if (!page || page < 1) return '';
+  return `[p.${Math.floor(page)}]`;
 }
 
 /**

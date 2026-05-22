@@ -267,4 +267,20 @@ describe('chunkTextWithOverlapByPage', () => {
       expect(c.pageEnd).toBe(1);
     }
   });
+
+  // R35 회귀 가드: overlap tail 이 pageStart 를 이전 페이지로 끌어당기지 않아야 한다.
+  // page 2 시작에 위치한 마커를 포함하는 첫 청크는 body 가 page 2 에서 시작하므로
+  // pageStart 가 2 여야 한다. 과거 버그: page 1 에서 끌어온 overlap tail 때문에
+  // pageStart 가 1 로 편향되어 [p.1-2] 같은 범위 라벨을 양산하고 인용을 앞 페이지로 편향시켰다.
+  it('overlap tail 이 pageStart 를 이전 페이지로 끌어당기지 않는다', () => {
+    const pageTexts = [
+      '첫페이지마커Aaa ' + '가나다라마바사 '.repeat(50),
+      '둘째페이지마커Zzz ' + '아자차카타파하 '.repeat(50),
+    ];
+    // overlap 0.1 (>0) 로 page 2 첫 청크에 page 1 출신 tail 이 붙도록 유도
+    const result = chunkTextWithOverlapByPage(pageTexts, 100, 0.1);
+    const zChunk = result.find((c) => c.text.includes('둘째페이지마커Zzz'));
+    expect(zChunk).toBeDefined();
+    expect(zChunk!.pageStart).toBe(2);
+  });
 });

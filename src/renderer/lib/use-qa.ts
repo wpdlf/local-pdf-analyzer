@@ -354,7 +354,9 @@ async function ragSearch(question: string, signal?: AbortSignal): Promise<string
     for (const r of results) {
       // page-citation-viewer: page 메타데이터가 있으면 [p.N] 라벨을 앞에 붙여
       // LLM 이 해당 페이지를 인용하도록 유도. 기존 청크도 label 없이 그대로 폴백.
-      const label = formatPageLabel(r.pageStart, r.pageEnd);
+      // R35: 멀티페이지 청크라도 단일 라벨(body 시작 페이지)만 방출한다 — 범위 라벨은
+      // 최종 출력 파서가 인식하지 못해 인용이 소실되므로(formatPageLabel 주석 참조).
+      const label = formatPageLabel(r.pageStart);
       const segment = label ? `${label}\n${r.text}` : r.text;
       if (totalLen + segment.length > MAX_QA_CONTEXT_CHARS) break;
       parts.push(segment);

@@ -319,11 +319,14 @@ export function chunkTextWithOverlapByPage(
   const result: PageChunk[] = [];
   for (const c of offsetChunks) {
     if (!c.text) continue;
-    // tailStart >= 0 이면 overlap tail 이 있음 → 그 페이지부터 포함
-    const chunkStart = c.tailStart >= 0 ? c.tailStart : c.bodyStart;
+    // R35: 페이지 귀속(attribution)은 **body 좌표 기준**으로만 산정한다. overlap tail 은
+    // 이전 청크 body 의 접미사(이전 페이지 출신)이므로 검색 recall 용으로만 c.text 에 포함될 뿐,
+    // pageStart 를 앞 페이지로 끌어당겨 인용을 실제 근거보다 이전 페이지로 편향시키고
+    // (예: page 8 본문 청크가 page 7 tail 때문에 [p.7-8] 로 라벨링) 범위 라벨을 양산했다.
+    // retrieval 좌표계(tail 포함)와 attribution 좌표계(body 전용)를 분리한다.
     // bodyEnd 는 exclusive → 마지막 문자는 bodyEnd - 1
-    const chunkEndChar = Math.max(chunkStart, c.bodyEnd - 1);
-    const pageStart = offsetToPage(chunkStart);
+    const chunkEndChar = Math.max(c.bodyStart, c.bodyEnd - 1);
+    const pageStart = offsetToPage(c.bodyStart);
     const pageEnd = Math.max(pageStart, offsetToPage(chunkEndChar));
     result.push({ text: c.text, pageStart, pageEnd });
   }
