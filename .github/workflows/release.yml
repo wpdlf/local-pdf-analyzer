@@ -21,6 +21,13 @@ jobs:
       # Windows 빌드 1개 추가 실행 비용보다 크다. Ubuntu 시그널은 그대로 보존.
       fail-fast: false
       matrix:
+        # windows-2025 는 2026-06-08~15 에 GitHub 측에서 VS2022→VS2026 으로 자동 마이그레이션된다
+        # (windows-latest/windows-2025 라벨 공통, 투명 리다이렉트라 라벨 변경 불필요).
+        # 본 프로젝트는 네이티브 모듈(node-gyp/electron-rebuild)이 0개이고 빌드가 electron-vite
+        # 번들링 + electron-builder NSIS(makensis) + Sigstore 로 VS 툴체인에 의존하지 않으므로
+        # VS 버전 전환의 영향을 받지 않는다. windows-2025-vs2026 라벨은 테스트 전용(마이그레이션
+        # 후 windows-2025 로 환원)이라 영구 핀 금지. VS2022 고정이 필요해지면(향후 네이티브 추가 시)
+        # windows-2022 로 변경할 것.
         os: [ubuntu-latest, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -58,6 +65,7 @@ jobs:
 
   build-windows:
     needs: test
+    # windows-2025: 2026-06-15 까지 VS2026 으로 자동 전환되나 본 빌드는 VS 무의존(상단 matrix 주석 참조).
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
