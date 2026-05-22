@@ -11,8 +11,13 @@ import { enrichDocumentWithImages } from './enrich-doc';
  *
  * 청크 prefix 1개만 붙이는 기존 방식은 LLM 이 범위만 알 수 있어 인용 생성이 희박했음.
  * 단락 단위 inline 마커는 chunkText 가 어디서 분할하든 각 청크의 모든 문단에 라벨 유지.
+ *
+ * R35: 요약 경로는 설계상 **항상 단일 `[p.N]`** 만 방출한다(범위 라벨 미사용). Q&A 경로
+ * (use-qa.ragSearch)가 R35 전까지 범위 라벨 `[p.N-M]` 에 의존하다 인용 소실을 겪은 것과 달리,
+ * 요약 경로는 이 함수로 단락마다 단일 라벨을 인라인 삽입해 동일 문제를 원천 회피한다.
+ * use-summarize.test.ts 가 이 불변식(범위 미방출 + CITATION_REGEX 재파싱 가능)을 가드한다.
  */
-function labelParagraphsWithPages(pageTexts: string[]): string {
+export function labelParagraphsWithPages(pageTexts: string[]): string {
   const labeled: string[] = [];
   pageTexts.forEach((pageText, pageIdx) => {
     if (!pageText || !pageText.trim()) return;
