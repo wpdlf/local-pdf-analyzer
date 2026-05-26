@@ -21,7 +21,24 @@ export const MAX_PDF_SIZE_BYTES = 100 * 1024 * 1024; // 100MB
  */
 export const LOCALHOST_HOSTS: readonly string[] = ['localhost', '127.0.0.1', '::1'];
 
-/** 외부 hostname 이 로컬호스트로 평가되는지 검사 — SSRF 방어 헬퍼. */
+/**
+ * 외부 hostname 이 로컬호스트로 평가되는지 검사 — SSRF 방어 헬퍼.
+ *
+ * v0.18.22: IPv6 loopback 호환성 수정. WHATWG URL parser 는 `http://[::1]` 의 hostname 을
+ * `[::1]` (괄호 포함) 으로 반환하지만 LOCALHOST_HOSTS 는 `::1` (괄호 없음) 만 보유했었다.
+ * 결과적으로 IPv6 loopback 이 의도와 달리 차단되던 결함을 해소. 모든 IPv4/CIDR-bracket 폼의
+ * IPv6 ([::1] / [0:0:...:1]) 를 단일 비교 표면에서 처리한다.
+ *
+ * 호출자는 raw socket hostname (예: `::1`) 또는 URL parser 출력 (`[::1]`) 어느 쪽이든 안전.
+ * 모든 ai/ollama IPC 경계가 본 헬퍼를 사용해 LOCALHOST_HOSTS.includes() 직접 호출 시
+ * 발생하던 4-site drift 위험도 함께 차단.
+ */
 export function isLocalhostHost(hostname: string): boolean {
-  return LOCALHOST_HOSTS.includes(hostname);
+  if (typeof hostname !== 'string' || hostname.length === 0) return false;
+  // WHATWG URL parser 가 IPv6 hostname 을 [::1] 형태로 반환 → 괄호 정규화 후 비교.
+  // 양 끝의 단일 `[`/`]` 만 제거 (중간 괄호는 비정상 입력으로 보존하여 매칭 실패).
+  const normalized = (hostname.startsWith('[') && hostname.endsWith(']'))
+    ? hostname.slice(1, -1)
+    : hostname;
+  return LOCALHOST_HOSTS.includes(normalized);
 }

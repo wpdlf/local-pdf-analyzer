@@ -11,7 +11,7 @@ import { resolve } from 'node:path';
 //   1. ai:generate / ai:abort / ai:embed / ai:analyze-image / ai:ocr-page handler 등록 존재
 //   2. ai:abort 가 bare requestId + `vision:` prefix 양쪽을 abort (R31)
 //   3. analyzeImage / ocrPage 가 `vision:${rawRequestId}` namespace 로 등록 (R31 / R32 P2)
-//   4. ai:generate 의 ollamaBaseUrl 이 LOCALHOST_HOSTS 화이트리스트로 검증 (SSRF 가드)
+//   4. ai:generate 의 ollamaBaseUrl 이 isLocalhostHost 헬퍼로 검증 (SSRF 가드)
 //   5. ai:generate 의 입력 길이 캡 (requestId 256, text 10MB, model 128) 정합
 //   6. abortGenerate / registerEmbedRequest / unregisterEmbedRequest 가 ai-service 에서 import
 //      (인라인 구현이 아닌 단일 출처 — R32 P3 placeholder 가드의 정합성 유지)
@@ -19,7 +19,7 @@ import { resolve } from 'node:path';
 // 본 테스트가 catch 하는 회귀:
 //   - R31~R35 누적 abort 회귀의 근본 원인 (IPC layer 무테스트) 보완
 //   - `vision:` prefix 제거로 인한 Vision abort 무력화 (R32 P2 회귀)
-//   - LOCALHOST_HOSTS drift (settings:set 만 수정하고 ai:generate 미수정) — SSRF 우회
+//   - localhost 검증 drift (settings:set 만 수정하고 ai:generate 미수정) — SSRF 우회
 //
 // 한계: 실제 IPC 왕복(invoke→handle) 통합 검증은 본 테스트 범위 밖.
 // 그것은 electron 의 ipcMain 모킹이 필요하며, R36+ 의 후속 라운드에서 도입 검토.
@@ -59,9 +59,10 @@ describe('main IPC contract — ai:* handler shape (Top5 #2)', () => {
     );
   });
 
-  it('ai:generate 가 ollamaBaseUrl 을 LOCALHOST_HOSTS 화이트리스트로 검증 (SSRF defense-in-depth)', () => {
+  it('ai:generate 가 ollamaBaseUrl 을 isLocalhostHost 헬퍼로 검증 (SSRF defense-in-depth)', () => {
     // ai-service.ts 의 validateOllamaUrl 외에 IPC 경계에서도 검증 — 다중 방어.
-    expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,1500}?LOCALHOST_HOSTS/);
+    // v0.18.22: 4개 호출 지점이 isLocalhostHost 단일 헬퍼로 통일 (drift 차단 + IPv6 [::1] 정규화).
+    expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,1500}?isLocalhostHost/);
     // protocol 허용 목록 (http: / https:) 도 함께 확인
     expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,1500}?\['http:',\s*'https:'\]/);
   });

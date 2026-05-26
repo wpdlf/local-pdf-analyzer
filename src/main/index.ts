@@ -5,7 +5,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
 import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest } from './ai-service';
-import { MAX_PDF_SIZE_BYTES, LOCALHOST_HOSTS } from '../shared/constants';
+import { MAX_PDF_SIZE_BYTES, isLocalhostHost } from '../shared/constants';
 // v0.18.19 patch R34 P2: settings 키 단일 출처. 이전엔 본 파일 두 곳에 별도 리터럴이 있었고
 // R33 Surface 4 P3 가 drift 가드 부재를 지적. settings-keys.ts 가 양쪽을 derive 함.
 import { VALID_SETTINGS_KEYS, VALID_SETTINGS_KEYS_SET } from './settings-keys';
@@ -419,8 +419,7 @@ function registerIpcHandlers(): void {
             if (typeof val === 'string') {
               try {
                 const parsed = new URL(val);
-                const allowedHosts = LOCALHOST_HOSTS;
-                if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && allowedHosts.includes(parsed.hostname)) {
+                if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && isLocalhostHost(parsed.hostname)) {
                   filtered[key] = val;
                 }
               } catch { /* 유효하지 않은 URL 무시 */ }
@@ -544,8 +543,7 @@ function registerIpcHandlers(): void {
     if (request.provider === 'ollama') {
       try {
         const parsed = new URL(request.ollamaBaseUrl);
-        const allowedHosts = LOCALHOST_HOSTS;
-        if (!['http:', 'https:'].includes(parsed.protocol) || !allowedHosts.includes(parsed.hostname)) {
+        if (!['http:', 'https:'].includes(parsed.protocol) || !isLocalhostHost(parsed.hostname)) {
           return { success: false, error: 'Invalid ollamaBaseUrl: localhost only' };
         }
       } catch { return { success: false, error: 'Invalid ollamaBaseUrl' }; }
@@ -610,8 +608,7 @@ function registerIpcHandlers(): void {
     if (provider === 'ollama') {
       try {
         const parsed = new URL(ollamaBaseUrl);
-        const allowedHosts = LOCALHOST_HOSTS;
-        if (!['http:', 'https:'].includes(parsed.protocol) || !allowedHosts.includes(parsed.hostname)) return false;
+        if (!['http:', 'https:'].includes(parsed.protocol) || !isLocalhostHost(parsed.hostname)) return false;
       } catch { return false; }
     }
     const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;

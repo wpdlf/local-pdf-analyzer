@@ -27,17 +27,13 @@ describe('validateOllamaUrl — SSRF 방어 (Top5 #1)', () => {
     expect(() => validateOllamaUrl('http://localhost:11434')).not.toThrow();
   });
 
-  it('http://127.0.0.1 / https://127.0.0.1 허용', () => {
+  it('http://127.0.0.1 / https://127.0.0.1 / http://[::1] (IPv6 loopback) 허용', () => {
     expect(() => validateOllamaUrl('http://127.0.0.1:11434')).not.toThrow();
     expect(() => validateOllamaUrl('https://127.0.0.1:11434')).not.toThrow();
-  });
-
-  // 현재 동작 캡처: WHATWG URL parser 가 `http://[::1]` 의 hostname 을 `[::1]` (괄호 포함) 으로
-  // 돌려주지만 LOCALHOST_HOSTS 는 `::1` (괄호 없음) 만 보유 → IPv6 loopback 은 실제로 차단된다.
-  // Ollama 가 보통 IPv4 만 바인딩하므로 reachability 영향은 거의 없으나 의도된 동작과 어긋날 가능성
-  // 이 있어 차후 리뷰 필요. 본 테스트는 현 동작을 명시적으로 기록한다.
-  it('IPv6 loopback `http://[::1]:11434` 는 현재 거부됨 (현재 동작 캡처, 추후 리뷰 대상)', () => {
-    expect(() => validateOllamaUrl('http://[::1]:11434')).toThrow(/허용되지 않는 Ollama 호스트/);
+    // v0.18.22: 이전엔 WHATWG URL parser 의 `[::1]` (괄호 포함) hostname 이 LOCALHOST_HOSTS 의
+    // `::1` (괄호 없음) 과 mismatch 로 차단됐다. isLocalhostHost 가 괄호 정규화로 해결.
+    expect(() => validateOllamaUrl('http://[::1]:11434')).not.toThrow();
+    expect(() => validateOllamaUrl('https://[::1]:11434')).not.toThrow();
   });
 
   it('ftp:// / ws:// / file:// 등 비 http(s) 프로토콜은 차단', () => {

@@ -2,7 +2,7 @@ import http from 'http';
 import https from 'https';
 import { StringDecoder } from 'string_decoder';
 import { BrowserWindow } from 'electron';
-import { LOCALHOST_HOSTS } from '../shared/constants';
+import { isLocalhostHost } from '../shared/constants';
 
 interface GenerateRequest {
   text: string;
@@ -56,7 +56,7 @@ export function validateOllamaUrl(url: string): void {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error(`허용되지 않는 프로토콜: ${parsed.protocol}. http/https만 허용됩니다.`);
     }
-    if (!LOCALHOST_HOSTS.includes(parsed.hostname)) {
+    if (!isLocalhostHost(parsed.hostname)) {
       throw new Error(`허용되지 않는 Ollama 호스트: ${parsed.hostname}. localhost만 허용됩니다.`);
     }
   } catch (err) {
