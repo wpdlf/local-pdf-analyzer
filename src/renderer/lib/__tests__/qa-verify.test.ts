@@ -121,6 +121,31 @@ describe('splitIntoSentences (v0.18)', () => {
     const out = splitIntoSentences(input);
     expect(out).toHaveLength(1);
   });
+
+  // v0.18.22 R36 P2 회귀 가드: 인용 토큰 클러스터가 별도 fragment 로 떨어져 검증되지 않아야 한다.
+  // R35 single-label 이후 "본문. [p.5] [p.6] [p.7]" 같이 연속 인용이 마침표 뒤에 붙는 패턴이
+  // 늘어났는데, split 결과에 인용만 있는 fragment 가 포함되면 verify 임베딩이 weak score 를
+  // 양산하여 false-positive refine 트리거가 됐다. split 전에 인용 토큰을 제거하여 차단.
+  it('R36 P2: 연속 인용 토큰 클러스터가 별도 sentence 로 분리되지 않는다', () => {
+    const input = '이것은 검증해야 할 충분히 긴 문장입니다. [p.5] [p.6] [p.7]';
+    const out = splitIntoSentences(input);
+    // citation cluster 는 stripped → 본문 한 문장만 남는다.
+    expect(out).toHaveLength(1);
+    expect(out[0]).not.toMatch(/\[p\./);
+  });
+
+  it('R36 P2: 문장 내부에 끼어든 인용 토큰도 제거되며 본문은 보존', () => {
+    const input = '첫째 본문이 충분히 길게 있다 [p.3]. 둘째 본문이 충분히 길게 있다 [p.7|quote here].';
+    const out = splitIntoSentences(input);
+    expect(out).toHaveLength(2);
+    expect(out.join(' ')).not.toMatch(/\[p\./);
+    expect(out[0]).toContain('첫째 본문');
+    expect(out[1]).toContain('둘째 본문');
+  });
+
+  it('R36 P2: 인용만으로 구성된 문자열은 빈 배열', () => {
+    expect(splitIntoSentences('[p.1] [p.2] [p.3]')).toEqual([]);
+  });
 });
 
 describe('buildRefinePrompt (v0.18)', () => {

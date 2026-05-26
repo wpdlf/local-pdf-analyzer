@@ -214,6 +214,12 @@ export const useAppStore = create<AppState>((set) => ({
   progressInfo: null,
   setSummary: (summary) => set({ summary }),
   appendStream: (token) => {
+    // v0.18.22 R36 P1: 세션이 이미 종료된 상태(isGenerating=false)면 토큰을 무시한다.
+    // appendQaStream(R32 P3) 과 대칭 — 사용자 Stop → handleAbort 가 flushStream + setIsGenerating(false)
+    // 직후, in-flight for-await 루프가 다음 iteration 의 isGenerating 체크 전에 추가 토큰을
+    // append 하면 cleared 가 false 로 reset 되어 50ms flush 가 ghost token 을 summaryStream 으로
+    // 흘리던 경로. QA 측 입구 게이트(line 334) 의 미러.
+    if (!useAppStore.getState().isGenerating) return;
     streamState.cleared = false;
     streamState.buffer += token;
     if (!streamState.flushTimer) {
@@ -386,10 +392,14 @@ export const useAppStore = create<AppState>((set) => ({
   enrichedPageTextsVersion: 0,
   // R32 P3: 매 호출마다 version 증가 → useRagBuilder fingerprint 가 길이만 같고 내용이 다른
   // enrichment 도 정확히 감지하여 재빌드 트리거.
-  setEnrichedPageTexts: (pages) => set((s) => ({
-    enrichedPageTexts: pages,
-    enrichedPageTextsVersion: s.enrichedPageTextsVersion + 1,
-  })),
+  // v0.18.22 R36 P2: 동일 reference(특히 반복적인 null) 호출은 no-op 으로 처리하여 불필요한
+  // version bump 를 차단. fingerprint 가 향후 `r` 분기에서 version 을 포함하도록 바뀌어도
+  // false-positive 재빌드가 발생하지 않도록 방어적 가드.
+  setEnrichedPageTexts: (pages) => set((s) => (
+    s.enrichedPageTexts === pages
+      ? s
+      : { enrichedPageTexts: pages, enrichedPageTextsVersion: s.enrichedPageTextsVersion + 1 }
+  )),
   // DR-01: 패널 너비 비율 — localStorage 에서 복원, 기본 0.5
   citationPanelWidth: (() => {
     try {

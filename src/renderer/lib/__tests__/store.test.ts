@@ -33,9 +33,14 @@ describe('stream batching — summaryStream', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     resetStreams();
+    // v0.18.22 R36 P1: appendStream 이 isGenerating=true 일 때만 토큰을 받도록
+    // 가드 추가됨 (appendQaStream R32 P3 미러, ghost token 차단). 기존 배치 테스트는
+    // 그 가드를 우회하기 위해 명시 활성화.
+    useAppStore.setState({ isGenerating: true });
   });
   afterEach(() => {
     vi.useRealTimers();
+    useAppStore.setState({ isGenerating: false });
   });
 
   it('appendStream 은 50ms 후 batched flush 로 summaryStream 에 반영된다', () => {
@@ -67,6 +72,18 @@ describe('stream batching — summaryStream', () => {
     // flush 후 타이머가 추가로 fire 해도 double-apply 되지 않는다 (buffer 비움 + timer null)
     vi.advanceTimersByTime(100);
     expect(useAppStore.getState().summaryStream).toBe('pending');
+  });
+
+  // v0.18.22 R36 P1 회귀 가드: isGenerating=false 면 토큰 무시.
+  // appendQaStream(R32 P3) 의 ghost-token race 가 요약 측에도 비대칭으로 존재하던 결함을
+  // 동일 입구 게이트로 차단. 사용자 Stop → handleAbort 가 flushStream + setIsGenerating(false)
+  // 직후 in-flight IPC 토큰이 도착해도 summaryStream 에 ghost text 가 남지 않아야 한다.
+  it('isGenerating=false 일 때 appendStream 호출은 summaryStream 을 건드리지 않는다 (R36 P1 ghost-token race)', () => {
+    useAppStore.setState({ isGenerating: false });
+    const s = useAppStore.getState();
+    s.appendStream('zombie');
+    vi.advanceTimersByTime(100);
+    expect(useAppStore.getState().summaryStream).toBe('');
   });
 });
 
@@ -477,5 +494,26 @@ describe('setEnrichedPageTexts idempotent null reset (R32 P2)', () => {
     useAppStore.getState().setEnrichedPageTexts(null);
     useAppStore.getState().setEnrichedPageTexts(null);
     expect(useAppStore.getState().enrichedPageTexts).toBeNull();
+  });
+
+  // v0.18.22 R36 P2 회귀 가드: 동일 reference 호출은 version bump 도 건너뛴다.
+  // 이전엔 idempotent null 호출도 매번 version 을 증가시켜, fingerprint 로직이 향후
+  // `r` 분기에서 version 을 포함하도록 바뀌면 false-positive 재빌드가 발생하던 잠재 결함.
+  it('R36 P2: 동일 reference 재호출 시 version 은 증가하지 않는다', () => {
+    useAppStore.getState().setEnrichedPageTexts(null);
+    const v0 = useAppStore.getState().enrichedPageTextsVersion;
+    useAppStore.getState().setEnrichedPageTexts(null);
+    useAppStore.getState().setEnrichedPageTexts(null);
+    expect(useAppStore.getState().enrichedPageTextsVersion).toBe(v0);
+
+    const same = ['p1', 'p2'];
+    useAppStore.getState().setEnrichedPageTexts(same);
+    const v1 = useAppStore.getState().enrichedPageTextsVersion;
+    useAppStore.getState().setEnrichedPageTexts(same);
+    expect(useAppStore.getState().enrichedPageTextsVersion).toBe(v1);
+
+    // 다른 reference(같은 내용) 는 의도된 bump (내용 변경 감지가 reference 식별 한계).
+    useAppStore.getState().setEnrichedPageTexts(['p1', 'p2']);
+    expect(useAppStore.getState().enrichedPageTextsVersion).toBe(v1 + 1);
   });
 });
