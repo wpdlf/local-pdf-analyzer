@@ -417,6 +417,12 @@ async function extractPageImages(
   // R30 (v0.18.17): timeoutId 를 finally 에서 명시적으로 clear — 이전엔 race 가 빠르게
   // resolve 되어도 setTimeout 이 살아있어 200p PDF 에서 200개 pending timer + 200개의
   // 오해 소지 있는 "timeout" 경고가 5초 뒤 폭주하던 leak 차단.
+  //
+  // v0.18.22 R36 P4 (한계 문서화): Promise.race 는 결과 selection 만 빠르게 resolve 할 뿐,
+  // pdfjs 의 내부 op 파싱은 백그라운드에서 계속 진행되어 CPU/메모리를 점유한다. pdfjs 가
+  // `getOperatorList(signal)` 같은 AbortSignal 인프라를 노출하지 않아 실 작업 취소는 불가
+  // (한계). 200p 손상 PDF 의 누적 부하는 timeout 발화 후에도 페이지 수만큼 백그라운드 작업이
+  // 잔존하며 이는 pdfjs 업스트림 abort 지원이 도입되기 전까지 mitigation 가능 영역 밖이다.
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<{ fnArray: number[]; argsArray: unknown[] }>((resolve) => {
     timeoutId = setTimeout(() => {

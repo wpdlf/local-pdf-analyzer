@@ -388,6 +388,10 @@ export function useSummarize() {
   }, [flushStream, setIsGenerating]);
 
   // 언마운트 시 진행 중인 요약 정리 (타이머 + AI 요청)
+  // v0.18.22 R36 P4: cleanup 은 ref (`timeoutTimerRef`) 와 store 의 latest 값
+  // (`useAppStore.getState()`) 만 참조하므로 의도된 빈 deps. 향후 reactive 외부 상태가
+  // 추가되면 deps 누락이 stale closure 회귀를 유발할 수 있어 명시 disable 로 의도 고정.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     return () => {
       if (timeoutTimerRef.current) {

@@ -20,6 +20,13 @@ let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 // setCitationPanelWidth 가 호출되어 동기 localStorage.setItem 이 초당 수백 회 발생하는 것 방지
 let citationPanelWidthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
+// v0.18.22 R36 P4: 모듈 스코프 notice 타이머 — 기존엔 useAppStore 생성부 이후 (line 507) 에
+// 선언되었으나 HMR dispose 핸들러(line 77) 와 setNotice (store 내부) 양쪽이 module init
+// 후 closure 로 접근하므로 동작은 정상이었다. 다른 디바운스 타이머와 동일 영역에 배치하여
+// "store 위쪽 타이머 / store 아래쪽 ...?" 라는 시각적 비대칭만 정리. 런타임 영향 없음.
+const NOTICE_DISMISS_MS = 6000;
+let noticeDismissTimer: ReturnType<typeof setTimeout> | null = null;
+
 // crypto.randomUUID 는 secure context 에서만 동작. Electron file:// 는 secure context 로
 // 간주되어 정상 동작하지만, 드물게 비정상 origin 또는 구 버전에서 throw 할 수 있음.
 // 실패 시 충돌 가능성이 낮은 대체 식별자 생성.
@@ -501,7 +508,3 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 }));
-
-// 모듈 스코프 타이머 — store 외부에서 set 호출이 들어와도 단일 타이머만 유지.
-const NOTICE_DISMISS_MS = 6000;
-let noticeDismissTimer: ReturnType<typeof setTimeout> | null = null;
