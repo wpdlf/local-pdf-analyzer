@@ -9,6 +9,9 @@ import { MAX_PDF_SIZE_BYTES, LOCALHOST_HOSTS } from '../shared/constants';
 // v0.18.19 patch R34 P2: settings 키 단일 출처. 이전엔 본 파일 두 곳에 별도 리터럴이 있었고
 // R33 Surface 4 P3 가 drift 가드 부재를 지적. settings-keys.ts 가 양쪽을 derive 함.
 import { VALID_SETTINGS_KEYS, VALID_SETTINGS_KEYS_SET } from './settings-keys';
+// v0.18.22 Top5 #3: loadSettings/saveSettings 를 순수 파일 I/O 모듈로 분리하여 단위 테스트
+// 가능성 확보. 동일 로직을 electron 의존성 없이 fs 모킹 기반으로 검증한다.
+import { loadSettings as _loadSettings, saveSettings as _saveSettings } from './settings-store';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -41,36 +44,11 @@ const defaultSettings = {
 // R34 P2: VALID_SETTINGS_KEYS_SET 은 settings-keys.ts 에서 import (단일 출처).
 
 async function loadSettings(): Promise<Record<string, unknown>> {
-  try {
-    const data = await fsp.readFile(settingsPath, 'utf-8');
-    const parsed = JSON.parse(data);
-    // 허용된 키만 로드하여 임의 속성 주입 방지
-    const filtered: Record<string, unknown> = {};
-    for (const key of Object.keys(parsed)) {
-      if (VALID_SETTINGS_KEYS_SET.has(key)) {
-        filtered[key] = parsed[key];
-      }
-    }
-    return { ...defaultSettings, ...filtered };
-  } catch (err) {
-    // ENOENT(최초 실행 시 파일 없음)는 정상이므로 로그 제외. 그 외(손상된 JSON, 권한 오류 등)는
-    // 사용자 리포트 시 진단에 필요 — 한 줄 경고로 가시성 확보.
-    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      console.error('[settings] load failed, using defaults:', err);
-    }
-    return { ...defaultSettings };
-  }
+  return _loadSettings(settingsPath, defaultSettings, VALID_SETTINGS_KEYS_SET);
 }
 
 async function saveSettings(settings: Record<string, unknown>): Promise<void> {
-  const tmpPath = settingsPath + '.tmp';
-  try {
-    await fsp.writeFile(tmpPath, JSON.stringify(settings, null, 2), 'utf-8');
-    await fsp.rename(tmpPath, settingsPath);
-  } catch (err) {
-    try { await fsp.unlink(tmpPath); } catch { /* 이미 삭제됨 */ }
-    throw err;
-  }
+  return _saveSettings(settingsPath, settings);
 }
 
 function createWindow(): BrowserWindow {

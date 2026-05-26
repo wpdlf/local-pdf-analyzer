@@ -48,7 +48,9 @@ export function cleanupAiService(): void {
   }
 }
 
-function validateOllamaUrl(url: string): void {
+// v0.18.22 Top5 #1: 단위 테스트 노출을 위해 export. validateOllamaUrl 은 generate() 가
+// 호출하는 pure validator 로, http 모듈 없이 SSRF 가드 로직만 검증할 수 있도록 한다.
+export function validateOllamaUrl(url: string): void {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
