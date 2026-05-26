@@ -35,10 +35,15 @@ export const LOCALHOST_HOSTS: readonly string[] = ['localhost', '127.0.0.1', '::
  */
 export function isLocalhostHost(hostname: string): boolean {
   if (typeof hostname !== 'string' || hostname.length === 0) return false;
-  // WHATWG URL parser 가 IPv6 hostname 을 [::1] 형태로 반환 → 괄호 정규화 후 비교.
-  // 양 끝의 단일 `[`/`]` 만 제거 (중간 괄호는 비정상 입력으로 보존하여 매칭 실패).
-  const normalized = (hostname.startsWith('[') && hostname.endsWith(']'))
-    ? hostname.slice(1, -1)
-    : hostname;
-  return LOCALHOST_HOSTS.includes(normalized);
+  // v0.18.22 M1 (Strict): RFC 3986 준수 — `[ ]` 는 IPv6 IP-literal 전용이다.
+  // `[localhost]` / `[127.0.0.1]` 같이 비-IPv6 hostname 을 brackets 로 감싸는 형태는
+  // RFC 위반이며 WHATWG URL parser 도 throw 한다 (IPC 경계 미도달).
+  // 정상 경로에서 도달 불가하지만 raw-socket 호출자가 향후 추가될 때 우회 소지를 사전 차단.
+  // IPv6 형식 추정 휴리스틱: brackets 안에 `:` 이 포함되어야 IP-literal 로 인정.
+  if (hostname.startsWith('[') && hostname.endsWith(']')) {
+    const inner = hostname.slice(1, -1);
+    if (!inner.includes(':')) return false;
+    return LOCALHOST_HOSTS.includes(inner);
+  }
+  return LOCALHOST_HOSTS.includes(hostname);
 }

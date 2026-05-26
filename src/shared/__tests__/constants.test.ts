@@ -46,7 +46,18 @@ describe('isLocalhostHost (v0.18.22 IPv6 fix)', () => {
     expect(isLocalhostHost('[evil.com]')).toBe(false);   // 괄호 우회 — 내부는 외부 호스트
     expect(isLocalhostHost('localhost]')).toBe(false);   // 단일 트레일링 괄호
     expect(isLocalhostHost('[localhost')).toBe(false);   // 단일 리딩 괄호 (mismatch)
-    expect(isLocalhostHost('[localhost]')).toBe(true);   // 정상 양끝 — 정규화 후 'localhost' 매칭
+  });
+
+  // v0.18.22 M1 Strict 정책: RFC 3986 준수 — `[ ]` 는 IPv6 IP-literal 전용이다.
+  // `[localhost]` / `[127.0.0.1]` 같이 비-IPv6 hostname 을 brackets 로 감싸는 형태는
+  // RFC 위반이며 WHATWG URL parser 도 throw. brackets 안에 `:` 이 없으면 false 반환.
+  it('M1 Strict: 비-IPv6 hostname 을 괄호로 감싸는 것은 RFC 3986 위반 — 차단', () => {
+    expect(isLocalhostHost('[localhost]')).toBe(false);   // hostname (IP 아님) 을 wrap → 차단
+    expect(isLocalhostHost('[127.0.0.1]')).toBe(false);   // IPv4 를 wrap → RFC 3986 위반
+    expect(isLocalhostHost('[evil.com]')).toBe(false);    // 외부 도메인 wrap (재확인)
+    // IPv6 형식은 정상 통과 (`:` 포함)
+    expect(isLocalhostHost('[::1]')).toBe(true);
+    expect(isLocalhostHost('[0:0:0:0:0:0:0:1]')).toBe(false); // expanded form — LOCALHOST_HOSTS 미보유
   });
 
   it('LOCALHOST_HOSTS readonly array 가 의도된 3개만 포함 (drift 가드)', () => {
