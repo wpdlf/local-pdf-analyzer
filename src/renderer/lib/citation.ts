@@ -16,6 +16,24 @@
 export const CITATION_REGEX = /\[p\.\s*(\d+)(?:\s*\|\s*[^\]]*)?\s*\]/gi;
 
 /**
+ * 텍스트에서 모든 인용 토큰(`[p.N]`, `[p.N|quote]`) 을 제거.
+ *
+ * v0.18.22 (C-L1): R36 P2-b 가 `use-qa.splitIntoSentences` 에 인라인으로 두었던 strip
+ * 정규식과 `CITATION_REGEX` 간 비대칭(non-greedy `*?` vs greedy `*`)을 single source of
+ * truth 로 통합. 본문 의미 기반 처리가 필요한 곳(예: `verifyAnswerSentences` 의 sentence
+ * split) 에서 토큰을 사전 strip 하여 fragment noise 를 차단.
+ *
+ * 주의: g flag 가 stateful 이므로 매 호출마다 fresh RegExp 인스턴스를 생성한다.
+ * `CITATION_REGEX` 자체를 직접 `replace` 에 넘기면 lastIndex 가 호출 간 누적되어 silent
+ * miss 가 발생할 수 있다 (`parseCitations` 가 사용하는 dispose 패턴과 동일 원리).
+ */
+export function stripCitations(text: string): string {
+  if (text.length === 0) return text;
+  const re = new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags);
+  return text.replace(re, '');
+}
+
+/**
  * safe-markdown 의 text renderer 에서 사용할 단일 세그먼트.
  * - `type: 'text'`  → 일반 텍스트 (content 사용)
  * - `type: 'citation'` → 페이지 인용 (page 사용, raw 는 디버그용)

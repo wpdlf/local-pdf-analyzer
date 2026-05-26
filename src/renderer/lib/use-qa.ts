@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { AiClient } from './ai-client';
 import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage } from './chunker';
-import { formatPageLabel, normalizeCitationPlacement } from './citation';
+import { formatPageLabel, normalizeCitationPlacement, stripCitations } from './citation';
 import { t } from './i18n';
 import type { QaMessage } from '../types';
 
@@ -383,9 +383,8 @@ export function splitIntoSentences(text: string): string[] {
   // R35 single-label 도입 이후, "본문. [p.5] [p.6] [p.7]" 처럼 연속 인용 클러스터가
   // 마침표 뒤에 별도 fragment 로 떨어지면 15자 필터를 통과하여 verify 의 임베딩 대상이
   // 되고 weak score 를 양산하던 경로. verify 는 본문 의미를 검증하므로 citation 무관.
-  // CITATION_REGEX 와 동일 패턴이지만 module 순환 방지 위해 인라인 사용.
-  const stripped = text.replace(/\[p\.\s*\d+(?:\s*\|\s*[^\]]*?)?\s*\]/gi, '');
-  const normalized = stripped.replace(/\s+/g, ' ').trim();
+  // v0.18.22 C-L1: 이전 인라인 정규식을 `citation.stripCitations` 로 통합 — single source.
+  const normalized = stripCitations(text).replace(/\s+/g, ' ').trim();
   // v0.18.5 C-M1 / v0.18.6 C25-M1 / v0.18.8 R27-I1 fix: CJK 종결부호(`。！？`) 뒤가 공백이거나
   // 즉시 다음 문자 든 모두 분할. 이전 정규식은 `\s+` 필수 → `"입니다。다음으로…"` 같은 공백 없는
   // 케이스 처리 못함 (v0.18.5 fix 영역). v0.18.5 fix 후에도 `(?=\S)` 만 있어 `"문장1。 문장2"` 처럼

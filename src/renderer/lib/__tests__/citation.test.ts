@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCitations, formatPageLabel, clampCitationPage, CITATION_REGEX, normalizeCitationPlacement } from '../citation';
+import { parseCitations, formatPageLabel, clampCitationPage, CITATION_REGEX, normalizeCitationPlacement, stripCitations } from '../citation';
 
 describe('parseCitations', () => {
   it('단일 인용을 3 세그먼트로 분리한다', () => {
@@ -241,5 +241,61 @@ describe('CITATION_REGEX', () => {
 
   it('i flag 포함 (대소문자 무시)', () => {
     expect(CITATION_REGEX.flags).toContain('i');
+  });
+});
+
+// v0.18.22 C-L1: single source 통합. `use-qa.splitIntoSentences` 가 인라인 정규식 대신
+// 본 헬퍼를 사용 — strip 동작이 CITATION_REGEX 정의와 1:1 매칭됨을 확인.
+describe('stripCitations (C-L1)', () => {
+  it('단일 [p.N] 인용 제거', () => {
+    expect(stripCitations('본문 끝에 [p.5] 인용')).toBe('본문 끝에  인용');
+  });
+
+  it('연속 인용 클러스터 모두 제거 (R35 single-label 이후 패턴)', () => {
+    expect(stripCitations('본문. [p.5] [p.6] [p.7]')).toBe('본문.   ');
+  });
+
+  it('파이프 quote 형태 [p.N|quote] 도 제거', () => {
+    expect(stripCitations('A [p.3|some quote] B')).toBe('A  B');
+  });
+
+  it('대소문자 무시 — [P.5] 도 제거 (i flag 정합)', () => {
+    expect(stripCitations('X [P.5] Y [p.6] Z')).toBe('X  Y  Z');
+  });
+
+  it('인용이 없는 텍스트는 그대로 반환', () => {
+    expect(stripCitations('plain text no citations')).toBe('plain text no citations');
+  });
+
+  it('빈 문자열은 빈 문자열', () => {
+    expect(stripCitations('')).toBe('');
+  });
+
+  it('인용만 있는 텍스트는 공백만 남는다 (호출자가 trim 처리)', () => {
+    expect(stripCitations('[p.1][p.2][p.3]').replace(/\s+/g, '')).toBe('');
+  });
+
+  // C-L1 핵심: 매 호출마다 fresh RegExp 생성으로 lastIndex 누적 방지
+  it('연속 호출 시 stateful lastIndex 누적 없이 안정적', () => {
+    const input = '[p.1] middle [p.2]';
+    expect(stripCitations(input)).toBe(' middle ');
+    expect(stripCitations(input)).toBe(' middle '); // 두 번째 호출도 동일
+    expect(stripCitations(input)).toBe(' middle '); // 세 번째도 동일
+  });
+
+  // CITATION_REGEX 가 인식하는 모든 매칭 패턴이 stripCitations 와 동일해야 함 (single source 보장)
+  it('CITATION_REGEX 와 strip 동작 1:1 매칭 (single source invariant)', () => {
+    const cases = [
+      '[p.1]',
+      '[p. 5]',     // 공백
+      '[P.10]',    // 대문자
+      '[p.100|q]', // quote
+      '[p.1] middle [p.2]',
+    ];
+    for (const c of cases) {
+      const re = new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags);
+      const expected = c.replace(re, '');
+      expect(stripCitations(c), `case=${c}`).toBe(expected);
+    }
   });
 });
