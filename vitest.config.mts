@@ -5,15 +5,15 @@ import { defineConfig } from 'vitest/config';
 // 케이스마다 각 파일에서 `vi.stubGlobal('window', { electronAPI: ... })` 식으로 반복했다.
 // 이 파일은 그런 보일러플레이트를 점진적으로 모으기 위한 단일 진입점이다.
 //
-// 현재는 환경(`environment`)을 변경하지 않고 setupFiles 만 활성화한다 — 기존 246 개
-// 테스트가 `vi.stubGlobal('window', ...)` 패턴으로 자체 셋업을 가지므로 happy-dom 같은
-// 실제 DOM 환경으로 전환하면 stub 충돌 위험이 있다. happy-dom/jsdom 이동은 R30 후보.
-//
-// happy-dom 으로 전환하려면:
-//   1) `npm install --save-dev happy-dom`
-//   2) 아래 environment 옵션 활성화
-//   3) `vi.stubGlobal('window', ...)` 패턴을 `Object.assign(window, ...)` 또는
-//      `vi.stubGlobal('electronAPI', ...)` (`window.electronAPI` 직접 접근) 로 마이그레이션
+// R37 P4-1 (v0.18.23) — happy-dom 정책 확정:
+//   기본 환경은 node 유지. DOM 이 실제로 필요한 파일은 **file pragma** 로 happy-dom 을 선언한다
+//   (예: `src/renderer/components/__tests__/CitationButton.test.tsx` 상단 `// @vitest-environment happy-dom`).
+//   이 분리는 의도된 최적 — happy-dom 을 전역으로 켜면 379 개 비-DOM 테스트의
+//   `vi.stubGlobal('window', { electronAPI: ... })` 패턴이 실제 window 와 충돌하고, 끄면 컴포넌트
+//   레벨 회귀(R31~R35 citation 등) 가드가 불가능하다. 둘의 장점만 취하는 file-pragma 패턴이
+//   v0.18.22 Top5 #4 (CitationButton.test.tsx) 도입 이후 안정화됨.
+//   happy-dom 은 devDependencies 에 정확 핀(20.9.0, `//testingPinPolicy` 참고) 유지 — 제거 금지.
+//   향후 컴포넌트 테스트 추가 시 동일 file pragma 패턴 사용.
 
 export default defineConfig({
   test: {
@@ -51,6 +51,18 @@ export default defineConfig({
         '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
         'src/main/**', 'src/preload/**', 'src/renderer/components/**',
       ],
+      // R37 P4-2 (v0.18.23): 후퇴 방지 게이트 도입.
+      // 베이스라인(v0.18.22 측정): Stmts 43.09 / Branch 38.50 / Funcs 46.41 / Lines 44.57.
+      // 각 지표에서 -5pp 마진을 빼고 게이트 — 우발적 회귀(테스트 누락, 함수 추가 시 미커버)는
+      // 잡되 자연적 변동(use-summarize/use-qa 등 부분 측정 함수의 chunk 출입)은 흡수.
+      // CI 통합은 R37 P4 후속에서 결정 (현재는 `npm run test:coverage` 수동 실행 시 적용).
+      // 베이스라인 자체 상승 시(예: pdf-parser/use-summarize 테스트 추가) 본 임계 동시 상향 권장.
+      thresholds: {
+        statements: 38,
+        branches: 33,
+        functions: 41,
+        lines: 39,
+      },
     },
   },
 });

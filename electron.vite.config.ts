@@ -9,17 +9,28 @@ const buildOpts = {
   minify: 'esbuild' as const,
 };
 
+// R37 P4-4 (v0.18.23): envPrefix 빈 화이트리스트 핀.
+// 본 앱은 `import.meta.env` 사용처 0건 (전 코드베이스 grep 확인). Vite 기본 envPrefix 가
+// `'VITE_'` 라 향후 누군가가 빌드 머신/dev 환경의 VITE_* 변수를 정의해도 renderer 번들에
+// inline 되지 않도록 빈 배열로 명시 차단. 보안적으로는 sourcemap 비노출(buildOpts.sourcemap=false)
+// 과 함께 "renderer 가 ambient env 를 의도치 않게 흡수하는 표면" 을 0 으로 만든다.
+// 향후 의도적으로 env 가 필요해지면 명시 prefix(예: `LPA_PUBLIC_`)를 추가하고 README 에 노출 정책 기록.
+const envPrefix: string[] = [];
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     build: buildOpts,
+    envPrefix,
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: buildOpts,
+    envPrefix,
   },
   renderer: {
     plugins: [react(), tailwindcss()],
+    envPrefix,
     build: {
       ...buildOpts,
       // R29 (v0.18.15) 코드-스플리팅: 800KB+ 단일 chunk 였던 renderer 번들을

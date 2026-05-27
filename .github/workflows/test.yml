@@ -10,6 +10,15 @@ permissions:
 
 jobs:
   test:
+    # R37 P4-3 (v0.18.23): Node matrix 도입.
+    # 기존엔 Node 20.11 단일이었으나 package.json `engines.node` 가 `>=20.11 <23` 으로 22 까지
+    # 허용하고 사용자의 실제 개발 환경이 Node 22 LTS 인 경우가 증가. 20.11 EoL (2026-04) 임박과
+    # 함께 22 검증 선행 필요. fail-fast: false — 한 Node 버전의 플레이크가 다른 버전 신호를
+    # 가리지 않도록. release.yml 의 빌드 잡은 안정성 중시로 20.11 단일 유지 (변경은 별도 라운드).
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20.11', '22']
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -19,7 +28,7 @@ jobs:
       # actions/setup-node@v6.4.0 (Node 24 호환)
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
-          node-version: '20.11'
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - run: npm ci
