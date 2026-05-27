@@ -1,6 +1,9 @@
 node_modules/
 out/
 dist/
+# R37 P4-2 (v0.18.23): vitest --coverage 산출물 (v8 provider 의 lcov/text 리포트, ~5MB).
+# CI 통합 시 별도 artifact 로 업로드 예정이므로 working tree 추적 금지.
+coverage/
 *.exe
 *.dmg
 *.zip
