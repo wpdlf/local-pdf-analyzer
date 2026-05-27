@@ -5,6 +5,16 @@ on:
     tags:
       - 'v*'
 
+# R37 P1 (v0.18.23): 동일 태그를 재푸시(force-push)하거나 거의 동시에 별개 v* 태그가 들어오면
+# 두 release 잡이 병렬로 실행되어 softprops/action-gh-release 의 `append_body: true` + SHA256SUMS
+# 파일 업로드가 race 한다 (두 번째 잡이 첫 번째의 SHA-256 라인을 덮어쓰거나, 동일 해시 라인을
+# 중복 append). cancel-in-progress: false — 태그는 이미 push 되어 있고 이미 실행 중인 빌드를
+# 죽이면 release 자산이 비어 사용자가 다시 태깅해야 하므로 직렬화만 한다. tag 단위 group 으로
+# 묶어 서로 다른 태그(예: v0.18.23 과 v0.19.0)는 그대로 병렬 허용.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   id-token: write
@@ -79,6 +89,24 @@ jobs:
       - run: npm ci
 
       - run: npm run build && npx electron-builder --publish never
+
+      # R37 P2 (v0.18.23): 빌드 실패 시 dist/ 와 out/ 를 회수해야 재현 디버깅이 가능하다.
+      # 현재까지는 stderr 만 GitHub Actions 로그에 남고 NSIS 중간 산출물(makensis 로그),
+      # electron-vite 번들 산출물, electron-builder app-builder 결과물이 worker 종료와 함께 사라졌다.
+      # if: failure() — 성공 시 30~150MB artifact 업로드를 피해 일반 흐름의 잡 시간을 늘리지 않음.
+      # path 는 dist/ + out/ 만 (workspace 내부). electron-builder 글로벌 캐시(%LOCALAPPDATA%)
+      # 는 Windows runner 의 ~ 확장이 불안정해 제외; 필요해지면 별도 step 으로 LOCALAPPDATA 사용.
+      # actions/upload-artifact@v4.6.2 (gh api 로 tag→commit SHA 확인 후 핀)
+      - name: Upload build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: build-windows-failure-${{ github.run_id }}
+          path: |
+            dist/
+            out/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Compute SHA256 for installer
         id: hash
