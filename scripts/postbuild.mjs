@@ -7,7 +7,7 @@
 // 등 CJK PDF 글리프가 정상적으로 표시된다. pdfjs 메이저 업그레이드 (4 → 5) 시 cmaps
 // 경로가 바뀔 수 있으므로 변경 시 본 스크립트 확인 필요.
 
-import { cpSync, existsSync } from 'node:fs';
+import { cpSync, existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
@@ -42,6 +42,13 @@ for (const name of SMOKE_FILES) {
   if (!existsSync(probe)) {
     console.error(`[postbuild] cmaps smoke check FAILED: missing ${probe}`);
     console.error('[postbuild] cmaps 복사가 부분적으로 실패했을 가능성. out/ 을 비우고 재시도하세요.');
+    process.exit(1);
+  }
+  // QA(low): existsSync 만으로는 ENOSPC 가 inode 는 만들고 데이터는 못 쓴 0바이트 파일을
+  // 못 잡는다. 크기까지 검증해 0바이트 cmap 이 패키징되는 silent 결함을 차단.
+  if (statSync(probe).size === 0) {
+    console.error(`[postbuild] cmaps smoke check FAILED: zero-byte ${probe}`);
+    console.error('[postbuild] cmaps 가 0바이트로 복사됨(디스크 공간 부족 등). out/ 을 비우고 재시도하세요.');
     process.exit(1);
   }
 }

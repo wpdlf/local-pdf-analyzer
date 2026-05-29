@@ -85,6 +85,9 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   // 1. pdfjs 로 문서 로드 (pdfBytes 가 바뀔 때마다 재실행)
   useEffect(() => {
     let cancelled = false;
+    // QA M1: in-flight getDocument 를 언마운트 시 즉시 취소할 수 있도록 effect 스코프로 hoist.
+    // IIFE 내부 const 였을 때는 cleanup 에서 닿지 못해 워커 작업이 promise resolve 까지 잔존했다.
+    let loadingTask: ReturnType<typeof pdfjsLib.getDocument> | null = null;
 
     // v0.18.5 H1 fix: pdfBytes 가 바뀌면(문서 전환) 이전 문서가 렌더했던 페이지 번호가
     // renderedPagesRef 에 잔존한다. 새 doc 의 targetPage 가 같은 번호로 들어오면
@@ -119,7 +122,7 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
         // store.pdfBytes (원본) 가 detach 되면 이후 재마운트가 실패한다.
         // 매 마운트마다 store 바이트를 보존할 fresh copy 를 1회만 할당한다.
         const copy = pdfBytes.slice();
-        const loadingTask = pdfjsLib.getDocument({ data: copy });
+        loadingTask = pdfjsLib.getDocument({ data: copy });
         const doc = await loadingTask.promise;
         if (cancelled) {
           // 파싱 중 언마운트 — 캐시하지 않고 파기
@@ -140,6 +143,9 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
 
     return () => {
       cancelled = true;
+      // QA M1: 로딩 중 언마운트면 워커/fetch 파이프라인을 즉시 취소. promise 가 이미
+      // resolve 됐으면 위 cancelled 분기에서 doc.destroy() 가 처리하므로 중복 안전.
+      loadingTask?.destroy().catch(() => { /* ignore */ });
       // 파싱 성공 후 언마운트 — 캐시된 doc 는 유지, ref 만 해제
       pdfDocRef.current = null;
     };
@@ -238,34 +244,42 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
         }
         try {
           const page = await doc.getPage(pageNum);
-          if (cancelled) { pumping = false; return; }
-          const naturalViewport = page.getViewport({ scale: 1 });
-          const fitScale = availableWidth / naturalViewport.width;
-          const scale = Math.min(MAX_RENDER_SCALE, Math.max(MIN_RENDER_SCALE, fitScale));
-          const viewport = page.getViewport({ scale });
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.round(viewport.width);
-          canvas.height = Math.round(viewport.height);
-          canvas.className = 'block shadow';
-          const ctx = canvas.getContext('2d');
-          if (!ctx) continue;
-          const task = page.render({ canvasContext: ctx, viewport });
-          currentTask = task as unknown as { promise: Promise<void>; cancel: () => void };
-          await task.promise;
-          currentTask = null;
-          if (cancelled) { pumping = false; return; }
-          wrapper.innerHTML = '';
-          wrapper.style.width = `${canvas.width}px`;
-          wrapper.style.height = `${canvas.height}px`;
-          wrapper.style.minHeight = '';
-          wrapper.appendChild(canvas);
-          renderedPagesRef.current.add(pageNum);
-          try { page.cleanup(); } catch { /* ignore */ }
+          try {
+            if (cancelled) { pumping = false; return; }
+            const naturalViewport = page.getViewport({ scale: 1 });
+            const fitScale = availableWidth / naturalViewport.width;
+            const scale = Math.min(MAX_RENDER_SCALE, Math.max(MIN_RENDER_SCALE, fitScale));
+            const viewport = page.getViewport({ scale });
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(viewport.width);
+            canvas.height = Math.round(viewport.height);
+            canvas.className = 'block shadow';
+            const ctx = canvas.getContext('2d');
+            if (!ctx) continue;
+            const task = page.render({ canvasContext: ctx, viewport });
+            currentTask = task as unknown as { promise: Promise<void>; cancel: () => void };
+            await task.promise;
+            currentTask = null;
+            if (cancelled) { pumping = false; return; }
+            wrapper.innerHTML = '';
+            wrapper.style.width = `${canvas.width}px`;
+            wrapper.style.height = `${canvas.height}px`;
+            wrapper.style.minHeight = '';
+            wrapper.appendChild(canvas);
+            renderedPagesRef.current.add(pageNum);
+          } finally {
+            // QA(low): cancel/error/continue 어느 경로로 빠지든 page 내부 폰트·이미지 리소스 해제 보장.
+            // 이전엔 happy-path 에서만 cleanup 되어 취소·에러 누적 시 메모리가 쌓였다.
+            try { page.cleanup(); } catch { /* ignore */ }
+          }
         } catch (err) {
           currentTask = null;
           if (cancelled) { pumping = false; return; }
           if ((err as { name?: string })?.name === 'RenderingCancelledException') {
+            // QA(low): effect 는 살아있는데 pdfjs 내부 사유로 렌더가 취소된 경우, 큐 잔여 항목이
+            // 다음 스크롤 발화 전까지 방치(빈 페이지)되지 않도록 즉시 재가동한다.
             pumping = false;
+            void pump();
             return;
           }
           console.warn(`[PdfViewer] page ${pageNum} render failed:`, err);

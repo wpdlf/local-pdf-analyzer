@@ -259,7 +259,9 @@ export class OllamaManager {
 
         // zip エントリのパス検証 (path traversal 防止)
         await new Promise<void>((resolve, reject) => {
-          execFile('unzip', ['-l', zipPath], (error, stdout) => {
+          // QA(low): Windows 설치 경로(timeout 300000)와 일관되게 unzip 도 타임아웃 부여.
+          // 손상·초대형 zip 또는 unzip 행(hang) 시 설치 플로우가 무한 블록되지 않도록.
+          execFile('unzip', ['-l', zipPath], { timeout: 300000 }, (error, stdout) => {
             if (error) { reject(error); return; }
             const hasTraversal = stdout.split('\n').some((line) => {
               const parts = line.trim().split(/\s+/);
@@ -274,7 +276,7 @@ export class OllamaManager {
           });
         });
         await new Promise<void>((resolve, reject) => {
-          execFile('unzip', ['-o', zipPath, '-d', '/Applications'], (error: ExecFileException | null) => {
+          execFile('unzip', ['-o', zipPath, '-d', '/Applications'], { timeout: 300000 }, (error: ExecFileException | null) => {
             if (error) reject(error);
             else resolve();
           });

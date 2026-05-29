@@ -61,10 +61,14 @@ export async function parsePdf(
   throwIfAborted(signal);
   const pageCount = pdf.numPages;
 
+  // QA(low): 아래 검증 throw 는 try/finally 진입 전이라 pdf.destroy() 가 호출되지 않았다.
+  // 워커측 PDFDocumentProxy 누수를 막기 위해 throw 전에 명시적으로 파기한다.
   if (pageCount === 0) {
+    await pdf.destroy().catch(() => { /* ignore */ });
     throw Object.assign(new Error('PDF에 페이지가 없습니다.'), { code: 'PDF_NO_TEXT' });
   }
   if (pageCount > MAX_PAGE_COUNT) {
+    await pdf.destroy().catch(() => { /* ignore */ });
     throw Object.assign(
       new Error(`페이지 수가 너무 많습니다 (${pageCount}p). 최대 ${MAX_PAGE_COUNT}페이지까지 지원합니다. 문서를 분할해주세요.`),
       { code: 'PDF_TOO_MANY_PAGES' },
@@ -556,7 +560,13 @@ async function imageDataToBase64(
 
     const canvas = new OffscreenCanvas(targetW, targetH);
     const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
+    if (!ctx) {
+      // QA(low): 이미 채워진 srcCanvas 의 backing store 를 즉시 반환. 이 경로(2번째 2D
+      // 컨텍스트 거부)는 메모리 압박 시 더 자주 발생하므로 GC 대기 없이 해제한다.
+      srcCanvas.width = 0;
+      srcCanvas.height = 0;
+      return null;
+    }
     ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
 
     const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });

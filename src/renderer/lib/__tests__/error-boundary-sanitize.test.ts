@@ -31,6 +31,29 @@ describe('sanitizeErrorPath · 사용자 홈 치환 (~)', () => {
   });
 });
 
+// QA(low) 회귀: Node/pdf.js 가 정규화한 forward-slash Windows 경로(`C:/Users/...`).
+// 이전엔 백슬래시 패턴에 안 걸리고 macOS `/Users/` 패턴이 부분 매치해 `C:~` 로 드라이브
+// 레터가 잔존했다. 또한 슬래시 드라이브 catch-all 이 `https://` 를 오탐하지 않아야 한다.
+describe('sanitizeErrorPath · forward-slash Windows 경로', () => {
+  it('C:/Users/alice/... → ~ (드라이브 레터 잔존 없음)', () => {
+    const out = sanitizeErrorPath('Error reading C:/Users/alice/Documents/secret.pdf');
+    expect(out).not.toContain('alice');
+    expect(out).not.toContain('secret');
+    expect(out).not.toContain('C:');
+    expect(out).toContain('~');
+  });
+
+  it('D:/Projects/secret/file.ts → <path>', () => {
+    const out = sanitizeErrorPath('Module not found: D:/Projects/secret/file.ts');
+    expect(out).not.toContain('secret');
+    expect(out).toContain('<path>');
+  });
+
+  it('https:// URL 은 오탐 치환되지 않는다', () => {
+    expect(sanitizeErrorPath('fetch https://api.example.com/v1 failed')).toContain('https://api.example.com/v1');
+  });
+});
+
 describe('sanitizeErrorPath · UNC 공유 경로', () => {
   it('\\\\server\\share\\... → <share>', () => {
     const out = sanitizeErrorPath('cannot access \\\\fileserver\\public\\docs\\x.pdf');

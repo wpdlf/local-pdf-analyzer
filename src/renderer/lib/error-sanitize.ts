@@ -28,6 +28,11 @@ export function sanitizeErrorPath(raw: string): string {
     // 이전에는 `C:\Users\alice` 만 `~` 로 바뀌고 `\secrets\api-key.ts` 가 남아 민감
     // 폴더/파일명이 노출됐다. 전체 경로를 `~` 로 일괄 치환해 프로젝트 구조까지 은닉.
     .replace(/[A-Z]:\\Users\\[^\\\s"'<>|?*]+(?:\\[^\s"'<>|?*]+)*/gi, '~')
+    // QA(low): 슬래시형 Windows 사용자 홈 (`C:/Users/alice/...`). Node/pdf.js 등이 정규화한
+    // forward-slash 경로는 위 백슬래시 패턴에 안 걸려 아래 macOS `/Users/` 패턴이 부분 매치하면
+    // `C:` 드라이브 레터가 `C:~` 로 남았다. macOS 패턴보다 먼저 드라이브까지 일괄 `~` 치환.
+    // \b = 독립된 단일 드라이브 레터만 매치 (URL 의 `https:` 등 단어 일부 오탐 방지).
+    .replace(/\b[A-Z]:\/Users\/[^/\s"'<>|?*]+(?:\/[^\s"'<>|?*]+)*/gi, '~')
     // macOS/Linux 사용자 홈 — 동일 정책
     .replace(/\/Users\/[^/\s"'<>|?*]+(?:\/[^\s"'<>|?*]+)*/g, '~')
     .replace(/\/home\/[^/\s"'<>|?*]+(?:\/[^\s"'<>|?*]+)*/g, '~')
@@ -41,5 +46,8 @@ export function sanitizeErrorPath(raw: string): string {
     // v0.18.7 R26-C9 fix: 라인 28 의 Users 패턴은 `gi` flag 인 반면 일반 드라이브 패턴이
     // `g` 만 가져 `c:\Users\…` 처럼 소문자 드라이브 레터로 시작하는 경로(Node 일부 API 가
     // 정규화한 결과) 가 sanitize 되지 않고 노출되던 비대칭 해소.
-    .replace(/[A-Z]:\\[^\s"'<>|?*]+/gi, '<path>');
+    .replace(/[A-Z]:\\[^\s"'<>|?*]+/gi, '<path>')
+    // QA(low): 슬래시형 일반 Windows 드라이브 경로 (`D:/Projects/...`) 잔여분 치환.
+    // \b = 독립 단일 드라이브 레터, (?!\/) = `scheme://` URL(`https://`) 오탐 방지.
+    .replace(/\b[A-Z]:\/(?!\/)[^\s"'<>|?*]+/gi, '<path>');
 }
