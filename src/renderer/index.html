@@ -5,15 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
       CSP 주석:
-      - script-src 'unsafe-inline' 은 아래 FOUC 방지용 초기화 스크립트 1건만을 위해 허용.
-        Electron 로컬 앱이므로 외부 스크립트 주입 경로가 없고, 렌더되는 마크다운은
-        react-markdown + safeComponents 로 이미 살균됨. 위험은 이론적으로만 존재.
-      - hash 기반 CSP(sha256-...)가 더 안전하지만 빌드 파이프라인이 복잡해져 trade-off 선택.
+      - R37 P5-1 (v0.18.23): script-src 'unsafe-inline' 제거. 아래 FOUC 방지 인라인 스크립트는
+        sha256-EGIiDi9IsPjfDRlZm477C/K+ZowthNLgLs1uyBa5kxU= 로 화이트리스트. 인라인 스크립트
+        본문이 변경되면 vitest 게이트(src/renderer/lib/__tests__/csp-inline-hash.test.ts)가
+        실패해 hash 갱신을 강제한다. 새 인라인 스크립트 추가 시 동일 패턴(hash 추가 + 테스트
+        갱신) 따를 것.
+      - style-src 'unsafe-inline' 은 Tailwind + React 인라인 style 광범위 사용으로 제거 불가
+        (script 가 없으면 style 단독 exfil 불가능, reachability 거의 0).
       - frame-src/child-src 'none': iframe 임베딩 차단 (마크다운/의존성 침해 시 탈출 경로 제거)
       - base-uri 'none': <base href="..."> 주입으로 상대 경로 탈취 차단
       - form-action 'none': 폼 submit 으로 외부 origin 데이터 전송 차단
     -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; child-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-EGIiDi9IsPjfDRlZm477C/K+ZowthNLgLs1uyBa5kxU='; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; child-src 'none'; base-uri 'none'; form-action 'none'">
     <title>PDF 자료 분석기</title>
     <script>
       // FOUC 방지: React 마운트 전에 동기적으로 테마 클래스 적용.
