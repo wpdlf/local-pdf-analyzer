@@ -33,6 +33,9 @@ Unlike cloud-based AI summarization services that require uploading PDFs to exte
 
 4. On first launch, the AI engine (Ollama), Korean-specialized models (gemma3, exaone3.5), and RAG embedding model (nomic-embed-text) are installed automatically — follow the on-screen instructions
 
+<a id="smartscreen"></a>
+> **Windows SmartScreen notice**: Because we do not yet hold an EV code-signing certificate, the first install may show a **"Windows protected your PC"** / **"Unknown publisher"** SmartScreen warning. This is expected — click **More info → Run anyway** to proceed. You can verify the installer's authenticity via the SHA-256 hash + Sigstore attestation in [Installer integrity verification](#installer-integrity-verification-new-in-v0188) below. (The warning will be removed once an EV certificate is in place.)
+
 > **Note**: AI model downloads require approximately 8GB of disk space and a few minutes.
 > **macOS users**: Starting v0.18.9, the dmg artifact is temporarily not shipped because we do not currently hold an Apple Developer ID for notarization. We chose to pause rather than publish an unsigned dmg that Gatekeeper quarantines (forcing users to run `xattr -d`). The dmg target will return as soon as notarization credentials are registered. In the meantime you can build from source with `npm run package`.
 

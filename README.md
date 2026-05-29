@@ -32,6 +32,9 @@
 3. 바탕화면 바로가기 또는 시작 메뉴에서 앱을 실행합니다
 4. 첫 실행 시 AI 엔진(Ollama)과 한국어 특화 모델(gemma3, exaone3.5) + RAG 임베딩 모델(nomic-embed-text)이 자동 설치됩니다 — 안내를 따라 진행해주세요
 
+<a id="smartscreen"></a>
+> **Windows SmartScreen 안내**: EV 코드서명 인증서 미도입으로, 첫 설치 시 **"Windows의 PC 보호"** / **"알 수 없는 게시자"** SmartScreen 경고가 표시될 수 있습니다. 정상 동작이며, **추가 정보(More info) → 실행(Run anyway)** 으로 진행하세요. 인스톨러 진위는 아래 [무결성 검증](#인스톨러-무결성-검증-v0188-신규)의 SHA-256 해시 + Sigstore attestation 으로 확인할 수 있습니다. (EV 인증서 도입 시 본 경고는 제거됩니다.)
+
 > **참고**: AI 모델 다운로드에 약 8GB의 디스크 공간과 수 분의 시간이 필요합니다.
 > **macOS 사용자**: v0.18.9 부터 Apple 공증(Notarization) 자격 미구비로 인해 dmg 출시가 일시 중단되었습니다. Gatekeeper 가 차단하는 unsigned 인스톨러를 사용자에게 강요하지 않기 위한 결정이며, 자격 등록 후 빠르게 복원됩니다. 그동안은 소스 빌드(`npm run package`)로 직접 빌드해 사용하실 수 있습니다.
 
