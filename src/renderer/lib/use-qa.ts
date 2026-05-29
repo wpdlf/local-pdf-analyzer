@@ -221,7 +221,10 @@ function embedWithTimeout(texts: string[], signal?: AbortSignal): Promise<{
  * page-citation-viewer 기능: pageTexts 가 있으면 page-aware 청커로 전환하여
  * 각 청크에 pageStart/pageEnd 메타데이터를 부착한다. 없으면 기존 동작 그대로.
  */
-async function buildRagIndex(
+// R37 P6 (v0.18.23): export 로 전환해 단위 테스트 가능화 (QA M3). useRagBuilder hook 본문의
+// 핵심 비순수 로직(임베딩 가용성/배치/부분결과 방어/abort 소유권)을 hook 런타임 없이 직접 검증.
+// __tests__/qa-rag-index.test.ts 가 가드.
+export async function buildRagIndex(
   extractedText: string,
   docId: string,
   signal: AbortSignal,

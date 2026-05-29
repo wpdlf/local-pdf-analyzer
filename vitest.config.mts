@@ -52,17 +52,19 @@ export default defineConfig({
         'src/main/**', 'src/preload/**', 'src/renderer/components/**',
       ],
       // R37 P4-2 (v0.18.23): 후퇴 방지 게이트 도입.
-      // 베이스라인(v0.18.22 측정): Stmts 43.09 / Branch 38.50 / Funcs 46.41 / Lines 44.57.
       // 각 지표에서 -5pp 마진을 빼고 게이트 — 우발적 회귀(테스트 누락, 함수 추가 시 미커버)는
       // 잡되 자연적 변동(use-summarize/use-qa 등 부분 측정 함수의 chunk 출입)은 흡수.
       // R37 P5-2 (v0.18.23): CI 통합 완료 — test.yml 의 `coverage` 잡이 `npm run test:coverage`
       // 로 본 thresholds 를 매 PR/push 에서 강제한다 (이전엔 수동 실행 시에만 적용).
-      // 베이스라인 자체 상승 시(예: pdf-parser/use-summarize 테스트 추가) 본 임계 동시 상향 권장.
+      // R37 P6 (v0.18.23): QA M3~M6 테스트 보강으로 베이스라인 상승 → 게이트 동시 상향.
+      //   측정: Stmts 49.85 / Branch 45.56 / Funcs 49.81 / Lines 51.63 (-5pp 마진 적용).
+      //   pdf-parser 캡/이미지 추출 + use-summarize stripConversational + use-qa buildRagIndex
+      //   + ollama pull 파싱 분리 테스트 반영. 추가 보강 시 본 임계 재상향 권장.
       thresholds: {
-        statements: 38,
-        branches: 33,
-        functions: 41,
-        lines: 39,
+        statements: 44,
+        branches: 40,
+        functions: 44,
+        lines: 46,
       },
     },
   },
