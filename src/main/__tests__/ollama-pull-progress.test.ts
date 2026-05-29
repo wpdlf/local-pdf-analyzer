@@ -1,0 +1,80 @@
+import { describe, it, expect } from 'vitest';
+import { stripAnsi, extractLastLine, toFriendlyMessage } from '../ollama-pull-progress';
+
+/**
+ * R37 P6 (v0.18.23) — `ollama pull` 출력 파싱 회귀 가드 (QA M5).
+ *
+ * OllamaManager 는 electron import 로 vitest 가 직접 import 불가(R15 H1 / R28 P2 회귀 영역).
+ * pull 진행 파싱은 ps-quote 와 동일하게 별도 순수 모듈로 분리해 여기서 가드한다.
+ */
+describe('stripAnsi', () => {
+  it('색상/커서 ANSI 시퀀스를 제거한다', () => {
+    expect(stripAnsi('\x1b[32mpulling\x1b[0m')).toBe('pulling');
+    expect(stripAnsi('\x1b[2K\x1b[1Gpulling 50%')).toBe('pulling 50%');
+  });
+
+  it('ANSI 가 없으면 원문 유지', () => {
+    expect(stripAnsi('plain text')).toBe('plain text');
+  });
+});
+
+describe('extractLastLine', () => {
+  it('\\r 로 덮어쓴 진행 출력에서 마지막 줄만 취한다', () => {
+    // ollama 는 같은 줄을 \r 로 갱신 — 마지막 진행률이 최종.
+    const raw = 'pulling 10%\rpulling 50%\rpulling 90%';
+    expect(extractLastLine(raw)).toBe('pulling 90%');
+  });
+
+  it('\\r 과 \\n 혼용을 모두 분할한다', () => {
+    expect(extractLastLine('pulling manifest\npulling abc 30%\r')).toBe('pulling abc 30%');
+  });
+
+  it('끝의 공백 줄/개행을 무시하고 마지막 실데이터 줄 반환', () => {
+    expect(extractLastLine('success\n\n   \n')).toBe('success');
+  });
+
+  it('ANSI 가 섞여 있어도 정리 후 마지막 줄 추출', () => {
+    expect(extractLastLine('\x1b[2K pulling 5%\r\x1b[2K pulling 80%')).toBe('pulling 80%');
+  });
+
+  it('빈 입력은 빈 문자열', () => {
+    expect(extractLastLine('')).toBe('');
+    expect(extractLastLine('\r\n  \r\n')).toBe('');
+  });
+});
+
+describe('toFriendlyMessage', () => {
+  it('"pulling <hash> ... NN%" 에서 퍼센트를 추출해 다운로드 메시지로 변환', () => {
+    expect(toFriendlyMessage('pulling a1b2c3 100% ▕████▏ 1.2 GB')).toBe('모델 다운로드 중... 100%');
+    expect(toFriendlyMessage('pulling deadbeef  37%')).toBe('모델 다운로드 중... 37%');
+  });
+
+  it('pulling manifest → 정보 확인 중', () => {
+    expect(toFriendlyMessage('pulling manifest')).toBe('모델 정보 확인 중...');
+  });
+
+  it('verifying → 무결성 검증 중', () => {
+    expect(toFriendlyMessage('verifying sha256 digest')).toBe('무결성 검증 중...');
+  });
+
+  it('writing → 설치 마무리 중', () => {
+    expect(toFriendlyMessage('writing manifest')).toBe('설치 마무리 중...');
+  });
+
+  it('success → 다운로드 완료', () => {
+    expect(toFriendlyMessage('success')).toBe('다운로드 완료!');
+  });
+
+  it('퍼센트 없는 pulling <hash> 는 준비 중 메시지', () => {
+    expect(toFriendlyMessage('pulling a1b2c3d4')).toBe('모델 다운로드 준비 중...');
+  });
+
+  it('매핑되지 않는 줄은 원문 그대로 통과', () => {
+    expect(toFriendlyMessage('Error: connection refused')).toBe('Error: connection refused');
+  });
+
+  it('대소문자 무관하게 상태를 인식한다', () => {
+    expect(toFriendlyMessage('VERIFYING sha256')).toBe('무결성 검증 중...');
+    expect(toFriendlyMessage('Success')).toBe('다운로드 완료!');
+  });
+});

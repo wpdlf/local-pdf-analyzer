@@ -10,6 +10,9 @@ import { app, BrowserWindow } from 'electron';
 // 그래서 escape 로직에 회귀 테스트가 0건이었다 (R15 H1 / R28 P2 발생 영역). 분리하여
 // `__tests__/ollama-psquote.test.ts` 가 검증.
 import { psQuotePath } from './ps-quote';
+// R37 P6 (v0.18.23): pull 진행 출력 파싱 로직 분리 (QA M5) — 위 ps-quote 와 동일 사유.
+// `__tests__/ollama-pull-progress.test.ts` 가 ANSI/개행/퍼센트/상태 매핑 회귀를 가드.
+import { extractLastLine, toFriendlyMessage } from './ollama-pull-progress';
 
 interface OllamaStatusResult {
   installed: boolean;
@@ -591,34 +594,7 @@ export class OllamaManager {
         safeResolve({ success: false, error: '모델 다운로드 타임아웃 (30분). 네트워크를 확인 후 다시 시도해주세요.' });
       }, PULL_TIMEOUT_MS);
 
-      // ANSI 이스케이프 시퀀스 전체 제거 (색상, 커서 이동 등)
-      const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-
-      // ollama pull은 \r과 \n을 혼용하므로, 둘 다 기준으로 split 후 마지막 비어있지 않은 줄만 취함
-      const extractLastLine = (raw: string): string => {
-        const cleaned = stripAnsi(raw);
-        const parts = cleaned.split(/[\r\n]+/).map(s => s.trim()).filter(Boolean);
-        // noUncheckedIndexedAccess: parts[parts.length - 1] 은 length>0 에도 T|undefined.
-        return parts.length > 0 ? (parts[parts.length - 1] ?? '') : '';
-      };
-
-      // ollama pull 원본 출력을 사용자 친화적 메시지로 변환
-      const toFriendlyMessage = (line: string): string => {
-        // "pulling abc123..." → 퍼센트 추출
-        const pullMatch = line.match(/^pulling\s+\S+.*?(\d+%)/);
-        if (pullMatch) return `모델 다운로드 중... ${pullMatch[1]}`;
-        // "pulling manifest"
-        if (/^pulling\s+manifest/i.test(line)) return '모델 정보 확인 중...';
-        // "verifying sha256 digest"
-        if (/^verifying/i.test(line)) return '무결성 검증 중...';
-        // "writing manifest"
-        if (/^writing/i.test(line)) return '설치 마무리 중...';
-        // "success"
-        if (/^success/i.test(line)) return '다운로드 완료!';
-        // 그 외 (예: pulling hash without %)
-        if (/^pulling\s+[a-f0-9]/i.test(line)) return '모델 다운로드 준비 중...';
-        return line;
-      };
+      // ANSI 제거 · \r\n 혼용 분할 · 퍼센트/상태 매핑은 ./ollama-pull-progress 로 분리 (M5).
 
       proc.stdout?.on('data', (data: Buffer) => {
         const line = extractLastLine(data.toString());
