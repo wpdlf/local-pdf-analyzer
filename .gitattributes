@@ -1,0 +1,6 @@
+# R37 P5-1 (v0.18.23): index.html 은 반드시 LF 로 체크아웃.
+# CSP 의 sha256 script-src 게이트는 인라인 스크립트 바이트의 해시에 의존한다.
+# Windows 러너(autocrlf=true)에서 CRLF 로 변환되면 (1) csp-inline-hash.test 가 실패하고,
+# (2) 패키지 빌드 산출물의 인라인 스크립트도 CRLF 가 되어 브라우저 런타임 해시가 CSP 와
+# 어긋나 FOUC 방지 스크립트가 차단(첫 실행 화이트 페이지)된다. eol=lf 로 양쪽을 고정.
+src/renderer/index.html text eol=lf

@@ -14,7 +14,10 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
 describe('CSP inline-script sha256 gate', () => {
-  const html = readFileSync(resolve(process.cwd(), 'src/renderer/index.html'), 'utf-8');
+  // CRLF → LF 정규화: CSP hash 는 LF 기준으로 산출됐고 빌드 산출물도 .gitattributes(eol=lf)로
+  // LF 고정이다. autocrlf=true 인 Windows 환경에서 체크아웃이 CRLF 여도 테스트가 환경 독립적으로
+  // 동일 해시를 계산하도록 정규화한다 (R37 P5-1 CI Windows 회귀 fix).
+  const html = readFileSync(resolve(process.cwd(), 'src/renderer/index.html'), 'utf-8').replace(/\r\n/g, '\n');
 
   it('인라인 <script> 가 정확히 1건이다 (다중 hash 화이트리스트 마이그레이션 필요 시 본 가정 갱신)', () => {
     const matches = html.match(/<script>[\s\S]*?<\/script>/g) ?? [];
