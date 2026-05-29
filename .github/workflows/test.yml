@@ -14,7 +14,9 @@ jobs:
     # 기존엔 Node 20.11 단일이었으나 package.json `engines.node` 가 `>=20.11 <23` 으로 22 까지
     # 허용하고 사용자의 실제 개발 환경이 Node 22 LTS 인 경우가 증가. 20.11 EoL (2026-04) 임박과
     # 함께 22 검증 선행 필요. fail-fast: false — 한 Node 버전의 플레이크가 다른 버전 신호를
-    # 가리지 않도록. release.yml 의 빌드 잡은 안정성 중시로 20.11 단일 유지 (변경은 별도 라운드).
+    # 가리지 않도록.
+    # R37 P5-3 (v0.18.23): release.yml 의 test/build 잡도 Node 22 로 정렬 (20.11 EoL 2026-04 경과).
+    # 본 프로젝트는 네이티브 모듈 0개라 빌드의 Node 버전 의존이 없어 안정성 손실 없이 통일.
     strategy:
       fail-fast: false
       matrix:
@@ -132,3 +134,28 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           # human-readable 출력도 logs 에 남김 (기존 동작 보존).
           npm audit --audit-level=high || true
+
+  coverage:
+    # R37 P5-2 (v0.18.23): 커버리지 게이트를 CI 에서 실제 강제 (QA M2).
+    # 그동안 vitest.config.mts 의 thresholds (Stmts38/Branch33/Funcs41/Lines39) 는
+    # `npm run test:coverage` 수동 실행 때만 적용돼, CI 의 `npm test`(=vitest run, no-coverage)
+    # 는 커버리지 회귀를 silent 통과시켰다. 본 잡이 threshold 미달 시 빌드를 fail 시킨다.
+    # 단일 Node(22) ubuntu 1회만 측정 — 커버리지 비율은 OS/Node 비의존적이라 매트릭스 불필요.
+    # 테스트가 2회(test 매트릭스 + 본 잡) 도는 비용은 있으나, 게이트 명확성/격리를 우선.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # actions/checkout@v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      # actions/setup-node@v6.4.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # vitest.config.mts 의 coverage.thresholds 미달 시 vitest 가 non-zero exit → 잡 실패.
+      # 베이스라인 상승 시(예: pdf-parser/use-summarize 테스트 추가) thresholds 동시 상향 권장.
+      - run: npm run test:coverage

@@ -55,7 +55,8 @@ export default defineConfig({
       // 베이스라인(v0.18.22 측정): Stmts 43.09 / Branch 38.50 / Funcs 46.41 / Lines 44.57.
       // 각 지표에서 -5pp 마진을 빼고 게이트 — 우발적 회귀(테스트 누락, 함수 추가 시 미커버)는
       // 잡되 자연적 변동(use-summarize/use-qa 등 부분 측정 함수의 chunk 출입)은 흡수.
-      // CI 통합은 R37 P4 후속에서 결정 (현재는 `npm run test:coverage` 수동 실행 시 적용).
+      // R37 P5-2 (v0.18.23): CI 통합 완료 — test.yml 의 `coverage` 잡이 `npm run test:coverage`
+      // 로 본 thresholds 를 매 PR/push 에서 강제한다 (이전엔 수동 실행 시에만 적용).
       // 베이스라인 자체 상승 시(예: pdf-parser/use-summarize 테스트 추가) 본 임계 동시 상향 권장.
       thresholds: {
         statements: 38,
