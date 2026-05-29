@@ -5,6 +5,10 @@ vi.mock('pdfjs-dist', () => {
   return {
     GlobalWorkerOptions: { workerSrc: '' },
     getDocument: vi.fn(),
+    // R37 P6 (QA M6): OPS.paintImageXObject 미모킹이던 결함 수정. 이전엔 OPS 가 undefined 라
+    // extractPageImages 의 `ops.fnArray[j] !== OPS.paintImageXObject` 가 첫 이미지 op 에서
+    // TypeError → 추출 0장 → 캡 테스트(images.length <= 50)가 0<=50 으로 공허 통과했다.
+    OPS: { paintImageXObject: 85 },
   };
 });
 
@@ -97,48 +101,83 @@ describe('PDF Parser - parsePdf success', () => {
 
 // R28 회귀: MAX_TOTAL_IMAGES=50 캡이 배치 동시성으로 우회되지 않는지 확인.
 // 모든 페이지가 병렬로 이미지를 푸시하더라도 결과의 images.length는 캡을 넘지 않아야 한다.
+//
+// R37 P6 (QA M6): 이전 버전은 objs.get 을 동기 mock(mockReturnValue)으로 두고 OPS 도
+// 미모킹이라 실제 추출이 0장 → `<= 50` 단언이 0<=50 으로 공허 통과했다. 이제 (1) objs.get
+// 을 실제 콜백 형태로, (2) OffscreenCanvas/ImageData 를 mock 해 imageDataToBase64 가 실제
+// 산출물을 내도록 하고, (3) `=== 50` 으로 캡이 실제로 작동했음을 단언한다.
 describe('PDF Parser - MAX_TOTAL_IMAGES cap enforcement', () => {
-  it('한 배치 내 다수 페이지가 이미지를 동시에 추출해도 캡을 초과하지 않는다', async () => {
-    // 10페이지가 각각 100장의 이미지를 가진 PDF를 시뮬레이션 — 캡 우회 시 1000장이 push됨.
+  it('다수 페이지가 동시에 이미지를 추출하면 정확히 50장으로 캡된다', async () => {
+    // 10페이지 × 페이지당 다수 이미지 op → 캡 미작동 시 100장. 캡이 정확히 50 으로 잘라야 함.
     const PAGES = 10;
-    const IMAGES_PER_PAGE = 100;
+    const OPS_PER_PAGE = 100; // MAX_IMAGES_PER_PAGE(10)로 페이지당 10장까지만 추출됨
 
+    // imageDataToBase64 가 통과하려면 MIN_IMAGE_SIZE(50) 이상 + RGBA data 충족 필요.
+    const W = 64;
+    const H = 64;
     const fakeImage = {
-      objId: 'img1',
-      width: 1,
-      height: 1,
-      data: new Uint8ClampedArray(4),
+      width: W,
+      height: H,
+      data: new Uint8ClampedArray(W * H * 4).fill(200),
     };
 
-    const mockPage = {
-      getTextContent: vi.fn().mockResolvedValue({
-        items: [{ str: '프로세스는 실행 중인 프로그램의 인스턴스이다. 운영체제는 프로세스를 관리한다.' }],
-      }),
-      // extractPageImages 내부에서 호출되는 메소드들을 최대한 모킹.
-      // 실제 extractPageImages는 getOperatorList/objs.get 등을 사용하므로 안전 모킹.
-      getOperatorList: vi.fn().mockResolvedValue({
-        fnArray: new Array(IMAGES_PER_PAGE).fill(85), // OPS.paintImageXObject = 85
-        argsArray: new Array(IMAGES_PER_PAGE).fill(['img1']),
-      }),
-      objs: { get: vi.fn().mockReturnValue(fakeImage) },
-      commonObjs: { get: vi.fn().mockReturnValue(fakeImage) },
-      cleanup: vi.fn(),
-    };
+    // OffscreenCanvas / ImageData mock — node 환경엔 없어 원래 imageDataToBase64 가 null 을
+    // 반환(0장)했다. 최소 동작 stub 으로 base64 산출 경로를 활성화한다.
+    class FakeImageData {
+      data: Uint8ClampedArray;
+      width: number;
+      height: number;
+      constructor(data: Uint8ClampedArray, width: number, height: number) {
+        this.data = data; this.width = width; this.height = height;
+      }
+    }
+    class FakeOffscreenCanvas {
+      width: number;
+      height: number;
+      constructor(w: number, h: number) { this.width = w; this.height = h; }
+      getContext() { return { putImageData() {}, drawImage() {} }; }
+      async convertToBlob() { return { async arrayBuffer() { return new ArrayBuffer(8); } }; }
+    }
 
-    const mockPdf = {
-      numPages: PAGES,
-      getPage: vi.fn().mockResolvedValue(mockPage),
-      destroy: vi.fn().mockResolvedValue(undefined),
-    };
-    (pdfjsLib.getDocument as ReturnType<typeof vi.fn>).mockReturnValue({
-      promise: Promise.resolve(mockPdf),
-    });
+    const g = globalThis as unknown as Record<string, unknown>;
+    const origOC = g.OffscreenCanvas;
+    const origID = g.ImageData;
+    g.OffscreenCanvas = FakeOffscreenCanvas;
+    g.ImageData = FakeImageData;
 
-    const { parsePdf } = await import('../pdf-parser');
-    const doc = await parsePdf(new ArrayBuffer(10), 'big.pdf', '/big.pdf');
+    try {
+      const mockPage = {
+        getTextContent: vi.fn().mockResolvedValue({
+          items: [{ str: '프로세스는 실행 중인 프로그램의 인스턴스이다. 운영체제는 프로세스를 관리한다.' }],
+        }),
+        getOperatorList: vi.fn().mockResolvedValue({
+          fnArray: new Array(OPS_PER_PAGE).fill(85), // OPS.paintImageXObject
+          argsArray: new Array(OPS_PER_PAGE).fill(['img1']),
+        }),
+        // 콜백 형태 — 실제 page.objs.get(id, cb) 호출 규약과 일치.
+        objs: { get: vi.fn((_id: string, cb: (obj: unknown) => void) => cb(fakeImage)) },
+        commonObjs: { get: vi.fn() },
+        cleanup: vi.fn(),
+      };
 
-    // extractPageImages가 실패하든 성공하든 images.length는 50을 넘으면 안 됨.
-    expect(doc.images.length).toBeLessThanOrEqual(50);
+      const mockPdf = {
+        numPages: PAGES,
+        getPage: vi.fn().mockResolvedValue(mockPage),
+        destroy: vi.fn().mockResolvedValue(undefined),
+      };
+      (pdfjsLib.getDocument as ReturnType<typeof vi.fn>).mockReturnValue({
+        promise: Promise.resolve(mockPdf),
+      });
+
+      const { parsePdf } = await import('../pdf-parser');
+      const doc = await parsePdf(new ArrayBuffer(10), 'big.pdf', '/big.pdf');
+
+      // 추출이 실제로 일어났고(>0) 캡이 정확히 작동했음(===50)을 동시 검증.
+      expect(doc.images.length).toBe(50);
+    } finally {
+      g.OffscreenCanvas = origOC;
+      g.ImageData = origID;
+    }
   });
 });
 

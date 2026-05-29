@@ -35,8 +35,14 @@ import type { PdfDocument, DefaultSummaryType, AppSettings, ProgressInfo, AppErr
 // 'qa'는 use-qa.ts 의 handleAsk 에서 ai-client.summarize 를 직접 호출하는 별도 경로.
 type TrackFn = (text: string, type: DefaultSummaryType) => AsyncGenerator<string>;
 
-/** 로컬 LLM이 생성한 대화형 멘트를 후처리로 제거 */
-function stripConversationalText(text: string): string {
+/**
+ * 로컬 LLM이 생성한 대화형 멘트를 후처리로 제거.
+ *
+ * R37 P6 (v0.18.23): export 로 전환해 단위 테스트 가능화 (QA M4). 이 함수는 ~30개 다국어
+ * 정규식으로 구성돼 인라인 주석에 R28~R37 회귀원으로 명시돼 있었으나 회귀 가드가 없었다.
+ * use-summarize-strip.test.ts 가 대표 패턴/본문 보존/빈줄·중복개행 정규화를 가드한다.
+ */
+export function stripConversationalText(text: string): string {
   // 줄 단위로 처리 — 대화형 패턴이 포함된 줄 제거
   const patterns = [
     // 한국어
