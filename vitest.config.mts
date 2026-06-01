@@ -55,7 +55,11 @@ export default defineConfig({
       //                                vision(analyze-image·ocr) 등 UI·생성 경로가 통합 성격이라
       //                                전체 39% 수준 → 분모 포함 시 branch 마진이 -5pp 정책 미달.
       //                                % 게이트에서는 제외하되 회귀는 행위 테스트가 가드한다.
-      //        - ollama-manager.ts   : child_process/http 통합 테스트 필요 (후속 라운드 P3)
+      //        - ollama-manager.ts   : R38 P3 에서 network/process 생명주기(listModels·healthCheck·
+      //                                isInstalled·getStatus·pullModel·stop) 행위는 검증됨
+      //                                (ollama-manager.test). 다만 downloadFile·verifyInstallerSignature·
+      //                                install* 가 통합/타이머 성격으로 미커버(전체 ~50%) → 분모 포함 시
+      //                                line 마진이 -5pp 정책 미달. % 게이트 제외, 회귀는 행위 테스트가 가드.
       //        - ai-service.ts       : 테스트는 있으나 activeRequests 표면만(~10%) — 본체(HTTP 스트리밍/
       //                                provider 어댑터)는 통합 성격이라 후속 라운드까지 분모 제외.
       //                                포함 시 1491줄 대부분 미커버로 게이트가 비현실적이 됨.
