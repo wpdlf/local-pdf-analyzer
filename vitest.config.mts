@@ -59,13 +59,6 @@ export default defineConfig({
       //      verifyInstallerSignature·start health-retry) 로 큰 부분이 커버되어 전체 ~55% →
       //      포함 시 오히려 베이스라인이 상승(드래그 아님). install* 오케스트레이션·computeFileHash·
       //      getOllamaPath(win32) 만 미커버로 남는다. → exclude 라인 제거(절차대로).
-      //      개별 제외로 남기는 것:
-      //        - index.ts            : R38 P2 에서 electron 모킹으로 핸들러 행위는 검증됨
-      //                                (ipc-handlers.test). 다만 createWindow / ai:generate /
-      //                                vision(analyze-image·ocr) 등 UI·생성 경로가 통합 성격이라
-      //                                전체 39% 수준 → 분모 포함 시 branch 마진이 -5pp 정책 미달.
-      //                                % 게이트에서는 제외하되 회귀는 행위 테스트가 가드한다.
-      //        - (ai-service.ts 는 R38 P5 에서 분모 편입 — 아래 참고)
       //   R38 P5: ai-service.ts 도 분모에 포함. 순수 헬퍼(buildPrompt/splitPrompt/detectMimeType/
       //      sanitize*) export + checkAvailability/generateEmbeddings/analyzeImage/generate(streamRequest)
       //      를 http 모킹으로 검증 → ~68% 커버. 포함 시 베이스라인 상승(드래그 아님). 잔여 미커버는

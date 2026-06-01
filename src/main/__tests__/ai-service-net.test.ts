@@ -23,6 +23,7 @@ import {
   generate,
   abortGenerate,
   cleanupAiService,
+  __activeRequestCount,
 } from '../ai-service';
 
 function makeReq() {
@@ -166,12 +167,17 @@ describe('analyzeImage (callVision → httpPost)', () => {
     expect(await analyzeImage('img', 'claude', 'm', 'x', 'key')).toBe('이미지 설명');
   });
 
-  it('에러 응답 시 API 키를 로그에서 redaction + HTTP 에러 throw', async () => {
+  // QA3: 코드가 처리하는 redaction 벡터를 폭넓게 검증 (이전엔 sk-ant 1개만).
+  it.each([
+    ['sk-ant (JSON error.message)', { error: { message: 'invalid sk-ant-api03-SECRETSECRETSECRET99999' } }, 'SECRETSECRETSECRET99999'],
+    ['소문자 bearer (비-JSON body)', 'unauthorized: bearer SUPERSECRETTOKENVALUE1234567', 'SUPERSECRETTOKENVALUE1234567'],
+    ['sk-proj (JSON)', { error: { message: 'bad sk-proj-SUPERSECRETPROJKEY1234567890' } }, 'SUPERSECRETPROJKEY1234567890'],
+  ])('에러 응답 로그에서 키 redaction: %s', async (_l, body, rawSecret) => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    respond(M.httpsRequest, 401, { error: { message: 'invalid key sk-ant-api03-SECRETSECRETSECRET99999' } });
+    respond(M.httpsRequest, 401, body);
     await expect(analyzeImage('img', 'claude', 'm', 'x', 'key')).rejects.toThrow(/HTTP 401/);
     const logged = errSpy.mock.calls.flat().join(' ');
-    expect(logged).not.toContain('SECRETSECRETSECRET99999'); // 원본 키 미노출
+    expect(logged).not.toContain(rawSecret); // 원본 키 미노출
     expect(logged).toContain('REDACTED');
     errSpy.mockRestore();
   });
@@ -197,9 +203,12 @@ describe('generate → streamRequest (스트리밍)', () => {
     });
     const win = makeWin();
     await generate('req1', { text: '본문', type: 'full', provider: 'ollama', model: 'llama3', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never);
-    expect(win.webContents.send).toHaveBeenCalledWith('ai:token', 'req1', '안녕');
-    expect(win.webContents.send).toHaveBeenCalledWith('ai:token', 'req1', '하세요');
-    expect(win.webContents.send).toHaveBeenCalledWith('ai:done', 'req1');
+    // 순서까지 단언 (QA2: 독립 toHaveBeenCalledWith 는 순서 미검증)
+    expect(win.webContents.send).toHaveBeenNthCalledWith(1, 'ai:token', 'req1', '안녕');
+    expect(win.webContents.send).toHaveBeenNthCalledWith(2, 'ai:token', 'req1', '하세요');
+    expect(win.webContents.send).toHaveBeenNthCalledWith(3, 'ai:done', 'req1');
+    // 정상 종료 후 activeRequests 누수 없음 (safeDeleteRequest)
+    expect(__activeRequestCount()).toBe(0);
   });
 
   it('claude SSE 401 → API_KEY_INVALID', async () => {
@@ -234,7 +243,10 @@ describe('generate → streamRequest (스트리밍)', () => {
     // 응답을 보내지 않아 요청이 in-flight 상태로 유지 → abort 로만 종료
     M.httpRequest.mockImplementation(() => makeReq());
     const p = generate('rabort', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never);
+    expect(__activeRequestCount()).toBe(1); // in-flight 등록됨
     abortGenerate('rabort'); // streamRequest 가 동기로 등록한 entry 를 취소
     await expect(p).rejects.toMatchObject({ code: 'ABORTED' });
+    // R34 P1: abort 후 entry 즉시 제거 — 10분 TTL leak 없음
+    expect(__activeRequestCount()).toBe(0);
   });
 });

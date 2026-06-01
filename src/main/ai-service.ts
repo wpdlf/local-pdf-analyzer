@@ -39,6 +39,14 @@ const ttlCleanupInterval = setInterval(() => {
 }, 60000);
 ttlCleanupInterval.unref(); // Node.js 이벤트루프 블로킹 방지
 
+/**
+ * @internal 테스트 전용 — activeRequests 누수 검증용.
+ * R34 P1 의 placeholder/abort TTL-leak 가드가 실제로 entry 를 제거하는지 단언하기 위함.
+ */
+export function __activeRequestCount(): number {
+  return activeRequests.size;
+}
+
 /** 앱 종료 시 TTL 정리 타이머 해제 */
 export function cleanupAiService(): void {
   clearInterval(ttlCleanupInterval);
