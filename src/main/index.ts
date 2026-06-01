@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import fs from 'fs';
+// R38 P1-2: sync `fs` 는 API 키 저장 로직과 함께 api-keys-store.ts 로 이동. 본 파일은 fsp 만 사용.
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
 import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest } from './ai-service';
@@ -26,6 +26,9 @@ import {
   validateEmbeddings,
   validateGenerateRequest,
 } from './ipc-validators';
+// R38 P1-2: API 키 암호화 저장/캐시/prototype-pollution 가드를 순수 모듈로 분리.
+// safeStorage 를 주입받아 electron-free 가 되어 api-keys-store.test 가 fs 모킹으로 검증한다.
+import { ApiKeyStore } from './api-keys-store';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -258,102 +261,16 @@ app.on('before-quit', (e) => {
 
 const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');
 
-// ─── API 키 메모리 캐시 ───
-// 이유: 이전엔 loadApiKey 호출마다 readFileSync + safeStorage.decryptString 을 수행했는데,
-// 청크가 많은 요약에선 hot path에서 수십 회 동기 파일 I/O + OS 복호화가 발생해
-// 메인 이벤트 루프가 블로킹됐다. 프로세스 메모리에 복호화된 키를 캐시하고
-// save/delete 시에만 무효화하여 비용을 O(1)로 축소.
-//
-// 보안: 캐시는 프로세스 메모리에만 존재하고 disk/IPC로 유출되지 않음.
-// 렌더러에는 절대 전달되지 않으며 (기존과 동일), 앱 종료 시 자연히 소멸.
-let apiKeysCache: Record<string, string> | null = null;
-
-// R28 P2 (v0.18.12): prototype pollution 가드용 알려진 provider 목록.
-// 디스크에 변조된 JSON 이 `__proto__` 같은 키를 포함해도 알려진 키만 안전하게 복사한다.
-const KNOWN_API_KEY_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
+// ─── API 키 암호화 저장소 ───
+// R38 P1-2: 캐시/prototype-pollution 가드/원자적 쓰기/keychain-unavailable throw 로직을
+// api-keys-store.ts 로 분리(행위 검증 가능). safeStorage 를 주입 — 캐시는 프로세스 메모리에만
+// 존재하고 disk/IPC 로 유출되지 않으며 렌더러에 전달되지 않음(기존과 동일).
+const apiKeyStore = new ApiKeyStore(apiKeysPath, safeStorage);
 
 // R28 P2 (v0.18.12): ai:embed 동시성 캡 — 비용/리소스 amp DoS 차단용.
 // 정상 RAG 인덱스 빌드 시 동시 in-flight 는 1~2이라 4 면 헤드룸 충분.
 const MAX_CONCURRENT_EMBED_REQUESTS = 4;
 let activeEmbedRequests = 0;
-
-function readApiKeys(): Record<string, string> {
-  if (apiKeysCache) return apiKeysCache;
-  // null-prototype 객체로 캐시 — 변조된 JSON 의 `__proto__` 키가 Object.prototype 을
-  // 오염시키는 경로 차단. 일반 객체 spread/lookup 은 그대로 동작한다.
-  const fresh: Record<string, string> = Object.create(null);
-  if (!safeStorage.isEncryptionAvailable()) {
-    apiKeysCache = fresh;
-    return fresh;
-  }
-  try {
-    const encrypted = fs.readFileSync(apiKeysPath);
-    const parsed: unknown = JSON.parse(safeStorage.decryptString(encrypted));
-    // 알려진 provider 키만 추출 — 그 외(prototype 키, 미지 provider 등)는 폐기.
-    if (parsed && typeof parsed === 'object') {
-      const obj = parsed as Record<string, unknown>;
-      for (const k of KNOWN_API_KEY_PROVIDERS) {
-        const v = obj[k];
-        if (typeof v === 'string') fresh[k] = v;
-      }
-    }
-    apiKeysCache = fresh;
-    return fresh;
-  } catch {
-    apiKeysCache = fresh;
-    return fresh;
-  }
-}
-
-function invalidateApiKeysCache(): void {
-  apiKeysCache = null;
-}
-
-function writeApiKeys(keys: Record<string, string>): void {
-  if (!safeStorage.isEncryptionAvailable()) {
-    // silent return 금지: 호출자가 실패를 감지할 수 있도록 throw
-    // (이전 버그: silent fail 시 UI가 "저장됨"이라고 보고한 뒤 실제 사용 시에야 실패 발견)
-    throw Object.assign(
-      new Error('OS 키체인을 사용할 수 없어 API 키를 저장할 수 없습니다. OS 설정을 확인해주세요.'),
-      { code: 'KEYCHAIN_UNAVAILABLE' },
-    );
-  }
-  const tmpPath = apiKeysPath + '.tmp';
-  const encrypted = safeStorage.encryptString(JSON.stringify(keys));
-  try {
-    fs.writeFileSync(tmpPath, encrypted);
-    fs.renameSync(tmpPath, apiKeysPath);
-    // 쓰기 성공 후 캐시에 최신값 반영 — 다음 읽기에서 파일 I/O 회피.
-    // R28 P2 (v0.18.12): null-prototype 객체로 캐시하여 readApiKeys 와 일관성 유지.
-    const fresh: Record<string, string> = Object.create(null);
-    for (const k of KNOWN_API_KEY_PROVIDERS) {
-      const v = keys[k];
-      if (typeof v === 'string') fresh[k] = v;
-    }
-    apiKeysCache = fresh;
-  } catch (err) {
-    // rename 실패 시 tmp 파일 정리 + 캐시 무효화 (디스크와 메모리 불일치 방지)
-    try { fs.unlinkSync(tmpPath); } catch { /* 이미 삭제됨 */ }
-    invalidateApiKeysCache();
-    throw err;
-  }
-}
-
-function saveApiKey(provider: string, key: string): void {
-  // clone 후 수정 — writeApiKeys 실패 시 캐시가 불일치 상태로 남지 않도록 보호
-  const keys = { ...readApiKeys(), [provider]: key };
-  writeApiKeys(keys);
-}
-
-function deleteApiKey(provider: string): void {
-  const keys = { ...readApiKeys() };
-  delete keys[provider];
-  writeApiKeys(keys);
-}
-
-function loadApiKey(provider: string): string | undefined {
-  return readApiKeys()[provider];
-}
 
 function registerIpcHandlers(): void {
   ipcMain.handle('settings:get', () => {
@@ -373,7 +290,7 @@ function registerIpcHandlers(): void {
       return { success: false, error: 'Invalid API key' };
     }
     try {
-      saveApiKey(provider, key.trim());
+      apiKeyStore.save(provider, key.trim());
       return { success: true };
     } catch (err) {
       return {
@@ -387,7 +304,7 @@ function registerIpcHandlers(): void {
     if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {
       return false;
     }
-    const key = loadApiKey(provider);
+    const key = apiKeyStore.load(provider);
     return !!key && key.length > 0;
   });
 
@@ -396,7 +313,7 @@ function registerIpcHandlers(): void {
       return { success: false, error: 'Invalid provider' };
     }
     try {
-      deleteApiKey(provider);
+      apiKeyStore.delete(provider);
       return { success: true };
     } catch (err) {
       return {
@@ -556,7 +473,7 @@ function registerIpcHandlers(): void {
     if (!win) return { success: false, error: '윈도우를 찾을 수 없습니다.' };
 
     const apiKey = request.provider !== 'ollama'
-      ? loadApiKey(request.provider)
+      ? apiKeyStore.load(request.provider)
       : undefined;
 
     try {
@@ -587,7 +504,7 @@ function registerIpcHandlers(): void {
     // R38 P1: provider 화이트리스트 + ollama localhost SSRF 가드를 ipc-validators 로 위임.
     if (!isValidProvider(provider)) return false;
     if (!isValidOllamaBaseUrl(ollamaBaseUrl, provider)) return false;
-    const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
+    const apiKey = provider !== 'ollama' ? apiKeyStore.load(provider) : undefined;
     return checkAvailability(provider, ollamaBaseUrl, apiKey);
   });
 
@@ -608,7 +525,7 @@ function registerIpcHandlers(): void {
       }
       model = available[0];
     }
-    const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
+    const apiKey = provider !== 'ollama' ? apiKeyStore.load(provider) : undefined;
     return { provider, model, ollamaBaseUrl, apiKey };
   }
 
@@ -720,7 +637,7 @@ function registerIpcHandlers(): void {
       const settings = await loadSettings();
       const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
       const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
-      const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
+      const apiKey = provider !== 'ollama' ? apiKeyStore.load(provider) : undefined;
       // R38 P1: texts 는 validateEmbedTexts 가 string[] 임을 이미 보증 (위 early return).
       // 검증을 별도 함수로 분리하면서 Array.isArray 의 흐름 narrowing 이 소실되므로 명시 cast.
       const result = await generateEmbeddings(texts as string[], provider, ollamaBaseUrl, apiKey, undefined, controller?.signal);
@@ -754,7 +671,7 @@ function registerIpcHandlers(): void {
       const settings = await loadSettings();
       const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
       if (provider === 'openai') {
-        const apiKey = loadApiKey('openai');
+        const apiKey = apiKeyStore.load('openai');
         return { available: !!apiKey, model: 'text-embedding-3-small' };
       }
       // Ollama or Claude (Ollama fallback)

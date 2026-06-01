@@ -70,12 +70,15 @@ export default defineConfig({
       //   측정: Stmts 49.85 / Branch 45.56 / Funcs 49.81 / Lines 51.63 (-5pp 마진 적용).
       // R38 P1: ipc-validators 추출 + 행위 테스트 + src/main 순수 모듈 분모 포함으로 베이스라인 상승.
       //   측정: Stmts 52.55 / Branch 50.18 / Funcs 52.48 / Lines 54.28 (-5pp 마진 적용).
+      // R38 P1-2: api-keys-store 추출(safeStorage 주입) + 행위 테스트(prototype pollution/원자적
+      //   쓰기/keychain throw) 로 베이스라인 추가 상승.
+      //   측정: Stmts 53.67 / Branch 50.63 / Funcs 53.79 / Lines 55.43 (-5pp 마진 적용).
       //   추가 보강(P2 electron-mock 핸들러 / P3 ollama-manager 통합) 시 본 임계 재상향 권장.
       thresholds: {
-        statements: 47,
+        statements: 48,
         branches: 45,
-        functions: 47,
-        lines: 49,
+        functions: 48,
+        lines: 50,
       },
     },
   },
