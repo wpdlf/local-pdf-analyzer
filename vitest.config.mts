@@ -65,13 +65,16 @@ export default defineConfig({
       //                                vision(analyze-image·ocr) 등 UI·생성 경로가 통합 성격이라
       //                                전체 39% 수준 → 분모 포함 시 branch 마진이 -5pp 정책 미달.
       //                                % 게이트에서는 제외하되 회귀는 행위 테스트가 가드한다.
-      //        - ai-service.ts       : 테스트는 있으나 activeRequests 표면만(~10%) — 본체(HTTP 스트리밍/
-      //                                provider 어댑터)는 통합 성격이라 후속 라운드까지 분모 제외.
-      //                                포함 시 1491줄 대부분 미커버로 게이트가 비현실적이 됨.
+      //        - (ai-service.ts 는 R38 P5 에서 분모 편입 — 아래 참고)
+      //   R38 P5: ai-service.ts 도 분모에 포함. 순수 헬퍼(buildPrompt/splitPrompt/detectMimeType/
+      //      sanitize*) export + checkAvailability/generateEmbeddings/analyzeImage/generate(streamRequest)
+      //      를 http 모킹으로 검증 → ~68% 커버. 포함 시 베이스라인 상승(드래그 아님). 잔여 미커버는
+      //      일부 프롬프트 템플릿 조합·streamRequest 의 idle/size-cap 분기 정도.
+      //      이제 src/main 에서 % 게이트 제외로 남는 것은 index.ts(P2 행위검증, UI/생성 경로 ~39%) 뿐.
       exclude: [
         'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
         '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
-        'src/main/index.ts', 'src/main/ai-service.ts',
+        'src/main/index.ts',
         'src/preload/**', 'src/renderer/components/**',
       ],
       // R37 P4-2 (v0.18.23): 후퇴 방지 게이트 도입.
@@ -89,12 +92,14 @@ export default defineConfig({
       // R38 P4: ollama-manager.ts(downloadFile·verifyInstallerSignature·start retry) 분모 포함으로
       //   베이스라인 상승.
       //   측정: Stmts 55.2 / Branch 50.39 / Funcs 55.85 / Lines 56.67 (-5pp 마진 적용).
-      //   잔여 미답(install* 오케스트레이션 / ai-service 본체 / E2E) 도입 시 본 임계 재상향 권장.
+      // R38 P5: ai-service.ts 본체(순수 헬퍼 + 네트워크 경로) 분모 편입으로 베이스라인 상승.
+      //   측정: Stmts 57.49 / Branch 51.24 / Funcs 57.53 / Lines 59.32 (-5pp 마진 적용).
+      //   잔여 미답(index.ts UI/생성 경로 / install* 오케스트레이션 / E2E) 도입 시 본 임계 재상향 권장.
       thresholds: {
-        statements: 50,
-        branches: 45,
-        functions: 50,
-        lines: 51,
+        statements: 52,
+        branches: 46,
+        functions: 52,
+        lines: 54,
       },
     },
   },
