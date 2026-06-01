@@ -272,7 +272,10 @@ const apiKeyStore = new ApiKeyStore(apiKeysPath, safeStorage);
 const MAX_CONCURRENT_EMBED_REQUESTS = 4;
 let activeEmbedRequests = 0;
 
-function registerIpcHandlers(): void {
+// R38 P2: export — electron 모킹 기반 핸들러 행위 검증(__tests__/ipc-handlers.test.ts)이
+// 본 함수를 직접 호출해 ipcMain.handle 로 등록된 핸들러를 캡처·invoke 한다. 프로덕션 경로는
+// 변함없이 app.whenReady().then 에서 1회 호출된다.
+export function registerIpcHandlers(): void {
   ipcMain.handle('settings:get', () => {
     // API 키는 Renderer에 전달하지 않음 — Main 프로세스에서만 사용
     return loadSettings();

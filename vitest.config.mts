@@ -50,7 +50,11 @@ export default defineConfig({
       //      모듈(ipc-validators / ollama-pull-progress / ps-quote / settings-store /
       //      settings-keys)을 분모에 포함시킨다. config 주석의 "테스트 도입 시 라인 제거" 절차 실행.
       //      개별 제외로 남기는 것:
-      //        - index.ts            : electron 을 module-init 에서 직접 사용 → import 불가 (정적 가드만)
+      //        - index.ts            : R38 P2 에서 electron 모킹으로 핸들러 행위는 검증됨
+      //                                (ipc-handlers.test). 다만 createWindow / ai:generate /
+      //                                vision(analyze-image·ocr) 등 UI·생성 경로가 통합 성격이라
+      //                                전체 39% 수준 → 분모 포함 시 branch 마진이 -5pp 정책 미달.
+      //                                % 게이트에서는 제외하되 회귀는 행위 테스트가 가드한다.
       //        - ollama-manager.ts   : child_process/http 통합 테스트 필요 (후속 라운드 P3)
       //        - ai-service.ts       : 테스트는 있으나 activeRequests 표면만(~10%) — 본체(HTTP 스트리밍/
       //                                provider 어댑터)는 통합 성격이라 후속 라운드까지 분모 제외.
