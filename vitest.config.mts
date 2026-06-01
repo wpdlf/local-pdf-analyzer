@@ -43,13 +43,23 @@ export default defineConfig({
       //   1) 표준 인프라/빌드 산출물: node_modules, out, dist, test, scripts, *.config, *.d.ts
       //   2) 테스트 파일 자체: **/__tests__/** — coverage 의 분모에서 테스트 코드를 제외
       //      (테스트 파일은 측정 대상이 아니라 측정 수단)
-      //   3) 단위 테스트 없는 영역: src/main/**, src/preload/**, src/renderer/components/**
+      //   3) 단위 테스트 없는 영역: src/preload/**, src/renderer/components/**
       //      — 0% coverage 가 분모를 비현실적으로 만들어 미래 임계 게이트를 방해하므로
       //      "아직 측정하지 않는" 영역으로 명시. 각 영역에 테스트가 도입되면 라인 제거.
+      //   R38 P1: 기존 `src/main/**` 통째 제외를 해제하고, "실질적으로" 단위 테스트된 순수
+      //      모듈(ipc-validators / ollama-pull-progress / ps-quote / settings-store /
+      //      settings-keys)을 분모에 포함시킨다. config 주석의 "테스트 도입 시 라인 제거" 절차 실행.
+      //      개별 제외로 남기는 것:
+      //        - index.ts            : electron 을 module-init 에서 직접 사용 → import 불가 (정적 가드만)
+      //        - ollama-manager.ts   : child_process/http 통합 테스트 필요 (후속 라운드 P3)
+      //        - ai-service.ts       : 테스트는 있으나 activeRequests 표면만(~10%) — 본체(HTTP 스트리밍/
+      //                                provider 어댑터)는 통합 성격이라 후속 라운드까지 분모 제외.
+      //                                포함 시 1491줄 대부분 미커버로 게이트가 비현실적이 됨.
       exclude: [
         'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
         '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
-        'src/main/**', 'src/preload/**', 'src/renderer/components/**',
+        'src/main/index.ts', 'src/main/ollama-manager.ts', 'src/main/ai-service.ts',
+        'src/preload/**', 'src/renderer/components/**',
       ],
       // R37 P4-2 (v0.18.23): 후퇴 방지 게이트 도입.
       // 각 지표에서 -5pp 마진을 빼고 게이트 — 우발적 회귀(테스트 누락, 함수 추가 시 미커버)는
@@ -58,13 +68,14 @@ export default defineConfig({
       // 로 본 thresholds 를 매 PR/push 에서 강제한다 (이전엔 수동 실행 시에만 적용).
       // R37 P6 (v0.18.23): QA M3~M6 테스트 보강으로 베이스라인 상승 → 게이트 동시 상향.
       //   측정: Stmts 49.85 / Branch 45.56 / Funcs 49.81 / Lines 51.63 (-5pp 마진 적용).
-      //   pdf-parser 캡/이미지 추출 + use-summarize stripConversational + use-qa buildRagIndex
-      //   + ollama pull 파싱 분리 테스트 반영. 추가 보강 시 본 임계 재상향 권장.
+      // R38 P1: ipc-validators 추출 + 행위 테스트 + src/main 순수 모듈 분모 포함으로 베이스라인 상승.
+      //   측정: Stmts 52.55 / Branch 50.18 / Funcs 52.48 / Lines 54.28 (-5pp 마진 적용).
+      //   추가 보강(P2 electron-mock 핸들러 / P3 ollama-manager 통합) 시 본 임계 재상향 권장.
       thresholds: {
-        statements: 44,
-        branches: 40,
-        functions: 44,
-        lines: 46,
+        statements: 47,
+        branches: 45,
+        functions: 47,
+        lines: 49,
       },
     },
   },

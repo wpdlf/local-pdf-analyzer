@@ -21,11 +21,20 @@ import { resolve } from 'node:path';
 //   - `vision:` prefix 제거로 인한 Vision abort 무력화 (R32 P2 회귀)
 //   - localhost 검증 drift (settings:set 만 수정하고 ai:generate 미수정) — SSRF 우회
 //
-// 한계: 실제 IPC 왕복(invoke→handle) 통합 검증은 본 테스트 범위 밖.
-// 그것은 electron 의 ipcMain 모킹이 필요하며, R36+ 의 후속 라운드에서 도입 검토.
+// R38 P1 승급: 검증 로직이 `ipc-validators.ts` 로 추출되어 행위 검증은
+// `__tests__/ipc-validators.test.ts` 가 직접 수행한다(SSRF/model 정규식/길이 캡/화이트리스트).
+// 본 테스트는 역할을 "행위 재현"에서 "배선 drift 가드"로 좁힌다 — 각 핸들러가 단일 출처
+// 검증기에 **위임**하는지(인라인 재복제 금지)와 import 단일 출처를 지킨다. 이로써 검증
+// 로직의 분기 폭증을 ipc-validators.test 가, 그 연결을 본 테스트가 나눠 가드한다.
 
 const INDEX_SRC = readFileSync(
   resolve(import.meta.dirname, '../../../src/main/index.ts'),
+  'utf-8',
+);
+
+// R38 P1: model 안전 문자집합 등 단일 출처 리터럴은 ipc-validators.ts 에 산다.
+const VALIDATORS_SRC = readFileSync(
+  resolve(import.meta.dirname, '../../../src/main/ipc-validators.ts'),
   'utf-8',
 );
 
@@ -53,18 +62,23 @@ describe('main IPC contract — ai:* handler shape (Top5 #2)', () => {
     );
   });
 
-  it('ai:generate 가 requestId 길이를 256자로 캡 (자기-DoS 방어)', () => {
+  it('ai:generate 가 검증을 ipc-validators.validateGenerateRequest 에 위임 (인라인 재복제 금지)', () => {
+    // R38 P1: requestId 256 캡 · SSRF(localhost) · type/provider/model/temperature/language
+    // 검증 전체가 validateGenerateRequest 로 단일화됨. 실제 거부/통과 행위는 ipc-validators.test
+    // 가 검증하고, 본 테스트는 핸들러가 그 함수를 호출하는지(배선)만 가드한다.
     expect(INDEX_SRC).toMatch(
-      /ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,800}?requestId\.length\s*>\s*256/,
+      /ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,600}?validateGenerateRequest\(\s*requestId\s*,\s*request\s*\)/,
     );
+    // SSRF/길이 캡 로직이 단일 출처(ipc-validators)에 실제로 존재하는지 확인.
+    expect(VALIDATORS_SRC).toMatch(/isLocalhostHost/);
+    expect(VALIDATORS_SRC).toMatch(/\['http:',\s*'https:'\]/);
+    expect(VALIDATORS_SRC).toMatch(/requestId.*256|256/);
   });
 
-  it('ai:generate 가 ollamaBaseUrl 을 isLocalhostHost 헬퍼로 검증 (SSRF defense-in-depth)', () => {
-    // ai-service.ts 의 validateOllamaUrl 외에 IPC 경계에서도 검증 — 다중 방어.
-    // v0.18.22: 4개 호출 지점이 isLocalhostHost 단일 헬퍼로 통일 (drift 차단 + IPv6 [::1] 정규화).
-    expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,1500}?isLocalhostHost/);
-    // protocol 허용 목록 (http: / https:) 도 함께 확인
-    expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,1500}?\['http:',\s*'https:'\]/);
+  it('ai:check-available 가 isValidProvider + isValidOllamaBaseUrl 에 위임 (SSRF 단일 출처)', () => {
+    expect(INDEX_SRC).toMatch(
+      /ipcMain\.handle\(['"]ai:check-available['"][\s\S]{0,400}?isValidProvider[\s\S]{0,200}?isValidOllamaBaseUrl/,
+    );
   });
 
   it('ai:abort 가 bare requestId 와 `vision:${requestId}` 양쪽을 abort (R31 회귀 가드)', () => {
@@ -108,23 +122,30 @@ describe('main IPC contract — ai:* handler shape (Top5 #2)', () => {
     expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:embed['"][\s\S]{0,2000}?registerEmbedRequest/);
   });
 
-  it('VALID_PROVIDERS 화이트리스트 — provider 입력 검증 (ollama/claude/openai 만)', () => {
-    expect(INDEX_SRC).toMatch(/VALID_PROVIDERS/);
-    // ai:generate 가 VALID_PROVIDERS 로 검증
+  it('VALID_PROVIDERS 화이트리스트 — ipc-validators 단일 출처에서 import', () => {
+    // R38 P1: VALID_PROVIDERS 가 ipc-validators.ts 에서 import 되어 단일 출처화됨.
+    expect(INDEX_SRC).toMatch(/import\s*\{[\s\S]*?\bVALID_PROVIDERS\b[\s\S]*?\}\s*from\s*['"]\.\/ipc-validators['"]/);
+    // apikey:* 핸들러가 여전히 VALID_PROVIDERS 로 provider 를 검증한다.
+    expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]apikey:save['"][\s\S]{0,300}?VALID_PROVIDERS/);
+  });
+
+  it('model 검증 정규식이 ipc-validators 에 단일 정의 + ollama:pull-model 이 위임', () => {
+    // R29 회귀 — model 필드로 10MB body 폭주 차단. 정규식이 weaken 되면 input attack surface 확대.
+    // R38 P1: 정규식 리터럴은 ipc-validators.MODEL_NAME_RE 단일 출처로 이동. 정규식 행위
+    // (경계/주입 거부)는 ipc-validators.test 가 검증하고, 본 테스트는 단일 정의 + 위임을 가드.
+    const expected = '/^[a-zA-Z0-9]([a-zA-Z0-9._:\\/-]*[a-zA-Z0-9])?$/';
+    expect(VALIDATORS_SRC).toContain(expected);
+    // index.ts 에는 동일 정규식 리터럴이 더 이상 인라인되지 않아야 한다 (재복제 금지).
+    expect(INDEX_SRC).not.toContain(expected);
+    // ai:generate / ollama:pull-model 이 isValidModelName(또는 validateGenerateRequest)에 위임.
     expect(INDEX_SRC).toMatch(
-      /ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,1500}?VALID_PROVIDERS/,
+      /ipcMain\.handle\(['"]ollama:pull-model['"][\s\S]{0,300}?isValidModelName\(\s*model\s*\)/,
     );
   });
 
-  it('model 입력 검증 정규식이 정합 — ai:generate 와 ollama:pull-model 의 안전 문자집합 공유', () => {
-    // R29 회귀 — model 필드로 10MB body 폭주 차단. 정규식이 weaken 되면 input attack surface 확대.
-    // 정규식 리터럴을 문자열 substring 으로 검사 (regex-in-regex 회피).
-    const expected = '/^[a-zA-Z0-9]([a-zA-Z0-9._:\\/-]*[a-zA-Z0-9])?$/';
-    expect(INDEX_SRC).toContain(expected);
-    // ai:generate handler 블록 내부에서 model 검증 정규식이 사용되는지 spot check
-    expect(INDEX_SRC).toMatch(
-      /ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,2000}?request\.model[\s\S]{0,100}?test\(request\.model\)/,
-    );
+  it('ai:embed 가 validateEmbedTexts + validateEmbeddings 에 위임 (NaN/캡 단일 출처)', () => {
+    expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:embed['"][\s\S]{0,600}?validateEmbedTexts\(\s*texts\s*\)/);
+    expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:embed['"][\s\S]{0,2500}?validateEmbeddings\(/);
   });
 
   it('settings IPC: settings:get / settings:set 핸들러 등록 + 화이트리스트 검증', () => {

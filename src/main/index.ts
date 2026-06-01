@@ -12,6 +12,20 @@ import { VALID_SETTINGS_KEYS, VALID_SETTINGS_KEYS_SET } from './settings-keys';
 // v0.18.22 Top5 #3: loadSettings/saveSettings 를 순수 파일 I/O 모듈로 분리하여 단위 테스트
 // 가능성 확보. 동일 로직을 electron 의존성 없이 fs 모킹 기반으로 검증한다.
 import { loadSettings as _loadSettings, saveSettings as _saveSettings } from './settings-store';
+// R38 P1: IPC 입력 검증 로직을 순수 모듈로 분리 (ps-quote/settings-store 와 동일 패턴).
+// 이전엔 핸들러 클로저에 인라인돼 electron 의존 때문에 행위 검증이 불가했고 ipc-contract.test 가
+// 소스 텍스트 정규식으로만 가드했다. 본 import 로 ipc-validators.test 가 행위를 직접 검증한다.
+import {
+  VALID_PROVIDERS,
+  isValidProvider,
+  isValidModelName,
+  isValidRequestId,
+  isValidOllamaBaseUrl,
+  validateImageBase64,
+  validateEmbedTexts,
+  validateEmbeddings,
+  validateGenerateRequest,
+} from './ipc-validators';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -347,7 +361,7 @@ function registerIpcHandlers(): void {
     return loadSettings();
   });
 
-  const VALID_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
+  // R38 P1: VALID_PROVIDERS 는 ipc-validators.ts 에서 import (단일 출처).
   // R34 P2: VALID_SETTINGS_KEYS 는 settings-keys.ts 에서 import (단일 출처).
   // 이전엔 본 함수 안과 모듈 상단에 같은 키 배열이 두 번 박혀 있어 drift 위험.
 
@@ -499,7 +513,8 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('ollama:pull-model', async (_event, model: string) => {
-    if (typeof model !== 'string' || model.length === 0 || model.length > 128 || !/^[a-zA-Z0-9]([a-zA-Z0-9._:\/-]*[a-zA-Z0-9])?$/.test(model)) {
+    // R38 P1: ai:generate 와 동일한 model 안전 문자집합(MODEL_NAME_RE)을 공유 — 단일 출처.
+    if (!isValidModelName(model)) {
       return { success: false, error: 'Invalid model name' };
     }
     try {
@@ -529,45 +544,12 @@ function registerIpcHandlers(): void {
     temperature?: number;
     language?: string;
   }) => {
-    // 입력값 검증 (길이 캡: ai:abort=256, ai:embed=128 과 정합 — 자기-DoS 방어)
-    if (typeof requestId !== 'string' || !requestId || requestId.length > 256) {
-      return { success: false, error: 'Invalid requestId' };
-    }
-    if (!request || typeof request.text !== 'string' || !request.text || request.text.length > 10 * 1024 * 1024) {
-      return { success: false, error: 'Invalid text' };
-    }
-    if (typeof request.ollamaBaseUrl !== 'string') {
-      return { success: false, error: 'Invalid ollamaBaseUrl' };
-    }
-    // IPC 경계에서 localhost URL 검증 (defense-in-depth)
-    if (request.provider === 'ollama') {
-      try {
-        const parsed = new URL(request.ollamaBaseUrl);
-        if (!['http:', 'https:'].includes(parsed.protocol) || !isLocalhostHost(parsed.hostname)) {
-          return { success: false, error: 'Invalid ollamaBaseUrl: localhost only' };
-        }
-      } catch { return { success: false, error: 'Invalid ollamaBaseUrl' }; }
-    }
-    if (!['full', 'chapter', 'keywords', 'qa'].includes(request.type)) {
-      return { success: false, error: 'Invalid type' };
-    }
-    if (!VALID_PROVIDERS.includes(request.provider as typeof VALID_PROVIDERS[number])) {
-      return { success: false, error: 'Invalid provider' };
-    }
-    // model 검증: 길이 상한 + 안전 문자집합. ollama:pull-model 과 동일한 regex 를 공유해
-    // ai:generate 와 ollama:pull-model 입력 표면이 일관되게 보호됨.
-    // renderer compromise 시 10MB model 필드로 body 폭주를 막기 위한 방어 심화.
-    if (typeof request.model !== 'string' || request.model.length === 0 || request.model.length > 128
-        || !/^[a-zA-Z0-9]([a-zA-Z0-9._:\/-]*[a-zA-Z0-9])?$/.test(request.model)) {
-      return { success: false, error: 'Invalid model' };
-    }
-    if (request.temperature !== undefined && (typeof request.temperature !== 'number' || Number.isNaN(request.temperature) || request.temperature < 0 || request.temperature > 2)) {
-      return { success: false, error: 'Invalid temperature' };
-    }
-    // language 화이트리스트 — settings:set 의 summaryLanguage 검증과 동일한 집합.
-    // 향후 새 언어 추가 시 양쪽을 동시에 업데이트해야 drift 가 발생하지 않는다.
-    if (request.language !== undefined && !['ko', 'en', 'ja', 'zh', 'auto'].includes(request.language)) {
-      return { success: false, error: 'Invalid language' };
+    // R38 P1: 입력 검증 전체를 ipc-validators 의 순수 함수로 위임 (행위 검증 가능).
+    // 검증 순서·거부 메시지는 ipc-validators.test.ts 가 회귀로 가드한다. SSRF(localhost)
+    // 가드 · model 정규식 · 길이 캡 · provider/type/language 화이트리스트가 모두 포함됨.
+    const valid = validateGenerateRequest(requestId, request);
+    if (!valid.ok) {
+      return { success: false, error: valid.error };
     }
 
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -591,7 +573,7 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('ai:abort', (_event, requestId: string) => {
-    if (typeof requestId !== 'string' || !requestId || requestId.length > 256) {
+    if (!isValidRequestId(requestId, 256)) {
       return { success: false, error: 'Invalid requestId' };
     }
     abortGenerate(requestId);
@@ -602,17 +584,11 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('ai:check-available', async (_event, provider: string, ollamaBaseUrl: string) => {
-    if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) return false;
-    if (typeof ollamaBaseUrl !== 'string') return false;
-    // IPC 경계에서 localhost URL 검증
-    if (provider === 'ollama') {
-      try {
-        const parsed = new URL(ollamaBaseUrl);
-        if (!['http:', 'https:'].includes(parsed.protocol) || !isLocalhostHost(parsed.hostname)) return false;
-      } catch { return false; }
-    }
+    // R38 P1: provider 화이트리스트 + ollama localhost SSRF 가드를 ipc-validators 로 위임.
+    if (!isValidProvider(provider)) return false;
+    if (!isValidOllamaBaseUrl(ollamaBaseUrl, provider)) return false;
     const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
-    return checkAvailability(provider as 'ollama' | 'claude' | 'openai', ollamaBaseUrl, apiKey);
+    return checkAvailability(provider, ollamaBaseUrl, apiKey);
   });
 
   // ─── Vision 공통: Ollama Vision 모델 자동 선택 ───
@@ -636,11 +612,7 @@ function registerIpcHandlers(): void {
     return { provider, model, ollamaBaseUrl, apiKey };
   }
 
-  function validateImageBase64(imageBase64: unknown): imageBase64 is string {
-    // v0.17.7 (M2): 불필요한 \n 허용 제거 + padding 위치 제한 (종단 0~2자만)
-    return typeof imageBase64 === 'string' && imageBase64.length > 0
-      && imageBase64.length <= 10 * 1024 * 1024 && /^[A-Za-z0-9+/]+={0,2}$/.test(imageBase64);
-  }
+  // R38 P1: validateImageBase64 는 ipc-validators.ts 로 이동 (행위 검증 가능).
 
   // R30 P2 (v0.18.18): requestId 선택 인자 추가 — renderer 가 ai:abort 로 in-flight Vision
   // 호출을 즉시 취소할 수 있도록 함. 이전엔 사용자 Stop 도 in-flight Vision (특히 cloud) 을
@@ -718,13 +690,10 @@ function registerIpcHandlers(): void {
   // ─── 임베딩 (RAG용) ───
 
   ipcMain.handle('ai:embed', async (_event, texts: unknown, requestId: unknown) => {
-    if (!Array.isArray(texts) || texts.length === 0 || texts.length > 200) {
-      return { success: false, error: 'Invalid texts array (1-200 items)' };
-    }
-    for (const t of texts) {
-      if (typeof t !== 'string' || t.length === 0 || t.length > 32000) {
-        return { success: false, error: 'Each text must be 1-32000 chars' };
-      }
+    // R38 P1: texts 배열 검증(1-200개, 각 1-32000자)을 ipc-validators 로 위임.
+    const textsCheck = validateEmbedTexts(texts);
+    if (!textsCheck.ok) {
+      return { success: false, error: textsCheck.error };
     }
     // R28 P2 (v0.18.12): 동시 임베딩 호출 캡 —
     // 손상되거나 폭주하는 renderer 가 단시간에 다수 요청을 발사해 OpenAI 토큰 비용을
@@ -752,20 +721,16 @@ function registerIpcHandlers(): void {
       const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
       const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
       const apiKey = provider !== 'ollama' ? loadApiKey(provider) : undefined;
-      const result = await generateEmbeddings(texts, provider, ollamaBaseUrl, apiKey, undefined, controller?.signal);
+      // R38 P1: texts 는 validateEmbedTexts 가 string[] 임을 이미 보증 (위 early return).
+      // 검증을 별도 함수로 분리하면서 Array.isArray 의 흐름 narrowing 이 소실되므로 명시 cast.
+      const result = await generateEmbeddings(texts as string[], provider, ollamaBaseUrl, apiKey, undefined, controller?.signal);
       if (!result) {
         return { success: false, error: '임베딩 생성 불가 (해당 프로바이더 미지원)' };
       }
-      // IPC 경계에서 NaN/Infinity 검증 — 벡터 스토어 오염 방지
-      for (const emb of result.embeddings) {
-        if (!Array.isArray(emb) || emb.length === 0) {
-          return { success: false, error: '빈 임베딩 벡터' };
-        }
-        for (let k = 0; k < emb.length; k++) {
-          if (!Number.isFinite(emb[k])) {
-            return { success: false, error: '임베딩에 유효하지 않은 값 포함 (NaN/Infinity)' };
-          }
-        }
+      // R38 P1: IPC 경계에서 빈 벡터/NaN/Infinity 검증 — 벡터 스토어 오염 방지 (ipc-validators).
+      const embCheck = validateEmbeddings(result.embeddings);
+      if (!embCheck.ok) {
+        return { success: false, error: embCheck.error };
       }
       return { success: true, embeddings: result.embeddings, model: result.model };
     } catch (err) {
