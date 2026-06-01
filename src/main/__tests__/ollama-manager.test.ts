@@ -237,6 +237,44 @@ describe('start (조기 반환 경로)', () => {
   });
 });
 
+describe('start (health-retry 루프, fake timers) — R38 P4', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('spawn 후 초기 health 실패 → 1s 간격 재시도하여 성공 → true', async () => {
+    vi.useFakeTimers();
+    const mgr = new OllamaManager();
+    const hc = vi.spyOn(mgr, 'healthCheck');
+    // 1) 진입부 health(false) 2) check 재시도 2회 false 3) 3회째 true
+    hc.mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+    vi.spyOn(mgr, 'isInstalled').mockResolvedValue(true);
+
+    const p = mgr.start();
+    // 각 실패 후 setTimeout(1000) — 2회 전진하면 3번째 check 에서 true
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await p).toBe(true);
+    expect(M.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('15회 재시도 모두 실패 → stop() 호출 후 false (좀비 프로세스 정리)', async () => {
+    vi.useFakeTimers();
+    const mgr = new OllamaManager();
+    vi.spyOn(mgr, 'healthCheck').mockResolvedValue(false);
+    vi.spyOn(mgr, 'isInstalled').mockResolvedValue(true);
+    const stopSpy = vi.spyOn(mgr, 'stop').mockResolvedValue();
+
+    const p = mgr.start();
+    // 15회 * 1s + 버퍼
+    await vi.advanceTimersByTimeAsync(16000);
+    expect(await p).toBe(false);
+    expect(stopSpy).toHaveBeenCalled();
+  });
+});
+
 describe('stop / killPullProcess — win32 taskkill 실패 시 SIGKILL fallback (R32 P3)', () => {
   const orig = process.platform;
   beforeEach(() => {

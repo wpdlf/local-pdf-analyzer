@@ -55,18 +55,23 @@ export default defineConfig({
       //                                vision(analyze-image·ocr) 등 UI·생성 경로가 통합 성격이라
       //                                전체 39% 수준 → 분모 포함 시 branch 마진이 -5pp 정책 미달.
       //                                % 게이트에서는 제외하되 회귀는 행위 테스트가 가드한다.
-      //        - ollama-manager.ts   : R38 P3 에서 network/process 생명주기(listModels·healthCheck·
-      //                                isInstalled·getStatus·pullModel·stop) 행위는 검증됨
-      //                                (ollama-manager.test). 다만 downloadFile·verifyInstallerSignature·
-      //                                install* 가 통합/타이머 성격으로 미커버(전체 ~50%) → 분모 포함 시
-      //                                line 마진이 -5pp 정책 미달. % 게이트 제외, 회귀는 행위 테스트가 가드.
+      //   R38 P4: ollama-manager.ts 도 분모에 포함. P3(생명주기) + P4(downloadFile·
+      //      verifyInstallerSignature·start health-retry) 로 큰 부분이 커버되어 전체 ~55% →
+      //      포함 시 오히려 베이스라인이 상승(드래그 아님). install* 오케스트레이션·computeFileHash·
+      //      getOllamaPath(win32) 만 미커버로 남는다. → exclude 라인 제거(절차대로).
+      //      개별 제외로 남기는 것:
+      //        - index.ts            : R38 P2 에서 electron 모킹으로 핸들러 행위는 검증됨
+      //                                (ipc-handlers.test). 다만 createWindow / ai:generate /
+      //                                vision(analyze-image·ocr) 등 UI·생성 경로가 통합 성격이라
+      //                                전체 39% 수준 → 분모 포함 시 branch 마진이 -5pp 정책 미달.
+      //                                % 게이트에서는 제외하되 회귀는 행위 테스트가 가드한다.
       //        - ai-service.ts       : 테스트는 있으나 activeRequests 표면만(~10%) — 본체(HTTP 스트리밍/
       //                                provider 어댑터)는 통합 성격이라 후속 라운드까지 분모 제외.
       //                                포함 시 1491줄 대부분 미커버로 게이트가 비현실적이 됨.
       exclude: [
         'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
         '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
-        'src/main/index.ts', 'src/main/ollama-manager.ts', 'src/main/ai-service.ts',
+        'src/main/index.ts', 'src/main/ai-service.ts',
         'src/preload/**', 'src/renderer/components/**',
       ],
       // R37 P4-2 (v0.18.23): 후퇴 방지 게이트 도입.
@@ -81,12 +86,15 @@ export default defineConfig({
       // R38 P1-2: api-keys-store 추출(safeStorage 주입) + 행위 테스트(prototype pollution/원자적
       //   쓰기/keychain throw) 로 베이스라인 추가 상승.
       //   측정: Stmts 53.67 / Branch 50.63 / Funcs 53.79 / Lines 55.43 (-5pp 마진 적용).
-      //   추가 보강(P2 electron-mock 핸들러 / P3 ollama-manager 통합) 시 본 임계 재상향 권장.
+      // R38 P4: ollama-manager.ts(downloadFile·verifyInstallerSignature·start retry) 분모 포함으로
+      //   베이스라인 상승.
+      //   측정: Stmts 55.2 / Branch 50.39 / Funcs 55.85 / Lines 56.67 (-5pp 마진 적용).
+      //   잔여 미답(install* 오케스트레이션 / ai-service 본체 / E2E) 도입 시 본 임계 재상향 권장.
       thresholds: {
-        statements: 48,
+        statements: 50,
         branches: 45,
-        functions: 48,
-        lines: 50,
+        functions: 50,
+        lines: 51,
       },
     },
   },
