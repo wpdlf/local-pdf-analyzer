@@ -246,7 +246,10 @@ describe('stop / killPullProcess — win32 taskkill 실패 시 SIGKILL fallback 
     Object.defineProperty(process, 'platform', { value: orig, configurable: true });
   });
 
-  it('진행 중 pull 을 stop 시 taskkill 시도 → 실패하면 SIGKILL fallback', async () => {
+  // 이 케이스는 serve 프로세스(this.process)가 없는 상태라 stop() 이 killPullProcess() 만
+  // 실행하고 `if (!this.process) return` 으로 조기 반환한다 → 검증 대상은 killPullProcess 의
+  // pull 자식 종료 경로(R38 QA2 지적: stop() 자체 블록과 구분).
+  it('killPullProcess: 진행 중 pull 을 stop 시 taskkill 실패 → SIGKILL fallback', async () => {
     const mgr = new OllamaManager();
     const pull = mgr.pullModel('gemma3');
     const proc = M.spawned[0]!;
@@ -270,5 +273,33 @@ describe('stop / killPullProcess — win32 taskkill 실패 시 SIGKILL fallback 
     // 정리: close 로 pull 타이머 clear + resolve
     proc.emit('close', 0);
     await pull;
+  });
+
+  // stop() 자체의 win32 serve-프로세스 종료 블록 + waitForExit 커버 (R38 QA2 보강).
+  // start() 성공 경로(첫 health-retry 가 true → 타이머 없음)로 this.process 를 채운 뒤 stop().
+  it('stop(): serve 프로세스 종료 — taskkill 실패 → SIGKILL fallback + waitForExit(close)', async () => {
+    const mgr = new OllamaManager();
+    vi.spyOn(mgr, 'healthCheck').mockResolvedValueOnce(false).mockResolvedValue(true);
+    vi.spyOn(mgr, 'isInstalled').mockResolvedValue(true);
+
+    expect(await mgr.start()).toBe(true);
+    expect(M.spawn).toHaveBeenCalledTimes(1);
+    const proc = M.spawned[0]!;
+
+    M.execFile.mockImplementation((...args: unknown[]) => {
+      (args.find((a) => typeof a === 'function') as (e: unknown) => void)(new Error('denied'));
+    });
+
+    const stopP = mgr.stop();
+    await Promise.resolve(); // stop 이 killPullProcess(no-op) → taskkill → SIGKILL 까지 진행하도록 양보
+    proc.emit('close'); // waitForExit resolve (5초 타이머 clear)
+    await stopP;
+
+    expect(M.execFile).toHaveBeenCalledWith(
+      'taskkill',
+      expect.arrayContaining(['/F', '/T', '/PID', String(proc.pid)]),
+      expect.any(Function),
+    );
+    expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
   });
 });
