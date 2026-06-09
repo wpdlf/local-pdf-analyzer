@@ -162,4 +162,49 @@ describe('VectorStore', () => {
       expect(result[1]!.pageStart).toBe(5);
     });
   });
+
+  // session-persistence module-1 (L1): serialize/restore 라운드트립 — 재임베딩 없이 인덱스 복원.
+  describe('serialize / restore (session-persistence)', () => {
+    it('라운드트립: search 결과·page·dimension·model 보존', () => {
+      const vs = new VectorStore();
+      vs.setModel('nomic-embed-text');
+      vs.addChunk('first chunk', [1, 0, 0], 0, { pageStart: 1, pageEnd: 2 });
+      vs.addChunk('second chunk', [0, 1, 0], 1, { pageStart: 3, pageEnd: 3 });
+
+      const s = vs.serialize();
+      expect(s.dimension).toBe(3);
+      expect(s.model).toBe('nomic-embed-text');
+      expect(s.chunkMeta).toHaveLength(2);
+      expect(s.buffer.byteLength).toBe(2 * 3 * 4); // count × dim × 4
+
+      const restored = VectorStore.restore(s);
+      expect(restored.size).toBe(2);
+      expect(restored.dimension).toBe(3);
+      expect(restored.model).toBe('nomic-embed-text');
+
+      const r = restored.search([1, 0, 0], 5, 0.5);
+      expect(r[0]?.text).toBe('first chunk');
+      expect(r[0]?.pageStart).toBe(1);
+      expect(r[0]?.pageEnd).toBe(2);
+      expect(r[0]?.score).toBeCloseTo(1, 5); // 재정규화 없이 벡터 보존
+    });
+
+    it('빈 인덱스 라운드트립', () => {
+      const vs = new VectorStore();
+      const s = vs.serialize();
+      expect(s.buffer.byteLength).toBe(0);
+      expect(s.dimension).toBeNull();
+      const restored = VectorStore.restore(s);
+      expect(restored.size).toBe(0);
+      expect(restored.search([1, 2, 3])).toEqual([]);
+    });
+
+    it('블롭 크기가 chunkMeta×dim 과 불일치하면 restore throw (fail-safe)', () => {
+      const vs = new VectorStore();
+      vs.addChunk('x', [1, 0, 0], 0);
+      const s = vs.serialize();
+      const bad = { ...s, buffer: s.buffer.slice(0, 4) }; // 잘린 버퍼
+      expect(() => VectorStore.restore(bad)).toThrow(/크기 불일치/);
+    });
+  });
 });

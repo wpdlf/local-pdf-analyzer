@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { SessionManifestEntry, SessionStats, SessionSaveMeta } from '../shared/session-types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   ollama: {
@@ -52,6 +53,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     save: (provider: 'ollama' | 'claude' | 'openai', key: string) => ipcRenderer.invoke('apikey:save', provider, key),
     has: (provider: 'ollama' | 'claude' | 'openai') => ipcRenderer.invoke('apikey:has', provider),
     delete: (provider: 'ollama' | 'claude' | 'openai') => ipcRenderer.invoke('apikey:delete', provider),
+  },
+  session: {
+    load: (docHash: string) => ipcRenderer.invoke('session:load', docHash),
+    save: (payload: { meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null }) =>
+      ipcRenderer.invoke('session:save', payload),
+    list: () => ipcRenderer.invoke('session:list'),
+    delete: (docHash: string) => ipcRenderer.invoke('session:delete', docHash),
+    clear: () => ipcRenderer.invoke('session:clear'),
+    stats: () => ipcRenderer.invoke('session:stats'),
   },
   openExternal: (url: string) => {
     if (typeof url !== 'string' || !url.startsWith('https://')) return Promise.resolve();
@@ -114,6 +124,14 @@ export type ElectronAPI = {
     save: (provider: 'ollama' | 'claude' | 'openai', key: string) => Promise<{ success: boolean; error?: string }>;
     has: (provider: 'ollama' | 'claude' | 'openai') => Promise<boolean>;
     delete: (provider: 'ollama' | 'claude' | 'openai') => Promise<{ success: boolean; error?: string }>;
+  };
+  session: {
+    load: (docHash: string) => Promise<{ session: unknown; blob: ArrayBuffer | null } | null>;
+    save: (payload: { meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null }) => Promise<{ ok: boolean }>;
+    list: () => Promise<SessionManifestEntry[]>;
+    delete: (docHash: string) => Promise<{ ok: boolean }>;
+    clear: () => Promise<{ ok: boolean }>;
+    stats: () => Promise<SessionStats>;
   };
   openExternal: (url: string) => Promise<void>;
   onSetupProgress: (callback: (message: string) => void) => () => void;

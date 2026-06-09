@@ -1,0 +1,183 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  SESSION_MAX_COUNT,
+  type SessionManifestEntry,
+  type SessionSaveMeta,
+} from '../../shared/session-types';
+
+// session-persistence module-2 (L2): session-store 파일 I/O·LRU·검증.
+// fs/promises 를 in-memory 가상 파일시스템으로 모킹해 원자적 쓰기·매니페스트·LRU·삭제를 행위 검증.
+
+const V = vi.hoisted(() => ({ files: new Map<string, Buffer | string>() }));
+
+vi.mock('fs/promises', () => {
+  const norm = (p: string) => p.replace(/\\/g, '/');
+  const enoent = () => { const e = new Error('ENOENT') as NodeJS.ErrnoException; e.code = 'ENOENT'; return e; };
+  return {
+    default: {
+      writeFile: vi.fn(async (p: string, data: Buffer | string | Uint8Array) => {
+        V.files.set(norm(p), data instanceof Uint8Array && !(data instanceof Buffer) ? Buffer.from(data) : data as Buffer | string);
+      }),
+      rename: vi.fn(async (a: string, b: string) => {
+        const k = norm(a); const v = V.files.get(k);
+        if (v === undefined) throw enoent();
+        V.files.set(norm(b), v); V.files.delete(k);
+      }),
+      readFile: vi.fn(async (p: string, _enc?: string) => {
+        const v = V.files.get(norm(p));
+        if (v === undefined) throw enoent();
+        return v;
+      }),
+      mkdir: vi.fn(async () => undefined),
+      rm: vi.fn(async (p: string) => {
+        const prefix = norm(p);
+        for (const k of [...V.files.keys()]) {
+          if (k === prefix || k.startsWith(prefix + '/')) V.files.delete(k);
+        }
+      }),
+      unlink: vi.fn(async (p: string) => { V.files.delete(norm(p)); }),
+    },
+  };
+});
+
+import {
+  writeSession, readSession, deleteSession, clearAll,
+  listSessions, sessionStats, enforceLru, isValidDocHash,
+} from '../session-store';
+
+const DIR = '/userData/sessions';
+const hashOf = (n: number) => n.toString(16).padStart(64, '0'); // 유효 64-hex
+const metaOf = (docHash: string): SessionSaveMeta => ({
+  docHash, fileName: 'doc.pdf', filePath: '/x/doc.pdf', pageCount: 10,
+  embedModel: 'nomic-embed-text', embedDim: 3, chunkCount: 2,
+});
+
+beforeEach(() => { V.files.clear(); });
+
+describe('isValidDocHash', () => {
+  it('64-hex 만 허용 (traversal/형식 위반 거부)', () => {
+    expect(isValidDocHash(hashOf(1))).toBe(true);
+    expect(isValidDocHash('../etc/passwd')).toBe(false);
+    expect(isValidDocHash('ABC')).toBe(false);
+    expect(isValidDocHash('g'.repeat(64))).toBe(false);
+    expect(isValidDocHash(123)).toBe(false);
+  });
+});
+
+describe('writeSession / readSession 라운드트립', () => {
+  it('세션 본문 + 블롭 저장 후 복원', async () => {
+    const h = hashOf(1);
+    const blob = new Float32Array([1, 0, 0, 0, 1, 0]).buffer; // 2×3
+    const session = { schemaVersion: 1, docHash: h, qaMessages: [{ id: 'a', role: 'user', content: 'q' }] };
+    const r = await writeSession(DIR, { meta: metaOf(h), session, blob, now: 1000 });
+    expect(r.ok).toBe(true);
+
+    const loaded = await readSession(DIR, h);
+    expect(loaded).not.toBeNull();
+    expect((loaded!.session as { docHash: string }).docHash).toBe(h);
+    expect(loaded!.blob).not.toBeNull();
+    expect(loaded!.blob!.byteLength).toBe(6 * 4);
+  });
+
+  it('블롭 없이도 저장/복원 (인덱스 미저장)', async () => {
+    const h = hashOf(2);
+    await writeSession(DIR, { meta: { ...metaOf(h), embedModel: null, embedDim: null, chunkCount: 0 }, session: { docHash: h }, blob: null, now: 1000 });
+    const loaded = await readSession(DIR, h);
+    expect(loaded!.blob).toBeNull();
+  });
+
+  it('부재 → null', async () => {
+    expect(await readSession(DIR, hashOf(99))).toBeNull();
+  });
+
+  it('손상 session.json → null (정상 재계산 폴백)', async () => {
+    const h = hashOf(3);
+    V.files.set(`${DIR}/${h}/session.json`, '{ broken json');
+    expect(await readSession(DIR, h)).toBeNull();
+  });
+
+  it('잘못된 docHash 저장 거부', async () => {
+    const r = await writeSession(DIR, { meta: metaOf('../evil'), session: {}, blob: null, now: 1 });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe('manifest / list / stats / delete / clear', () => {
+  it('저장 시 manifest upsert + list/stats 반영', async () => {
+    await writeSession(DIR, { meta: metaOf(hashOf(1)), session: { a: 1 }, blob: null, now: 1000 });
+    await writeSession(DIR, { meta: metaOf(hashOf(2)), session: { a: 2 }, blob: null, now: 2000 });
+    const list = await listSessions(DIR);
+    expect(list).toHaveLength(2);
+    expect(list[0]!.docHash).toBe(hashOf(2)); // lastAccessed 내림차순
+    const stats = await sessionStats(DIR);
+    expect(stats.count).toBe(2);
+    expect(stats.totalBytes).toBeGreaterThan(0);
+    expect(stats.dir).toBe(DIR);
+  });
+
+  it('동일 docHash 재저장 시 createdAt 보존 + 항목 1개 유지', async () => {
+    const h = hashOf(1);
+    await writeSession(DIR, { meta: metaOf(h), session: { v: 1 }, blob: null, now: 1000 });
+    await writeSession(DIR, { meta: metaOf(h), session: { v: 2 }, blob: null, now: 5000 });
+    const list = await listSessions(DIR);
+    expect(list).toHaveLength(1);
+    expect(list[0]!.createdAt).toBe(new Date(1000).toISOString());
+    expect(list[0]!.lastAccessed).toBe(new Date(5000).toISOString());
+  });
+
+  it('deleteSession 은 디렉토리 + manifest 항목 제거', async () => {
+    await writeSession(DIR, { meta: metaOf(hashOf(1)), session: { a: 1 }, blob: null, now: 1000 });
+    const r = await deleteSession(DIR, hashOf(1));
+    expect(r.ok).toBe(true);
+    expect(await listSessions(DIR)).toHaveLength(0);
+    expect(await readSession(DIR, hashOf(1))).toBeNull();
+  });
+
+  it('clearAll 은 전체 비우기', async () => {
+    await writeSession(DIR, { meta: metaOf(hashOf(1)), session: { a: 1 }, blob: null, now: 1000 });
+    await clearAll(DIR);
+    expect(await listSessions(DIR)).toHaveLength(0);
+  });
+});
+
+describe('enforceLru (순수)', () => {
+  const entry = (h: string, last: number, bytes: number): SessionManifestEntry => ({
+    docHash: h, fileName: 'f', filePath: 'p', pageCount: 1,
+    embedModel: null, embedDim: null, chunkCount: 0, byteSize: bytes,
+    createdAt: 'x', lastAccessed: new Date(last).toISOString(),
+  });
+
+  it('개수 초과 시 가장 오래된 것부터 제거', () => {
+    const entries = [entry('a', 1000, 10), entry('b', 3000, 10), entry('c', 2000, 10)];
+    const evict = enforceLru(entries, 2, Infinity);
+    expect(evict).toEqual(['a']); // 가장 오래된 lastAccessed
+  });
+
+  it('용량 초과 시 오래된 것부터 누적 제거', () => {
+    const entries = [entry('a', 1000, 100), entry('b', 2000, 100), entry('c', 3000, 100)];
+    const evict = enforceLru(entries, Infinity, 150);
+    expect(evict).toEqual(['a', 'b']); // 100+100+100=300 > 150 → a,b 제거 후 100 ≤ 150
+  });
+
+  it('상한 이내면 빈 배열', () => {
+    const entries = [entry('a', 1000, 10), entry('b', 2000, 10)];
+    expect(enforceLru(entries, 5, 1000)).toEqual([]);
+  });
+});
+
+describe('writeSession LRU 통합', () => {
+  it('MAX_COUNT 초과 시 가장 오래된 세션 자동 제거', async () => {
+    // MAX_COUNT 개를 오래된 순으로 미리 채움
+    for (let i = 0; i < SESSION_MAX_COUNT; i++) {
+      await writeSession(DIR, { meta: metaOf(hashOf(i)), session: { i }, blob: null, now: 1000 + i });
+    }
+    expect(await listSessions(DIR)).toHaveLength(SESSION_MAX_COUNT);
+    // 1개 더 추가 → 가장 오래된 hashOf(0) 제거, 개수 유지
+    await writeSession(DIR, { meta: metaOf(hashOf(9999)), session: { x: 1 }, blob: null, now: 9_000_000 });
+    const list = await listSessions(DIR);
+    expect(list).toHaveLength(SESSION_MAX_COUNT);
+    expect(list.some((e) => e.docHash === hashOf(0))).toBe(false);
+    expect(list.some((e) => e.docHash === hashOf(9999))).toBe(true);
+    expect(await readSession(DIR, hashOf(0))).toBeNull(); // 디렉토리도 제거됨
+  });
+});

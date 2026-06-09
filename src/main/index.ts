@@ -29,6 +29,18 @@ import {
 // R38 P1-2: API 키 암호화 저장/캐시/prototype-pollution 가드를 순수 모듈로 분리.
 // safeStorage 를 주입받아 electron-free 가 되어 api-keys-store.test 가 fs 모킹으로 검증한다.
 import { ApiKeyStore } from './api-keys-store';
+// session-persistence (module-2): 세션·인덱스 캐싱 영속화. sessionsDir 주입으로 electron-free.
+import {
+  readSession,
+  writeSession,
+  touchSession,
+  deleteSession,
+  clearAll as clearAllSessions,
+  listSessions,
+  sessionStats,
+  isValidDocHash,
+} from './session-store';
+import type { SessionSaveMeta } from '../shared/session-types';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -43,6 +55,8 @@ const ollamaManager = new OllamaManager();
 
 // electron-store는 ESM 전용이므로 JSON 파일로 직접 관리
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+// session-persistence: 세션 저장 루트. docHash 화이트리스트로 traversal 차단(session-store).
+const sessionsDir = path.join(app.getPath('userData'), 'sessions');
 // 기본 설정값 (src/renderer/types/index.ts의 DEFAULT_SETTINGS와 동기화 필요)
 const defaultSettings = {
   provider: 'ollama',
@@ -393,6 +407,50 @@ export function registerIpcHandlers(): void {
     const next = settingsWriteChain.then(task, task);
     settingsWriteChain = next.catch(() => ({}));
     return next;
+  });
+
+  // ─── session-persistence: 세션·인덱스 캐싱 (module-2) ───
+  // Design Ref: §4 — docHash 검증·LRU·원자적 저장은 session-store 에 위임. manifest load→save
+  // 원자성을 위해 settings 와 동일한 직렬화 mutex 로 쓰기 race 를 차단한다.
+  let sessionWriteChain: Promise<unknown> = Promise.resolve();
+  function serializeSessionWrite<T>(task: () => Promise<T>): Promise<T> {
+    const next = sessionWriteChain.then(task, task);
+    sessionWriteChain = next.catch(() => undefined);
+    return next;
+  }
+
+  ipcMain.handle('session:load', async (_event, docHash: unknown) => {
+    if (!isValidDocHash(docHash)) return null;
+    const result = await readSession(sessionsDir, docHash);
+    // 최근 사용 표시(lastAccessed) — load 를 블록하지 않도록 fire-and-forget + mutex 직렬화
+    if (result) void serializeSessionWrite(() => touchSession(sessionsDir, docHash, Date.now()));
+    return result;
+  });
+
+  ipcMain.handle('session:save', async (_event, payload: unknown) => {
+    const p = payload as { meta?: SessionSaveMeta; session?: unknown; blob?: ArrayBuffer | null } | null;
+    if (!p || !p.meta || !isValidDocHash(p.meta.docHash)) return { ok: false };
+    const meta = p.meta;
+    const session = p.session;
+    const blob = p.blob ?? null;
+    return serializeSessionWrite(() => writeSession(sessionsDir, { meta, session, blob, now: Date.now() }));
+  });
+
+  ipcMain.handle('session:list', async () => {
+    return listSessions(sessionsDir);
+  });
+
+  ipcMain.handle('session:delete', async (_event, docHash: unknown) => {
+    if (!isValidDocHash(docHash)) return { ok: false };
+    return serializeSessionWrite(() => deleteSession(sessionsDir, docHash));
+  });
+
+  ipcMain.handle('session:clear', async () => {
+    return serializeSessionWrite(() => clearAllSessions(sessionsDir));
+  });
+
+  ipcMain.handle('session:stats', async () => {
+    return sessionStats(sessionsDir);
   });
 
   ipcMain.handle('ollama:status', async () => {

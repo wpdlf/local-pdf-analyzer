@@ -174,6 +174,55 @@ export const KOREAN_RECOMMENDED_MODELS = ['gemma3', 'qwen2.5', 'exaone3.5'];
 // 초기 설치 시 함께 다운로드할 모델 (한국어 PDF 요약 특화)
 export const INITIAL_INSTALL_MODELS = ['gemma3', 'exaone3.5', 'nomic-embed-text'] as const;
 
+// ─── 세션 영속화 (session-persistence) ───
+// Design Ref: §3 — 콘텐츠 해시 기준 세션·인덱스 캐싱. 본문 도메인 타입은 여기,
+// manifest/stats primitive 메타는 src/shared/session-types.ts.
+
+/** index.bin 의 벡터 순서와 1:1 평행한 청크 메타 (벡터 본체는 바이너리 블롭) */
+export interface PersistedChunkMeta {
+  text: string;
+  index: number;
+  pageStart?: number;
+  pageEnd?: number;
+}
+
+/** VectorStore 직렬화 결과 — 메타는 JSON, 정규화 벡터는 ArrayBuffer(Float32) */
+export interface SerializedIndex {
+  model: string | null;
+  dimension: number | null;
+  chunkMeta: PersistedChunkMeta[];
+  buffer: ArrayBuffer; // chunkMeta.length × dimension floats (row-major, unit-normalized)
+}
+
+/** 타입별 저장 요약 */
+export interface PersistedSummary {
+  content: string;
+  model: string;
+  provider: AiProviderType;
+}
+
+/** userData/sessions/<docHash>/session.json — 벡터 본체는 index.bin 에 분리 저장 */
+export interface PersistedSession {
+  schemaVersion: number;
+  docHash: string;
+  fileName: string;
+  filePath: string;
+  pageCount: number;
+  // 파싱 텍스트 (재파싱 없이 Q&A 컨텍스트 복원). images 는 미저장(용량·Vision 캐싱은 Out of Scope)
+  extractedText: string;
+  pageTexts: string[];
+  chapters: Chapter[];
+  isOcr?: boolean;
+  // 분석 결과
+  summaries: Partial<Record<DefaultSummaryType, PersistedSummary>>;
+  summaryType: DefaultSummaryType;
+  qaMessages: QaMessage[];
+  // 인덱스 메타 (벡터 본체는 index.bin)
+  embedModel: string | null;
+  embedDim: number | null;
+  chunkMeta: PersistedChunkMeta[];
+}
+
 // 기본 설정값
 export const DEFAULT_SETTINGS: AppSettings = {
   provider: 'ollama',

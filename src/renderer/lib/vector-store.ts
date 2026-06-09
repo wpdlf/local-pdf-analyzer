@@ -7,6 +7,8 @@
  * 메모리 사용량 절반 + 캐시 지역성 개선.
  */
 
+import type { SerializedIndex, PersistedChunkMeta } from '../types';
+
 export interface VectorChunk {
   text: string;
   embedding: Float32Array; // unit-normalized
@@ -142,5 +144,56 @@ export class VectorStore {
     this.chunks = [];
     this._model = null;
     this._dimension = null;
+  }
+
+  /**
+   * 인덱스를 직렬화 — 메타(text/index/page)는 JSON, 정규화 벡터는 Float32 버퍼로 분리.
+   * Design Ref: §3.2 — 세션 영속화 시 session.json(메타) + index.bin(버퍼) 으로 저장.
+   * embedding 은 addChunk 에서 이미 unit-normalized 됐으므로 그대로 export(재정규화 불필요).
+   */
+  serialize(): SerializedIndex {
+    const dim = this._dimension ?? 0;
+    const count = this.chunks.length;
+    const buffer = new ArrayBuffer(count * dim * 4);
+    const floats = new Float32Array(buffer);
+    const chunkMeta: PersistedChunkMeta[] = [];
+    for (let i = 0; i < count; i++) {
+      const c = this.chunks[i]!;
+      floats.set(c.embedding, i * dim);
+      chunkMeta.push({ text: c.text, index: c.index, pageStart: c.pageStart, pageEnd: c.pageEnd });
+    }
+    return { model: this._model, dimension: this._dimension, chunkMeta, buffer };
+  }
+
+  /**
+   * 직렬화된 인덱스를 복원 — 재임베딩 없이 VectorStore 재구성.
+   * Plan SC: 재오픈 시 재임베딩 0. 블롭 크기가 (chunkCount × dim × 4) 와 불일치하면 throw 하여
+   * 호출자(store)가 인덱스를 무시하고 재임베딩하도록 한다(fail-safe, Design §6).
+   * 벡터는 이미 정규화돼 있으므로 addChunk 의 재정규화 경로를 우회해 직접 push.
+   */
+  static restore(s: SerializedIndex): VectorStore {
+    const store = new VectorStore();
+    store._model = s.model;
+    store._dimension = s.dimension;
+    const dim = s.dimension ?? 0;
+    const floats = new Float32Array(s.buffer);
+    if (dim > 0 && floats.length !== s.chunkMeta.length * dim) {
+      throw new Error(
+        `인덱스 블롭 크기 불일치: expected ${s.chunkMeta.length * dim}, got ${floats.length}`,
+      );
+    }
+    for (let i = 0; i < s.chunkMeta.length; i++) {
+      const m = s.chunkMeta[i]!;
+      // slice 로 독립 복사본 확보(원본 버퍼와 분리). 이미 unit-normalized 라 재정규화 금지.
+      const embedding = dim > 0 ? floats.slice(i * dim, i * dim + dim) : new Float32Array(0);
+      store.chunks.push({
+        text: m.text,
+        embedding,
+        index: m.index,
+        pageStart: m.pageStart,
+        pageEnd: m.pageEnd,
+      });
+    }
+    return store;
   }
 }

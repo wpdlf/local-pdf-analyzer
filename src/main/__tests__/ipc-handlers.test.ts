@@ -46,7 +46,11 @@ const H = vi.hoisted(() => ({
   },
   store: { read: vi.fn(), load: vi.fn(), save: vi.fn(), delete: vi.fn(), invalidate: vi.fn() },
   settings: { load: vi.fn(), save: vi.fn() },
-  fsp: { writeFile: vi.fn(), readFile: vi.fn(), stat: vi.fn(), lstat: vi.fn() },
+  fsp: {
+    writeFile: vi.fn(), readFile: vi.fn(), stat: vi.fn(), lstat: vi.fn(),
+    // session-store(module-2) 가 사용하는 추가 메서드
+    rename: vi.fn(), mkdir: vi.fn(), rm: vi.fn(), unlink: vi.fn(),
+  },
 }));
 
 vi.mock('electron', () => ({
@@ -410,5 +414,55 @@ describe('ai:embed (동시성 캡 + 카운터 누수 방지)', () => {
   it('유효하지 않은 texts 거부 (generateEmbeddings 미호출)', async () => {
     expect(await invoke('ai:embed', [], 'r')).toEqual({ success: false, error: 'Invalid texts array (1-200 items)' });
     expect(H.ai.generateEmbeddings).not.toHaveBeenCalled();
+  });
+});
+
+// session-persistence module-2 (L3): session:* IPC 핸들러 — docHash 검증 + session-store 위임 계약.
+describe('session:* (영속화 핸들러)', () => {
+  const HASH = 'a'.repeat(64);
+  beforeEach(() => {
+    H.fsp.readFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    H.fsp.writeFile.mockResolvedValue(undefined);
+    H.fsp.rename.mockResolvedValue(undefined);
+    H.fsp.mkdir.mockResolvedValue(undefined);
+    H.fsp.rm.mockResolvedValue(undefined);
+    H.fsp.unlink.mockResolvedValue(undefined);
+  });
+
+  it('session:load 잘못된 docHash → null (fs 접근 없음)', async () => {
+    H.fsp.readFile.mockClear();
+    expect(await invoke('session:load', '../evil')).toBeNull();
+    expect(H.fsp.readFile).not.toHaveBeenCalled();
+  });
+
+  it('session:load 부재 docHash → null', async () => {
+    expect(await invoke('session:load', HASH)).toBeNull();
+  });
+
+  it('session:save 메타 누락/잘못된 docHash → { ok:false }', async () => {
+    expect(await invoke('session:save', { session: {}, blob: null })).toEqual({ ok: false });
+    expect(await invoke('session:save', { meta: { docHash: 'bad' }, session: {}, blob: null })).toEqual({ ok: false });
+  });
+
+  it('session:save 유효 → { ok:true } + session.json 기록 위임', async () => {
+    const meta = { docHash: HASH, fileName: 'd.pdf', filePath: '/d.pdf', pageCount: 3, embedModel: 'm', embedDim: 3, chunkCount: 1 };
+    const r = await invoke('session:save', { meta, session: { docHash: HASH }, blob: null });
+    expect(r).toEqual({ ok: true });
+    const wroteSession = H.fsp.writeFile.mock.calls.some((c) => String(c[0]).includes('session.json'));
+    expect(wroteSession).toBe(true);
+  });
+
+  it('session:delete 잘못된 docHash → { ok:false }', async () => {
+    expect(await invoke('session:delete', 'nope')).toEqual({ ok: false });
+  });
+
+  it('session:list → 빈 배열(매니페스트 없음)', async () => {
+    expect(await invoke('session:list')).toEqual([]);
+  });
+
+  it('session:stats → count 0 + dir 에 sessions 포함', async () => {
+    const s = await invoke('session:stats') as { count: number; totalBytes: number; dir: string };
+    expect(s.count).toBe(0);
+    expect(s.dir).toContain('sessions');
   });
 });
