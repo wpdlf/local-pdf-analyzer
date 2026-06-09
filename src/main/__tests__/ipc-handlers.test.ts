@@ -288,6 +288,30 @@ describe('ai:check-available (SSRF 포트 오라클 가드)', () => {
     expect(result).toBe(false);
     expect(H.ai.checkAvailability).not.toHaveBeenCalled();
   });
+
+  // R40 보강: store-read 의 두 안전망(falsy 폴백 / 비-string typeof 가드)을 회귀로 고정.
+  // 사용자가 settings.json 을 직접 편집하면 ollamaBaseUrl 이 비정상 값일 수 있다.
+  it('ollama: store 의 ollamaBaseUrl 이 없으면(undefined) 기본 localhost:11434 로 폴백', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama' }); // ollamaBaseUrl 누락
+    H.ai.checkAvailability.mockResolvedValue(true);
+
+    const result = await invoke('ai:check-available', 'ollama', 'http://127.0.0.1:6379');
+
+    expect(result).toBe(true);
+    // `|| 'http://localhost:11434'` 폴백이 발동 — 악성 인자가 아니라 기본값으로 위임
+    expect(H.ai.checkAvailability).toHaveBeenCalledWith('ollama', 'http://localhost:11434', undefined);
+  });
+
+  it('ollama: store 의 ollamaBaseUrl 이 비-string(truthy)이면 typeof 가드로 false (checkAvailability 미호출)', async () => {
+    // 123 은 truthy 라 `|| 폴백` 을 통과하지만, isValidOllamaBaseUrl 의 typeof !== 'string' 가 차단.
+    H.settings.load.mockResolvedValue({ provider: 'ollama', ollamaBaseUrl: 123 });
+    H.ai.checkAvailability.mockResolvedValue(true);
+
+    const result = await invoke('ai:check-available', 'ollama', 'http://127.0.0.1:6379');
+
+    expect(result).toBe(false);
+    expect(H.ai.checkAvailability).not.toHaveBeenCalled();
+  });
 });
 
 describe('ollama:status / pull-model', () => {
