@@ -9,7 +9,7 @@ vi.stubGlobal('window', {
 });
 vi.stubGlobal('crypto', { randomUUID: () => 'test-uuid' });
 
-import { sanitizePromptInput, extractKeywords, selectRelevantChunks } from '../use-qa';
+import { sanitizePromptInput, extractKeywords, selectRelevantChunks, countKeywordOccurrences } from '../use-qa';
 
 // ─── L1-C01: sanitizePromptInput ─────────────────────────────────────────
 describe('sanitizePromptInput (L1-C01)', () => {
@@ -100,6 +100,31 @@ describe('extractKeywords (L1-C02)', () => {
 
   it('C02-10: CJK + 영문 혼합', () => {
     expect(extractKeywords('PDF의 RAG란 무엇?')).toEqual(['pdf의', 'rag란', '무엇']);
+  });
+});
+
+// ─── countKeywordOccurrences: TF 카운트 (워드바운더리 vs substring) ──────────
+describe('countKeywordOccurrences', () => {
+  it('ASCII 키워드는 워드바운더리로 매칭 — 부분문자열 오탐 제거', () => {
+    // 이전 substring 카운트: 'ai' 가 'said'/'rain' 안에서 매칭되어 TF 부풀림
+    expect(countKeywordOccurrences('he said it would rain again', 'ai')).toBe(0);
+  });
+
+  it('ASCII 키워드 — 독립 단어만 카운트', () => {
+    expect(countKeywordOccurrences('ai models and ai agents use ai', 'ai')).toBe(3);
+  });
+
+  it('ASCII 키워드 — 부분문자열은 제외하고 단어만 카운트', () => {
+    // 'art' 는 'start'/'partly' 안에 있지만 독립 'art' 1회만
+    expect(countKeywordOccurrences('art is in start and partly art again', 'art')).toBe(2);
+  });
+
+  it('CJK/Hangul 키워드는 substring 카운트 유지 (공백 경계 없음)', () => {
+    expect(countKeywordOccurrences('인공지능은 인공지능이다 인공지능', '인공지능')).toBe(3);
+  });
+
+  it('매칭 없으면 0', () => {
+    expect(countKeywordOccurrences('completely different text', 'zeta')).toBe(0);
   });
 });
 

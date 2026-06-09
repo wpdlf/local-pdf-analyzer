@@ -492,6 +492,31 @@ describe('verifyAnswerSentences (v0.18)', () => {
     expect(result.needsRefine).toBe(true);
   });
 
+  // 차원 불일치 가드 회귀 — 인덱스(빌드 모델)와 verify 임베딩(현재 모델)의 차원이 다르면
+  // VectorStore.search 가 항상 [] 를 반환해 모든 문장이 maxScore=0 으로 오분류되고,
+  // fail-safe 의도와 정반대로 refine 이 매번 강제 트리거되던 문제. 가드 추가로 needsRefine=false.
+  it('verify 임베딩 차원이 인덱스 차원과 다르면 fail-safe 로 needsRefine=false', async () => {
+    const ragIndex = useAppStore.getState().ragIndex;
+    // 인덱스는 3차원 모델로 빌드
+    ragIndex.addChunk('ref', [1, 0, 0], 0);
+
+    // verify 임베딩은 다른 모델(4차원) — 정상 success 이지만 차원이 불일치
+    mockEmbed.mockResolvedValueOnce({
+      success: true,
+      embeddings: [[1, 0, 0, 0], [1, 0, 0, 0]],
+      model: 'other-model',
+    });
+
+    const result = await verifyAnswerSentences(
+      '첫 번째 검증 문장이 충분히 길다. 두 번째 검증 문장이 충분히 길다.',
+    );
+    expect(result.totalSentences).toBe(2);
+    // 차원 불일치 → 약문장 오분류 없이 draft 유지
+    expect(result.needsRefine).toBe(false);
+    expect(result.weakCount).toBe(0);
+    expect(result.avgScore).toBe(1);
+  });
+
   it('사전 abort 된 signal 을 받으면 embed 호출이 실패 경로로 즉시 귀결된다', async () => {
     const ragIndex = useAppStore.getState().ragIndex;
     ragIndex.addChunk('ref', [1, 0, 0], 0);

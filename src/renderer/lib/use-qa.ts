@@ -63,6 +63,20 @@ export function extractKeywords(question: string): string[] {
     .filter((w) => w.length >= 2 && !STOPWORDS.has(w));
 }
 
+/**
+ * 키워드의 TF(빈도) 카운트.
+ * ASCII 단어(`a-z0-9`)는 워드바운더리로 매칭해 `ai`→`said`/`rain` 같은 부분문자열 오탐을 방지하고,
+ * Hangul/CJK 등 비-ASCII 키워드는 공백 경계가 없어 substring 카운트가 더 정확하므로 그대로 유지한다.
+ * (kw 는 extractKeywords 에서 구두점이 제거되고 lowercase 처리됨 → ASCII 분기는 정규식-특수문자 무포함이 보장됨)
+ */
+export function countKeywordOccurrences(lowerText: string, kw: string): number {
+  if (/^[a-z0-9]+$/.test(kw)) {
+    const matches = lowerText.match(new RegExp(`\\b${kw}\\b`, 'g'));
+    return matches ? matches.length : 0;
+  }
+  return lowerText.split(kw).length - 1;
+}
+
 /** 질문 키워드 기반 관련 청크 선별 (TF 스코어링) — RAG fallback용 */
 export function selectRelevantChunks(
   question: string,
@@ -83,8 +97,7 @@ export function selectRelevantChunks(
 
   const scored = chunks.map((chunk, idx) => {
     const lower = chunk.toLowerCase();
-    const score = keywords.reduce((sum, kw) =>
-      sum + (lower.split(kw).length - 1), 0);
+    const score = keywords.reduce((sum, kw) => sum + countKeywordOccurrences(lower, kw), 0);
     return { chunk, score, idx };
   });
 
@@ -433,6 +446,14 @@ export async function verifyAnswerSentences(
   const result = await embedWithTimeout(sentences, signal);
   if (!result.success || !result.embeddings || result.embeddings.length !== sentences.length) {
     // 검증 자체 실패 → 안전하게 draft 그대로 사용 (refine 강제하지 않음)
+    return { needsRefine: false, avgScore: 1, weakCount: 0, totalSentences: sentences.length };
+  }
+  // 차원 불일치(인덱스 빌드 모델 ≠ verify 임베딩 모델) 가드.
+  // VectorStore.search 는 쿼리 차원이 인덱스와 다르면 항상 [] 를 반환하므로,
+  // 이 경우 모든 문장이 maxScore=0 → 약문장으로 오분류되어 refine 이 강제 트리거된다.
+  // fail-safe 의도(검증 불가 시 draft 유지)와 동일하게 needsRefine=false 로 처리.
+  const verifyDim = result.embeddings[0]?.length ?? 0;
+  if (ragIndex.dimension !== null && verifyDim !== ragIndex.dimension) {
     return { needsRefine: false, avgScore: 1, weakCount: 0, totalSentences: sentences.length };
   }
 
