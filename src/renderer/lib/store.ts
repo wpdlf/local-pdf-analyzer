@@ -123,6 +123,8 @@ interface AppState {
   // refine 단계 또는 good-draft flush 시 qaStream 이 채워지면서 verifying=false 로 전환.
   qaVerifying: boolean;
   addQaMessage: (msg: Omit<QaMessage, 'id'>) => void;
+  // session-persistence: 복원 시 Q&A 대화 일괄 복원 (id 보존)
+  setQaMessages: (messages: QaMessage[]) => void;
   appendQaStream: (token: string) => void;
   flushQaStream: () => void;
   clearQaStream: () => void;
@@ -135,6 +137,15 @@ interface AppState {
   ragIndex: VectorStore;
   ragState: RagIndexState;
   setRagState: (state: Partial<RagIndexState>) => void;
+  // session-persistence: 복원 시 직렬화된 인덱스로 VectorStore 인스턴스 교체 (재임베딩 0)
+  setRagIndex: (vs: VectorStore) => void;
+  // 복원 결정(session.load) 동안 useRagBuilder 의 자동 재임베딩을 보류시키는 게이트.
+  // 문서 로드 직후 true, 복원 hit(인덱스 주입)/miss(정상 빌드) 결정 후 false.
+  sessionRestorePending: boolean;
+  setSessionRestorePending: (v: boolean) => void;
+  // 복원된 인덱스 마커 — useRagBuilder 가 같은 doc+provider 면 재빌드를 skip (재임베딩 0 보장).
+  restoredSession: { docId: string; provider: string; embedModel: string | null } | null;
+  setRestoredSession: (v: { docId: string; provider: string; embedModel: string | null } | null) => void;
 
   // Page citation (Design Ref: §4.2) — page-citation-viewer 기능
   // null 이면 PdfViewer 패널 비활성, { page: N } 이면 해당 페이지로 스크롤
@@ -312,6 +323,10 @@ export const useAppStore = create<AppState>((set) => ({
       citationTarget: null,
       pdfBytes: null,
       enrichedPageTexts: null,
+      // session-persistence: 이전 문서의 복원 마커/게이트 초기화 (stale skip 방지).
+      // handlePdfData 는 setDocument 직후 다시 sessionRestorePending=true 로 설정한다.
+      restoredSession: null,
+      sessionRestorePending: false,
     });
   },
 
@@ -377,6 +392,7 @@ export const useAppStore = create<AppState>((set) => ({
     }
     set({ qaStream: '' });
   },
+  setQaMessages: (messages) => set({ qaMessages: messages }),
   setIsQaGenerating: (isQaGenerating) => set({ isQaGenerating }),
   setQaRequestId: (qaRequestId) => set({ qaRequestId }),
   clearQa: () => {
@@ -388,6 +404,11 @@ export const useAppStore = create<AppState>((set) => ({
   ragIndex: new VectorStore(),
   ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
   setRagState: (partial) => set((s) => ({ ragState: { ...s.ragState, ...partial } })),
+  setRagIndex: (ragIndex) => set({ ragIndex }),
+  sessionRestorePending: false,
+  setSessionRestorePending: (sessionRestorePending) => set({ sessionRestorePending }),
+  restoredSession: null,
+  setRestoredSession: (restoredSession) => set({ restoredSession }),
 
   // Page citation — Design Ref §4.2
   citationTarget: null,

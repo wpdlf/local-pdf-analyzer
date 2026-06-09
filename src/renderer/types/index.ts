@@ -111,6 +111,9 @@ export interface AppSettings {
   // 사용자에게는 여전히 단일 답변만 표시되며 배지/스코어는 노출하지 않음 — 내부적으로 정확성만 개선.
   // OFF 하면 기존 단일 pass 스트리밍 (빠르지만 환각 위험 높음).
   enableAnswerVerification: boolean;
+  // session-persistence: 문서별 요약·Q&A·RAG 인덱스를 콘텐츠 해시 기준으로 영속화.
+  // OFF 시 저장/복원 전체 skip(프라이버시/디스크 민감 사용자용). 기본 ON.
+  persistSessions: boolean;
 }
 
 // Provider별 대표 모델
@@ -236,4 +239,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableOcrFallback: true,
   summaryLanguage: 'ko' as SummaryLanguage,
   enableAnswerVerification: true,
+  persistSessions: true,
 };

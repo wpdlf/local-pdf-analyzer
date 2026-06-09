@@ -12,6 +12,7 @@ import { handlePdfData } from './lib/pdf-parser';
 import { applyTheme } from './lib/theme';
 import { useSummarize } from './lib/use-summarize';
 import { useRagBuilder } from './lib/use-qa';
+import { useSessionPersistence } from './lib/use-session';
 import { MAX_PDF_SIZE_BYTES } from '../shared/constants';
 import logoImg from './assets/logo.png';
 
@@ -49,6 +50,9 @@ export default function App() {
   // 이전에는 QaChat이 마운트되는 시점(요약 완료 후)에야 빌드가 시작되어,
   // 사용자가 Q&A를 할 수 있을 때까지 "요약 시간 + 인덱싱 시간"을 모두 대기해야 했음.
   useRagBuilder();
+
+  // session-persistence(module-3): 요약·Q&A·인덱스 변경이 settle 되면 자동 저장.
+  useSessionPersistence();
 
   // 초기화: 설정 로드 + Ollama 상태 확인
   useEffect(() => {

@@ -70,6 +70,7 @@ const defaultSettings = {
   enableOcrFallback: true,
   summaryLanguage: 'ko',
   enableAnswerVerification: true,
+  persistSessions: true,
 } as const;
 
 // R34 P2: VALID_SETTINGS_KEYS_SET 은 settings-keys.ts 에서 import (단일 출처).
@@ -395,6 +396,9 @@ export function registerIpcHandlers(): void {
             if (['ko', 'en', 'ja', 'zh', 'auto'].includes(val as string)) filtered[key] = val;
             break;
           case 'enableAnswerVerification':
+            if (typeof val === 'boolean') filtered[key] = val;
+            break;
+          case 'persistSessions':
             if (typeof val === 'boolean') filtered[key] = val;
             break;
         }

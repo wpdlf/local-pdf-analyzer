@@ -33,6 +33,7 @@ export const VALID_SETTINGS_KEYS = [
   'enableOcrFallback',
   'summaryLanguage',
   'enableAnswerVerification',
+  'persistSessions',
 ] as const;
 
 export type ValidSettingsKey = typeof VALID_SETTINGS_KEYS[number];

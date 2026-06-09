@@ -2,6 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { OPS } from 'pdfjs-dist';
 import type { PdfDocument, Chapter, PageImage, AppError } from '../types';
 import { useAppStore } from './store';
+import { restoreSessionForDocument } from './use-session';
 import { MAX_PDF_SIZE_BYTES } from '../../shared/constants';
 // Vite의 ?url 쿼리를 사용해 worker 파일을 정적 에셋으로 번들링.
 // bare specifier + import.meta.url 패턴은 Vite에서 dev/build 동작이 다를 수 있어
@@ -685,6 +686,12 @@ export async function handlePdfData(
     store.clearQa();
     store.setDocument(doc);
     store.setPdfBytes(pdfBytesCopy); // PdfViewer 가 참조할 원본
+    // session-persistence(module-3): setDocument 직후 복원 게이트 ON → useRagBuilder 자동
+    // 재임베딩을 보류시키고, 콘텐츠 해시로 세션 복원을 시도한다. hit 시 재요약·재임베딩 0,
+    // miss 시 게이트 해제 후 정상 빌드. (setDocument→resetSummaryState 가 게이트를 false 로
+    // 초기화하므로 반드시 그 "이후"에 true 로 설정해야 함)
+    store.setSessionRestorePending(true);
+    void restoreSessionForDocument(doc);
     store.setError(null);
     // v0.18.7 D5 fix: notice 채널도 함께 정리. v0.18.6 D1 에서 notice 를 추가했지만
     // 새 PDF 로드 성공 시 stale notice (예: 직전 multi-file 드롭 경고) 를 정리하지 않아

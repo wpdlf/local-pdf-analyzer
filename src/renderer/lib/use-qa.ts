@@ -550,6 +550,9 @@ export function useRagBuilder(): void {
   // Q&A 검색은 못 보는" UX 비대칭 해소.
   const enrichedPageTexts = useAppStore((s) => s.enrichedPageTexts);
   const enrichedVersion = useAppStore((s) => s.enrichedPageTextsVersion);
+  // session-persistence(module-3): 복원 게이트 + 복원된 인덱스 채택 마커.
+  const sessionRestorePending = useAppStore((s) => s.sessionRestorePending);
+  const restoredSession = useAppStore((s) => s.restoredSession);
   const prevKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -558,12 +561,26 @@ export function useRagBuilder(): void {
       prevKeyRef.current = null;
       return;
     }
+    // session-persistence: 복원 결정(session.load) 동안에는 인덱스 clear/build 를 모두 보류.
+    // 게이트가 풀리면(restore hit/miss) 이 effect 가 재실행되어 채택 또는 빌드를 결정한다.
+    if (sessionRestorePending) return;
     // key 에 enrichment 플래그 + version 포함 — raw→enriched 전이 + 동일 길이 재-enrich 도 감지.
     // v0.18.19 patch R32 P3: 이전엔 `e${pageTexts.length}` 라 두 번째 Vision 패스가 길이만
     // 같으면 같은 fingerprint 로 떨어져 RAG 재빌드가 누락됐다. store 의 enrichedPageTextsVersion
     // 단조 카운터를 끼워 내용 변화도 포착 (R32 Surface 1 P4).
     const enrichTag = enrichedPageTexts ? `e${enrichedPageTexts.length}v${enrichedVersion}` : 'r';
     const key = `${document.id}:${provider}:${enrichTag}`;
+    // session-persistence: 복원된 인덱스 채택 — 같은 문서+provider 이고 새 enrichment 가 없으면
+    // 재빌드 skip(재임베딩 0). enrichment 가 생기거나 provider 가 바뀌면 아래 정상 빌드로 진행.
+    if (
+      !enrichedPageTexts &&
+      restoredSession &&
+      restoredSession.docId === document.id &&
+      restoredSession.provider === provider
+    ) {
+      prevKeyRef.current = key;
+      return;
+    }
     if (key === prevKeyRef.current) return;
     prevKeyRef.current = key;
     const docId = document.id;
@@ -601,7 +618,7 @@ export function useRagBuilder(): void {
         activeBuildController = null;
       }
     };
-  }, [document, provider, enrichedPageTexts, enrichedVersion]);
+  }, [document, provider, enrichedPageTexts, enrichedVersion, sessionRestorePending, restoredSession]);
 }
 
 export function useQa() {

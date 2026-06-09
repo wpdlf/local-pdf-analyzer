@@ -517,3 +517,31 @@ describe('setEnrichedPageTexts idempotent null reset (R32 P2)', () => {
     expect(useAppStore.getState().enrichedPageTextsVersion).toBe(v1 + 1);
   });
 });
+
+// session-persistence(module-3): 복원 게이트/마커 + resetSummaryState 초기화.
+describe('session-persistence store fields', () => {
+  it('setSessionRestorePending / setRestoredSession 동작', () => {
+    useAppStore.getState().setSessionRestorePending(true);
+    expect(useAppStore.getState().sessionRestorePending).toBe(true);
+    const marker = { docId: 'd1', provider: 'ollama', embedModel: 'm' };
+    useAppStore.getState().setRestoredSession(marker);
+    expect(useAppStore.getState().restoredSession).toEqual(marker);
+  });
+
+  it('setQaMessages 는 대화를 일괄 교체', () => {
+    useAppStore.getState().setQaMessages([
+      { id: 'a', role: 'user', content: 'q' },
+      { id: 'b', role: 'assistant', content: 'a' },
+    ]);
+    expect(useAppStore.getState().qaMessages).toHaveLength(2);
+    expect(useAppStore.getState().qaMessages[0]!.id).toBe('a');
+  });
+
+  it('resetSummaryState 는 restoredSession/sessionRestorePending 를 초기화', () => {
+    useAppStore.getState().setRestoredSession({ docId: 'd1', provider: 'ollama', embedModel: 'm' });
+    useAppStore.getState().setSessionRestorePending(true);
+    useAppStore.getState().resetSummaryState();
+    expect(useAppStore.getState().restoredSession).toBeNull();
+    expect(useAppStore.getState().sessionRestorePending).toBe(false);
+  });
+});
