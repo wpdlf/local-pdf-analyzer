@@ -506,6 +506,13 @@ export class OllamaManager {
       // v0.18.19 patch R32 P3: taskkill 실패(권한 거부, AV 간섭, PID 재사용 race) 시 silent
       // 처리하면 ollama.exe serve 자식 트리가 살아남아 port 11434 squat. 실패 시 fallback
       // SIGKILL + 콘솔 로그로 가시화 (R32 Surface 2 P4).
+      //
+      // R39 known limitation (의도적 유지): fallback `proc.kill('SIGKILL')` 은 직접 자식(serve)
+      // 만 종료하고 detached 손자(ollama runner)는 못 잡는다. 그러나 (1) taskkill `/F /T` 실패
+      // 자체가 비현실적이고(정상 경로는 트리 전체 정리), (2) 도달 시 영향은 "다음 실행 시 11434
+      // 충돌"이라는 self-DoS 가용성 저하뿐(보안/데이터 영향 0, 다음 healthCheck 가 흡수), (3)
+      // fallback 에 트리 종료 재시도를 넣어도 taskkill 이 이미 실패한 상황이라 성공률이 낮다.
+      // 변경 효익 < 종료 경로 회귀 위험 → 현 상태(taskkill + SIGKILL + console.warn) 유지.
       try {
         await new Promise<void>((resolve) => {
           execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], (err) => {

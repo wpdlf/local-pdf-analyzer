@@ -256,6 +256,40 @@ describe('ai:abort (이중 namespace 디스패치)', () => {
   });
 });
 
+// R39 (v0.18.26): SSRF 포트-스캔 오라클 회귀 가드. ai:check-available 가 renderer 전달 URL 을
+// 신뢰하면 손상된 렌더러가 임의 localhost 포트를 프로브할 수 있으므로, ollama 는 settings store
+// 의 정규 URL 만 사용해야 한다. (적대적 검증 R39 — store-read 전환)
+describe('ai:check-available (SSRF 포트 오라클 가드)', () => {
+  it('ollama: renderer 가 보낸 임의 포트 URL 을 무시하고 settings store URL 로 호출', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama', ollamaBaseUrl: 'http://localhost:11434' });
+    H.ai.checkAvailability.mockResolvedValue(true);
+
+    // 손상된 렌더러가 Redis(6379) 등 임의 localhost 포트를 프로브하려 시도
+    const result = await invoke('ai:check-available', 'ollama', 'http://127.0.0.1:6379');
+
+    expect(result).toBe(true);
+    // 핵심 단언: 악성 인자가 아니라 store 의 정규 URL 로 위임됐는가
+    expect(H.ai.checkAvailability).toHaveBeenCalledWith('ollama', 'http://localhost:11434', undefined);
+    expect(H.ai.checkAvailability).not.toHaveBeenCalledWith('ollama', 'http://127.0.0.1:6379', undefined);
+  });
+
+  it('ollama: store 가 커스텀 포트를 보유하면 그 URL 을 사용(커스텀 포트 보존)', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama', ollamaBaseUrl: 'http://localhost:23456' });
+    H.ai.checkAvailability.mockResolvedValue(true);
+
+    await invoke('ai:check-available', 'ollama', 'http://127.0.0.1:6379');
+
+    expect(H.ai.checkAvailability).toHaveBeenCalledWith('ollama', 'http://localhost:23456', undefined);
+  });
+
+  it('잘못된 provider 는 store 조회 없이 false', async () => {
+    H.settings.load.mockClear();
+    const result = await invoke('ai:check-available', 'evil', 'http://localhost:11434');
+    expect(result).toBe(false);
+    expect(H.ai.checkAvailability).not.toHaveBeenCalled();
+  });
+});
+
 describe('ollama:status / pull-model', () => {
   it('status: getStatus 결과 그대로 반환', async () => {
     H.ollama.getStatus.mockResolvedValue({ installed: true, running: true, models: ['gemma3'] });

@@ -503,9 +503,19 @@ export function registerIpcHandlers(): void {
     return { success: true };
   });
 
-  ipcMain.handle('ai:check-available', async (_event, provider: string, ollamaBaseUrl: string) => {
+  ipcMain.handle('ai:check-available', async (_event, provider: string, _ollamaBaseUrl: string) => {
     // R38 P1: provider 화이트리스트 + ollama localhost SSRF 가드를 ipc-validators 로 위임.
     if (!isValidProvider(provider)) return false;
+    // R39 (v0.18.26): SSRF 포트-스캔 오라클 차단. 이전엔 renderer 가 전달한 URL 을 그대로
+    // checkAvailability 에 넘겨, 손상된 렌더러가 `ai:check-available('ollama', 'http://127.0.0.1:<임의포트>')`
+    // 를 per-call 로 호출하며 임의 localhost 포트를 스윕하는 프로브 오라클이 됐다(host/protocol 은
+    // 검증되나 port 미검증). embeddings/vision 핸들러와 동일하게 settings store 의 정규 URL 만
+    // 사용해 renderer 인자를 신뢰 경계 밖으로 밀어낸다. renderer 의 isAvailable() 은 항상 저장된
+    // settings.ollamaBaseUrl 로 호출하므로(저장 전 임의 입력 테스트 경로 없음) UX 영향 없음.
+    const ollamaBaseUrl =
+      provider === 'ollama'
+        ? ((await loadSettings()).ollamaBaseUrl as string) || 'http://localhost:11434'
+        : _ollamaBaseUrl;
     if (!isValidOllamaBaseUrl(ollamaBaseUrl, provider)) return false;
     const apiKey = provider !== 'ollama' ? apiKeyStore.load(provider) : undefined;
     return checkAvailability(provider, ollamaBaseUrl, apiKey);

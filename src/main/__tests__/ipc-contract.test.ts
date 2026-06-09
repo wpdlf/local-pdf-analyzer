@@ -76,8 +76,10 @@ describe('main IPC contract — ai:* handler shape (Top5 #2)', () => {
   });
 
   it('ai:check-available 가 isValidProvider + isValidOllamaBaseUrl 에 위임 (SSRF 단일 출처)', () => {
+    // R39 (v0.18.26): store-read 전환으로 두 validator 사이에 정규 URL 조회 + 설명 주석이
+    // 삽입되어 gap 허용 폭을 200→900 으로 확장. 위임 순서(provider→baseUrl) 자체는 그대로 가드.
     expect(INDEX_SRC).toMatch(
-      /ipcMain\.handle\(['"]ai:check-available['"][\s\S]{0,400}?isValidProvider[\s\S]{0,200}?isValidOllamaBaseUrl/,
+      /ipcMain\.handle\(['"]ai:check-available['"][\s\S]{0,400}?isValidProvider[\s\S]{0,900}?isValidOllamaBaseUrl/,
     );
   });
 
