@@ -53,7 +53,8 @@ export function RecentDocuments() {
     }
   }, [refresh]);
 
-  if (!persistEnabled || entries.length === 0) {
+  // 영속화 OFF 시에만 완전히 숨김. ON + 빈 목록은 안내 문구로 기능 발견성 확보(Design §5.4).
+  if (!persistEnabled) {
     return null;
   }
 
@@ -62,6 +63,9 @@ export function RecentDocuments() {
       <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2 px-1">
         {tr('recent.title')}
       </h2>
+      {entries.length === 0 ? (
+        <p className="text-xs text-gray-400 dark:text-gray-500 px-1 py-2">{tr('recent.empty')}</p>
+      ) : (
       <ul className="flex flex-col gap-2">
         {entries.map((e) => (
           <li
@@ -103,6 +107,7 @@ export function RecentDocuments() {
           </li>
         ))}
       </ul>
+      )}
     </div>
   );
 }
