@@ -3,6 +3,7 @@ import { useAppStore } from './lib/store';
 import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS } from './types';
 import { t, useT } from './lib/i18n';
 import { PdfUploader } from './components/PdfUploader';
+import { RecentDocuments } from './components/RecentDocuments';
 import { SummaryViewer } from './components/SummaryViewer';
 import { SummaryTypeSelector } from './components/SummaryTypeSelector';
 import { StatusBar } from './components/StatusBar';
@@ -375,9 +376,12 @@ export default function App() {
           </div>
         )}
 
-        {/* 1) PDF 미업로드: 업로드 영역 */}
+        {/* 1) PDF 미업로드: 업로드 영역 + 최근 문서 목록 */}
         {!document && !summaryStream && (
-          <PdfUploader />
+          <>
+            <PdfUploader />
+            <RecentDocuments />
+          </>
         )}
 
         {/* 모델 추천 알림 */}

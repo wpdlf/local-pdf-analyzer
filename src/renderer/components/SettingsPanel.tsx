@@ -5,6 +5,13 @@ import type { AppSettings, AiProviderType } from '../types';
 import { PROVIDER_MODELS, UI_LANGUAGES, DEFAULT_SETTINGS } from '../types';
 import { applyTheme } from '../lib/theme';
 
+/** 바이트를 사람이 읽기 쉬운 단위로 (session-persistence 용량 표시) */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export function SettingsPanel() {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
@@ -39,6 +46,18 @@ export function SettingsPanel() {
   // onChange 에서 즉시 거부하면 "2000" 타이핑 중 "2" 가 거부되어 입력 불가. blur 시 clamp + 커밋.
   const [chunkSizeInput, setChunkSizeInput] = useState(String(draft.maxChunkSize));
   const [chunkSizeError, setChunkSizeError] = useState(false);
+  // session-persistence(module-4): 저장 용량/위치 표시 + 전체 비우기.
+  const [sessionStats, setSessionStats] = useState<{ count: number; totalBytes: number; dir: string } | null>(null);
+  const refreshSessionStats = async () => {
+    try { setSessionStats(await window.electronAPI.session.stats()); }
+    catch { setSessionStats(null); }
+  };
+  useEffect(() => { void refreshSessionStats(); }, []);
+  const handleClearSessions = async () => {
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(t('settings.clearConfirm'))) return;
+    try { await window.electronAPI.session.clear(); } finally { void refreshSessionStats(); }
+  };
 
   useEffect(() => {
     if (!keyMessage) return;
@@ -549,6 +568,35 @@ export function SettingsPanel() {
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('settings.answerVerificationDesc')}</p>
           </div>
         </label>
+      </section>
+
+      {/* 세션 데이터 (session-persistence module-4) */}
+      <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.dataSection')}</h3>
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" checked={draft.persistSessions} onChange={(e) => updateDraft({ persistSessions: e.target.checked })} className="w-4 h-4 rounded" />
+          <div>
+            <span className="text-sm text-gray-700 dark:text-gray-200">{t('settings.persistToggle')}</span>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('settings.persistDesc')}</p>
+          </div>
+        </label>
+        {sessionStats && (
+          <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              {t('settings.storageUsage', { count: sessionStats.count, size: formatBytes(sessionStats.totalBytes) })}
+            </p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 truncate" title={sessionStats.dir}>
+              {t('settings.storageLocation', { dir: sessionStats.dir })}
+            </p>
+            <button
+              onClick={handleClearSessions}
+              disabled={sessionStats.count === 0}
+              className="mt-2 px-3 py-1.5 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {t('settings.clearSessions')}
+            </button>
+          </div>
+        )}
       </section>
 
       {/* 저장 */}

@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     save: (content: string, defaultName: string) =>
       ipcRenderer.invoke('file:save', content, defaultName),
     openPdf: () => ipcRenderer.invoke('file:open-pdf'),
+    openPath: (targetPath: string) => ipcRenderer.invoke('file:open-path', targetPath),
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
@@ -115,6 +116,7 @@ export type ElectronAPI = {
   file: {
     save: (content: string, defaultName: string) => Promise<string | null>;
     openPdf: () => Promise<{ path: string; name: string; data: ArrayBuffer } | { error: string } | null>;
+    openPath: (targetPath: string) => Promise<{ path: string; name: string; data: ArrayBuffer } | { error: string }>;
   };
   settings: {
     get: () => Promise<Record<string, unknown>>;

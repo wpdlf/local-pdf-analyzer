@@ -237,6 +237,22 @@ export const _translations = {
   'setup.manualInstall': { ko: '수동 설치:', en: 'Manual install:' },
   'setup.cancel': { ko: '취소하고 다른 Provider 사용', en: 'Cancel and use another provider' },
   'setup.cancelling': { ko: '취소 중... 진행 중인 작업은 백그라운드에서 완료됩니다.', en: 'Cancelling... ongoing operations will finish in the background.' },
+
+  // ─── 세션 영속화 (session-persistence) ───
+  'recent.title': { ko: '최근 문서', en: 'Recent Documents' },
+  'recent.empty': { ko: '저장된 세션이 없습니다. PDF를 분석하면 여기에 나타납니다.', en: 'No saved sessions yet. Analyzed PDFs will appear here.' },
+  'recent.open': { ko: '열기', en: 'Open' },
+  'recent.delete': { ko: '세션 삭제', en: 'Delete session' },
+  'recent.pages': { ko: '{count}페이지', en: '{count} pages' },
+  'recent.indexed': { ko: '인덱스 {count}청크', en: '{count} chunks indexed' },
+  'recent.openFail': { ko: '문서를 열 수 없습니다. 원본 파일이 이동/삭제되었을 수 있습니다.', en: 'Could not open the document. The original file may have been moved or deleted.' },
+  'settings.dataSection': { ko: '세션 데이터', en: 'Session Data' },
+  'settings.persistToggle': { ko: '세션·캐시 저장', en: 'Save sessions & cache' },
+  'settings.persistDesc': { ko: '문서별 요약·Q&A·검색 인덱스를 저장해 다시 열 때 복원합니다 (재요약·재임베딩 없음).', en: 'Save summaries, Q&A, and the search index per document to restore them on reopen (no re-summarize/re-embed).' },
+  'settings.storageUsage': { ko: '저장: 문서 {count}개 · {size}', en: 'Stored: {count} documents · {size}' },
+  'settings.storageLocation': { ko: '위치: {dir}', en: 'Location: {dir}' },
+  'settings.clearSessions': { ko: '전체 비우기', en: 'Clear all' },
+  'settings.clearConfirm': { ko: '저장된 모든 세션을 삭제할까요? 되돌릴 수 없습니다.', en: 'Delete all saved sessions? This cannot be undone.' },
 } as const;
 
 type TranslationKey = keyof typeof _translations;

@@ -466,3 +466,46 @@ describe('session:* (영속화 핸들러)', () => {
     expect(s.dir).toContain('sessions');
   });
 });
+
+// session-persistence module-4 (L3): file:open-path — 최근목록 재오픈 보안 가드.
+describe('file:open-path (최근목록 재오픈 보안 가드)', () => {
+  beforeEach(() => {
+    H.fsp.lstat.mockResolvedValue({ isSymbolicLink: () => false });
+    H.fsp.stat.mockResolvedValue({ isFile: () => true, size: 1000 });
+    H.fsp.readFile.mockResolvedValue(Buffer.from('%PDF-1.4 test'));
+  });
+
+  it('비-string/빈 경로 거부 (fs 접근 없음)', async () => {
+    H.fsp.lstat.mockClear();
+    expect((await invoke('file:open-path', 123) as { error: string }).error).toBeTruthy();
+    expect((await invoke('file:open-path', '') as { error: string }).error).toBeTruthy();
+    expect(H.fsp.lstat).not.toHaveBeenCalled();
+  });
+
+  it('.pdf 아닌 확장자 거부 (fs 접근 없음)', async () => {
+    H.fsp.lstat.mockClear();
+    const r = await invoke('file:open-path', '/x/secret.txt') as { error: string };
+    expect(r.error).toBeTruthy();
+    expect(H.fsp.lstat).not.toHaveBeenCalled();
+  });
+
+  it('심볼릭 링크 거부 (readFile 미도달)', async () => {
+    H.fsp.lstat.mockResolvedValue({ isSymbolicLink: () => true });
+    H.fsp.readFile.mockClear();
+    const r = await invoke('file:open-path', '/x/a.pdf') as { error: string };
+    expect(r.error).toBeTruthy();
+    expect(H.fsp.readFile).not.toHaveBeenCalled();
+  });
+
+  it('일반 파일 아니면 거부', async () => {
+    H.fsp.stat.mockResolvedValue({ isFile: () => false, size: 10 });
+    expect((await invoke('file:open-path', '/x/a.pdf') as { error: string }).error).toBeTruthy();
+  });
+
+  it('유효한 .pdf → { path, name, data }', async () => {
+    const r = await invoke('file:open-path', '/docs/lecture.pdf') as { path: string; name: string; data: ArrayBuffer };
+    expect(r.path).toBe('/docs/lecture.pdf');
+    expect(r.name).toBe('lecture.pdf');
+    expect(r.data).toBeInstanceOf(ArrayBuffer);
+  });
+});
