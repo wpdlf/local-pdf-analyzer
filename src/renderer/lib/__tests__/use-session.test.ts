@@ -222,3 +222,58 @@ describe('persistCurrentSession (module-3)', () => {
     expect(payload.meta.chunkCount).toBe(0);
   });
 });
+
+describe('R41 fixes', () => {
+  it('High: summaryType 키가 없으면 fallback 요약의 실제 타입으로 복원 (불일치 방지)', async () => {
+    const doc = makeDoc();
+    useAppStore.setState({ document: doc, sessionRestorePending: true });
+    api.session.load.mockImplementation(async (hash: string) => {
+      const f = persistedSession(doc, false);
+      f.session.docHash = hash;
+      f.session.summaries = { full: { content: 'FULL 본문', model: 'm', provider: 'ollama' } };
+      f.session.summaryType = 'keywords'; // summaries 에 keywords 없음
+      return f;
+    });
+    await restoreSessionForDocument(doc);
+    const s = useAppStore.getState();
+    expect(s.summary?.content).toBe('FULL 본문');
+    expect(s.summary?.type).toBe('full');   // keywords 가 아니라 실제 타입
+    expect(s.summaryType).toBe('full');
+  });
+
+  it('#3: load↔checkEmbedModel 사이 provider 변경 시 마커에 최신 provider 반영', async () => {
+    const doc = makeDoc();
+    useAppStore.setState({ document: doc, sessionRestorePending: true, settings: { ...useAppStore.getState().settings, provider: 'ollama' } });
+    api.session.load.mockImplementation(async (hash: string) => {
+      const f = persistedSession(doc, true);
+      f.session.docHash = hash;
+      return f;
+    });
+    api.ai.checkEmbedModel.mockImplementation(async () => {
+      // 두 await 사이 provider 토글
+      useAppStore.setState({ settings: { ...useAppStore.getState().settings, provider: 'openai' } });
+      return { available: true, model: 'nomic-embed-text' };
+    });
+    await restoreSessionForDocument(doc);
+    expect(useAppStore.getState().restoredSession?.provider).toBe('openai'); // stale 'ollama' 아님
+  });
+
+  it('#2: 동시 persist 호출이 직렬화되어 last-write-wins', async () => {
+    const doc = makeDoc();
+    useAppStore.setState({
+      document: doc,
+      summary: { id: 's', documentId: doc.id, type: 'full', content: 'v1', model: 'm', provider: 'ollama', createdAt: new Date(), durationMs: 1 },
+      summaryStream: 'v1',
+      ragIndex: new VectorStore(),
+    });
+    api.session.load.mockResolvedValue(null);
+    const p1 = persistCurrentSession();
+    // 두 번째 호출 직전 상태 갱신 — 직렬화되면 두 번째 save 가 v2 를 반영해야 함
+    useAppStore.setState({ summaryStream: 'v2' });
+    const p2 = persistCurrentSession();
+    await Promise.all([p1, p2]);
+    expect(api.session.save).toHaveBeenCalledTimes(2);
+    const last = api.session.save.mock.calls.at(-1)![0] as { session: PersistedSession };
+    expect(last.session.summaries.full?.content).toBe('v2');
+  });
+});

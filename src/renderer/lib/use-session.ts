@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useAppStore } from './store';
 import { hashDocumentText } from './session-hash';
 import { VectorStore } from './vector-store';
-import type { PdfDocument, PersistedSession, Summary } from '../types';
+import type { PdfDocument, PersistedSession, Summary, DefaultSummaryType } from '../types';
 import { SESSION_SCHEMA_VERSION, type SessionSaveMeta } from '../../shared/session-types';
 
 /**
@@ -43,14 +43,25 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
       return;
     }
 
-    // 요약 복원 (현재 summaryType 우선, 없으면 첫 항목)
-    const persistedSummary = session.summaries?.[session.summaryType]
-      ?? Object.values(session.summaries ?? {})[0];
+    // 요약 복원 (현재 summaryType 우선, 없으면 첫 항목).
+    // R41 High fix: fallback 으로 다른 타입 요약을 채택할 때는 그 요약의 **실제 타입**으로
+    // 라벨링해야 한다. 이전엔 라벨을 session.summaryType 로 고정해 "keywords 탭인데 full 본문"
+    // 불일치가 발생했고, 그 stale 조합이 자동저장으로 흘러가 summaries[summaryType]=다른본문 으로
+    // 디스크 세션을 손상시켰다.
+    let restoredType = session.summaryType;
+    let persistedSummary = session.summaries?.[session.summaryType];
+    if (!persistedSummary) {
+      const firstEntry = Object.entries(session.summaries ?? {})[0];
+      if (firstEntry) {
+        restoredType = firstEntry[0] as DefaultSummaryType;
+        persistedSummary = firstEntry[1];
+      }
+    }
     if (persistedSummary) {
       const summary: Summary = {
         id: `restored-${doc.id}`,
         documentId: doc.id,
-        type: session.summaryType,
+        type: restoredType,
         content: persistedSummary.content,
         model: persistedSummary.model,
         provider: persistedSummary.provider,
@@ -58,7 +69,7 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
         durationMs: 0,
       };
       store.setSummary(summary);
-      store.setSummaryType(session.summaryType);
+      store.setSummaryType(restoredType);
       store.replaceSummaryStream(persistedSummary.content);
     }
 
@@ -85,8 +96,15 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
             isIndexing: false, progress: null, isAvailable: true,
             model: session.embedModel, chunkCount: vs.size,
           });
-          // useRagBuilder 가 같은 doc+provider 면 재빌드 skip 하도록 마커 설정
-          store.setRestoredSession({ docId: doc.id, provider: store.settings.provider, embedModel: session.embedModel });
+          // useRagBuilder 가 같은 doc+provider 면 재빌드 skip 하도록 마커 설정.
+          // R41 fix: provider 는 함수 진입 스냅샷(store)이 아니라 마커 설정 직전 최신값을 읽는다 —
+          // load+checkEmbedModel 두 await 사이 provider 토글 시 stale provider 가 박혀 잘못된 인덱스를
+          // 오채택할 위험 차단.
+          store.setRestoredSession({
+            docId: doc.id,
+            provider: useAppStore.getState().settings.provider,
+            embedModel: session.embedModel,
+          });
         }
       } catch { /* 블롭 손상/크기 불일치 → 마커 미설정 → 재빌드 */ }
     }
@@ -100,8 +118,19 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
   }
 }
 
-/** 현재 store 상태를 세션으로 저장 (best-effort). 생성 중/복원 대기 중에는 skip. */
-export async function persistCurrentSession(): Promise<void> {
+// R41 fix: persist 직렬화 체인. persistCurrentSession 은 async 본문(load→merge→save)이 await 로
+// 겹칠 수 있어, 디바운스만으로는 두 인스턴스가 동시 in-flight 되면 인덱스 메타가 stale 스냅샷으로
+// 덮어써질 수 있다(재임베딩 0 위반). 체인으로 순차 실행하면 각 doPersist 가 실행 시점의 최신
+// getState() 를 읽어 last-write-wins 가 보장된다.
+let persistChain: Promise<void> = Promise.resolve();
+
+/** 현재 store 상태를 세션으로 저장 (best-effort, 직렬화). 생성 중/복원 대기 중에는 skip. */
+export function persistCurrentSession(): Promise<void> {
+  persistChain = persistChain.then(doPersistCurrentSession, doPersistCurrentSession);
+  return persistChain;
+}
+
+async function doPersistCurrentSession(): Promise<void> {
   const s = useAppStore.getState();
   const doc = s.document;
   const api = window.electronAPI?.session;

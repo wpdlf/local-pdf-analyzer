@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useT } from '../lib/i18n';
 import { useAppStore } from '../lib/store';
 import { handlePdfData } from '../lib/pdf-parser';
@@ -14,13 +14,18 @@ export function RecentDocuments() {
   const persistEnabled = useAppStore((s) => s.settings.persistSessions);
   const [entries, setEntries] = useState<SessionManifestEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  // R41 fix: 열기 성공(handlePdfData → setDocument) 시 이 컴포넌트는 즉시 언마운트된다
+  // (App 의 `!document` 조건). 이후 finally setBusy / refresh setEntries 가 언마운트 상태에서
+  // 실행되므로 가드한다 (SettingsPanel 의 mountedRef 패턴과 일치).
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const refresh = useCallback(async () => {
     try {
       const list = await window.electronAPI.session.list();
-      setEntries(Array.isArray(list) ? list : []);
+      if (mountedRef.current) setEntries(Array.isArray(list) ? list : []);
     } catch {
-      setEntries([]);
+      if (mountedRef.current) setEntries([]);
     }
   }, []);
 
@@ -41,7 +46,7 @@ export function RecentDocuments() {
     } catch {
       useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: tr('recent.openFail') });
     } finally {
-      setBusy(null);
+      if (mountedRef.current) setBusy(null);
     }
   }, [tr]);
 

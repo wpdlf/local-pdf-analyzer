@@ -49,8 +49,9 @@ export function SettingsPanel() {
   // session-persistence(module-4): 저장 용량/위치 표시 + 전체 비우기.
   const [sessionStats, setSessionStats] = useState<{ count: number; totalBytes: number; dir: string } | null>(null);
   const refreshSessionStats = async () => {
-    try { setSessionStats(await window.electronAPI.session.stats()); }
-    catch { setSessionStats(null); }
+    // R41 fix: stats() await 동안 패널이 닫혀(언마운트) 있을 수 있으므로 mountedRef 가드.
+    try { const s = await window.electronAPI.session.stats(); if (mountedRef.current) setSessionStats(s); }
+    catch { if (mountedRef.current) setSessionStats(null); }
   };
   useEffect(() => { void refreshSessionStats(); }, []);
   const handleClearSessions = async () => {

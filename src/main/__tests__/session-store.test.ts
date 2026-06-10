@@ -165,6 +165,41 @@ describe('enforceLru (순수)', () => {
   });
 });
 
+describe('R41 fixes (session-store)', () => {
+  it('blob 없이 재저장 시 이전 index.bin 제거 (stale 인덱스 + byteSize 과소 방지)', async () => {
+    const h = hashOf(1);
+    const blob = new Float32Array([1, 0, 0, 0, 1, 0]).buffer; // 2×3
+    await writeSession(DIR, { meta: metaOf(h), session: { a: 1 }, blob, now: 1000 });
+    expect((await readSession(DIR, h))!.blob).not.toBeNull();
+    const withBlob = (await listSessions(DIR))[0]!.byteSize;
+
+    // 같은 docHash 를 blob 없이 재저장 → 이전 index.bin 제거 + byteSize 축소
+    await writeSession(DIR, {
+      meta: { ...metaOf(h), embedModel: null, embedDim: null, chunkCount: 0 },
+      session: { a: 2 }, blob: null, now: 2000,
+    });
+    expect((await readSession(DIR, h))!.blob).toBeNull();
+    expect((await listSessions(DIR))[0]!.byteSize).toBeLessThan(withBlob);
+  });
+
+  it('손상된 meta 필드(거대 문자열/NaN/Infinity) 를 서버측 정규화', async () => {
+    const h = hashOf(2);
+    await writeSession(DIR, {
+      meta: {
+        docHash: h, fileName: 'x'.repeat(2000), filePath: 'p',
+        pageCount: NaN, embedModel: null, embedDim: null, chunkCount: Infinity,
+      },
+      session: {}, blob: null, now: 1000,
+    });
+    const e = (await listSessions(DIR))[0]!;
+    expect(e.fileName.length).toBeLessThanOrEqual(512);
+    expect(e.pageCount).toBe(0);      // NaN → 0
+    expect(e.chunkCount).toBe(0);     // Infinity → 0
+    // byteSize 합산이 NaN 으로 오염되지 않음 → LRU 용량 캡 정상 동작
+    expect(Number.isFinite((await sessionStats(DIR)).totalBytes)).toBe(true);
+  });
+});
+
 describe('writeSession LRU 통합', () => {
   it('MAX_COUNT 초과 시 가장 오래된 세션 자동 제거', async () => {
     // MAX_COUNT 개를 오래된 순으로 미리 채움

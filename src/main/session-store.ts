@@ -135,20 +135,30 @@ export async function writeSession(
       const u8 = new Uint8Array(blob);
       await writeFileAtomic(path.join(dir, INDEX_BIN), u8);
       blobBytes = u8.byteLength;
+    } else {
+      // R41 fix: blob 없이 갱신 시 이전 index.bin 을 제거한다. 미제거 시 (1) stale 임베딩
+      // 인덱스가 디스크에 잔존해 다음 readSession 이 새 session.json 과 옛 index.bin 을 짝지어
+      // 차원/모델 불일치 복원을 유발하고, (2) byteSize 가 과소 계상되어 LRU 200MB 캡이 실제
+      // 디스크 사용량을 과소평가한다.
+      try { await fsp.unlink(path.join(dir, INDEX_BIN)); } catch { /* 없으면 무시 */ }
     }
     const byteSize = Buffer.byteLength(jsonStr) + blobBytes;
     const nowIso = new Date(now).toISOString();
 
     const manifest = await loadManifest(sessionsDir);
     const existing = manifest.entries.find((e) => e.docHash === meta.docHash);
+    // R41 fix: 렌더러 제공 meta 필드 서버측 정규화 — 손상된 렌더러의 거대 문자열/비유한 숫자가
+    // manifest 를 오염시키거나 enforceLru 의 byteSize 합산을 NaN 으로 무력화하는 것을 차단.
+    const safeStr = (v: unknown, cap: number): string => (typeof v === 'string' ? v.slice(0, cap) : '');
+    const safeNum = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
     const entry: SessionManifestEntry = {
       docHash: meta.docHash,
-      fileName: meta.fileName,
-      filePath: meta.filePath,
-      pageCount: meta.pageCount,
-      embedModel: meta.embedModel,
-      embedDim: meta.embedDim,
-      chunkCount: meta.chunkCount,
+      fileName: safeStr(meta.fileName, 512),
+      filePath: safeStr(meta.filePath, 4096),
+      pageCount: safeNum(meta.pageCount),
+      embedModel: typeof meta.embedModel === 'string' ? meta.embedModel.slice(0, 128) : null,
+      embedDim: meta.embedDim === null ? null : safeNum(meta.embedDim),
+      chunkCount: safeNum(meta.chunkCount),
       byteSize,
       createdAt: existing?.createdAt ?? nowIso,
       lastAccessed: nowIso,
