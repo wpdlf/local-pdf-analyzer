@@ -17,7 +17,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // environment: 'happy-dom',  // ← R30 에서 활성화 예정 (위 마이그레이션 노트 참고)
+    // 전역 environment 는 node 유지(기본값). DOM 필요 파일만 file pragma 로 happy-dom 선언 — 위 R37 P4-1 정책 참고.
     setupFiles: ['./test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     // 명시적 exclude — out/ 의 빌드 산출물에 source map 잔여물이 있어도 잡히지 않도록.

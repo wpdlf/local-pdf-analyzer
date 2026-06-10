@@ -246,6 +246,7 @@ export const _translations = {
   'recent.pages': { ko: '{count}페이지', en: '{count} pages' },
   'recent.indexed': { ko: '인덱스 {count}청크', en: '{count} chunks indexed' },
   'recent.openFail': { ko: '문서를 열 수 없습니다. 원본 파일이 이동/삭제되었을 수 있습니다.', en: 'Could not open the document. The original file may have been moved or deleted.' },
+  'recent.deleteFail': { ko: '세션을 삭제하지 못했습니다. 잠시 후 다시 시도하세요.', en: 'Could not delete the session. Please try again.' },
   'settings.dataSection': { ko: '세션 데이터', en: 'Session Data' },
   'settings.persistToggle': { ko: '세션·캐시 저장', en: 'Save sessions & cache' },
   'settings.persistDesc': { ko: '문서별 요약·Q&A·검색 인덱스를 저장해 다시 열 때 복원합니다 (재요약·재임베딩 없음).', en: 'Save summaries, Q&A, and the search index per document to restore them on reopen (no re-summarize/re-embed).' },

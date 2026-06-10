@@ -50,6 +50,36 @@ async function writeFileAtomic(filePath: string, data: string | Uint8Array): Pro
   }
 }
 
+/**
+ * R42 fix: manifest 의 개별 엔트리 형태를 신뢰하지 않고 정규화한다. loadManifest 는 entries 가
+ * 배열인지만 검사했고, 손상된(부분 쓰기/외부 편집) 엔트리의 비문자열 lastAccessed 는
+ * enforceLru/listSessions 의 `.localeCompare` 를 throw 시키고(try/catch 없는 session:list·stats
+ * 핸들러를 크래시), 비유한 byteSize 는 sessionStats 합산과 200MB LRU 캡을 NaN 으로 무력화한다.
+ * 유효 docHash 가 없는 엔트리는 폐기, 나머지는 writeSession 과 동일 규칙으로 좌표를 보정한다.
+ */
+function normalizeEntry(raw: unknown): SessionManifestEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const e = raw as Record<string, unknown>;
+  if (!isValidDocHash(e.docHash)) return null;
+  const safeStr = (v: unknown, cap: number): string => (typeof v === 'string' ? v.slice(0, cap) : '');
+  const safeNum = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  // 정렬·LRU 키는 반드시 문자열이어야 한다. 누락/손상 시 epoch 로 폴백 → 가장 오래된 것으로 취급(fail-safe).
+  const EPOCH = '1970-01-01T00:00:00.000Z';
+  const lastAccessed = typeof e.lastAccessed === 'string' ? e.lastAccessed : EPOCH;
+  return {
+    docHash: e.docHash,
+    fileName: safeStr(e.fileName, 512),
+    filePath: safeStr(e.filePath, 4096),
+    pageCount: safeNum(e.pageCount),
+    embedModel: typeof e.embedModel === 'string' ? e.embedModel.slice(0, 128) : null,
+    embedDim: typeof e.embedDim === 'number' && Number.isFinite(e.embedDim) ? e.embedDim : null,
+    chunkCount: safeNum(e.chunkCount),
+    byteSize: safeNum(e.byteSize),
+    createdAt: typeof e.createdAt === 'string' ? e.createdAt : lastAccessed,
+    lastAccessed,
+  };
+}
+
 export async function loadManifest(sessionsDir: string): Promise<SessionManifest> {
   try {
     const raw = await fsp.readFile(manifestPath(sessionsDir), 'utf-8');
@@ -57,7 +87,10 @@ export async function loadManifest(sessionsDir: string): Promise<SessionManifest
     if (!parsed || !Array.isArray(parsed.entries)) {
       return { schemaVersion: SESSION_SCHEMA_VERSION, entries: [] };
     }
-    return { schemaVersion: parsed.schemaVersion ?? SESSION_SCHEMA_VERSION, entries: parsed.entries };
+    const entries = parsed.entries
+      .map(normalizeEntry)
+      .filter((e): e is SessionManifestEntry => e !== null);
+    return { schemaVersion: parsed.schemaVersion ?? SESSION_SCHEMA_VERSION, entries };
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
       console.warn('[session] manifest load failed, resetting:', (err as Error)?.message);

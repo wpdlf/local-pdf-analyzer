@@ -52,11 +52,18 @@ export function RecentDocuments() {
 
   const handleDelete = useCallback(async (docHash: string) => {
     try {
-      await window.electronAPI.session.delete(docHash);
+      const result = await window.electronAPI.session.delete(docHash);
+      // R42 fix: 삭제 실패(잠긴 파일/권한)가 무음이면 refresh() 후 항목이 그대로 재등장해
+      // 사용자가 클릭이 먹히지 않았다고 오인한다. handleOpen 과 동일하게 배너로 수렴.
+      if (!result?.ok) {
+        useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: tr('recent.deleteFail') });
+      }
+    } catch {
+      useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: tr('recent.deleteFail') });
     } finally {
       void refresh();
     }
-  }, [refresh]);
+  }, [refresh, tr]);
 
   // 영속화 OFF 시에만 완전히 숨김. ON + 빈 목록은 안내 문구로 기능 발견성 확보(Design §5.4).
   if (!persistEnabled) {

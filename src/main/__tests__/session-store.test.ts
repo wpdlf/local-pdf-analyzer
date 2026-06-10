@@ -42,7 +42,7 @@ vi.mock('fs/promises', () => {
 
 import {
   writeSession, readSession, deleteSession, clearAll,
-  listSessions, sessionStats, enforceLru, isValidDocHash,
+  listSessions, sessionStats, enforceLru, isValidDocHash, loadManifest,
 } from '../session-store';
 
 const DIR = '/userData/sessions';
@@ -197,6 +197,48 @@ describe('R41 fixes (session-store)', () => {
     expect(e.chunkCount).toBe(0);     // Infinity → 0
     // byteSize 합산이 NaN 으로 오염되지 않음 → LRU 용량 캡 정상 동작
     expect(Number.isFinite((await sessionStats(DIR)).totalBytes)).toBe(true);
+  });
+});
+
+describe('R42 fixes (session-store)', () => {
+  // 손상된 manifest(부분 쓰기/외부 편집) 의 개별 엔트리를 loadManifest 가 정규화/폐기하는지 검증.
+  // 과거: entries 배열 여부만 검사 → 비문자열 lastAccessed 가 listSessions/enforceLru 의
+  // .localeCompare 를 throw(try/catch 없는 session:list·stats 핸들러 크래시), 비유한 byteSize 가
+  // sessionStats 합산·200MB LRU 캡을 NaN 으로 무력화.
+  const writeRawManifest = (entries: unknown[]) => {
+    V.files.set(`${DIR}/manifest.json`, JSON.stringify({ schemaVersion: 1, entries }));
+  };
+
+  it('비문자열 lastAccessed 엔트리가 있어도 listSessions/sessionStats 가 throw 하지 않음', async () => {
+    writeRawManifest([
+      { docHash: hashOf(1), lastAccessed: 12345, byteSize: 10 }, // lastAccessed 숫자(손상)
+      { docHash: hashOf(2), lastAccessed: '2026-01-01T00:00:00.000Z', byteSize: 20 },
+    ]);
+    // 과거엔 12345.localeCompare 로 throw → 이제 epoch 폴백으로 정상 정렬
+    const list = await listSessions(DIR);
+    expect(list).toHaveLength(2);
+    expect(list[0]!.docHash).toBe(hashOf(2)); // 최신이 먼저 (손상 엔트리는 epoch 로 밀림)
+    expect(Number.isFinite((await sessionStats(DIR)).totalBytes)).toBe(true);
+  });
+
+  it('비유한 byteSize 를 0 으로 정규화해 LRU 용량 합산 NaN 오염 차단', async () => {
+    writeRawManifest([
+      { docHash: hashOf(1), lastAccessed: '2026-01-01T00:00:00.000Z', byteSize: Number.NaN },
+      { docHash: hashOf(2), lastAccessed: '2026-01-02T00:00:00.000Z', byteSize: 100 },
+    ]);
+    const stats = await sessionStats(DIR);
+    expect(stats.totalBytes).toBe(100); // NaN → 0, 100 만 합산
+  });
+
+  it('유효 docHash 가 없는 엔트리는 폐기', async () => {
+    writeRawManifest([
+      { docHash: '../etc/passwd', lastAccessed: '2026-01-01T00:00:00.000Z', byteSize: 10 },
+      { lastAccessed: '2026-01-02T00:00:00.000Z' }, // docHash 누락
+      { docHash: hashOf(3), lastAccessed: '2026-01-03T00:00:00.000Z', byteSize: 30 },
+    ]);
+    const manifest = await loadManifest(DIR);
+    expect(manifest.entries).toHaveLength(1);
+    expect(manifest.entries[0]!.docHash).toBe(hashOf(3));
   });
 });
 

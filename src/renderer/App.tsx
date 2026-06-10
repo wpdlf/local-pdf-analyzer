@@ -134,7 +134,17 @@ export default function App() {
   // Main process에서 파일 드롭 수신 (IPC)
   useEffect(() => {
     const unsubscribe = window.electronAPI.onFileDropped(async (file) => {
-      await handlePdfData(file.data, file.name, file.path);
+      // R42 fix: OS 레벨 드래그-드롭(프로덕션 경로)에서 handlePdfData 가 throw 하면 async 콜백의
+      // 거부가 unhandledrejection 이 되어 ErrorBoundary 도 못 잡고 배너도 안 뜬다.
+      // 글로벌 drop / Ctrl+O 와 동일하게 setError 로 수렴.
+      try {
+        await handlePdfData(file.data, file.name, file.path);
+      } catch (err) {
+        useAppStore.getState().setError({
+          code: 'PDF_PARSE_FAIL',
+          message: (err as Error)?.message || t('uploader.cannotRead'),
+        });
+      }
     });
     return unsubscribe;
   }, []);
