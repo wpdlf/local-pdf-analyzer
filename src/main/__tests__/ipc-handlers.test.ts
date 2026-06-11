@@ -46,6 +46,8 @@ const H = vi.hoisted(() => ({
   },
   store: { read: vi.fn(), load: vi.fn(), save: vi.fn(), delete: vi.fn(), invalidate: vi.fn() },
   settings: { load: vi.fn(), save: vi.fn() },
+  // localeAwareDefaults 가 호출하는 app.getLocale — 테스트별 로캘 override 용
+  appLocale: vi.fn(() => 'ko-KR'),
   fsp: {
     writeFile: vi.fn(), readFile: vi.fn(), stat: vi.fn(), lstat: vi.fn(),
     // session-store(module-2) 가 사용하는 추가 메서드
@@ -63,6 +65,7 @@ vi.mock('electron', () => ({
     requestSingleInstanceLock: () => true,
     quit: vi.fn(),
     isPackaged: false,
+    getLocale: H.appLocale,
   },
   BrowserWindow: class {
     static getAllWindows(): unknown[] { return []; }
@@ -124,6 +127,7 @@ beforeEach(() => {
   // 구현은 매 테스트 재설정.
   H.settings.load.mockResolvedValue({ provider: 'ollama', ollamaBaseUrl: 'http://localhost:11434' });
   H.settings.save.mockResolvedValue(undefined);
+  H.appLocale.mockReturnValue('ko-KR');
   H.store.load.mockReturnValue(undefined);
   H.store.save.mockReturnValue(undefined);
   H.store.delete.mockReturnValue(undefined);
@@ -507,5 +511,33 @@ describe('file:open-path (최근목록 재오픈 보안 가드)', () => {
     expect(r.path).toBe('/docs/lecture.pdf');
     expect(r.name).toBe('lecture.pdf');
     expect(r.data).toBeInstanceOf(ArrayBuffer);
+  });
+});
+
+// 첫 실행 언어 감지: localeAwareDefaults 가 OS 로캘 기반 uiLanguage/summaryLanguage 기본값을
+// settings-store loadSettings 의 defaults 인자로 전달하는지 검증. 저장된 설정이 있으면
+// settings-store 의 spread 가 defaults 를 덮으므로(settings-store.test 에서 가드) 기존 사용자 무영향.
+describe('settings:get 로캘 기반 언어 기본값', () => {
+  const lastDefaults = () =>
+    H.settings.load.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+
+  it('ko 계열 로캘 → 기본값 ko 유지', async () => {
+    H.appLocale.mockReturnValue('ko-KR');
+    await invoke('settings:get');
+    expect(lastDefaults().uiLanguage).toBe('ko');
+    expect(lastDefaults().summaryLanguage).toBe('ko');
+  });
+
+  it('비-ko 로캘(en-US) → uiLanguage/summaryLanguage 기본값 en', async () => {
+    H.appLocale.mockReturnValue('en-US');
+    await invoke('settings:get');
+    expect(lastDefaults().uiLanguage).toBe('en');
+    expect(lastDefaults().summaryLanguage).toBe('en');
+  });
+
+  it('getLocale throw 시 ko 로 안전 fallback', async () => {
+    H.appLocale.mockImplementation(() => { throw new Error('locale unavailable'); });
+    await invoke('settings:get');
+    expect(lastDefaults().uiLanguage).toBe('ko');
   });
 });

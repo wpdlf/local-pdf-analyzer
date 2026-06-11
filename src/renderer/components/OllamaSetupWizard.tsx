@@ -12,7 +12,16 @@ export function OllamaSetupWizard() {
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
   const setView = useAppStore((s) => s.setView);
   const setError = useAppStore((s) => s.setError);
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
   const t = useT();
+
+  // 설치 화면은 헤더 없이 단독 렌더되므로 설정 패널의 언어 라디오에 접근할 수 없다.
+  // OS 로캘 감지(localeAwareDefaults)가 틀렸을 때의 탈출구로 토글을 직접 제공.
+  const switchLanguage = (lang: 'ko' | 'en') => {
+    if (settings.uiLanguage === lang) return;
+    updateSettings({ ...settings, uiLanguage: lang });
+  };
   const doneTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // 사용자가 진행 중 취소를 요청하면 true. 각 await 뒤에서 체크되어 다음 단계 진입을 차단.
   // 이미 전송된 install/pullModel IPC 는 Main 에서 계속 실행되지만, UI 는 사용자를
@@ -191,7 +200,25 @@ export function OllamaSetupWizard() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full p-8">
+    <div className="relative flex flex-col items-center justify-center h-full p-8">
+      <div className="absolute top-4 right-4 flex items-center gap-1 text-sm" role="group" aria-label="Language">
+        {(['ko', 'en'] as const).map((lang, i) => (
+          <span key={lang} className="flex items-center gap-1">
+            {i > 0 && <span className="text-gray-300 dark:text-gray-600">|</span>}
+            <button
+              onClick={() => switchLanguage(lang)}
+              aria-pressed={settings.uiLanguage === lang}
+              className={`px-1.5 py-0.5 rounded transition-colors ${
+                settings.uiLanguage === lang
+                  ? 'font-semibold text-blue-600 dark:text-blue-400'
+                  : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'
+              }`}
+            >
+              {lang === 'ko' ? '한국어' : 'English'}
+            </button>
+          </span>
+        ))}
+      </div>
       <h1 className="text-2xl font-bold mb-6 text-gray-800 dark:text-white">
         {t('setup.title')}
       </h1>

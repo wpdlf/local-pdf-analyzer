@@ -32,6 +32,7 @@ vi.stubGlobal('window', Object.assign(window, {
 
 import { OllamaSetupWizard } from '../OllamaSetupWizard';
 import { t } from '../../lib/i18n';
+import { useAppStore } from '../../lib/store';
 import {
   INITIAL_INSTALL_MODELS,
   OPTIONAL_KOREAN_MODEL,
@@ -71,6 +72,23 @@ describe('OllamaSetupWizard 선택 설치', () => {
 
   afterEach(() => {
     cleanup();
+    // 언어 토글 테스트가 store 싱글톤의 uiLanguage 를 바꾸므로 매 테스트 후 ko 로 복원
+    useAppStore.setState((s) => ({ settings: { ...s.settings, uiLanguage: 'ko' as const } }));
+  });
+
+  it('welcome 우상단 토글로 영어 전환 — 문구 즉시 영어로, 다시 한국어 복귀', async () => {
+    const user = userEvent.setup();
+    render(<OllamaSetupWizard />);
+
+    await user.click(screen.getByText('English'));
+    expect(useAppStore.getState().settings.uiLanguage).toBe('en');
+    // useT() 가 store 구독이므로 재렌더 즉시 영어 문구 노출
+    expect(screen.getByText(t('setup.start'))).toBeTruthy();
+    expect(t('setup.start')).toBe('Start setup');
+
+    await user.click(screen.getByText('한국어'));
+    expect(useAppStore.getState().settings.uiLanguage).toBe('ko');
+    expect(t('setup.start')).toBe('설정 시작');
   });
 
   it('welcome 목록에 exaone3.5 가 기본 제외되고, 체크하면 나타난다', async () => {

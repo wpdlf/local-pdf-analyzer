@@ -75,8 +75,20 @@ const defaultSettings = {
 
 // R34 P2: VALID_SETTINGS_KEYS_SET 은 settings-keys.ts 에서 import (단일 출처).
 
+// 첫 실행(설정 파일 부재 또는 해당 키 미저장) 시 OS 로캘 기반 언어 기본값 — ko 계열 로캘이
+// 아니면 UI/요약 언어 모두 en. 기존 사용자의 저장된 설정은 _loadSettings 의 spread 순서상
+// 항상 우선하므로 영향 없음. app.getLocale() 은 ready 이후에만 유효하나 loadSettings 는
+// IPC 핸들러 경유로만 호출되므로 안전. 실패 시 기존 기본값(ko) 유지.
+function localeAwareDefaults(): Record<string, unknown> {
+  let lang: 'ko' | 'en' = 'ko';
+  try {
+    lang = app.getLocale().toLowerCase().startsWith('ko') ? 'ko' : 'en';
+  } catch { /* getLocale 실패 시 ko 유지 */ }
+  return { ...defaultSettings, uiLanguage: lang, summaryLanguage: lang };
+}
+
 async function loadSettings(): Promise<Record<string, unknown>> {
-  return _loadSettings(settingsPath, defaultSettings, VALID_SETTINGS_KEYS_SET);
+  return _loadSettings(settingsPath, localeAwareDefaults(), VALID_SETTINGS_KEYS_SET);
 }
 
 async function saveSettings(settings: Record<string, unknown>): Promise<void> {
