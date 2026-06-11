@@ -67,8 +67,10 @@ export default function App() {
 
       setBgModelLoading(true);
       // 실패 시에도 직전까지 성공한 모델 목록을 메시지에 포함해 "부분 성공이 실패 토스트에 가려지는"
-      // UX 문제를 해결. 예: gemma3 설치 성공 후 exaone3.5 실패 시
-      // "모델 다운로드 실패: exaone3.5 — ... (설치 완료: gemma3)"
+      // UX 문제를 해결. 예: gemma3 설치 성공 후 nomic-embed-text 실패 시
+      // "모델 다운로드 실패: nomic-embed-text — ... (설치 완료: gemma3)"
+      // 주의: 선택 설치 모델(OPTIONAL_KOREAN_MODEL)은 INITIAL_INSTALL_MODELS 에 없으므로
+      // 여기서 재설치되지 않는다 — 사용자의 첫 설치 선택(미설치)을 존중.
       const succeeded: string[] = [];
       for (const model of missing) {
         if (aborted) return;

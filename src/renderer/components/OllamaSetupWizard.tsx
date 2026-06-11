@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import type { AppErrorCode } from '../types';
-import { INITIAL_INSTALL_MODELS } from '../types';
+import { INITIAL_INSTALL_MODELS, OPTIONAL_KOREAN_MODEL } from '../types';
 
 type SetupStep = 'welcome' | 'progress' | 'done' | 'error';
 
@@ -22,18 +22,27 @@ export function OllamaSetupWizard() {
   const [progressMessage, setProgressMessage] = useState('');
   const [errorCode, setErrorCode] = useState<AppErrorCode | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  // 한국어 특화 모델(exaone3.5, 약 4.8GB) 선택 설치 — 기본 해제로 첫 설치 용량을 줄인다.
+  // 체크박스는 welcome 단계에서만 노출되므로 진행 중 설치 목록이 바뀌지 않는다.
+  const [includeKorean, setIncludeKorean] = useState(false);
+  const installModels = useMemo<string[]>(
+    () => (includeKorean ? [...INITIAL_INSTALL_MODELS, OPTIONAL_KOREAN_MODEL] : [...INITIAL_INSTALL_MODELS]),
+    [includeKorean],
+  );
   // 상태만 state 로 관리하고 label 은 매 렌더 시 t 로 계산 — UI 언어 전환이 즉시 반영됨.
-  const [itemStatuses, setItemStatuses] = useState<SetupItemStatus[]>(() => [
-    'pending',
-    'pending',
-    ...INITIAL_INSTALL_MODELS.map(() => 'pending' as SetupItemStatus),
-  ]);
+  // 길이는 startSetup 진입 시 installModels 기준으로 채워지고, 그 전에는 ?? 'pending' fallback.
+  const [itemStatuses, setItemStatuses] = useState<SetupItemStatus[]>([]);
+  const modelItemLabel = (m: string) => {
+    if (m === 'nomic-embed-text') return t('setup.downloadEmbed', { model: m });
+    if (m === OPTIONAL_KOREAN_MODEL) return t('setup.downloadKorean', { model: m });
+    return t('setup.downloadBase', { model: m });
+  };
   // noUncheckedIndexedAccess: itemStatuses[N] 은 T|undefined 로 좁혀지므로 'pending' fallback.
   const items = [
     { label: t('setup.ollamaCheck'), status: itemStatuses[0] ?? 'pending' },
     { label: t('setup.ollamaStart'), status: itemStatuses[1] ?? 'pending' },
-    ...INITIAL_INSTALL_MODELS.map((m, i) => ({
-      label: m === 'nomic-embed-text' ? t('setup.downloadEmbed', { model: m }) : t('setup.downloadKorean', { model: m }),
+    ...installModels.map((m, i) => ({
+      label: modelItemLabel(m),
       status: itemStatuses[2 + i] ?? 'pending',
     })),
   ];
@@ -73,7 +82,7 @@ export function OllamaSetupWizard() {
     setStep('progress');
     setErrorCode(null);
     setErrorMsg('');
-    setItemStatuses((prev) => prev.map(() => 'pending' as SetupItemStatus));
+    setItemStatuses(Array.from({ length: 2 + installModels.length }, () => 'pending' as SetupItemStatus));
 
     try {
       updateItem(0, 'running');
@@ -110,9 +119,9 @@ export function OllamaSetupWizard() {
       const existingModels = await window.electronAPI.ollama.listModels();
       if (cancelledRef.current) return;
 
-      for (let i = 0; i < INITIAL_INSTALL_MODELS.length; i++) {
+      for (let i = 0; i < installModels.length; i++) {
         if (cancelledRef.current) return;
-        const modelName = INITIAL_INSTALL_MODELS[i];
+        const modelName = installModels[i];
         // noUncheckedIndexedAccess: 인덱스 가드 — i < length 이미 검사했으나 컴파일러 좁힘 안됨.
         if (!modelName) continue;
         const itemIndex = 2 + i;
@@ -126,7 +135,9 @@ export function OllamaSetupWizard() {
 
         const modelLabel = modelName === 'nomic-embed-text'
           ? t('setup.downloadingModelLabel.embed', { model: modelName })
-          : t('setup.downloadingModelLabel.korean', { model: modelName });
+          : modelName === OPTIONAL_KOREAN_MODEL
+            ? t('setup.downloadingModelLabel.korean', { model: modelName })
+            : t('setup.downloadingModelLabel.base', { model: modelName });
         setProgressMessage(t('setup.downloadingModel', { label: modelLabel }));
         const pullResult = await window.electronAPI.ollama.pullModel(modelName);
         if (cancelledRef.current) return;
@@ -189,7 +200,7 @@ export function OllamaSetupWizard() {
         <div className="text-center">
           <p className="text-gray-600 dark:text-gray-300 mb-2">{t('setup.desc')}</p>
           <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">{t('setup.autoInstall')}</p>
-          <div className="text-left mb-6 space-y-2">
+          <div className="text-left mb-4 space-y-2">
             {items.map((item, i) => (
               <div key={i} className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
                 <span>{statusIcon(item.status)}</span>
@@ -197,6 +208,22 @@ export function OllamaSetupWizard() {
               </div>
             ))}
           </div>
+          <label className="flex items-start gap-2 text-left mb-6 max-w-md mx-auto p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includeKorean}
+              onChange={(e) => setIncludeKorean(e.target.checked)}
+              className="mt-1 accent-blue-500"
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+                {t('setup.koreanOption', { model: OPTIONAL_KOREAN_MODEL })}
+              </span>
+              <span className="block text-xs text-gray-500 dark:text-gray-400 mt-1">
+                {t('setup.koreanOptionDesc')}
+              </span>
+            </span>
+          </label>
           <button onClick={startSetup} className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-lg transition-colors">
             {t('setup.start')}
           </button>

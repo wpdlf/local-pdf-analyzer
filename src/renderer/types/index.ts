@@ -174,8 +174,14 @@ export interface AppError {
 // 한국어 성능이 우수한 Ollama 추천 모델
 export const KOREAN_RECOMMENDED_MODELS = ['gemma3', 'qwen2.5', 'exaone3.5'];
 
-// 초기 설치 시 함께 다운로드할 모델 (한국어 PDF 요약 특화)
-export const INITIAL_INSTALL_MODELS = ['gemma3', 'exaone3.5', 'nomic-embed-text'] as const;
+// 초기 설치 시 반드시 다운로드할 모델 (범용 요약 + RAG 임베딩, 약 3.6GB).
+// exaone3.5(약 4.8GB)는 한국어 특화 품질 부스터라 첫 설치에서 선택 옵션으로 분리 —
+// App.tsx 의 ensureDefaultModels 백그라운드 재설치 대상에서도 제외된다.
+export const INITIAL_INSTALL_MODELS = ['gemma3', 'nomic-embed-text'] as const;
+
+// 첫 설치 마법사에서 선택 설치로 제공하는 한국어 특화 모델.
+// 미설치 시에도 설정 → 모델 관리에서 언제든 추가 가능.
+export const OPTIONAL_KOREAN_MODEL = 'exaone3.5';
 
 // ─── 세션 영속화 (session-persistence) ───
 // Design Ref: §3 — 콘텐츠 해시 기준 세션·인덱스 캐싱. 본문 도메인 타입은 여기,
