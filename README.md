@@ -192,7 +192,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | API key error | Verify the key format in Settings. Claude: `sk-ant-...`, OpenAI: `sk-...`, Gemini: `AIza...` |
 | Claude/OpenAI/Gemini unavailable | Save the API key first, then select the provider |
 | Gemini "response was blocked" error | Gemini's safety filter blocked the document content, or the output budget was exhausted. Try another model (e.g. gemini-2.5-pro) or split the document |
-| Gemini "rate limit exceeded" | The free tier has a low per-minute request limit. Retry shortly, or disable image analysis for image-heavy PDFs |
+| Gemini "rate limit exceeded" | The free tier has a low per-minute request limit. The app automatically lowers concurrency and retries up to twice with backoff; if it persists, retry shortly or disable image analysis for image-heavy PDFs |
 | Q&A can't answer | If the RAG badge is missing, install the embedding model with `ollama pull nomic-embed-text`. In keyword mode, include specific terms in your question |
 | RAG indexing doesn't run | Make sure first-run setup completed (nomic-embed-text auto-install). Manual install: `ollama pull nomic-embed-text` |
 | Answers seem to generate twice | Answer verification triggers one extra LLM call when grounding is weak; you can turn off the "Answer verification" toggle in Settings |

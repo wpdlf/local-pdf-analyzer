@@ -275,8 +275,12 @@ async function ocrFallback(
   // 페이지 수가 많아 어차피 scale 이 축소되는 큰 PDF (101+) 에서는 캔버스가 작아 8 유지가
   // 안전하지만, 50-100 페이지 PDF 는 scale=1.5 라 캔버스가 여전히 크므로 4 로 축소하여
   // 저사양 환경(4GB RAM 노트북) 에서의 OOM 위험을 낮춘다. (R32 Surface 2 P3)
+  // R44(R43 후속 M5): Gemini 는 무료 티어 분당 한도가 낮아 클라우드 일괄 8 대신 3 으로 하향
+  // (429 는 ai-service 의 retryOn429 백오프가 추가 방어). use-summarize Vision 배치와 동일 정책.
   const provider = useAppStore.getState().settings.provider;
-  const BATCH_SIZE = provider === 'ollama' ? 3 : (pageCount > 50 && pageCount <= 100 ? 4 : 8);
+  const BATCH_SIZE = provider === 'ollama' || provider === 'gemini'
+    ? 3
+    : (pageCount > 50 && pageCount <= 100 ? 4 : 8);
   // 대용량 PDF: 50+ 페이지 시 scale 자동 축소
   const scale = pageCount > 100 ? 1.0 : pageCount > 50 ? 1.5 : 2.0;
 

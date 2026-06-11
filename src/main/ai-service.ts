@@ -27,6 +27,43 @@ export function geminiModelUrl(model: string, method: string, sse: boolean): str
   return `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:${method}${sse ? '?alt=sse' : ''}`;
 }
 
+/** abort 가능한 sleep — signal 발화 시 즉시 reject 하고 타이머/리스너를 정리한다. */
+function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new Error('Aborted')); return; }
+    const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(timer); cleanup(); reject(new Error('Aborted')); };
+    const cleanup = () => signal?.removeEventListener('abort', onAbort);
+    signal?.addEventListener('abort', onAbort);
+  });
+}
+
+/**
+ * R44(R43 후속 M5): HTTP 429 한정 지수 백오프 재시도 (기본 2s → 4s, 최대 2회).
+ * Gemini 무료 티어는 분당 요청 한도가 낮아 Vision/OCR 배치에서 429 가 흔한데,
+ * 이전엔 즉시 실패해 이미지 설명이 조용히 누락됐다. 429 외 에러는 즉시 전파,
+ * 사용자 취소(signal)는 대기 중에도 즉시 중단.
+ * @internal 테스트 노출용 export
+ */
+export async function retryOn429<T>(
+  fn: () => Promise<T>,
+  signal?: AbortSignal,
+  retries = 2,
+  baseDelayMs = 2000,
+): Promise<T> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = (err as Error & { status?: number })?.status;
+      if (status !== 429 || attempt >= retries) throw err;
+      await sleepWithAbort(baseDelayMs * Math.pow(2, attempt), signal);
+      attempt++;
+    }
+  }
+}
+
 const activeRequests = new Map<string, { abort: () => void; createdAt: number; startedAt: number }>();
 let nextRequestSeq = 0; // 단조 증가 카운터 — 같은 requestId 구별용
 
@@ -872,10 +909,14 @@ async function callVision(
         }],
         generationConfig: { maxOutputTokens: config.maxTokens },
       });
-      const result = await httpPost(geminiModelUrl(model || 'gemini-3.5-flash', 'generateContent', false), {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      }, body, config.timeoutMs, signal);
+      // R44: 무료 티어 429 시 지수 백오프 재시도 — 이미지 설명/OCR 페이지 무음 누락 방지
+      const result = await retryOn429(
+        () => httpPost(geminiModelUrl(model || 'gemini-3.5-flash', 'generateContent', false), {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        }, body, config.timeoutMs, signal),
+        signal,
+      );
       const parsed = JSON.parse(result);
       const parts = parsed.candidates?.[0]?.content?.parts;
       const text = Array.isArray(parts) ? parts.map((p: { text?: string }) => p?.text || '').join('') : '';
@@ -979,7 +1020,8 @@ function httpPost(
             detail = parsed.error?.message || parsed.error || parsed.message || detail;
           } catch { /* 비 JSON 응답은 그대로 사용 */ }
           console.error(`Vision API error: HTTP ${errStatus}${truncated ? ' (body truncated)' : ''}`, detail);
-          safeReject(new Error(`Vision API 요청 실패: HTTP ${errStatus}`));
+          // R44: status 부착 — retryOn429 가 429 만 선별 재시도할 수 있도록
+          safeReject(Object.assign(new Error(`Vision API 요청 실패: HTTP ${errStatus}`), { status: errStatus }));
         };
         // 에러 바디 사이즈는 바이트 기준으로 제한 — chunk 개수 기준은 공격적/버그 서버가
         // 초대형 chunk 를 보낼 때 실질 상한이 없어짐. 성공 경로(10MB)와 달리 에러는
@@ -1177,10 +1219,14 @@ async function embedGemini(
         content: { parts: [{ text: t }] },
       })),
     });
-    const result = await httpPost(geminiModelUrl(useModel, 'batchEmbedContents', false), {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey,
-    }, body, 60000, signal);
+    // R44: 무료 티어 429 시 지수 백오프 재시도 (RAG 인덱싱 배치가 한도에 걸려도 자가 회복)
+    const result = await retryOn429(
+      () => httpPost(geminiModelUrl(useModel, 'batchEmbedContents', false), {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      }, body, 60000, signal),
+      signal,
+    );
     const parsed = JSON.parse(result);
     if (!parsed.embeddings || !Array.isArray(parsed.embeddings)) {
       throw new Error('Gemini 임베딩 응답 형식 오류');

@@ -24,6 +24,7 @@ import {
   abortGenerate,
   cleanupAiService,
   __activeRequestCount,
+  retryOn429,
 } from '../ai-service';
 
 function makeReq() {
@@ -261,6 +262,81 @@ describe('analyzeImage (callVision → httpPost)', () => {
 
   it('gemini vision — apiKey 없으면 throw', async () => {
     await expect(analyzeImage('img', 'gemini', 'm', 'x', undefined)).rejects.toThrow(/Gemini API 키가 필요/);
+  });
+
+  // R44(R43 후속 M5): 무료 티어 429 → 백오프 재시도 후 성공 (이미지 설명 무음 누락 방지)
+  it('gemini vision 429 1회 → 백오프 재시도로 성공', async () => {
+    vi.useFakeTimers();
+    try {
+      M.httpsRequest
+        .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+          const req = makeReq();
+          queueMicrotask(() => {
+            const res = makeRes({ statusCode: 429 });
+            cb(res);
+            queueMicrotask(() => { res.emit('data', Buffer.from('{"error":{"message":"quota"}}')); res.emit('end'); });
+          });
+          return req;
+        })
+        .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+          const req = makeReq();
+          queueMicrotask(() => {
+            const res = makeRes({ statusCode: 200 });
+            cb(res);
+            queueMicrotask(() => {
+              res.emit('data', Buffer.from(JSON.stringify({ candidates: [{ content: { parts: [{ text: '재시도 성공' }] } }] })));
+              res.emit('end');
+            });
+          });
+          return req;
+        });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const p = analyzeImage('img', 'gemini', 'm', 'x', 'gkey');
+      await vi.advanceTimersByTimeAsync(2100); // 1차 백오프(2s) 경과
+      expect(await p).toBe('재시도 성공');
+      expect(M.httpsRequest).toHaveBeenCalledTimes(2);
+      errSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// R44(R43 후속 M5): 429 한정 지수 백오프 재시도 헬퍼
+describe('retryOn429', () => {
+  const err429 = () => Object.assign(new Error('HTTP 429'), { status: 429 });
+
+  it('429 두 번 후 성공 → 결과 반환 (3회 호출)', async () => {
+    let calls = 0;
+    const fn = vi.fn(async () => {
+      calls++;
+      if (calls < 3) throw err429();
+      return 'ok';
+    });
+    expect(await retryOn429(fn, undefined, 2, 1)).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it('429 아닌 에러는 즉시 전파 (재시도 없음)', async () => {
+    const fn = vi.fn(async () => { throw Object.assign(new Error('HTTP 500'), { status: 500 }); });
+    await expect(retryOn429(fn, undefined, 2, 1)).rejects.toThrow('HTTP 500');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('재시도 소진 시 마지막 429 전파', async () => {
+    const fn = vi.fn(async () => { throw err429(); });
+    await expect(retryOn429(fn, undefined, 2, 1)).rejects.toThrow('HTTP 429');
+    expect(fn).toHaveBeenCalledTimes(3); // 최초 1 + 재시도 2
+  });
+
+  it('백오프 대기 중 abort → 즉시 중단', async () => {
+    const controller = new AbortController();
+    const fn = vi.fn(async () => { throw err429(); });
+    const p = retryOn429(fn, controller.signal, 2, 60000); // 60s 대기 — abort 가 끊어야 함
+    await new Promise((r) => setTimeout(r, 5)); // 첫 호출 실패 → 대기 진입
+    controller.abort();
+    await expect(p).rejects.toThrow('Aborted');
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
 
