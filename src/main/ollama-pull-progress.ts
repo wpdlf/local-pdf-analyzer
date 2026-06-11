@@ -36,8 +36,8 @@ export interface MainProgressEvent {
 
 /** ollama pull 원본 출력 한 줄을 구조화 진행 이벤트로 변환 */
 export function toProgressEvent(line: string): MainProgressEvent {
-  // "pulling abc123..." → 퍼센트 추출
-  const pullMatch = line.match(/^pulling\s+\S+.*?(\d+%)/);
+  // "pulling abc123..." → 퍼센트 추출 (R44 F7: 다른 매처와 동일하게 대소문자 무관)
+  const pullMatch = line.match(/^pulling\s+\S+.*?(\d+%)/i);
   if (pullMatch) return { key: 'pulling', params: { percent: pullMatch[1] ?? '' } };
   // "pulling manifest"
   if (/^pulling\s+manifest/i.test(line)) return { key: 'pullingManifest' };

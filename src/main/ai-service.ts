@@ -561,6 +561,7 @@ function streamRequest(
           const finalizeHttpError = () => {
             if (errDone) return;
             errDone = true;
+            clearTimeout(errBodyTimer);
             const sanitized = sanitizeApiErrorBody(
               Buffer.concat(errChunks).toString('utf-8').slice(0, 2000),
             );
@@ -569,12 +570,20 @@ function streamRequest(
               const p = JSON.parse(sanitized);
               detail = p.error?.message || p.error || p.message || detail;
             } catch { /* 비 JSON 응답은 그대로 사용 */ }
+            // R44 F2: 매퍼 throw 가 res 이벤트 핸들러 내 uncaught exception 으로 전파되지
+            // 않도록 가드 — 실패 시 generic HTTP 에러로 fallback.
+            let mapped: Error | null = null;
+            try {
+              mapped = config.mapHttpError!(errStatus, String(detail));
+            } catch { /* 매퍼 결함 — generic fallback */ }
             safeDeleteRequest();
-            safeReject(
-              config.mapHttpError!(errStatus, String(detail))
-                ?? new Error(`API 요청 실패: HTTP ${errStatus}`),
-            );
+            safeReject(mapped ?? new Error(`API 요청 실패: HTTP ${errStatus}`));
           };
+          // R44 I-2: 에러 바디 수집에 전용 타이머 — 서버가 4xx 헤더만 보내고 바디를 멈추면
+          // 기존엔 req.setTimeout(300s)/renderer IPC 타임아웃(120s)까지 generic 에러로
+          // 강등됐다. 에러 바디는 보통 수백 바이트이므로 8초면 충분하고, 만료 시 수집된
+          // 부분 바디로 즉시 매핑한다 (R43 이전의 "즉시 reject" 보장 복원).
+          const errBodyTimer = setTimeout(() => { res.destroy(); finalizeHttpError(); }, 8000);
           const MAX_ERR_BODY = 64 * 1024;
           res.on('data', (c: Buffer) => {
             if (errDone) return;

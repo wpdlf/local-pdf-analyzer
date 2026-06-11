@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // v0.18.5 T2 — `_translations` 가 export 되어 런타임 parity 검증이 가능해졌다.
 // 이전에는 소스 파일을 regex 로 파싱해 "ko:"/"en:" 존재 여부만 확인했기 때문에
@@ -124,19 +126,26 @@ describe('t() 런타임 동작', () => {
 
 // R44(R43 후속 F3/F8): main 구조화 메시지 번역 헬퍼 + 키 동기화 가드
 describe('translateMainProgress / translateMainError', () => {
-  it('main 의 toProgressEvent 키가 전부 mainprog.* 로 정의돼 있다 (drift 가드)', async () => {
+  it('main 이 방출하는 진행/에러 키 전수가 i18n 에 정의돼 있다 (R44: 소스 정적 스캔 drift 가드)', async () => {
+    // R44 F3: 이전의 하드코딩 키 목록은 main 에 새 키가 추가되는 방향의 drift 를 못 잡았다.
+    // preload-shape 와 동일하게 main 소스를 정적으로 읽어 방출 집합을 추출, 양방향 가드.
     const { _translations } = await import('../i18n');
-    // ollama-pull-progress.toProgressEvent + ollama-manager sendProgress 가 방출하는 전체 키 집합.
-    // 한쪽만 갱신하면 사용자가 i18n missing-key fallback(마지막 segment)을 보게 된다.
-    const mainKeys = [
-      'pulling', 'pullingManifest', 'verifying', 'writing', 'success', 'preparing',
-      'downloadingInstaller', 'verifyingDownload', 'installerWindow', 'confirmingInstall',
-      'installingBrew', 'brewFallback',
-    ];
-    for (const k of mainKeys) {
+    const managerSrc = readFileSync(resolve(import.meta.dirname, '../../../main/ollama-manager.ts'), 'utf-8');
+    const progressSrc = readFileSync(resolve(import.meta.dirname, '../../../main/ollama-pull-progress.ts'), 'utf-8');
+
+    const progKeys = new Set<string>();
+    for (const m of managerSrc.matchAll(/sendProgress\(\{\s*key:\s*'([A-Za-z]+)'/g)) progKeys.add(m[1]!);
+    for (const m of progressSrc.matchAll(/return\s*\{\s*key:\s*'([A-Za-z]+)'/g)) progKeys.add(m[1]!);
+    progKeys.delete('raw'); // translateMainProgress 가 원문 passthrough 로 특수 처리
+    expect(progKeys.size, '추출 실패 의심 — 정규식/소스 구조 확인').toBeGreaterThanOrEqual(12);
+    for (const k of progKeys) {
       expect(_translations[`mainprog.${k}` as keyof typeof _translations], `mainprog.${k} 미정의`).toBeTruthy();
     }
-    for (const k of ['pullInProgress', 'pullTimeout', 'pullFailed']) {
+
+    const errKeys = new Set<string>();
+    for (const m of managerSrc.matchAll(/errorKey:\s*'([A-Za-z]+)'/g)) errKeys.add(m[1]!);
+    expect(errKeys.size, '추출 실패 의심').toBeGreaterThanOrEqual(4); // pullInProgress/Timeout/Failed/Cancelled
+    for (const k of errKeys) {
       expect(_translations[`mainerr.${k}` as keyof typeof _translations], `mainerr.${k} 미정의`).toBeTruthy();
     }
   });

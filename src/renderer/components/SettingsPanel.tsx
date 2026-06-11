@@ -267,6 +267,9 @@ export function SettingsPanel() {
         setOllamaStatus(status);
         setPullModelName('');
         setPullProgress('');
+      } else if (result.errorKey === 'pullCancelled') {
+        // R44 I-1: 사용자가 직접 취소한 경우 — 에러 배너 없이 조용히 정리
+        setPullProgress('');
       } else {
         // v0.18.4 H2: 에러는 isPulling 과 독립된 pullError 로 표시해 finally 의
         // setIsPulling(false) 후에도 사용자에게 계속 보이도록 함.
@@ -300,9 +303,14 @@ export function SettingsPanel() {
     const models = ollamaModels.map((m) => ({ label: m, value: m }));
     // R43 F10: 정확 일치 대신 콜론 경계 매칭 — 첫 설치 직후 settings.model='gemma3' 와
     // listModels 의 'gemma3:latest' 가 불일치해 "(설치 안 됨)" 오표시되던 문제 해소.
-    // 위자드/ensureDefaultModels 의 매칭 의미론(matchesModel)과 통일.
-    if (draft.model && !ollamaModels.some((m) => matchesModel(m, draft.model))) {
-      models.unshift({ label: `${draft.model} (${t('settings.notInstalled')})`, value: draft.model });
+    // R44 I-3: 단, controlled <select> 는 value('gemma3')와 일치하는 <option> 이 없으면
+    // 빈칸으로 표시되므로, 콜론 매칭 히트 시에도 설치본 라벨의 alias 옵션을 추가해
+    // value 일치를 보장한다 (정확 일치면 기존 옵션이 이미 매칭되므로 불필요).
+    if (draft.model && !ollamaModels.includes(draft.model)) {
+      const installedMatch = ollamaModels.find((m) => matchesModel(m, draft.model));
+      models.unshift(installedMatch
+        ? { label: installedMatch, value: draft.model }
+        : { label: `${draft.model} (${t('settings.notInstalled')})`, value: draft.model });
     }
     return models;
   })();

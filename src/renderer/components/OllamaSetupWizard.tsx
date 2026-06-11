@@ -92,7 +92,8 @@ export function OllamaSetupWizard() {
 
   const handleCancel = () => {
     cancelledRef.current = true;
-    setProgress({ type: 'key', key: 'setup.cancelling' });
+    // R44 F6: 이전의 "취소 중..." 진행 메시지는 setView 동기 언마운트로 0프레임 표시되던
+    // dead state 였고, 문구("백그라운드에서 완료됩니다")도 실제 중단 동작과 모순이라 제거.
     // R44 F9: 진행 중인 모델 다운로드 실제 중단 (best-effort — pull 미진행 시 no-op)
     window.electronAPI.ollama.cancelPull().catch(() => { /* 무시 */ });
     // 설정 화면으로 이동 — 사용자가 다른 provider (Claude/OpenAI) 선택 가능

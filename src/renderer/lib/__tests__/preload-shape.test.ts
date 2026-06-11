@@ -39,7 +39,7 @@ describe('preload contextBridge shape (R34 P2)', () => {
   it('IPC channel 이름 — 모든 known channel 이 source 에 존재', () => {
     const expectedChannels = [
       'ollama:status', 'ollama:install', 'ollama:start', 'ollama:stop',
-      'ollama:pull-model', 'ollama:list-models',
+      'ollama:pull-model', 'ollama:cancel-pull', 'ollama:list-models',
       'ai:generate', 'ai:abort', 'ai:check-available',
       'ai:analyze-image', 'ai:ocr-page', 'ai:embed', 'ai:check-embed-model',
       'ai:token', 'ai:done',

@@ -79,6 +79,13 @@ export default function App() {
         setBgModelSync(t('app.downloadingModel', { model }));
         const result = await window.electronAPI.ollama.pullModel(model);
         if (aborted) return;
+        if (result.errorKey === 'pullCancelled') {
+          // R44 I-1: 사용자 취소(설치 화면/설정의 취소 버튼이 백그라운드 보정 pull 을 죽인 경우
+          // 포함) — 실패 토스트 없이 조용히 중단. 다음 실행 시 ensureDefaultModels 가 재보정.
+          setBgModelLoading(false);
+          setBgModelSync(null);
+          return;
+        }
         if (!result.success) {
           if (aborted) return;
           setBgModelLoading(false);

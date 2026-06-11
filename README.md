@@ -166,7 +166,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Render error recovery — unexpected UI errors offer a "Try again" button, no restart needed
 
 **Quality assurance**
-- 800 unit tests + CI quality gates, plus a 4-agent parallel QA round on every release
+- 816 unit tests + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -181,7 +181,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 
 | Symptom | Solution |
 |---------|----------|
-| Ollama installation fails | Install manually from [ollama.com](https://ollama.com), or use the wizard's "Cancel and use another provider" button to switch to Claude/OpenAI |
+| Ollama installation fails | Install manually from [ollama.com](https://ollama.com), or use the wizard's "Cancel and use another provider" button to switch to Claude/OpenAI/Gemini |
 | Poor Korean summary quality | Install and select the Korean-specialized model (exaone3.5) under Settings → Model Management. It is an optional install during first-run setup and produces better Korean summaries than the base model (gemma3) |
 | Summarization is slow | Switch to a lighter model (e.g. phi3) or reduce the chunk size in Settings |
 | Text extraction fails | Make sure "Scanned PDF OCR" is enabled in Settings; a Vision model (llava, Claude, GPT-4o, Gemini) is required |
@@ -220,7 +220,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | State management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
-| Testing | Vitest, 800 unit tests / 40 files (renderer·shared 455 + main 345) + `tsc --noEmit` type check + CI coverage gates (55/49/56/58) |
+| Testing | Vitest, 816 unit tests / 42 files (renderer·shared 463 + main 353) + `tsc --noEmit` type check + CI coverage gates (57/51/58/59) |
 | i18n | In-house (i18n.ts) — 172+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -268,7 +268,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (800, 40 files)
+    │   └── __tests__/         # Unit tests (816, 42 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -462,8 +462,8 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **800 unit tests / 40 files** — renderer·shared 455 + main 345. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
-- **CI gates** — `tsc --noEmit` (strict), enforced coverage thresholds (55/49/56/58), lockfile version sync check, `npm audit` advisory, Node 20.11/22/24 matrix
+- **816 unit tests / 42 files** — renderer·shared 463 + main 353. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
+- **CI gates** — `tsc --noEmit` (strict), enforced coverage thresholds (57/51/58/59), lockfile version sync check, `npm audit` advisory, Node 20.11/22/24 matrix
 - **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings for 43 consecutive rounds (detected High/Important issues are fixed immediately in patch releases — most recently: 19 findings in R43 → v0.21.1)
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 

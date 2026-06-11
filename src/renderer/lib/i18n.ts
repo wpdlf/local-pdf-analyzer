@@ -34,7 +34,6 @@ export const _translations = {
   'common.delete': { ko: '삭제', en: 'Delete' },
   'common.cancel': { ko: '취소', en: 'Cancel' },
   'common.retry': { ko: '다시 시도', en: 'Retry' },
-  'common.stop': { ko: '중지', en: 'Stop' },
   'common.send': { ko: '전송', en: 'Send' },
   'common.none': { ko: '없음', en: 'None' },
   'common.saved': { ko: '저장됨', en: 'Saved' },
@@ -69,7 +68,6 @@ export const _translations = {
   'uploader.tooManyPages': { ko: '페이지 수가 너무 많습니다 ({pages}p). 최대 {max}페이지까지 지원합니다. 문서를 분할해주세요.', en: 'Too many pages ({pages}p). Maximum {max} pages supported. Please split the document.' },
   'uploader.cancelParse': { ko: 'PDF 처리 취소', en: 'Cancel PDF processing' },
   'uploader.cancelBtn': { ko: '■ 취소', en: '■ Cancel' },
-  'uploader.ariaLabel': { ko: 'PDF 파일 업로드', en: 'Upload PDF file' },
   'uploader.ocrProgress': { ko: '스캔 PDF 텍스트 인식 중...', en: 'Recognizing scanned PDF text...' },
   'uploader.ocrLabel': { ko: 'OCR 진행', en: 'OCR progress' },
   'uploader.ocrDesc': { ko: 'Vision 모델로 텍스트를 추출하고 있습니다', en: 'Extracting text with Vision model' },
@@ -257,9 +255,9 @@ export const _translations = {
   'mainerr.pullInProgress': { ko: '다른 모델 다운로드가 이미 진행 중입니다. 완료 후 다시 시도해주세요.', en: 'Another model download is already in progress. Please try again after it finishes.' },
   'mainerr.pullTimeout': { ko: '모델 다운로드 타임아웃 (30분). 네트워크를 확인 후 다시 시도해주세요.', en: 'Model download timed out (30 min). Check your network and try again.' },
   'mainerr.pullFailed': { ko: '모델 다운로드 실패: {detail}', en: 'Model download failed: {detail}' },
+  'mainerr.pullCancelled': { ko: '모델 다운로드가 취소되었습니다.', en: 'Model download was cancelled.' },
   'setup.manualInstall': { ko: '수동 설치:', en: 'Manual install:' },
   'setup.cancel': { ko: '취소하고 다른 Provider 사용', en: 'Cancel and use another provider' },
-  'setup.cancelling': { ko: '취소 중... 진행 중인 작업은 백그라운드에서 완료됩니다.', en: 'Cancelling... ongoing operations will finish in the background.' },
 
   // ─── 세션 영속화 (session-persistence) ───
   'recent.title': { ko: '최근 문서', en: 'Recent Documents' },

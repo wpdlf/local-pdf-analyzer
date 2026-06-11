@@ -552,7 +552,6 @@ export function useRagBuilder(): void {
   const enrichedVersion = useAppStore((s) => s.enrichedPageTextsVersion);
   // session-persistence(module-3): 복원 게이트 + 복원된 인덱스 채택 마커.
   const sessionRestorePending = useAppStore((s) => s.sessionRestorePending);
-  const restoredSession = useAppStore((s) => s.restoredSession);
   const prevKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -570,6 +569,12 @@ export function useRagBuilder(): void {
     // 단조 카운터를 끼워 내용 변화도 포착 (R32 Surface 1 P4).
     const enrichTag = enrichedPageTexts ? `e${enrichedPageTexts.length}v${enrichedVersion}` : 'r';
     const key = `${document.id}:${provider}:${enrichTag}`;
+    // R44 H-1: 마커는 deps 로 구독하지 않고 실행 시점에 읽는다. R43 의 1회용 소비(setState)가
+    // deps 구독과 결합하면 cleanup 이 방금 시작한 빌드를 abort 하고 재실행은 same-key 로 조기
+    // return — 빌드가 영구 누락되고, chunkCount N→0 영속화가 디스크의 정상 index.bin 까지
+    // 지우는 2차 피해가 있었다. 마커 설정은 sessionRestorePending 전이(deps 포함)와 동기
+    // 블록에서 일어나므로 getState() 읽기로 충분하다.
+    const restoredSession = useAppStore.getState().restoredSession;
     // session-persistence: 복원된 인덱스 채택 — 같은 문서+provider 이고 새 enrichment 가 없으면
     // 재빌드 skip(재임베딩 0). enrichment 가 생기거나 provider 가 바뀌면 아래 정상 빌드로 진행.
     if (
@@ -627,7 +632,8 @@ export function useRagBuilder(): void {
         activeBuildController = null;
       }
     };
-  }, [document, provider, enrichedPageTexts, enrichedVersion, sessionRestorePending, restoredSession]);
+    // R44 H-1: restoredSession 은 의도적으로 deps 제외 (위 getState 주석 참조)
+  }, [document, provider, enrichedPageTexts, enrichedVersion, sessionRestorePending]);
 }
 
 export function useQa() {

@@ -25,6 +25,9 @@ interface OllamaStatusResult {
 export class OllamaManager {
   private process: ChildProcess | null = null;
   private pullProcess: ChildProcess | null = null; // 진행 중인 `ollama pull` 자식 프로세스 — stop() 에서 종료 필요
+  // R44 I-1: killPullProcess 가 사용자 취소 의도를 기록 — close 핸들러가 비-0 exit 를
+  // '다운로드 실패'가 아닌 'pullCancelled' 로 구분해 renderer 가 에러 배너를 띄우지 않도록 한다.
+  private pullCancelRequested = false;
   private baseUrl = 'http://localhost:11434';
   private startPromise: Promise<boolean> | null = null; // 동시 start() 호출 시 동일 Promise 반환
   private installPromise: Promise<{ success: boolean; error?: string }> | null = null; // 동시 install() 호출 시 동일 Promise 반환
@@ -595,6 +598,7 @@ export class OllamaManager {
       // Windows에서 부모 프로세스가 죽어도 pipe로 연결된 자식은 살아남는 문제(Node + win32)
       // 때문에 명시적 taskkill 이 필요.
       this.pullProcess = proc;
+      this.pullCancelRequested = false;
       let lastProgress = '';
 
       const timeout = setTimeout(() => {
@@ -633,6 +637,10 @@ export class OllamaManager {
         if (this.pullProcess === proc) this.pullProcess = null;
         if (code === 0) {
           safeResolve({ success: true });
+        } else if (this.pullCancelRequested) {
+          // R44 I-1: 사용자 취소로 죽은 프로세스(비-0 exit / SIGTERM null) — 실패가 아니라
+          // 취소로 보고해 renderer 가 빨간 에러 배너를 띄우지 않도록 한다.
+          safeResolve({ success: false, error: '모델 다운로드가 취소되었습니다.', errorKey: 'pullCancelled' });
         } else {
           safeResolve({ success: false, error: `모델 다운로드 실패 (exit code: ${code})`, errorKey: 'pullFailed', errorParams: { detail: `exit code: ${code}` } });
         }
@@ -640,10 +648,11 @@ export class OllamaManager {
     });
   }
 
-  /** 진행 중인 `ollama pull` 자식 프로세스를 즉시 종료. 앱 종료 직전 호출. */
+  /** 진행 중인 `ollama pull` 자식 프로세스를 즉시 종료. 사용자 취소/앱 종료 직전 호출. */
   async killPullProcess(): Promise<void> {
     const proc = this.pullProcess;
     if (!proc) return;
+    this.pullCancelRequested = true; // R44 I-1: close 핸들러가 실패 대신 취소로 보고
     this.pullProcess = null;
     if (process.platform === 'win32' && proc.pid) {
       // v0.18.19 patch R32 P3: 위 stop() 과 동일 패턴 — taskkill 실패 시 SIGKILL fallback.

@@ -219,6 +219,29 @@ describe('pullModel (spawn 생명주기)', () => {
     });
   });
 
+  it('R44 I-1: killPullProcess 로 죽은 pull 은 실패가 아닌 pullCancelled 로 보고', async () => {
+    const orig = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      const mgr = new OllamaManager();
+      const p = mgr.pullModel('gemma3');
+      const proc = M.spawned[0]!;
+      M.execFile.mockImplementation((...args: unknown[]) => {
+        (args.find((a) => typeof a === 'function') as (e: unknown) => void)(null);
+      });
+      await mgr.killPullProcess();
+      // 취소로 죽은 프로세스의 비-0 exit — 에러 배너용 pullFailed 가 아니라 pullCancelled
+      proc.emit('close', 1);
+      expect(await p).toEqual({
+        success: false,
+        error: '모델 다운로드가 취소되었습니다.',
+        errorKey: 'pullCancelled',
+      });
+    } finally {
+      Object.defineProperty(process, 'platform', { value: orig, configurable: true });
+    }
+  });
+
   it('재진입 가드 — 진행 중이면 두 번째 호출 즉시 거부 (spawn 1회)', async () => {
     const mgr = new OllamaManager();
     const p1 = mgr.pullModel('gemma3');

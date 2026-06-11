@@ -91,11 +91,14 @@ export default defineConfig({
       // R43: Gemini 네트워크 경로(SSE/safety block/400 매핑/임베딩 분할/Vision) + 로캘 감지 +
       //   위자드 에러·재시도 테스트 추가로 베이스라인 상승.
       //   측정: Stmts 60.91 / Branch 54.88 / Funcs 61.32 / Lines 63.17 (-5pp 마진 적용).
+      // R44: useRagBuilder 훅 회귀 가드 + SettingsPanel 취소 흐름 + pullCancelled +
+      //   i18n 정적 스캔 drift 가드 추가로 베이스라인 상승.
+      //   측정: Stmts 62.54 / Branch 56.2 / Funcs 63.65 / Lines 64.79 (-5pp 마진 적용).
       thresholds: {
-        statements: 55,
-        branches: 49,
-        functions: 56,
-        lines: 58,
+        statements: 57,
+        branches: 51,
+        functions: 58,
+        lines: 59,
       },
     },
   },

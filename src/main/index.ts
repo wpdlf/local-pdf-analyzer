@@ -98,7 +98,9 @@ async function loadSettings(): Promise<Record<string, unknown>> {
   try {
     const raw = JSON.parse(await fsp.readFile(settingsPath, 'utf-8'));
     if (raw && typeof raw === 'object' && 'uiLanguage' in raw && !('summaryLanguage' in raw)) {
-      settings.summaryLanguage = settings.uiLanguage;
+      // R44: 값 검증 — 손으로 망가진 파일의 임의 uiLanguage 가 summaryLanguage 로 전파되지 않도록
+      const ui = settings.uiLanguage;
+      if (ui === 'ko' || ui === 'en') settings.summaryLanguage = ui;
     }
   } catch { /* 첫 실행(파일 없음)/손상 — localeAwareDefaults 유지 */ }
   return settings;

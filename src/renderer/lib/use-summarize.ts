@@ -132,7 +132,7 @@ async function analyzeDocumentImages(
   // Claude/OpenAI 는 REST 동시 요청을 권장 throughput 까지 허용.
   // 이미지 많은 PDF 의 분석 시간 30~40% 단축 (cloud provider 한정).
   // R44(R43 후속 M5): Gemini 는 무료 티어 분당 한도가 낮아 동시 8 이 429 폭주를 유발 —
-  // 3 으로 하향 (429 는 ai-service 의 retryOn429 백오프가 추가 방어). pdf-parser OCR 동일.
+  // 3 으로 하향 (429 는 ai-service 의 retryOn429 백오프가 추가 방어 — Vision/임베딩 경로 한정, generate 미적용). pdf-parser OCR 동일.
   const BATCH = provider === 'ollama' || provider === 'gemini' ? 3 : 8;
   for (let bi = 1; bi < doc.images.length && !isAborted(); bi += BATCH) {
     const batch = doc.images.slice(bi, bi + BATCH);
