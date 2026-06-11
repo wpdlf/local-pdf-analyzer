@@ -157,7 +157,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Real-time streaming — summaries appear as they are generated, with auto-scroll (pauses when you scroll manually)
 - Every long-running task is cancellable — stop summarization/parsing/OCR, cancel Ollama setup midway and switch providers
 - File swap during parsing — dropping another file cancels the previous job and switches immediately
-- Dark mode, instant Korean/English switching, screen-reader and keyboard accessibility
+- Dark mode, instant Korean/English switching — the UI language is auto-detected from your OS locale on first run, with a toggle on the setup screen; screen-reader and keyboard accessibility
 
 **Reliability · Security**
 - API keys encrypted in the OS keychain — decrypted only in the Main process, never exposed to the renderer
@@ -191,6 +191,8 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Image analysis doesn't work | With Ollama, a Vision model such as llava is required — install it in Settings |
 | API key error | Verify the key format in Settings. Claude: `sk-ant-...`, OpenAI: `sk-...`, Gemini: `AIza...` |
 | Claude/OpenAI/Gemini unavailable | Save the API key first, then select the provider |
+| Gemini "response was blocked" error | Gemini's safety filter blocked the document content, or the output budget was exhausted. Try another model (e.g. gemini-2.5-pro) or split the document |
+| Gemini "rate limit exceeded" | The free tier has a low per-minute request limit. Retry shortly, or disable image analysis for image-heavy PDFs |
 | Q&A can't answer | If the RAG badge is missing, install the embedding model with `ollama pull nomic-embed-text`. In keyword mode, include specific terms in your question |
 | RAG indexing doesn't run | Make sure first-run setup completed (nomic-embed-text auto-install). Manual install: `ollama pull nomic-embed-text` |
 | Answers seem to generate twice | Answer verification triggers one extra LLM call when grounding is weak; you can turn off the "Answer verification" toggle in Settings |
@@ -462,7 +464,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 - **800 unit tests / 40 files** — renderer·shared 455 + main 345. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
 - **CI gates** — `tsc --noEmit` (strict), enforced coverage thresholds (55/49/56/58), lockfile version sync check, `npm audit` advisory, Node 20.11/22/24 matrix
-- **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical/High findings for 42 consecutive rounds
+- **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings for 43 consecutive rounds (detected High/Important issues are fixed immediately in patch releases — most recently: 19 findings in R43 → v0.21.1)
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
 ## License

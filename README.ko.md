@@ -157,7 +157,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - 실시간 스트리밍 — 요약이 생성되는 즉시 표시, 자동 스크롤 (직접 스크롤하면 멈춤)
 - 모든 장시간 작업 취소 가능 — 요약/파싱/OCR 중단, Ollama 설치 중도 취소 후 다른 Provider 전환
 - 파싱 중 파일 교체 — 분석 도중 다른 파일을 드롭하면 이전 작업을 자동 취소하고 새 파일로 전환
-- 다크모드, 한국어/English 즉시 전환, 스크린 리더·키보드 접근성
+- 다크모드, 한국어/English 즉시 전환 — 첫 실행 시 OS 언어 자동 감지, 설치 화면 우상단 토글로 바로 변경 가능, 스크린 리더·키보드 접근성
 
 **안정성 · 보안**
 - API 키 OS 키체인 암호화 — Main 프로세스에서만 복호화, 화면(Renderer)에 노출되지 않음
@@ -191,6 +191,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 이미지 분석이 안 됨 | Ollama 사용 시 llava 등 Vision 모델이 필요합니다. 설정에서 모델을 설치해주세요 |
 | API 키 오류 | 설정에서 API 키가 올바른지 확인. Claude: `sk-ant-...`, OpenAI: `sk-...`, Gemini: `AIza...` |
 | Claude/OpenAI/Gemini 사용 불가 | API 키를 먼저 저장한 후 Provider를 선택해주세요 |
+| Gemini에서 "응답이 차단되었습니다" 에러 | Gemini 안전 필터가 문서 내용을 차단했거나 출력 한도를 초과한 경우입니다. 다른 모델(gemini-2.5-pro 등)로 바꾸거나 문서를 분할해보세요 |
+| Gemini "요청 한도를 초과했습니다 (rate limit)" | 무료 티어는 분당 요청 수 제한이 낮습니다. 잠시 후 다시 시도하거나, 이미지가 많은 PDF는 이미지 분석을 끄고 사용해보세요 |
 | Q&A에서 답변을 못 함 | RAG 배지가 없으면 `ollama pull nomic-embed-text`로 임베딩 모델을 설치하세요. 키워드 모드에서는 질문에 구체적 용어를 포함해주세요 |
 | RAG 인덱싱이 안 됨 | 첫 실행 셋업을 완료했는지 확인하세요 (nomic-embed-text 자동 설치). 수동 설치: `ollama pull nomic-embed-text` |
 | 답변이 두 번 생성되는 듯한 지연이 있음 | 답변 자동 검증이 근거 약한 답변을 다듬을 때 LLM 호출이 한 번 더 발생합니다. 설정에서 "답변 검증" 토글을 끌 수 있습니다 |
@@ -462,7 +464,7 @@ PDF 파일
 
 - **단위 테스트 800건 / 40파일** — renderer·shared 455 + main 345. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service까지 행위 테스트
 - **CI 게이트** — `tsc --noEmit`(strict), 커버리지 임계(55/49/56/58) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 20.11/22/24 매트릭스
-- **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, Critical/High 42라운드 연속 0건 유지
+- **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, Critical 43라운드 연속 0건 (검출된 High/Important 는 패치 릴리즈로 즉시 수정 — 최근: R43 19건 → v0.21.1)
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 
 ## 라이선스
