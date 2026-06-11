@@ -13,7 +13,7 @@
 - **페이지 인용 + PDF 뷰어** — 요약/답변에 `[p.12]` 출처 인용이 자동으로 붙고, 클릭하면 PDF 원문의 해당 페이지가 바로 열립니다
 - **세션 자동 저장·복원** — 분석한 PDF를 다시 열면 요약·Q&A·검색 인덱스가 재요약·재임베딩 없이 즉시 복원됩니다
 - **개인 자료 걱정 없이 사용** — 시험자료, 사내 문서, 논문 초고 등 민감한 자료도 안심하고 요약할 수 있습니다
-- **한국어/English UI · 유료 AI 전환** — 더 높은 품질이 필요하면 Claude/OpenAI API로 간편하게 전환할 수 있습니다
+- **한국어/English UI · 외부 AI 전환** — 더 높은 품질이 필요하면 Claude/OpenAI/Gemini API로 간편하게 전환할 수 있습니다
 
 이 문서는 두 부분으로 구성됩니다 — **[사용자 가이드](#사용자-가이드)** (설치 · 사용법 · 문제 해결) | **[개발자 가이드](#개발자-가이드)** (기술 스택 · 아키텍처 · 보안 설계)
 
@@ -93,9 +93,10 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 | **Ollama (기본)** | 오프라인 사용, 개인 자료 보안 | 무료 |
 | **Claude API** | 높은 요약 품질, 긴 문서 처리에 강점 | 유료 (토큰당 과금) |
 | **OpenAI API** | GPT-4o 기반, 범용적 요약 | 유료 (토큰당 과금) |
+| **Google Gemini API** | 요약·Vision·임베딩을 한 키로 모두 지원 | 무료 티어 제공 (한도 초과 시 유료) |
 
-유료 AI를 사용하려면:
-1. 설정(⚙️) → AI Provider에서 Claude 또는 OpenAI 선택
+외부 AI를 사용하려면:
+1. 설정(⚙️) → AI Provider에서 Claude, OpenAI 또는 Gemini 선택
 2. API 키 입력 후 **저장** (키는 암호화되어 로컬에 저장됩니다)
 3. 모델 선택 후 **설정 저장**
 
@@ -105,6 +106,7 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 |----------|------------|------|------|
 | **Ollama** | nomic-embed-text (274MB) | 768 | 로컬 실행, 첫 실행 셋업 시 자동 설치 |
 | **OpenAI** | text-embedding-3-small | 1536 | API 키로 자동 사용, 추가 설치 불필요 |
+| **Gemini** | gemini-embedding-2 | — | API 키로 자동 사용, 추가 설치 불필요 |
 | **Claude** | Ollama fallback | — | 자체 임베딩 API 없음, Ollama 모델 사용 시도 → 불가 시 키워드 검색 |
 
 > 임베딩 모델이 없어도 Q&A는 키워드 기반 검색으로 동작합니다. RAG는 정확도를 높이는 선택적 기능입니다.
@@ -122,6 +124,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | **Ollama** | llava, llama3.2-vision | 로컬 실행, 미설치 시 자동 안내 |
 | **Claude** | claude-sonnet-4 | API 비용 발생 |
 | **OpenAI** | gpt-4o | API 비용 발생 |
+| **Gemini** | 선택한 Gemini 모델 (전 모델 멀티모달) | 무료 티어 제공 |
 
 > Ollama 사용 시 Vision 모델(llava 등)이 별도로 필요합니다. 설정 → 모델 관리에서 설치할 수 있습니다.
 
@@ -137,6 +140,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 |----------|-------------------|------|
 | **Claude** | 90~98% | 표/수식 구조 인식 포함, API 비용 발생 |
 | **OpenAI (GPT-4o)** | 90~95% | 표/수식 구조 인식 포함, API 비용 발생 |
+| **Gemini** | 90~97% | 표/수식 구조 인식 포함, 무료 티어 제공 |
 | **Ollama (llava)** | 60~75% | 무료, 간단한 영문 PDF에 적합 |
 
 > 스캔 PDF의 페이지 수에 따라 처리 시간과 API 비용이 증가합니다. 50페이지 기준 Claude 약 $0.15~0.30, GPT-4o 약 $0.25~0.50입니다.
@@ -162,7 +166,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - 렌더 오류 복구 — 예기치 못한 UI 오류 시 "다시 시도" 버튼으로 재시작 없이 복구
 
 **품질 보증**
-- 단위 테스트 762건 + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
+- 단위 테스트 782건 + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
 - 빌드 무결성 — 인스톨러 SHA-256 해시 + Sigstore attestation 자동 게시
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 
@@ -177,16 +181,16 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 
 | 증상 | 해결 방법 |
 |------|----------|
-| Ollama 설치 실패 | [ollama.com](https://ollama.com)에서 수동 설치하거나, 설치 마법사의 "취소하고 다른 Provider 사용" 버튼으로 Claude/OpenAI 전환 |
+| Ollama 설치 실패 | [ollama.com](https://ollama.com)에서 수동 설치하거나, 설치 마법사의 "취소하고 다른 Provider 사용" 버튼으로 Claude/OpenAI/Gemini 전환 |
 | 한국어 요약 품질이 낮음 | 한국어 특화 모델(exaone3.5)을 설정 → 모델 관리에서 설치 후 선택해보세요. 첫 설치에서 선택 설치 옵션이며, 기본 모델(gemma3)보다 한국어 요약 품질이 좋습니다 |
 | 요약이 느림 | 설정에서 경량 모델(phi3 등)로 변경하거나 청크 크기를 줄여보세요 |
-| PDF 텍스트 추출 불가 | 설정에서 "스캔 PDF OCR"이 활성화되어 있는지 확인하세요. Vision 모델(llava, Claude, GPT-4o)이 필요합니다 |
-| OCR 결과가 부정확함 | Ollama llava는 한국어 정확도가 낮습니다. Claude 또는 OpenAI로 전환하면 정확도가 크게 향상됩니다 |
+| PDF 텍스트 추출 불가 | 설정에서 "스캔 PDF OCR"이 활성화되어 있는지 확인하세요. Vision 모델(llava, Claude, GPT-4o, Gemini)이 필요합니다 |
+| OCR 결과가 부정확함 | Ollama llava는 한국어 정확도가 낮습니다. Claude, OpenAI 또는 Gemini로 전환하면 정확도가 크게 향상됩니다 |
 | OCR이 너무 오래 걸림 | 진행 중 "■ 취소" 버튼으로 중단할 수 있습니다. 클라우드 provider로 전환하면 더 빠릅니다 |
 | PDF가 500페이지 초과 | 수동으로 문서를 분할한 후 다시 업로드해주세요. 자원 폭주 방지를 위해 상한이 적용됩니다 |
 | 이미지 분석이 안 됨 | Ollama 사용 시 llava 등 Vision 모델이 필요합니다. 설정에서 모델을 설치해주세요 |
-| API 키 오류 | 설정에서 API 키가 올바른지 확인. Claude: `sk-ant-...`, OpenAI: `sk-...` |
-| Claude/OpenAI 사용 불가 | API 키를 먼저 저장한 후 Provider를 선택해주세요 |
+| API 키 오류 | 설정에서 API 키가 올바른지 확인. Claude: `sk-ant-...`, OpenAI: `sk-...`, Gemini: `AIza...` |
+| Claude/OpenAI/Gemini 사용 불가 | API 키를 먼저 저장한 후 Provider를 선택해주세요 |
 | Q&A에서 답변을 못 함 | RAG 배지가 없으면 `ollama pull nomic-embed-text`로 임베딩 모델을 설치하세요. 키워드 모드에서는 질문에 구체적 용어를 포함해주세요 |
 | RAG 인덱싱이 안 됨 | 첫 실행 셋업을 완료했는지 확인하세요 (nomic-embed-text 자동 설치). 수동 설치: `ollama pull nomic-embed-text` |
 | 답변이 두 번 생성되는 듯한 지연이 있음 | 답변 자동 검증이 근거 약한 답변을 다듬을 때 LLM 호출이 한 번 더 발생합니다. 설정에서 "답변 검증" 토글을 끌 수 있습니다 |
@@ -208,13 +212,13 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 |------|------|
 | 프레임워크 | Electron 41 + React 19 |
 | 언어 | TypeScript (strict mode, `noUncheckedIndexedAccess` 등 활성) |
-| AI 생성 | Ollama (로컬) / Claude API / OpenAI API — Main 프로세스 IPC 기반 |
-| AI 임베딩 (RAG) | Ollama /api/embed / OpenAI /v1/embeddings — 인메모리 벡터 스토어 |
+| AI 생성 | Ollama (로컬) / Claude API / OpenAI API / Gemini API — Main 프로세스 IPC 기반 |
+| AI 임베딩 (RAG) | Ollama /api/embed / OpenAI /v1/embeddings / Gemini batchEmbedContents — 인메모리 벡터 스토어 |
 | PDF 파싱 | pdfjs-dist (위치 기반 텍스트 추출 + 이미지 추출, 한글 최적화) |
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG는 공증 자격 확보 시까지 일시 중단) |
-| 테스트 | Vitest 단위 테스트 762건/39파일 (renderer·shared 443 + main 319) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (44/40/44/46) |
+| 테스트 | Vitest 단위 테스트 782건/40파일 (renderer·shared 451 + main 331) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (44/40/44/46) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -262,7 +266,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (762건, 39 파일)
+    │   └── __tests__/         # 단위 테스트 (782건, 40 파일)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -456,7 +460,7 @@ PDF 파일
 
 ## 품질 보증
 
-- **단위 테스트 762건 / 39파일** — renderer·shared 443 + main 319. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service까지 행위 테스트
+- **단위 테스트 782건 / 40파일** — renderer·shared 451 + main 331. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service까지 행위 테스트
 - **CI 게이트** — `tsc --noEmit`(strict), 커버리지 임계(44/40/44/46) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 20.11/22/24 매트릭스
 - **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, Critical/High 42라운드 연속 0건 유지
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)

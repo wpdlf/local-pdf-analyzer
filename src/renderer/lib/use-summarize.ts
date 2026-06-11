@@ -101,7 +101,7 @@ async function analyzeDocumentImages(
   setProgressInfo: ((info: ProgressInfo) => void) | null,
   startTime: number,
   isAborted: () => boolean,
-  provider: 'ollama' | 'claude' | 'openai' = 'ollama',
+  provider: 'ollama' | 'claude' | 'openai' | 'gemini' = 'ollama',
   // R30 P2 (v0.18.18): Stop / 문서 전환 시 in-flight Vision 호출을 즉시 abort 하기 위한
   // hook. 호출자(use-summarize 메인 흐름) 가 in-flight requestId 들을 추적해 두면
   // isAborted() 가 true 가 된 직후 abortInFlight() 한 번 호출로 모두 끊을 수 있다.

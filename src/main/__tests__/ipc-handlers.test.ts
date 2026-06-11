@@ -32,6 +32,8 @@ const H = vi.hoisted(() => ({
     cleanupAiService: vi.fn(),
     registerEmbedRequest: vi.fn(),
     unregisterEmbedRequest: vi.fn(),
+    // vi.mock 이 ai-service 모듈 전체를 대체하므로 index.ts 가 import 하는 상수도 제공
+    GEMINI_EMBED_MODEL: 'gemini-embedding-2',
   },
   ollama: {
     getStatus: vi.fn(),
@@ -147,7 +149,7 @@ describe('핸들러 등록', () => {
 
 describe('apikey:save', () => {
   it('미지원 provider 거부 (store 미호출)', async () => {
-    expect(await invoke('apikey:save', 'gemini', 'sk-x')).toEqual({ success: false, error: 'Invalid provider' });
+    expect(await invoke('apikey:save', 'mistral', 'sk-x')).toEqual({ success: false, error: 'Invalid provider' });
     expect(H.store.save).not.toHaveBeenCalled();
   });
 
@@ -174,7 +176,7 @@ describe('apikey:save', () => {
 
 describe('apikey:has / apikey:delete', () => {
   it('has: 미지원 provider → false', async () => {
-    expect(await invoke('apikey:has', 'gemini')).toBe(false);
+    expect(await invoke('apikey:has', 'mistral')).toBe(false);
   });
 
   it('has: 저장된 키 있으면 true, 없으면 false', async () => {
@@ -185,13 +187,34 @@ describe('apikey:has / apikey:delete', () => {
   });
 
   it('delete: 미지원 provider → {success:false}', async () => {
-    expect(await invoke('apikey:delete', 'gemini')).toEqual({ success: false, error: 'Invalid provider' });
+    expect(await invoke('apikey:delete', 'mistral')).toEqual({ success: false, error: 'Invalid provider' });
     expect(H.store.delete).not.toHaveBeenCalled();
   });
 
   it('delete: 정상 → store.delete 위임', async () => {
     expect(await invoke('apikey:delete', 'claude')).toEqual({ success: true });
     expect(H.store.delete).toHaveBeenCalledWith('claude');
+  });
+
+  it('gemini provider 키 저장/조회 — 화이트리스트 통과', async () => {
+    expect(await invoke('apikey:save', 'gemini', 'AIza-test-key')).toEqual({ success: true });
+    expect(H.store.save).toHaveBeenCalledWith('gemini', 'AIza-test-key');
+    H.store.load.mockReturnValue('AIza-test-key');
+    expect(await invoke('apikey:has', 'gemini')).toBe(true);
+  });
+});
+
+describe('ai:check-embed-model (gemini)', () => {
+  it('provider gemini + 키 저장 → gemini 임베딩 모델 사용 가능', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'gemini' });
+    H.store.load.mockReturnValue('AIza-test-key');
+    expect(await invoke('ai:check-embed-model')).toEqual({ available: true, model: 'gemini-embedding-2' });
+  });
+
+  it('provider gemini + 키 없음 → 사용 불가 (키워드 검색 fallback 경로)', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'gemini' });
+    H.store.load.mockReturnValue(undefined);
+    expect(await invoke('ai:check-embed-model')).toEqual({ available: false, model: 'gemini-embedding-2' });
   });
 });
 

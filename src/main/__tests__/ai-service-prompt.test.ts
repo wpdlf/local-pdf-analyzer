@@ -15,6 +15,8 @@ import {
   sanitizeVisionResponse,
   sanitizeOcrResponse,
   checkEmbeddingAvailability,
+  geminiModelUrl,
+  GEMINI_EMBED_MODEL,
 } from '../ai-service';
 
 describe('splitPrompt', () => {
@@ -82,6 +84,29 @@ describe('checkEmbeddingAvailability (순수 모델 탐색)', () => {
 
   it('임베딩 모델 없으면 null', async () => {
     expect(await checkEmbeddingAvailability('x', ['llama3', 'gemma3'])).toBeNull();
+  });
+});
+
+describe('geminiModelUrl (path 주입 차단)', () => {
+  it('정상 모델명 → v1beta models 경로 + 메서드', () => {
+    expect(geminiModelUrl('gemini-3.5-flash', 'generateContent', false))
+      .toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent');
+  });
+
+  it('SSE 모드는 ?alt=sse 쿼리 부착', () => {
+    expect(geminiModelUrl('gemini-3.5-flash', 'streamGenerateContent', true))
+      .toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse');
+  });
+
+  it("모델명의 '/' 는 인코딩 — path segment 주입 차단 (MODEL_NAME_RE 가 '/' 허용하므로 필수)", () => {
+    const url = geminiModelUrl('evil/../../v1/other', 'generateContent', false);
+    expect(url).not.toContain('/evil/');
+    expect(url).toContain('evil%2F..%2F..%2Fv1%2Fother');
+  });
+
+  it('GEMINI_EMBED_MODEL 상수는 batchEmbedContents 경로와 결합 가능', () => {
+    expect(geminiModelUrl(GEMINI_EMBED_MODEL, 'batchEmbedContents', false))
+      .toContain(`/models/${GEMINI_EMBED_MODEL}:batchEmbedContents`);
   });
 });
 

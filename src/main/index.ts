@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 // R38 P1-2: sync `fs` 는 API 키 저장 로직과 함께 api-keys-store.ts 로 이동. 본 파일은 fsp 만 사용.
 import fsp from 'fs/promises';
 import { OllamaManager } from './ollama-manager';
-import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest } from './ai-service';
+import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
 import { MAX_PDF_SIZE_BYTES, isLocalhostHost } from '../shared/constants';
 // v0.18.19 patch R34 P2: settings 키 단일 출처. 이전엔 본 파일 두 곳에 별도 리터럴이 있었고
 // R33 Surface 4 P3 가 drift 가드 부재를 지적. settings-keys.ts 가 양쪽을 derive 함.
@@ -532,7 +532,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('ai:generate', async (event, requestId: string, request: {
     text: string;
     type: 'full' | 'chapter' | 'keywords' | 'qa';
-    provider: 'ollama' | 'claude' | 'openai';
+    provider: 'ollama' | 'claude' | 'openai' | 'gemini';
     model: string;
     ollamaBaseUrl: string;
     temperature?: number;
@@ -601,7 +601,7 @@ export function registerIpcHandlers(): void {
 
   async function resolveVisionModel(errorPrefix: string) {
     const settings = await loadSettings();
-    const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
+    const provider = (settings.provider as 'ollama' | 'claude' | 'openai' | 'gemini') || 'ollama';
     const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
     let model = (settings.model as string) || '';
     if (provider === 'ollama' && !OLLAMA_VISION_MODELS.some((v) => model.startsWith(v))) {
@@ -722,7 +722,7 @@ export function registerIpcHandlers(): void {
         registerEmbedRequest(validRequestId, controller);
       }
       const settings = await loadSettings();
-      const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
+      const provider = (settings.provider as 'ollama' | 'claude' | 'openai' | 'gemini') || 'ollama';
       const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
       const apiKey = provider !== 'ollama' ? apiKeyStore.load(provider) : undefined;
       // R38 P1: texts 는 validateEmbedTexts 가 string[] 임을 이미 보증 (위 early return).
@@ -756,10 +756,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('ai:check-embed-model', async () => {
     try {
       const settings = await loadSettings();
-      const provider = (settings.provider as 'ollama' | 'claude' | 'openai') || 'ollama';
+      const provider = (settings.provider as 'ollama' | 'claude' | 'openai' | 'gemini') || 'ollama';
       if (provider === 'openai') {
         const apiKey = apiKeyStore.load('openai');
         return { available: !!apiKey, model: 'text-embedding-3-small' };
+      }
+      if (provider === 'gemini') {
+        const apiKey = apiKeyStore.load('gemini');
+        return { available: !!apiKey, model: GEMINI_EMBED_MODEL };
       }
       // Ollama or Claude (Ollama fallback)
       const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';

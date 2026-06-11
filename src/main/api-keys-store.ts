@@ -30,7 +30,7 @@ export interface SafeStorageLike {
  * R28 P2 (v0.18.12): prototype pollution 가드용 알려진 provider 목록.
  * 디스크에 변조된 JSON 이 `__proto__` 같은 키를 포함해도 알려진 키만 안전하게 복사한다.
  */
-export const KNOWN_API_KEY_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
+export const KNOWN_API_KEY_PROVIDERS = ['ollama', 'claude', 'openai', 'gemini'] as const;
 
 /**
  * 알려진 provider 의 string 값만 null-prototype 객체로 추출.

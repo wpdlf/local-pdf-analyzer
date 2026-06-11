@@ -21,7 +21,7 @@
 
 import { isLocalhostHost } from '../shared/constants';
 
-export const VALID_PROVIDERS = ['ollama', 'claude', 'openai'] as const;
+export const VALID_PROVIDERS = ['ollama', 'claude', 'openai', 'gemini'] as const;
 export type ValidProvider = typeof VALID_PROVIDERS[number];
 
 /** ai:generate 가 허용하는 요약/QA 타입. */
@@ -126,7 +126,7 @@ export function validateEmbeddings(embeddings: unknown): ValidationResult {
 export interface GenerateRequest {
   text: string;
   type: 'full' | 'chapter' | 'keywords' | 'qa';
-  provider: 'ollama' | 'claude' | 'openai';
+  provider: 'ollama' | 'claude' | 'openai' | 'gemini';
   model: string;
   ollamaBaseUrl: string;
   temperature?: number;

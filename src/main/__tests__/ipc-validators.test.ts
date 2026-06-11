@@ -31,8 +31,8 @@ import {
 } from '../ipc-validators';
 
 describe('상수 화이트리스트 (단일 출처)', () => {
-  it('VALID_PROVIDERS 는 ollama/claude/openai 만', () => {
-    expect([...VALID_PROVIDERS]).toEqual(['ollama', 'claude', 'openai']);
+  it('VALID_PROVIDERS 는 ollama/claude/openai/gemini 만', () => {
+    expect([...VALID_PROVIDERS]).toEqual(['ollama', 'claude', 'openai', 'gemini']);
   });
 
   it('VALID_GENERATE_TYPES 는 full/chapter/keywords/qa', () => {
@@ -45,12 +45,12 @@ describe('상수 화이트리스트 (단일 출처)', () => {
 });
 
 describe('isValidProvider', () => {
-  it.each(['ollama', 'claude', 'openai'])('허용: %s', (p) => {
+  it.each(['ollama', 'claude', 'openai', 'gemini'])('허용: %s', (p) => {
     expect(isValidProvider(p)).toBe(true);
   });
 
   it.each([
-    ['미지원 provider', 'gemini'],
+    ['미지원 provider', 'mistral'],
     ['빈 문자열', ''],
     ['대문자', 'Ollama'],
     ['number', 123],
@@ -268,6 +268,12 @@ describe('validateGenerateRequest (전체 검증 순서·메시지)', () => {
     ).toEqual({ ok: true });
   });
 
+  it('통과: provider gemini (cloud — ollamaBaseUrl localhost 제약 미적용)', () => {
+    expect(
+      validateGenerateRequest('req-1', { ...valid, provider: 'gemini', model: 'gemini-3.5-flash' }),
+    ).toEqual({ ok: true });
+  });
+
   it('optional temperature/language 정상값 통과', () => {
     expect(validateGenerateRequest('req-1', { ...valid, temperature: 0.7, language: 'en' })).toEqual({ ok: true });
   });
@@ -289,7 +295,7 @@ describe('validateGenerateRequest (전체 검증 순서·메시지)', () => {
     ['ollamaBaseUrl 외부 호스트', { ...valid, ollamaBaseUrl: 'http://evil.com' }, 'Invalid ollamaBaseUrl: localhost only'],
     ['ollamaBaseUrl 메타데이터 SSRF', { ...valid, ollamaBaseUrl: 'http://169.254.169.254/' }, 'Invalid ollamaBaseUrl: localhost only'],
     ['type 미지원', { ...valid, type: 'translate' }, 'Invalid type'],
-    ['provider 미지원', { ...valid, provider: 'gemini' }, 'Invalid provider'],
+    ['provider 미지원', { ...valid, provider: 'mistral' }, 'Invalid provider'],
     ['model 빈값', { ...valid, model: '' }, 'Invalid model'],
     ['model 주입 시도', { ...valid, model: 'm; rm -rf' }, 'Invalid model'],
     ['temperature 범위 초과', { ...valid, temperature: 5 }, 'Invalid temperature'],

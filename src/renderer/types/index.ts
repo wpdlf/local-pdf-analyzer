@@ -93,7 +93,7 @@ export const SUMMARY_LANGUAGES: { value: SummaryLanguage; label: string }[] = [
 ];
 
 // AI 제공자
-export type AiProviderType = 'ollama' | 'claude' | 'openai';
+export type AiProviderType = 'ollama' | 'claude' | 'openai' | 'gemini';
 
 // 앱 설정 (API 키는 Main 프로세스에서만 관리)
 export interface AppSettings {
@@ -126,6 +126,11 @@ export const PROVIDER_MODELS: Record<AiProviderType, { label: string; value: str
   openai: [
     { label: 'GPT-4o', value: 'gpt-4o' },
     { label: 'GPT-4o mini', value: 'gpt-4o-mini' },
+  ],
+  gemini: [
+    { label: 'Gemini 3.5 Flash', value: 'gemini-3.5-flash' },
+    { label: 'Gemini 3.1 Flash-Lite', value: 'gemini-3.1-flash-lite' },
+    { label: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' },
   ],
 };
 

@@ -14,14 +14,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     generate: (requestId: string, request: {
       text: string;
       type: 'full' | 'chapter' | 'keywords' | 'qa';
-      provider: 'ollama' | 'claude' | 'openai';
+      provider: 'ollama' | 'claude' | 'openai' | 'gemini';
       model: string;
       ollamaBaseUrl: string;
       temperature?: number;
       language?: string;
     }) => ipcRenderer.invoke('ai:generate', requestId, request),
     abort: (requestId: string) => ipcRenderer.invoke('ai:abort', requestId),
-    checkAvailable: (provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) =>
+    checkAvailable: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', ollamaBaseUrl: string) =>
       ipcRenderer.invoke('ai:check-available', provider, ollamaBaseUrl),
     analyzeImage: (imageBase64: string, requestId?: string) => ipcRenderer.invoke('ai:analyze-image', imageBase64, requestId),
     ocrPage: (imageBase64: string, requestId?: string) => ipcRenderer.invoke('ai:ocr-page', imageBase64, requestId),
@@ -51,9 +51,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (settings: Record<string, unknown>) => ipcRenderer.invoke('settings:set', settings),
   },
   apiKey: {
-    save: (provider: 'ollama' | 'claude' | 'openai', key: string) => ipcRenderer.invoke('apikey:save', provider, key),
-    has: (provider: 'ollama' | 'claude' | 'openai') => ipcRenderer.invoke('apikey:has', provider),
-    delete: (provider: 'ollama' | 'claude' | 'openai') => ipcRenderer.invoke('apikey:delete', provider),
+    save: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', key: string) => ipcRenderer.invoke('apikey:save', provider, key),
+    has: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => ipcRenderer.invoke('apikey:has', provider),
+    delete: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => ipcRenderer.invoke('apikey:delete', provider),
   },
   session: {
     load: (docHash: string) => ipcRenderer.invoke('session:load', docHash),
@@ -98,7 +98,7 @@ export type ElectronAPI = {
     generate: (requestId: string, request: {
       text: string;
       type: 'full' | 'chapter' | 'keywords' | 'qa';
-      provider: 'ollama' | 'claude' | 'openai';
+      provider: 'ollama' | 'claude' | 'openai' | 'gemini';
       model: string;
       ollamaBaseUrl: string;
       temperature?: number;
@@ -109,7 +109,7 @@ export type ElectronAPI = {
     ocrPage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; text?: string; error?: string; code?: string }>;
     embed: (texts: string[], requestId?: string) => Promise<{ success: boolean; embeddings?: number[][]; model?: string; error?: string }>;
     checkEmbedModel: () => Promise<{ available: boolean; model?: string }>;
-    checkAvailable: (provider: 'ollama' | 'claude' | 'openai', ollamaBaseUrl: string) => Promise<boolean>;
+    checkAvailable: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', ollamaBaseUrl: string) => Promise<boolean>;
     onToken: (callback: (requestId: string, token: string) => void) => () => void;
     onDone: (callback: (requestId: string) => void) => () => void;
   };
@@ -123,9 +123,9 @@ export type ElectronAPI = {
     set: (settings: Record<string, unknown>) => Promise<Record<string, unknown>>;
   };
   apiKey: {
-    save: (provider: 'ollama' | 'claude' | 'openai', key: string) => Promise<{ success: boolean; error?: string }>;
-    has: (provider: 'ollama' | 'claude' | 'openai') => Promise<boolean>;
-    delete: (provider: 'ollama' | 'claude' | 'openai') => Promise<{ success: boolean; error?: string }>;
+    save: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', key: string) => Promise<{ success: boolean; error?: string }>;
+    has: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => Promise<boolean>;
+    delete: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => Promise<{ success: boolean; error?: string }>;
   };
   session: {
     load: (docHash: string) => Promise<{ session: unknown; blob: ArrayBuffer | null } | null>;

@@ -13,7 +13,7 @@ Most AI summarization services require uploading your PDF to an external server 
 - **Page citations + PDF viewer** — summaries and answers carry `[p.12]` source citations; click one to open the original page instantly
 - **Automatic session save & restore** — reopen an analyzed PDF and your summary, Q&A history, and search index are restored instantly, with no re-summarization or re-embedding
 - **Safe for sensitive material** — exam papers, internal documents, paper drafts and other private files can be summarized with confidence
-- **Korean/English UI · paid AI option** — switch to Claude/OpenAI API easily when you need higher quality
+- **Korean/English UI · external AI option** — switch to Claude/OpenAI/Gemini API easily when you need higher quality
 
 This document has two parts — **[User Guide](#user-guide)** (install · usage · troubleshooting) | **[Developer Guide](#developer-guide)** (tech stack · architecture · security design)
 
@@ -93,9 +93,10 @@ The app works with local AI (Ollama) by default; switch to a paid AI when you ne
 | **Ollama (default)** | Offline use, privacy for personal documents | Free |
 | **Claude API** | High summary quality, strong with long documents | Paid (per token) |
 | **OpenAI API** | GPT-4o based, general-purpose summarization | Paid (per token) |
+| **Google Gemini API** | Summaries · Vision · embeddings with a single key | Free tier available (paid beyond limits) |
 
-To use a paid AI:
-1. Settings (⚙️) → select Claude or OpenAI under AI Provider
+To use an external AI:
+1. Settings (⚙️) → select Claude, OpenAI, or Gemini under AI Provider
 2. Enter your API key and **Save** (keys are encrypted and stored locally)
 3. Choose a model and **Save Settings**
 
@@ -105,6 +106,7 @@ To use a paid AI:
 |----------|----------------|------------|-------|
 | **Ollama** | nomic-embed-text (274MB) | 768 | Runs locally, installed automatically during first-run setup |
 | **OpenAI** | text-embedding-3-small | 1536 | Used automatically with your API key, no extra install |
+| **Gemini** | gemini-embedding-2 | — | Used automatically with your API key, no extra install |
 | **Claude** | Ollama fallback | — | No native embedding API; tries the Ollama model → falls back to keyword search |
 
 > Q&A still works without an embedding model via keyword search. RAG is an optional accuracy booster.
@@ -122,6 +124,7 @@ Charts, diagrams, tables, and photos embedded in PDFs are analyzed automatically
 | **Ollama** | llava, llama3.2-vision | Runs locally; the app guides installation if missing |
 | **Claude** | claude-sonnet-4 | API costs apply |
 | **OpenAI** | gpt-4o | API costs apply |
+| **Gemini** | your selected Gemini model (all multimodal) | Free tier available |
 
 > With Ollama, a separate Vision model (e.g. llava) is required. Install it under Settings → Model Management.
 
@@ -137,6 +140,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 |----------|----------------------|-------|
 | **Claude** | 90–98% | Recognizes table/formula structure; API costs apply |
 | **OpenAI (GPT-4o)** | 90–95% | Recognizes table/formula structure; API costs apply |
+| **Gemini** | 90–97% | Recognizes table/formula structure; free tier available |
 | **Ollama (llava)** | 60–75% | Free; suited to simple English PDFs |
 
 > Processing time and API cost grow with page count. For a 50-page scan: Claude ≈ $0.15–0.30, GPT-4o ≈ $0.25–0.50.
@@ -162,7 +166,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Render error recovery — unexpected UI errors offer a "Try again" button, no restart needed
 
 **Quality assurance**
-- 762 unit tests + CI quality gates, plus a 4-agent parallel QA round on every release
+- 782 unit tests + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -180,13 +184,13 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Ollama installation fails | Install manually from [ollama.com](https://ollama.com), or use the wizard's "Cancel and use another provider" button to switch to Claude/OpenAI |
 | Poor Korean summary quality | Install and select the Korean-specialized model (exaone3.5) under Settings → Model Management. It is an optional install during first-run setup and produces better Korean summaries than the base model (gemma3) |
 | Summarization is slow | Switch to a lighter model (e.g. phi3) or reduce the chunk size in Settings |
-| Text extraction fails | Make sure "Scanned PDF OCR" is enabled in Settings; a Vision model (llava, Claude, GPT-4o) is required |
-| OCR results are inaccurate | Ollama llava has low Korean accuracy; switching to Claude or OpenAI improves it significantly |
+| Text extraction fails | Make sure "Scanned PDF OCR" is enabled in Settings; a Vision model (llava, Claude, GPT-4o, Gemini) is required |
+| OCR results are inaccurate | Ollama llava has low Korean accuracy; switching to Claude, OpenAI, or Gemini improves it significantly |
 | OCR takes too long | Use the "■ Cancel" button to stop; cloud providers offer faster throughput |
 | PDF exceeds 500 pages | Split the document and upload again; the cap prevents resource exhaustion |
 | Image analysis doesn't work | With Ollama, a Vision model such as llava is required — install it in Settings |
-| API key error | Verify the key format in Settings. Claude: `sk-ant-...`, OpenAI: `sk-...` |
-| Claude/OpenAI unavailable | Save the API key first, then select the provider |
+| API key error | Verify the key format in Settings. Claude: `sk-ant-...`, OpenAI: `sk-...`, Gemini: `AIza...` |
+| Claude/OpenAI/Gemini unavailable | Save the API key first, then select the provider |
 | Q&A can't answer | If the RAG badge is missing, install the embedding model with `ollama pull nomic-embed-text`. In keyword mode, include specific terms in your question |
 | RAG indexing doesn't run | Make sure first-run setup completed (nomic-embed-text auto-install). Manual install: `ollama pull nomic-embed-text` |
 | Answers seem to generate twice | Answer verification triggers one extra LLM call when grounding is weak; you can turn off the "Answer verification" toggle in Settings |
@@ -208,13 +212,13 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 |------|------------|
 | Framework | Electron 41 + React 19 |
 | Language | TypeScript (strict mode, incl. `noUncheckedIndexedAccess`) |
-| AI generation | Ollama (local) / Claude API / OpenAI API — via Main-process IPC |
-| AI embeddings (RAG) | Ollama /api/embed / OpenAI /v1/embeddings — in-memory vector store |
+| AI generation | Ollama (local) / Claude API / OpenAI API / Gemini API — via Main-process IPC |
+| AI embeddings (RAG) | Ollama /api/embed / OpenAI /v1/embeddings / Gemini batchEmbedContents — in-memory vector store |
 | PDF parsing | pdfjs-dist (position-based text extraction + image extraction, Korean-optimized) |
 | State management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
-| Testing | Vitest, 762 unit tests / 39 files (renderer·shared 443 + main 319) + `tsc --noEmit` type check + CI coverage gates (44/40/44/46) |
+| Testing | Vitest, 782 unit tests / 40 files (renderer·shared 451 + main 331) + `tsc --noEmit` type check + CI coverage gates (44/40/44/46) |
 | i18n | In-house (i18n.ts) — 172+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -262,7 +266,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (762, 39 files)
+    │   └── __tests__/         # Unit tests (782, 40 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -456,7 +460,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **762 unit tests / 39 files** — renderer·shared 443 + main 319. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
+- **782 unit tests / 40 files** — renderer·shared 451 + main 331. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
 - **CI gates** — `tsc --noEmit` (strict), enforced coverage thresholds (44/40/44/46), lockfile version sync check, `npm audit` advisory, Node 20.11/22/24 matrix
 - **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical/High findings for 42 consecutive rounds
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)

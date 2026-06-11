@@ -5,6 +5,9 @@ import type { AppSettings, AiProviderType } from '../types';
 import { PROVIDER_MODELS, UI_LANGUAGES, DEFAULT_SETTINGS } from '../types';
 import { applyTheme } from '../lib/theme';
 
+/** API 키가 필요한 클라우드 provider 의 표시 이름 (키 저장/삭제 토스트용) */
+const CLOUD_PROVIDER_NAMES = { claude: 'Claude', openai: 'OpenAI', gemini: 'Gemini' } as const;
+
 /** 바이트를 사람이 읽기 쉬운 단위로 (session-persistence 용량 표시) */
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -39,8 +42,10 @@ export function SettingsPanel() {
 
   const [claudeKey, setClaudeKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
+  const [geminiKey, setGeminiKey] = useState('');
   const [claudeKeyStored, setClaudeKeyStored] = useState(false);
   const [openaiKeyStored, setOpenaiKeyStored] = useState(false);
+  const [geminiKeyStored, setGeminiKeyStored] = useState(false);
   const [keyMessage, setKeyMessage] = useState('');
   // 청크 크기는 로컬 string state 로 관리 — 한 글자씩 타이핑 중 범위 벗어난 중간값 허용.
   // onChange 에서 즉시 거부하면 "2000" 타이핑 중 "2" 가 거부되어 입력 불가. blur 시 clamp + 커밋.
@@ -112,6 +117,9 @@ export function SettingsPanel() {
     window.electronAPI.apiKey.has('openai')
       .then((has) => { if (mountedRef.current) setOpenaiKeyStored(has); })
       .catch(() => {});
+    window.electronAPI.apiKey.has('gemini')
+      .then((has) => { if (mountedRef.current) setGeminiKeyStored(has); })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -132,10 +140,13 @@ export function SettingsPanel() {
     // PROVIDER_MODELS 는 const 정의로 항상 ≥1 이지만 컴파일러는 좁히지 못함.
     const claudeFirst = PROVIDER_MODELS.claude[0]?.value ?? '';
     const openaiFirst = PROVIDER_MODELS.openai[0]?.value ?? '';
+    const geminiFirst = PROVIDER_MODELS.gemini[0]?.value ?? '';
     if (draft.provider === 'claude') {
       setDraft((d) => ({ ...d, model: claudeFirst }));
     } else if (draft.provider === 'openai') {
       setDraft((d) => ({ ...d, model: openaiFirst }));
+    } else if (draft.provider === 'gemini') {
+      setDraft((d) => ({ ...d, model: geminiFirst }));
     } else if (draft.provider === 'ollama' && ollamaModels.length > 0) {
       const first = ollamaModels[0];
       if (first) setDraft((d) => ({ ...d, model: first }));
@@ -148,8 +159,8 @@ export function SettingsPanel() {
     userEditedRef.current = true;
   };
 
-  const handleSaveApiKey = async (provider: 'claude' | 'openai') => {
-    const key = provider === 'claude' ? claudeKey : openaiKey;
+  const handleSaveApiKey = async (provider: 'claude' | 'openai' | 'gemini') => {
+    const key = provider === 'claude' ? claudeKey : provider === 'openai' ? openaiKey : geminiKey;
     if (!key.trim()) {
       // 공백만 입력한 경우 무음 실패 대신 명시적 피드백 — 사용자가 "저장" 버튼 반응 없음으로 혼란
       setKeyMessage(t('settings.keyEmpty'));
@@ -165,17 +176,20 @@ export function SettingsPanel() {
       if (provider === 'claude') {
         setClaudeKeyStored(true);
         setClaudeKey('');
-      } else {
+      } else if (provider === 'openai') {
         setOpenaiKeyStored(true);
         setOpenaiKey('');
+      } else {
+        setGeminiKeyStored(true);
+        setGeminiKey('');
       }
-      setKeyMessage(t('settings.keySaved', { provider: provider === 'claude' ? 'Claude' : 'OpenAI' }));
+      setKeyMessage(t('settings.keySaved', { provider: CLOUD_PROVIDER_NAMES[provider] }));
     } catch {
       setKeyMessage(t('settings.keySaveFail'));
     }
   };
 
-  const handleDeleteApiKey = async (provider: 'claude' | 'openai') => {
+  const handleDeleteApiKey = async (provider: 'claude' | 'openai' | 'gemini') => {
     try {
       const result = await window.electronAPI.apiKey.delete(provider);
       if (!result.success) {
@@ -186,13 +200,13 @@ export function SettingsPanel() {
       // provider-change 훅은 ollamaModels 가 비어 있으면 모델을 건드리지 않기 때문에
       // Claude/OpenAI 모델 id 가 draft 에 남아 저장 시 "Ollama + claude-sonnet-4" 같은
       // 잘못된 조합이 StatusBar/AI client 로 전파되는 문제를 사전에 방지.
-      const needsProviderFlip =
-        (provider === 'claude' && draft.provider === 'claude') ||
-        (provider === 'openai' && draft.provider === 'openai');
+      const needsProviderFlip = draft.provider === provider;
       if (provider === 'claude') {
         setClaudeKeyStored(false);
-      } else {
+      } else if (provider === 'openai') {
         setOpenaiKeyStored(false);
+      } else {
+        setGeminiKeyStored(false);
       }
       if (needsProviderFlip) {
         const fallbackModel = ollamaModels.length > 0 ? ollamaModels[0] : DEFAULT_SETTINGS.model;
@@ -211,6 +225,10 @@ export function SettingsPanel() {
     }
     if (draft.provider === 'openai' && !openaiKeyStored) {
       setKeyMessage(t('settings.saveKeyFirst', { provider: 'OpenAI' }));
+      return;
+    }
+    if (draft.provider === 'gemini' && !geminiKeyStored) {
+      setKeyMessage(t('settings.saveKeyFirst', { provider: 'Gemini' }));
       return;
     }
     updateSettings(draft);
@@ -341,9 +359,13 @@ export function SettingsPanel() {
             { value: 'ollama' as AiProviderType, label: t('settings.ollamaLabel'), desc: t('settings.ollamaDesc') },
             { value: 'claude' as AiProviderType, label: t('settings.claudeLabel'), desc: t('settings.claudeDesc') },
             { value: 'openai' as AiProviderType, label: t('settings.openaiLabel'), desc: t('settings.openaiDesc') },
+            { value: 'gemini' as AiProviderType, label: t('settings.geminiLabel'), desc: t('settings.geminiDesc') },
           ]).map((opt) => {
             const needsKey = opt.value !== 'ollama';
-            const hasKey = opt.value === 'claude' ? claudeKeyStored : opt.value === 'openai' ? openaiKeyStored : true;
+            const hasKey = opt.value === 'claude' ? claudeKeyStored
+              : opt.value === 'openai' ? openaiKeyStored
+              : opt.value === 'gemini' ? geminiKeyStored
+              : true;
             return (
               <label key={opt.value} className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer border transition-colors ${
                 draft.provider === opt.value
@@ -393,7 +415,7 @@ export function SettingsPanel() {
           </div>
         </div>
 
-        <div>
+        <div className="mb-4">
           <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
             OpenAI API {openaiKeyStored && <span className="text-green-500 ml-1">{t('common.saved')}</span>}
           </label>
@@ -403,6 +425,20 @@ export function SettingsPanel() {
               <button onClick={() => handleSaveApiKey('openai')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">{t('common.save')}</button>
             ) : openaiKeyStored ? (
               <button onClick={() => handleDeleteApiKey('openai')} className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors">{t('common.delete')}</button>
+            ) : null}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
+            Gemini API {geminiKeyStored && <span className="text-green-500 ml-1">{t('common.saved')}</span>}
+          </label>
+          <div className="flex gap-2">
+            <input type="password" autoComplete="off" spellCheck={false} maxLength={200} placeholder={geminiKeyStored ? t('settings.apiKeyMasked') : t('settings.apiKeyPlaceholder')} value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+            {geminiKey ? (
+              <button onClick={() => handleSaveApiKey('gemini')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">{t('common.save')}</button>
+            ) : geminiKeyStored ? (
+              <button onClick={() => handleDeleteApiKey('gemini')} className="px-3 py-1.5 text-sm bg-red-500 text-white rounded hover:bg-red-600 transition-colors">{t('common.delete')}</button>
             ) : null}
           </div>
         </div>

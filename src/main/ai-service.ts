@@ -7,11 +7,24 @@ import { isLocalhostHost } from '../shared/constants';
 interface GenerateRequest {
   text: string;
   type: 'full' | 'chapter' | 'keywords' | 'qa';
-  provider: 'ollama' | 'claude' | 'openai';
+  provider: 'ollama' | 'claude' | 'openai' | 'gemini';
   model: string;
   ollamaBaseUrl: string;
   temperature?: number;
   language?: string;
+}
+
+// ─── Gemini 공통 ───
+
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+
+/**
+ * Gemini 는 모델명이 URL path 에 들어가므로 encodeURIComponent 로 path 조작을 차단한다.
+ * (MODEL_NAME_RE 가 '/' 를 허용하므로 IPC 검증만으로는 path segment 주입을 못 막음)
+ * @internal 테스트 노출용 export (validateOllamaUrl 과 동일 패턴)
+ */
+export function geminiModelUrl(model: string, method: string, sse: boolean): string {
+  return `${GEMINI_API_BASE}/models/${encodeURIComponent(model)}:${method}${sse ? '?alt=sse' : ''}`;
 }
 
 const activeRequests = new Map<string, { abort: () => void; createdAt: number; startedAt: number }>();
@@ -169,6 +182,9 @@ export async function generate(
       case 'openai':
         if (!apiKey) throw Object.assign(new Error('OpenAI API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING' });
         return await generateOpenAi(requestId, prompt, request, apiKey, win);
+      case 'gemini':
+        if (!apiKey) throw Object.assign(new Error('Gemini API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING' });
+        return await generateGemini(requestId, prompt, request, apiKey, win);
     }
   } catch (err) {
     // sync 또는 async throw 시 placeholder 가 streamRequest 의 자기 entry 로 아직 교체되지
@@ -183,7 +199,7 @@ export async function generate(
 }
 
 export async function checkAvailability(
-  provider: 'ollama' | 'claude' | 'openai',
+  provider: 'ollama' | 'claude' | 'openai' | 'gemini',
   ollamaBaseUrl: string,
   apiKey: string | undefined,
 ): Promise<boolean> {
@@ -204,6 +220,8 @@ export async function checkAvailability(
     case 'claude':
       return !!apiKey;
     case 'openai':
+      return !!apiKey;
+    case 'gemini':
       return !!apiKey;
   }
 }
@@ -310,6 +328,47 @@ async function generateOpenAi(
   }, win);
 }
 
+// ─── Gemini ───
+
+async function generateGemini(
+  requestId: string,
+  prompt: string,
+  request: GenerateRequest,
+  apiKey: string,
+  win: BrowserWindow,
+): Promise<void> {
+  const { system, user } = splitPrompt(prompt);
+  const body = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ text: user }] }],
+    ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+    generationConfig: {
+      temperature: request.temperature ?? 0.3,
+      maxOutputTokens: 4096,
+    },
+  });
+
+  return streamRequest(requestId, {
+    url: geminiModelUrl(request.model || 'gemini-3.5-flash', 'streamGenerateContent', true),
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      // API 키는 쿼리스트링이 아닌 헤더로 전달 — URL 로그/에러 메시지 유출 방지
+      'x-goog-api-key': apiKey,
+    },
+    body,
+    isSSE: true,
+    extractToken: (parsed) => {
+      const parts = parsed.candidates?.[0]?.content?.parts;
+      if (!Array.isArray(parts)) return null;
+      const text = parts.map((p) => p?.text || '').join('');
+      return text || null;
+    },
+    // Gemini 는 만료/권한 없는 키에 401/403 을 반환. 형식이 잘못된 키는 400(INVALID_ARGUMENT)
+    // 이지만 400 은 입력 초과 등 일반 오류와 겹치므로 auth 매핑에서 제외 (오분류 방지).
+    checkAuthError: (statusCode) => statusCode === 401 || statusCode === 403,
+  }, win);
+}
+
 // ─── 스트리밍 응답 타입 (JSON.parse 결과 — provider별 속성을 단일 인터페이스로 통합) ───
 
 interface StreamChunk {
@@ -321,6 +380,8 @@ interface StreamChunk {
   delta?: { text?: string };
   // OpenAI
   choices?: { delta?: { content?: string } }[];
+  // Gemini
+  candidates?: { content?: { parts?: { text?: string }[] } }[];
 }
 
 // ─── 공통 스트리밍 요청 ───
@@ -631,7 +692,7 @@ interface VisionConfig {
 async function callVision(
   config: VisionConfig,
   imageBase64: string,
-  provider: 'ollama' | 'claude' | 'openai',
+  provider: 'ollama' | 'claude' | 'openai' | 'gemini',
   model: string,
   ollamaBaseUrl: string,
   apiKey: string | undefined,
@@ -695,12 +756,33 @@ async function callVision(
       const parsed = JSON.parse(result);
       return config.sanitize(parsed.choices?.[0]?.message?.content || '');
     }
+    case 'gemini': {
+      if (!apiKey) throw new Error('Gemini API 키가 필요합니다.');
+      const body = JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [
+            { inline_data: { mime_type: detectMimeType(imageBase64), data: imageBase64 } },
+            { text: config.prompt },
+          ],
+        }],
+        generationConfig: { maxOutputTokens: config.maxTokens },
+      });
+      const result = await httpPost(geminiModelUrl(model || 'gemini-3.5-flash', 'generateContent', false), {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      }, body, config.timeoutMs, signal);
+      const parsed = JSON.parse(result);
+      const parts = parsed.candidates?.[0]?.content?.parts;
+      const text = Array.isArray(parts) ? parts.map((p: { text?: string }) => p?.text || '').join('') : '';
+      return config.sanitize(text);
+    }
   }
 }
 
 export async function analyzeImage(
   imageBase64: string,
-  provider: 'ollama' | 'claude' | 'openai',
+  provider: 'ollama' | 'claude' | 'openai' | 'gemini',
   model: string,
   ollamaBaseUrl: string,
   apiKey: string | undefined,
@@ -725,7 +807,7 @@ export function sanitizeOcrResponse(text: string): string {
 
 export async function analyzeImageForOcr(
   imageBase64: string,
-  provider: 'ollama' | 'claude' | 'openai',
+  provider: 'ollama' | 'claude' | 'openai' | 'gemini',
   model: string,
   ollamaBaseUrl: string,
   apiKey: string | undefined,
@@ -793,7 +875,9 @@ function httpPost(
             // R30 P2 (v0.18.18): RFC 6750 token68 char class 에 `~` 가 포함되므로 누락 회피
             .replace(/Bearer\s+[A-Za-z0-9._~\-+/=]+/gi, 'Bearer [REDACTED]')
             .replace(/\bsk-ant-[A-Za-z0-9_\-]{20,}\b/g, 'sk-ant-[REDACTED]')
-            .replace(/\bsk-(?:proj-|test-|live-)?[A-Za-z0-9_\-]{20,}\b/g, 'sk-[REDACTED]');
+            .replace(/\bsk-(?:proj-|test-|live-)?[A-Za-z0-9_\-]{20,}\b/g, 'sk-[REDACTED]')
+            // Google API 키 형식 (AIza + 35자) — Gemini 에러 바디 echo 유출 방지
+            .replace(/\bAIza[A-Za-z0-9_\-]{30,}\b/g, 'AIza[REDACTED]');
           let detail = sanitized.slice(0, 500);
           try {
             const parsed = JSON.parse(sanitized);
@@ -874,7 +958,7 @@ const OLLAMA_EMBED_MODELS = ['nomic-embed-text', 'mxbai-embed-large', 'all-minil
 export interface EmbeddingResult {
   embeddings: number[][];
   model: string;
-  provider: 'ollama' | 'openai';
+  provider: 'ollama' | 'openai' | 'gemini';
 }
 
 /**
@@ -883,7 +967,7 @@ export interface EmbeddingResult {
  */
 export async function generateEmbeddings(
   texts: string[],
-  provider: 'ollama' | 'claude' | 'openai',
+  provider: 'ollama' | 'claude' | 'openai' | 'gemini',
   ollamaBaseUrl: string,
   apiKey: string | undefined,
   embeddingModel?: string,
@@ -905,6 +989,11 @@ export async function generateEmbeddings(
   if (provider === 'openai') {
     if (!apiKey) return null;
     return embedOpenAi(texts, apiKey, embeddingModel, signal);
+  }
+
+  if (provider === 'gemini') {
+    if (!apiKey) return null;
+    return embedGemini(texts, apiKey, embeddingModel, signal);
   }
 
   return null;
@@ -967,6 +1056,44 @@ async function embedOpenAi(
     model: useModel,
     provider: 'openai',
   };
+}
+
+/** Gemini 기본 임베딩 모델 — index.ts 의 ai:check-embed-model 과 동기화 */
+export const GEMINI_EMBED_MODEL = 'gemini-embedding-2';
+
+async function embedGemini(
+  texts: string[],
+  apiKey: string,
+  model?: string,
+  signal?: AbortSignal,
+): Promise<EmbeddingResult> {
+  const useModel = model || GEMINI_EMBED_MODEL;
+  const body = JSON.stringify({
+    requests: texts.map((t) => ({
+      model: `models/${useModel}`,
+      content: { parts: [{ text: t }] },
+    })),
+  });
+  const result = await httpPost(geminiModelUrl(useModel, 'batchEmbedContents', false), {
+    'Content-Type': 'application/json',
+    'x-goog-api-key': apiKey,
+  }, body, 60000, signal);
+  const parsed = JSON.parse(result);
+  if (!parsed.embeddings || !Array.isArray(parsed.embeddings)) {
+    throw new Error('Gemini 임베딩 응답 형식 오류');
+  }
+  if (parsed.embeddings.length !== texts.length) {
+    throw new Error(`Gemini 임베딩 개수 불일치: expected ${texts.length}, got ${parsed.embeddings.length}`);
+  }
+  // batchEmbedContents 는 요청 순서를 보존하므로 index 정렬 불필요 — values 배열만 검증·추출.
+  const embeddings: number[][] = [];
+  for (const e of parsed.embeddings as { values?: unknown }[]) {
+    if (!e || !Array.isArray(e.values)) {
+      throw new Error('Gemini 임베딩 응답 형식 오류');
+    }
+    embeddings.push(e.values as number[]);
+  }
+  return { embeddings, model: useModel, provider: 'gemini' };
 }
 
 /** 사용 가능한 임베딩 모델 확인 (Ollama 전용) */

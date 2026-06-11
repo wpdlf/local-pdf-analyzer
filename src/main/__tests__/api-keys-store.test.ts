@@ -52,8 +52,8 @@ beforeEach(() => {
 });
 
 describe('상수', () => {
-  it('KNOWN_API_KEY_PROVIDERS 는 ollama/claude/openai', () => {
-    expect([...KNOWN_API_KEY_PROVIDERS]).toEqual(['ollama', 'claude', 'openai']);
+  it('KNOWN_API_KEY_PROVIDERS 는 ollama/claude/openai/gemini', () => {
+    expect([...KNOWN_API_KEY_PROVIDERS]).toEqual(['ollama', 'claude', 'openai', 'gemini']);
   });
 });
 
@@ -86,11 +86,11 @@ describe('read', () => {
   });
 
   it('미지 provider / 비-string 값은 폐기', () => {
-    mocks.readFileSync.mockReturnValue(storedBuffer({ claude: 'sk-c', gemini: 'sk-g', openai: 12345 }));
+    mocks.readFileSync.mockReturnValue(storedBuffer({ claude: 'sk-c', mistral: 'sk-m', openai: 12345 }));
     const store = new ApiKeyStore(PATH, makeCrypto());
     const result = store.read();
     expect(result).toEqual({ claude: 'sk-c' });
-    expect(result).not.toHaveProperty('gemini');
+    expect(result).not.toHaveProperty('mistral');
     expect(result).not.toHaveProperty('openai');
   });
 

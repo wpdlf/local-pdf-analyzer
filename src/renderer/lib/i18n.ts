@@ -146,6 +146,8 @@ export const _translations = {
   'settings.claudeDesc': { ko: '높은 요약 품질, API 키 필요 (유료)', en: 'High quality summaries, API key required (paid)' },
   'settings.openaiLabel': { ko: 'OpenAI API', en: 'OpenAI API' },
   'settings.openaiDesc': { ko: 'GPT-4o 기반 요약, API 키 필요 (유료)', en: 'GPT-4o based summaries, API key required (paid)' },
+  'settings.geminiLabel': { ko: 'Google Gemini API', en: 'Google Gemini API' },
+  'settings.geminiDesc': { ko: 'Gemini 기반 요약·Vision·임베딩, API 키 필요 (무료 티어 제공)', en: 'Gemini summaries · Vision · embeddings, API key required (free tier available)' },
   'settings.enterApiKey': { ko: '아래에서 API 키를 입력하세요', en: 'Enter API key below' },
   'settings.keyRegistered': { ko: '키 등록됨', en: 'Key registered' },
   'settings.model': { ko: '모델', en: 'Model' },
