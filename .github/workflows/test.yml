@@ -17,10 +17,11 @@ jobs:
     # 가리지 않도록.
     # R37 P5-3 (v0.18.23): release.yml 의 test/build 잡도 Node 22 로 정렬 (20.11 EoL 2026-04 경과).
     # 본 프로젝트는 네이티브 모듈 0개라 빌드의 Node 버전 의존이 없어 안정성 손실 없이 통일.
+    # (v0.19.1+): 로컬 개발 환경 Node 24 업그레이드에 따라 engines <25 로 확장, 매트릭스에 24 추가.
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['20.11', '22']
+        node-version: ['20.11', '22', '24']
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

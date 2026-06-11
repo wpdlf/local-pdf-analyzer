@@ -49,7 +49,7 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           # R37 P5-3 (v0.18.23): 20.11 → 22. Node 20.11 EoL(2026-04) 경과 + test.yml 매트릭스/
-          # engines(<23) 정렬. 네이티브 모듈 0개라 빌드 Node 의존 없음.
+          # engines(현재 <25) 정렬. 네이티브 모듈 0개라 빌드 Node 의존 없음.
           node-version: '22'
           cache: npm
 
