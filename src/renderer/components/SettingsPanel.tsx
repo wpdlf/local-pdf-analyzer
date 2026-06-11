@@ -308,15 +308,30 @@ export function SettingsPanel() {
 
   return (
     <div className="p-6 max-w-lg mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      {/* sticky 헤더 — 저장 버튼을 하단에서 이동(R43 UX): 긴 설정 페이지를 스크롤한 상태에서도
+          저장/닫기가 항상 보이도록 한다. 음수 마진으로 컨테이너 패딩을 상쇄해 전폭 배경 유지. */}
+      <div className="sticky top-0 z-10 -mt-6 -mx-6 px-6 py-4 mb-6 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <h2 className="text-xl font-bold text-gray-800 dark:text-white">{t('settings.title')}</h2>
-        <button
-          onClick={handleCancel}
-          aria-label={t('settings.closePanel')}
-          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-        >
-          ✕ {t('common.close')}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSave}
+            disabled={!hasChanges && !saved}
+            className={`px-4 py-1.5 text-sm rounded-lg font-medium transition-colors ${
+              saved ? 'bg-green-500 text-white'
+                : hasChanges ? 'bg-blue-500 text-white hover:bg-blue-600'
+                : 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
+            }`}
+          >
+            {saved ? t('settings.savedBtn') : hasChanges ? t('settings.saveBtn') : t('settings.noChanges')}
+          </button>
+          <button
+            onClick={handleCancel}
+            aria-label={t('settings.closePanel')}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+          >
+            ✕ {t('common.close')}
+          </button>
+        </div>
       </div>
 
       {keyMessage && (
@@ -636,20 +651,6 @@ export function SettingsPanel() {
         )}
       </section>
 
-      {/* 저장 */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={handleSave}
-          disabled={!hasChanges && !saved}
-          className={`flex-1 py-2.5 rounded-lg font-medium transition-colors ${
-            saved ? 'bg-green-500 text-white'
-              : hasChanges ? 'bg-blue-500 text-white hover:bg-blue-600'
-              : 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed'
-          }`}
-        >
-          {saved ? t('settings.savedBtn') : hasChanges ? t('settings.saveBtn') : t('settings.noChanges')}
-        </button>
-      </div>
     </div>
   );
 }
