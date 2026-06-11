@@ -1,275 +1,275 @@
-🌐 **한국어** | [English](README.en.md)
+🌐 [한국어](README.ko.md) | **English**
 
-# 📄 로컬 AI PDF 분석기 (Local AI PDF Analyzer)
+# 📄 Local AI PDF Analyzer
 
-**개인 PC에서 직접 실행되는 로컬 AI 기반 PDF 요약 도구입니다.**
+**A local AI-powered PDF summarization tool that runs entirely on your PC.**
 
-기존 AI 요약 서비스는 PDF를 외부 서버에 업로드해야 하지만, 이 앱은 **AI가 내 컴퓨터 안에서 실행**됩니다.
+Most AI summarization services require uploading your PDF to an external server — this app runs **the AI inside your own computer**.
 
-- **완전한 오프라인 동작** — Ollama 로컬 AI 엔진이 PC에서 직접 실행되어, PDF 파일이 외부 서버로 전송되지 않습니다
-- **텍스트 + 이미지 통합 분석** — 텍스트는 물론 차트, 다이어그램, 표 등 삽입 이미지까지 Vision AI로 분석합니다
-- **스캔 PDF OCR** — 이미지 기반 스캔 PDF도 Vision AI가 페이지별로 텍스트를 인식하여 분석합니다
-- **RAG 기반 Q&A 채팅** — 임베딩 시맨틱 검색으로 질문과 가장 관련 높은 부분을 찾아 답변하고, 답변의 근거를 자동 검증합니다
-- **페이지 인용 + PDF 뷰어** — 요약/답변에 `[p.12]` 출처 인용이 자동으로 붙고, 클릭하면 PDF 원문의 해당 페이지가 바로 열립니다
-- **세션 자동 저장·복원** — 분석한 PDF를 다시 열면 요약·Q&A·검색 인덱스가 재요약·재임베딩 없이 즉시 복원됩니다
-- **개인 자료 걱정 없이 사용** — 시험자료, 사내 문서, 논문 초고 등 민감한 자료도 안심하고 요약할 수 있습니다
-- **한국어/English UI · 유료 AI 전환** — 더 높은 품질이 필요하면 Claude/OpenAI API로 간편하게 전환할 수 있습니다
+- **Fully offline operation** — the Ollama local AI engine runs directly on your PC, so your PDF files never leave your machine
+- **Unified text + image analysis** — analyzes not only text but also embedded charts, diagrams, and tables with Vision AI
+- **Scanned PDF OCR** — image-based scanned PDFs are recognized page by page with Vision AI
+- **RAG-based Q&A chat** — embedding-based semantic search finds the most relevant parts of your PDF, and answers are automatically verified against the source
+- **Page citations + PDF viewer** — summaries and answers carry `[p.12]` source citations; click one to open the original page instantly
+- **Automatic session save & restore** — reopen an analyzed PDF and your summary, Q&A history, and search index are restored instantly, with no re-summarization or re-embedding
+- **Safe for sensitive material** — exam papers, internal documents, paper drafts and other private files can be summarized with confidence
+- **Korean/English UI · paid AI option** — switch to Claude/OpenAI API easily when you need higher quality
 
-이 문서는 두 부분으로 구성됩니다 — **[사용자 가이드](#사용자-가이드)** (설치 · 사용법 · 문제 해결) | **[개발자 가이드](#개발자-가이드)** (기술 스택 · 아키텍처 · 보안 설계)
+This document has two parts — **[User Guide](#user-guide)** (install · usage · troubleshooting) | **[Developer Guide](#developer-guide)** (tech stack · architecture · security design)
 
 ---
 
-# 사용자 가이드
+# User Guide
 
-## 다운로드 및 설치
+## Download & Install
 
-> **[최신 버전 다운로드](https://github.com/wpdlf/local-pdf-analyzer/releases/latest)**
+> **[Download the latest version](https://github.com/wpdlf/local-pdf-analyzer/releases/latest)**
 
-| 플랫폼 | 파일 |
+| Platform | File |
 |---|---|
 | **Windows** | `Local-PDF-Analyzer-Setup-x.x.x.exe` |
-| **macOS** | _일시 제외_ (코드사인/공증 자격 추가 후 복원 예정 — 그동안은 `npm run package` 소스 빌드로 사용 가능) |
+| **macOS** | _temporarily unavailable_ (will return once code signing/notarization credentials are in place — in the meantime, build from source with `npm run package`) |
 
-1. 위 링크에서 Windows 설치 파일을 다운로드합니다
-2. 다운로드한 파일을 실행하여 설치합니다
-3. 바탕화면 바로가기 또는 시작 메뉴에서 앱을 실행합니다
-4. 첫 실행 시 AI 엔진(Ollama)과 기본 AI 모델(gemma3) + RAG 임베딩 모델(nomic-embed-text)이 자동 설치됩니다 (약 3.6GB) — 안내를 따라 진행해주세요
-5. 한국어 기반 자료를 주로 분석한다면 설치 화면의 **한국어 특화 모델(exaone3.5, 약 4.8GB) 함께 설치** 옵션을 체크하세요 — 한국어 요약 품질이 더 좋아집니다. 나중에 설정 → 모델 관리에서도 추가할 수 있습니다
+1. Download the Windows installer from the link above
+2. Run the downloaded file to install
+3. Launch the app from the desktop shortcut or Start menu
+4. On first run, the AI engine (Ollama), the base AI model (gemma3), and the RAG embedding model (nomic-embed-text) are installed automatically (~3.6GB) — just follow the prompts
+5. If you mainly analyze Korean documents, check the **Also install the Korean-specialized model (exaone3.5, ~4.8GB)** option on the setup screen for better Korean summaries. You can also add it later in Settings → Model Management
 
 <a id="smartscreen"></a>
-> **Windows SmartScreen 안내**: EV 코드서명 인증서 미도입으로, 첫 설치 시 **"Windows의 PC 보호"** / **"알 수 없는 게시자"** SmartScreen 경고가 표시될 수 있습니다. 정상 동작이며, **추가 정보(More info) → 실행(Run anyway)** 으로 진행하세요. 인스톨러 진위는 아래 [무결성 검증](#인스톨러-무결성-검증)으로 확인할 수 있습니다.
+> **Windows SmartScreen notice**: Because an EV code-signing certificate is not yet in use, the first install may show a **"Windows protected your PC"** / **"Unknown publisher"** SmartScreen warning. This is expected — proceed via **More info → Run anyway**. You can verify the installer's authenticity with the [integrity verification](#installer-integrity-verification) below.
 
-> **참고**: AI 모델 다운로드에 기본 구성 약 3.6GB(한국어 특화 모델 포함 시 약 8.4GB)의 디스크 공간과 수 분의 시간이 필요합니다.
+> **Note**: Downloading the AI models requires about 3.6GB of disk space for the default setup (~8.4GB with the Korean-specialized model) and several minutes.
 
-### 인스톨러 무결성 검증
+### Installer integrity verification
 
-각 릴리즈에는 인스톨러의 **SHA-256 해시**(`SHA256SUMS-windows.txt`)가 자산으로 첨부되며, GitHub Actions가 발급하는 **Sigstore build provenance attestation**으로 빌드 출처를 검증할 수 있습니다.
+Each release ships with the installer's **SHA-256 hash** (`SHA256SUMS-windows.txt`) as a release asset, and a **Sigstore build provenance attestation** issued by GitHub Actions lets you verify the build origin.
 
 ```bash
-# Windows (PowerShell) — 해시 비교
+# Windows (PowerShell) — compare the hash
 Get-FileHash -Algorithm SHA256 .\Local-PDF-Analyzer-Setup-x.x.x.exe
 
-# GitHub CLI 로 attestation 검증 (선택)
+# Verify the Sigstore attestation via GitHub CLI (optional)
 gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pdf-analyzer
 ```
 
-## 사용 방법
+## How to Use
 
-### 1. PDF 업로드
-- 앱 화면에 PDF 파일을 **드래그앤드롭**하거나, **파일 선택** 버튼 또는 **Ctrl+O**로 선택합니다
-- 이전에 분석한 PDF는 업로드 화면 하단 **최근 문서** 목록에서 바로 열 수 있고, 같은 PDF를 다시 열면 요약·Q&A·검색 인덱스가 **자동 복원**됩니다
+### 1. Upload a PDF
+- **Drag & drop** a PDF onto the app window, click **Select File**, or press **Ctrl+O**
+- Previously analyzed PDFs appear in the **Recent Documents** list at the bottom of the upload screen; reopening the same PDF **automatically restores** its summary, Q&A, and search index
 
-### 2. 요약 유형 선택
+### 2. Choose a Summary Type
 
-| 유형 | 설명 |
-|------|------|
-| **전체 요약** | PDF 전체 내용을 하나의 요약으로 정리 |
-| **챕터별 요약** | 장/절 단위로 나누어 각각 요약 |
-| **키워드 추출** | 핵심 키워드와 설명을 표로 정리 |
+| Type | Description |
+|------|-------------|
+| **Full Summary** | Summarizes the entire PDF in one pass |
+| **Chapter Summary** | Splits the document into chapters/sections and summarizes each |
+| **Keyword Extraction** | Extracts key terms with explanations in a table |
 
-### 3. 결과 확인 및 저장
-- 요약이 실시간으로 화면에 표시됩니다
-- **`.md` 내보내기** 버튼으로 파일 저장, **복사** 버튼으로 클립보드에 복사
+### 3. View & Save Results
+- The summary streams to the screen in real time
+- Save with the **Export `.md`** button, or copy to clipboard with **Copy**
 
-### 4. Q&A 채팅 (RAG 시맨틱 검색)
-- PDF 로드 시 자동으로 **RAG 벡터 인덱스**가 생성됩니다 (헤더에 진행률 → 완료 시 **RAG** 배지 표시)
-- 질문하면 임베딩 유사도로 PDF에서 가장 관련 높은 부분을 찾아 AI가 답변합니다 (최대 10턴까지 이전 대화 맥락 유지)
-- 임베딩 모델이 없으면 키워드 기반 검색으로 자동 전환됩니다 (기능 동일, 정확도 차이)
-- **답변 자동 검증** — 답변의 각 문장을 PDF 임베딩에 대조하여, 근거가 약한 문장이 많으면 자동으로 한 번 더 다듬어 출력합니다 (설정에서 비활성화 가능)
-- `Enter`: 전송 / `Shift+Enter`: 줄바꿈
+### 4. Q&A Chat (RAG Semantic Search)
+- A **RAG vector index** is built automatically when a PDF loads (progress in the header → **RAG** badge when ready)
+- Ask a question and the AI answers using the most relevant parts of the PDF found via embedding similarity (up to 10 turns of conversation context)
+- Without an embedding model, Q&A falls back to keyword search automatically (same feature, lower accuracy)
+- **Automatic answer verification** — each sentence of the answer is checked against the PDF embeddings; if too many sentences lack grounding, the answer is automatically refined once more (can be disabled in Settings)
+- `Enter`: send / `Shift+Enter`: new line
 
-### 5. 페이지 인용 + PDF 뷰어
-- 요약과 Q&A 답변의 핵심 사실마다 **`[p.12]` 형태의 페이지 인용**이 자동으로 붙습니다
-- 인용을 **클릭**하면 화면 우측에 **PDF 뷰어 패널**이 열려 해당 페이지로 바로 이동합니다 — AI 환각 여부를 1-click으로 검증할 수 있습니다
-- 중앙 구분선을 드래그하거나 키보드(Tab 포커스 후 `←`/`→`, `Home`/`End`)로 좌/우 비율을 20~80% 사이로 조정할 수 있고, 비율은 저장되어 재시작 시 복원됩니다
-- `ESC` 또는 ✕ 버튼으로 패널을 닫습니다
+### 5. Page Citations + PDF Viewer
+- Every key fact in summaries and Q&A answers gets an automatic **`[p.12]`-style page citation**
+- **Click** a citation to open the **PDF viewer panel** on the right at that exact page — verify potential AI hallucinations with one click
+- Drag the center divider (or use the keyboard: Tab focus then `←`/`→`, `Home`/`End`) to adjust the split between 20–80%; the ratio is saved across restarts
+- Close the panel with `ESC` or the ✕ button
 
-## AI Provider 선택
+## AI Provider Selection
 
-기본은 로컬 AI(Ollama)로 동작하며, 더 높은 품질의 요약이 필요하면 유료 AI를 사용할 수 있습니다.
+The app works with local AI (Ollama) by default; switch to a paid AI when you need higher-quality summaries.
 
-| Provider | 특징 | 비용 |
-|----------|------|------|
-| **Ollama (기본)** | 오프라인 사용, 개인 자료 보안 | 무료 |
-| **Claude API** | 높은 요약 품질, 긴 문서 처리에 강점 | 유료 (토큰당 과금) |
-| **OpenAI API** | GPT-4o 기반, 범용적 요약 | 유료 (토큰당 과금) |
+| Provider | Strengths | Cost |
+|----------|-----------|------|
+| **Ollama (default)** | Offline use, privacy for personal documents | Free |
+| **Claude API** | High summary quality, strong with long documents | Paid (per token) |
+| **OpenAI API** | GPT-4o based, general-purpose summarization | Paid (per token) |
 
-유료 AI를 사용하려면:
-1. 설정(⚙️) → AI Provider에서 Claude 또는 OpenAI 선택
-2. API 키 입력 후 **저장** (키는 암호화되어 로컬에 저장됩니다)
-3. 모델 선택 후 **설정 저장**
+To use a paid AI:
+1. Settings (⚙️) → select Claude or OpenAI under AI Provider
+2. Enter your API key and **Save** (keys are encrypted and stored locally)
+3. Choose a model and **Save Settings**
 
-### Q&A 임베딩 모델 (RAG)
+### Q&A Embedding Models (RAG)
 
-| Provider | 임베딩 모델 | 차원 | 비고 |
-|----------|------------|------|------|
-| **Ollama** | nomic-embed-text (274MB) | 768 | 로컬 실행, 첫 실행 셋업 시 자동 설치 |
-| **OpenAI** | text-embedding-3-small | 1536 | API 키로 자동 사용, 추가 설치 불필요 |
-| **Claude** | Ollama fallback | — | 자체 임베딩 API 없음, Ollama 모델 사용 시도 → 불가 시 키워드 검색 |
+| Provider | Embedding model | Dimensions | Notes |
+|----------|----------------|------------|-------|
+| **Ollama** | nomic-embed-text (274MB) | 768 | Runs locally, installed automatically during first-run setup |
+| **OpenAI** | text-embedding-3-small | 1536 | Used automatically with your API key, no extra install |
+| **Claude** | Ollama fallback | — | No native embedding API; tries the Ollama model → falls back to keyword search |
 
-> 임베딩 모델이 없어도 Q&A는 키워드 기반 검색으로 동작합니다. RAG는 정확도를 높이는 선택적 기능입니다.
+> Q&A still works without an embedding model via keyword search. RAG is an optional accuracy booster.
 
-## PDF 이미지 분석
+## PDF Image Analysis
 
-PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동으로 분석하여 요약에 포함합니다.
+Charts, diagrams, tables, and photos embedded in PDFs are analyzed automatically by Vision AI and incorporated into the summary.
 
-- PDF 페이지에서 이미지를 개별 추출하여 Vision 모델로 의미 분석
-- 분석 결과가 해당 페이지 텍스트에 자연스럽게 통합되어 요약 품질 향상
-- 설정에서 이미지 분석 on/off 가능
+- Images are extracted per page and semantically analyzed by a Vision model
+- Analysis results are merged into the page text, improving summary quality
+- Image analysis can be toggled on/off in Settings
 
-| Provider | Vision 모델 | 비고 |
-|----------|------------|------|
-| **Ollama** | llava, llama3.2-vision | 로컬 실행, 미설치 시 자동 안내 |
-| **Claude** | claude-sonnet-4 | API 비용 발생 |
-| **OpenAI** | gpt-4o | API 비용 발생 |
+| Provider | Vision model | Notes |
+|----------|--------------|-------|
+| **Ollama** | llava, llama3.2-vision | Runs locally; the app guides installation if missing |
+| **Claude** | claude-sonnet-4 | API costs apply |
+| **OpenAI** | gpt-4o | API costs apply |
 
-> Ollama 사용 시 Vision 모델(llava 등)이 별도로 필요합니다. 설정 → 모델 관리에서 설치할 수 있습니다.
+> With Ollama, a separate Vision model (e.g. llava) is required. Install it under Settings → Model Management.
 
-## 스캔 PDF OCR
+## Scanned PDF OCR
 
-텍스트를 추출할 수 없는 이미지 기반/스캔 PDF에서 Vision AI가 페이지별로 텍스트를 자동 인식합니다.
+For image-based/scanned PDFs where text extraction fails, Vision AI recognizes the text page by page.
 
-- 텍스트 추출 실패 시 자동으로 OCR fallback 진입 (설정에서 on/off 가능)
-- 배치 병렬 처리 + 진행률 표시, 진행 중 언제든 취소 가능
-- OCR로 처리된 문서에는 `OCR` 배지가 표시됩니다
+- OCR fallback kicks in automatically when text extraction fails (toggle in Settings)
+- Batched parallel processing with a progress bar; cancel anytime
+- Documents processed via OCR show an `OCR` badge
 
-| Provider | OCR 정확도 (한국어) | 비고 |
-|----------|-------------------|------|
-| **Claude** | 90~98% | 표/수식 구조 인식 포함, API 비용 발생 |
-| **OpenAI (GPT-4o)** | 90~95% | 표/수식 구조 인식 포함, API 비용 발생 |
-| **Ollama (llava)** | 60~75% | 무료, 간단한 영문 PDF에 적합 |
+| Provider | OCR accuracy (Korean) | Notes |
+|----------|----------------------|-------|
+| **Claude** | 90–98% | Recognizes table/formula structure; API costs apply |
+| **OpenAI (GPT-4o)** | 90–95% | Recognizes table/formula structure; API costs apply |
+| **Ollama (llava)** | 60–75% | Free; suited to simple English PDFs |
 
-> 스캔 PDF의 페이지 수에 따라 처리 시간과 API 비용이 증가합니다. 50페이지 기준 Claude 약 $0.15~0.30, GPT-4o 약 $0.25~0.50입니다.
+> Processing time and API cost grow with page count. For a 50-page scan: Claude ≈ $0.15–0.30, GPT-4o ≈ $0.25–0.50.
 
-## 주요 특징
+## Key Features
 
-**분석 품질**
-- 한국어 최적화 — 한글 PDF 텍스트 추출 품질 개선, 한글 비율에 따른 청크 자동 조절
-- 깔끔한 요약 — AI가 생성하는 인사말·감상평·대화형 멘트를 프롬프트 제약 + 후처리 필터로 이중 제거
-- 대용량 PDF 지원 — 긴 문서도 자동 분할 후 배치 병렬 처리, 통합 요약 생성 (최대 500페이지)
-- 답변 자동 검증 — Q&A 답변을 문장 단위로 PDF 임베딩에 대조, 근거 약한 답변은 자동 재정리
+**Analysis quality**
+- Korean-optimized — improved Korean PDF text extraction, chunk sizing adapts to the Korean-text ratio
+- Clean summaries — greetings, commentary, and conversational filler are removed via prompt constraints plus a post-processing filter
+- Large PDF support — long documents are split, processed in parallel batches, and merged into a unified summary (up to 500 pages)
+- Automatic answer verification — Q&A answers are checked sentence-by-sentence against PDF embeddings and refined when grounding is weak
 
-**사용성**
-- 실시간 스트리밍 — 요약이 생성되는 즉시 표시, 자동 스크롤 (직접 스크롤하면 멈춤)
-- 모든 장시간 작업 취소 가능 — 요약/파싱/OCR 중단, Ollama 설치 중도 취소 후 다른 Provider 전환
-- 파싱 중 파일 교체 — 분석 도중 다른 파일을 드롭하면 이전 작업을 자동 취소하고 새 파일로 전환
-- 다크모드, 한국어/English 즉시 전환, 스크린 리더·키보드 접근성
+**Usability**
+- Real-time streaming — summaries appear as they are generated, with auto-scroll (pauses when you scroll manually)
+- Every long-running task is cancellable — stop summarization/parsing/OCR, cancel Ollama setup midway and switch providers
+- File swap during parsing — dropping another file cancels the previous job and switches immediately
+- Dark mode, instant Korean/English switching, screen-reader and keyboard accessibility
 
-**안정성 · 보안**
-- API 키 OS 키체인 암호화 — Main 프로세스에서만 복호화, 화면(Renderer)에 노출되지 않음
-- 세션 자동 저장·복원 — 문서 해시 기준 복원, 최대 30개/200MB LRU 자동 정리 (설정에서 끄기/비우기 가능)
-- 페이지 단위 손상 복원력 — 깨진 페이지가 있어도 나머지 페이지는 계속 처리
-- 렌더 오류 복구 — 예기치 못한 UI 오류 시 "다시 시도" 버튼으로 재시작 없이 복구
+**Reliability · Security**
+- API keys encrypted in the OS keychain — decrypted only in the Main process, never exposed to the renderer
+- Automatic session save & restore — restored by document content hash, LRU-pruned at 30 sessions/200MB (disable or clear in Settings)
+- Per-page corruption resilience — one broken page doesn't stop the rest of the document
+- Render error recovery — unexpected UI errors offer a "Try again" button, no restart needed
 
-**품질 보증**
-- 단위 테스트 762건 + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
-- 빌드 무결성 — 인스톨러 SHA-256 해시 + Sigstore attestation 자동 게시
-- 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
+**Quality assurance**
+- 762 unit tests + CI quality gates, plus a 4-agent parallel QA round on every release
+- Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
+- Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
-## 시스템 요구 사항
+## System Requirements
 
-- **Windows 10 이상** 또는 **macOS 12 (Monterey) 이상**
-- 디스크 공간 최소 4GB (기본 AI 모델 기준, Ollama 사용 시 — 한국어 특화 모델 포함 시 약 9GB)
-- 인터넷 연결 (첫 설치 시 및 유료 API 사용 시)
-- PDF 제한: 최대 100MB, 최대 500페이지 (초과 시 문서 분할 권장)
+- **Windows 10 or later**, or **macOS 12 (Monterey) or later**
+- At least 4GB free disk space (default AI models, when using Ollama — about 9GB with the Korean-specialized model)
+- Internet connection (first-time setup and paid API use)
+- PDF limits: max 100MB, max 500 pages (split larger documents)
 
-## 문제 해결
+## Troubleshooting
 
-| 증상 | 해결 방법 |
-|------|----------|
-| Ollama 설치 실패 | [ollama.com](https://ollama.com)에서 수동 설치하거나, 설치 마법사의 "취소하고 다른 Provider 사용" 버튼으로 Claude/OpenAI 전환 |
-| 한국어 요약 품질이 낮음 | 한국어 특화 모델(exaone3.5)을 설정 → 모델 관리에서 설치 후 선택해보세요. 첫 설치에서 선택 설치 옵션이며, 기본 모델(gemma3)보다 한국어 요약 품질이 좋습니다 |
-| 요약이 느림 | 설정에서 경량 모델(phi3 등)로 변경하거나 청크 크기를 줄여보세요 |
-| PDF 텍스트 추출 불가 | 설정에서 "스캔 PDF OCR"이 활성화되어 있는지 확인하세요. Vision 모델(llava, Claude, GPT-4o)이 필요합니다 |
-| OCR 결과가 부정확함 | Ollama llava는 한국어 정확도가 낮습니다. Claude 또는 OpenAI로 전환하면 정확도가 크게 향상됩니다 |
-| OCR이 너무 오래 걸림 | 진행 중 "■ 취소" 버튼으로 중단할 수 있습니다. 클라우드 provider로 전환하면 더 빠릅니다 |
-| PDF가 500페이지 초과 | 수동으로 문서를 분할한 후 다시 업로드해주세요. 자원 폭주 방지를 위해 상한이 적용됩니다 |
-| 이미지 분석이 안 됨 | Ollama 사용 시 llava 등 Vision 모델이 필요합니다. 설정에서 모델을 설치해주세요 |
-| API 키 오류 | 설정에서 API 키가 올바른지 확인. Claude: `sk-ant-...`, OpenAI: `sk-...` |
-| Claude/OpenAI 사용 불가 | API 키를 먼저 저장한 후 Provider를 선택해주세요 |
-| Q&A에서 답변을 못 함 | RAG 배지가 없으면 `ollama pull nomic-embed-text`로 임베딩 모델을 설치하세요. 키워드 모드에서는 질문에 구체적 용어를 포함해주세요 |
-| RAG 인덱싱이 안 됨 | 첫 실행 셋업을 완료했는지 확인하세요 (nomic-embed-text 자동 설치). 수동 설치: `ollama pull nomic-embed-text` |
-| 답변이 두 번 생성되는 듯한 지연이 있음 | 답변 자동 검증이 근거 약한 답변을 다듬을 때 LLM 호출이 한 번 더 발생합니다. 설정에서 "답변 검증" 토글을 끌 수 있습니다 |
-| 최근 문서에서 열었는데 PDF 뷰어가 안 뜸 | 요약·Q&A 분석은 복원되지만, 원본 파일이 이동/삭제되었으면 뷰어 렌더는 비활성화됩니다. 원본을 다시 열면 뷰어도 복구됩니다 |
-| 저장된 세션이 디스크를 너무 많이 차지함 | 최대 30개/200MB까지만 보관하고 초과 시 오래된 것부터 자동 삭제됩니다. 설정 → "세션 데이터"에서 용량 확인 및 "전체 비우기" 가능 |
-| 화면 오류로 앱이 멈춤 | 오류 화면의 "다시 시도" 버튼으로 재시작 없이 복구를 시도할 수 있습니다 |
-| 인스톨러가 변조됐는지 확인하고 싶음 | 릴리즈 페이지의 `SHA256SUMS-windows.txt` 해시와 비교하거나, `gh attestation verify`로 Sigstore provenance를 검증하세요 ([무결성 검증](#인스톨러-무결성-검증) 참고) |
-| macOS 다운로드가 보이지 않음 | 코드사인/공증 자격이 갖춰질 때까지 dmg 출시를 일시 중단했습니다. 그동안은 소스에서 `npm run package`로 직접 빌드해 사용하실 수 있습니다 |
+| Symptom | Solution |
+|---------|----------|
+| Ollama installation fails | Install manually from [ollama.com](https://ollama.com), or use the wizard's "Cancel and use another provider" button to switch to Claude/OpenAI |
+| Poor Korean summary quality | Install and select the Korean-specialized model (exaone3.5) under Settings → Model Management. It is an optional install during first-run setup and produces better Korean summaries than the base model (gemma3) |
+| Summarization is slow | Switch to a lighter model (e.g. phi3) or reduce the chunk size in Settings |
+| Text extraction fails | Make sure "Scanned PDF OCR" is enabled in Settings; a Vision model (llava, Claude, GPT-4o) is required |
+| OCR results are inaccurate | Ollama llava has low Korean accuracy; switching to Claude or OpenAI improves it significantly |
+| OCR takes too long | Use the "■ Cancel" button to stop; cloud providers offer faster throughput |
+| PDF exceeds 500 pages | Split the document and upload again; the cap prevents resource exhaustion |
+| Image analysis doesn't work | With Ollama, a Vision model such as llava is required — install it in Settings |
+| API key error | Verify the key format in Settings. Claude: `sk-ant-...`, OpenAI: `sk-...` |
+| Claude/OpenAI unavailable | Save the API key first, then select the provider |
+| Q&A can't answer | If the RAG badge is missing, install the embedding model with `ollama pull nomic-embed-text`. In keyword mode, include specific terms in your question |
+| RAG indexing doesn't run | Make sure first-run setup completed (nomic-embed-text auto-install). Manual install: `ollama pull nomic-embed-text` |
+| Answers seem to generate twice | Answer verification triggers one extra LLM call when grounding is weak; you can turn off the "Answer verification" toggle in Settings |
+| Opened from Recent Documents but the PDF viewer is missing | The summary/Q&A analysis is restored, but if the original file was moved/deleted the viewer is disabled. Reopen the original file to restore it |
+| Saved sessions use too much disk | At most 30 sessions/200MB are kept; older ones are pruned automatically. Check usage and "Clear all" under Settings → Session Data |
+| App freezes on a screen error | Use the "Try again" button on the error screen to recover without restarting |
+| Want to verify the installer wasn't tampered with | Compare against `SHA256SUMS-windows.txt` on the release page, or verify Sigstore provenance with `gh attestation verify` (see [integrity verification](#installer-integrity-verification)) |
+| No macOS download | dmg releases are paused until code signing/notarization credentials are in place; meanwhile, build from source with `npm run package` |
 
-> 과거 버전에서 수정된 문제들의 상세 이력은 [docs/HISTORY.md](docs/HISTORY.md)와 [GitHub Releases](https://github.com/wpdlf/local-pdf-analyzer/releases)를 참고하세요.
+> For the detailed history of issues fixed in past versions, see [docs/HISTORY.md](docs/HISTORY.md) (Korean) and [GitHub Releases](https://github.com/wpdlf/local-pdf-analyzer/releases).
 
 ---
 
-# 개발자 가이드
+# Developer Guide
 
-## 기술 스택
+## Tech Stack
 
-| 항목 | 기술 |
-|------|------|
-| 프레임워크 | Electron 41 + React 19 |
-| 언어 | TypeScript (strict mode, `noUncheckedIndexedAccess` 등 활성) |
-| AI 생성 | Ollama (로컬) / Claude API / OpenAI API — Main 프로세스 IPC 기반 |
-| AI 임베딩 (RAG) | Ollama /api/embed / OpenAI /v1/embeddings — 인메모리 벡터 스토어 |
-| PDF 파싱 | pdfjs-dist (위치 기반 텍스트 추출 + 이미지 추출, 한글 최적화) |
-| 상태 관리 | Zustand |
-| 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
-| 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG는 공증 자격 확보 시까지 일시 중단) |
-| 테스트 | Vitest 단위 테스트 762건/39파일 (renderer·shared 443 + main 319) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (44/40/44/46) |
-| 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
-| API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화 |
-| 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
+| Area | Technology |
+|------|------------|
+| Framework | Electron 41 + React 19 |
+| Language | TypeScript (strict mode, incl. `noUncheckedIndexedAccess`) |
+| AI generation | Ollama (local) / Claude API / OpenAI API — via Main-process IPC |
+| AI embeddings (RAG) | Ollama /api/embed / OpenAI /v1/embeddings — in-memory vector store |
+| PDF parsing | pdfjs-dist (position-based text extraction + image extraction, Korean-optimized) |
+| State management | Zustand |
+| Styling | Tailwind CSS v4 + @tailwindcss/typography |
+| Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
+| Testing | Vitest, 762 unit tests / 39 files (renderer·shared 443 + main 319) + `tsc --noEmit` type check + CI coverage gates (44/40/44/46) |
+| i18n | In-house (i18n.ts) — 172+ keys, useT() hook, template substitution |
+| API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
+| Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
 
-## 개발 환경 설정
+## Development Setup
 
 ```bash
-# 의존성 설치
+# Install dependencies
 npm install
 
-# 개발 모드 실행
+# Development mode
 npm run dev
 
-# 프로덕션 빌드
+# Production build
 npm run build
 
-# 인스톨러 패키징
+# Package installer
 npm run package
 
-# 테스트 실행
+# Run tests
 npm test
 
-# 테스트 (watch 모드)
+# Tests (watch mode)
 npm run test:watch
 ```
 
-## 프로젝트 구조
+## Project Structure
 
 ```
 src/
 ├── main/                 # Electron main process
-│   ├── index.ts          # 앱 엔트리, IPC, 설정/API키 관리
-│   ├── ai-service.ts     # AI API 호출 (스트리밍 요약 + Vision 이미지 분석 + OCR)
-│   └── ollama-manager.ts # Ollama 설치/시작/모델 관리
+│   ├── index.ts          # App entry, IPC, settings/API key management
+│   ├── ai-service.ts     # AI API calls (streaming summary + Vision image analysis + OCR)
+│   └── ollama-manager.ts # Ollama install/start/model management
 ├── preload/
 │   └── index.ts          # contextBridge API (ai, settings, apiKey, ollama, file)
 └── renderer/             # React UI
-    ├── App.tsx            # 루트 컴포넌트, 요약 로직
-    ├── components/        # UI 컴포넌트 (9개)
+    ├── App.tsx            # Root component, summarization logic
+    ├── components/        # UI components (9)
     ├── lib/
-    │   ├── ai-client.ts       # AI Client (IPC를 통해 Main에 요약/Q&A 요청)
-    │   ├── pdf-parser.ts      # PDF 텍스트 + 이미지 추출, 챕터 감지, OCR fallback
-    │   ├── chunker.ts         # 텍스트 청크 분할 (한글 비율 자동 감지)
-    │   ├── i18n.ts             # 다국어 번역 (172+ 키, t() 함수, useT() 훅)
-    │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
-    │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
-    │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (762건, 39 파일)
+    │   ├── ai-client.ts       # AI client (requests summaries/Q&A from Main via IPC)
+    │   ├── pdf-parser.ts      # PDF text + image extraction, chapter detection, OCR fallback
+    │   ├── chunker.ts         # Text chunking (auto-detects Korean ratio)
+    │   ├── i18n.ts             # Translations (172+ keys, t() function, useT() hook)
+    │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
+    │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
+    │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
+    │   └── __tests__/         # Unit tests (762, 39 files)
     └── types/
-        └── index.ts       # 타입 정의 + Provider 모델 상수
+        └── index.ts       # Type definitions + provider model constants
 ```
 
-## 아키텍처
+## Architecture
 
-API 키 보안을 위해 AI API 호출은 Main 프로세스에서 수행됩니다. Renderer는 IPC를 통해 요약을 요청하고 토큰 스트림을 수신합니다.
+For API key security, all AI API calls happen in the Main process. The renderer requests summaries over IPC and receives a token stream.
 
 ```
 Electron Main Process                Renderer Process (React)
@@ -283,184 +283,184 @@ Electron Main Process                Renderer Process (React)
 │   ├── Ollama /api/embed  │        │     ├── AiClient (IPC)   │
 │   └── OpenAI /v1/embed.  │        │     ├── PdfParser        │
 │ Settings (JSON)          │        │     ├── VectorStore (RAG) │
-│ API Keys (safeStorage)   │        │     ├── useQa (Q&A 훅)   │
+│ API Keys (safeStorage)   │        │     ├── useQa (Q&A hook) │
 │ File I/O                 │        │     └── Zustand           │
 └──────────────────────────┘        └──────────────────────────┘
          │                                     │
-         │  ai:generate ──► Main에서 API 호출   │
-         │  ai:token    ◄── 토큰 스트리밍        │
-         │  ai:done     ◄── 완료 신호           │
-         │  ai:abort    ──► 요청 중단           │
-         │  ai:embed    ──► 임베딩 벡터 생성     │
-         │  ai:check-embed-model ──► 모델 확인  │
+         │  ai:generate ──► API call in Main   │
+         │  ai:token    ◄── token streaming    │
+         │  ai:done     ◄── completion signal  │
+         │  ai:abort    ──► cancel request     │
+         │  ai:embed    ──► embedding vectors  │
+         │  ai:check-embed-model ──► model check│
 ```
 
-## 데이터 처리 파이프라인
+## Data Processing Pipeline
 
-PDF 파일이 요약 결과로 변환되는 전체 과정입니다.
+The full journey from PDF file to summary.
 
 ```
-PDF 파일
+PDF file
   │
   ▼
 ┌─────────────────────────────────────────────────────┐
-│ 1. PDF 파싱 (pdf-parser.ts)                          │
-│    ├── pdfjs-dist로 페이지별 텍스트 추출              │
-│    │   └── 위치 기반(x,y,fontSize) 공백/줄바꿈 삽입   │
-│    │       → 한글 글자 단위 분할 대응                  │
-│    ├── 페이지별 이미지 추출 (paintImageXObject)        │
-│    │   └── RGB/RGBA/Grayscale → JPEG base64 변환      │
-│    │       → 최대 1024px 리사이즈, 4M 픽셀 초과 스킵  │
-│    └── 챕터 자동 감지                                 │
-│        └── "제1장", "Chapter 1", "1장" 패턴 매칭      │
-│            → 미감지 시 10페이지 단위 분할              │
+│ 1. PDF parsing (pdf-parser.ts)                       │
+│    ├── Per-page text extraction via pdfjs-dist       │
+│    │   └── Position-based (x,y,fontSize) spacing     │
+│    │       → handles per-character Korean splits     │
+│    ├── Per-page image extraction (paintImageXObject) │
+│    │   └── RGB/RGBA/Grayscale → JPEG base64          │
+│    │       → resized to 1024px max, >4M pixels skip  │
+│    └── Automatic chapter detection                   │
+│        └── "제1장", "Chapter 1", "1장" patterns       │
+│            → falls back to 10-page splits            │
 │                                                      │
-│    배치 처리: 10페이지씩 병렬, 이미지 최대 50장       │
+│    Batching: 10 pages in parallel, max 50 images     │
 └─────────────────────────────────────────────────────┘
   │
-  ▼ (텍스트 50자 미만 + OCR 활성화 시)
+  ▼ (when text < 50 chars + OCR enabled)
 ┌─────────────────────────────────────────────────────┐
-│ 1-b. OCR Fallback (pdf-parser.ts, 스캔 PDF 전용)     │
-│    ├── 각 페이지를 OffscreenCanvas로 JPEG 렌더링     │
-│    │   └── scale 자동 조정 (50p+: 1.5, 100p+: 1.0)  │
-│    │       → 최대 3000px, GPU 메모리 즉시 해제        │
-│    ├── Provider-aware 배치 병렬로 Vision OCR 요청    │
-│    │   └── Ollama: 3페이지 / Claude·OpenAI: 8페이지  │
-│    │       → ai:ocr-page IPC → Main → Vision API    │
-│    ├── AbortSignal 전파로 즉시 취소 (사용자 취소 버튼)│
-│    └── 추출된 텍스트로 정상 파이프라인에 합류          │
-└─────────────────────────────────────────────────────┘
-  │
-  ▼
-┌─────────────────────────────────────────────────────┐
-│ 2. 이미지 분석 (선택적, enableImageAnalysis=true)     │
-│    ├── 첫 이미지로 Vision 모델 사전 확인 (preflight)  │
-│    ├── 나머지 이미지 3장씩 배치 병렬 분석             │
-│    └── 분석 결과를 해당 페이지 텍스트에 삽입           │
-│        → "[이미지 분석: 차트는 매출 상승을...]"        │
+│ 1-b. OCR fallback (pdf-parser.ts, scanned PDFs)      │
+│    ├── Render each page to JPEG via OffscreenCanvas  │
+│    │   └── auto scale (50p+: 1.5, 100p+: 1.0)        │
+│    │       → 3000px cap, GPU memory freed eagerly    │
+│    ├── Provider-aware parallel Vision OCR batches    │
+│    │   └── Ollama: 3 pages / Claude·OpenAI: 8 pages  │
+│    │       → ai:ocr-page IPC → Main → Vision API     │
+│    ├── Instant cancel via AbortSignal propagation    │
+│    └── Extracted text rejoins the normal pipeline    │
 └─────────────────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────────────────┐
-│ 3. 텍스트 청크 분할 (chunker.ts)                      │
-│    ├── 한글 비율 자동 감지 (처음 2000자 샘플링)        │
-│    │   └── 100% 한글: 1.5 chars/token                │
-│    │       0% 한글:   4.0 chars/token                │
-│    ├── maxChunkSize(기본 4000 토큰) × chars/token     │
-│    │   → 실제 문자 수 기준 분할                       │
-│    └── 문단(\n\n) 경계에서만 분할 (문장 중간 절단 방지)│
+│ 2. Image analysis (optional, enableImageAnalysis)    │
+│    ├── Preflight Vision check with the first image   │
+│    ├── Remaining images analyzed in batches of 3     │
+│    └── Results merged into the page text             │
+│        → "[Image analysis: the chart shows...]"      │
 └─────────────────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────────────────┐
-│ 4. AI 요약 생성 (ai-service.ts)                       │
-│    ├── 프롬프트 구성: 시스템 지시 + 금지 사항 + 본문   │
-│    ├── IPC: Renderer → Main (ai:generate)             │
-│    ├── Main에서 API 키 복호화 후 HTTP 스트리밍 요청    │
-│    │   ├── Ollama:  /api/generate (NDJSON)            │
-│    │   ├── Claude:  /v1/messages  (SSE)               │
-│    │   └── OpenAI:  /v1/chat/completions (SSE)        │
-│    ├── 토큰 스트리밍: Main → Renderer (ai:token)       │
-│    └── 다중 청크 시 개별 요약 후 통합 요약 추가 생성   │
+│ 3. Text chunking (chunker.ts)                        │
+│    ├── Korean ratio auto-detection (first 2000 chars)│
+│    │   └── 100% Korean: 1.5 chars/token              │
+│    │       0% Korean:   4.0 chars/token              │
+│    ├── maxChunkSize (default 4000 tokens) ×          │
+│    │   chars/token → splits by actual char count     │
+│    └── Splits only at paragraph (\n\n) boundaries    │
 └─────────────────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────────────────┐
-│ 5. Renderer 표시 (SummaryViewer.tsx + store.ts)       │
-│    ├── 토큰 버퍼링 (50ms 간격 배치 flush)             │
-│    ├── Markdown 렌더링 leading-edge throttle (150ms) │
-│    │   └── 첫 토큰 즉시 표시, 이후 150ms 윈도우 제한  │
-│    ├── 자동 스크롤 (하단 100px 이내일 때만)            │
-│    ├── aria-live=polite 로 스크린 리더 알림           │
-│    ├── stripConversationalText 후처리 (대화형 멘트 제거)│
-│    └── .md 내보내기 / 클립보드 복사                    │
+│ 4. AI summary generation (ai-service.ts)             │
+│    ├── Prompt: system instructions + prohibitions    │
+│    ├── IPC: Renderer → Main (ai:generate)            │
+│    ├── Main decrypts API key, streams over HTTP      │
+│    │   ├── Ollama:  /api/generate (NDJSON)           │
+│    │   ├── Claude:  /v1/messages  (SSE)              │
+│    │   └── OpenAI:  /v1/chat/completions (SSE)       │
+│    ├── Token streaming: Main → Renderer (ai:token)   │
+│    └── Multi-chunk: per-chunk summaries + final merge│
 └─────────────────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────────────────┐
-│ 6-a. RAG 벡터 인덱스 빌드 (문서 로드 시 자동)        │
-│    ├── 임베딩 모델 사용 가능 여부 확인                │
-│    │   └── Ollama: nomic-embed-text 등 자동 감지     │
-│    │       OpenAI: text-embedding-3-small             │
-│    │       Claude: Ollama fallback → 불가 시 키워드   │
-│    ├── 오버랩 청킹 (500토큰, 10% 오버랩)             │
-│    ├── 50건씩 배치 임베딩 (배치당 2분 타임아웃)       │
-│    │   └── ai:embed IPC → Main → 임베딩 API          │
-│    │       → IPC 경계에서 NaN/Infinity 검증           │
-│    ├── 인메모리 벡터 스토어에 청크+임베딩 저장         │
-│    │   └── 차원 고정: 첫 청크 차원으로 lock           │
-│    ├── 문서 전환 시 buildId 가드로 즉시 취소          │
-│    └── UI: 인덱싱 진행률 → 완료 시 RAG 배지          │
+│ 5. Renderer display (SummaryViewer.tsx + store.ts)   │
+│    ├── Token buffering (50ms batched flush)          │
+│    ├── Markdown leading-edge throttle (150ms)        │
+│    │   └── first token instant, then 150ms windows   │
+│    ├── Auto-scroll (only within 100px of the bottom) │
+│    ├── aria-live=polite screen-reader announcements  │
+│    ├── stripConversationalText post-processing       │
+│    └── .md export / clipboard copy                   │
 └─────────────────────────────────────────────────────┘
   │
   ▼
 ┌─────────────────────────────────────────────────────┐
-│ 6-b. Q&A 채팅 (use-qa.ts + QaChat.tsx)               │
-│    ├── 사용자 질문 입력 (Enter 전송, Shift+Enter 줄바꿈)│
-│    ├── RAG 시맨틱 검색 (코사인 유사도 Top-5)          │
-│    │   ├── 질문 임베딩 → 벡터 스토어 검색             │
-│    │   ├── minScore 0.3 미만 결과 제외                │
-│    │   └── 8000자 컨텍스트 크기 제한 적용             │
-│    ├── RAG 실패 시 키워드 TF 스코어링 fallback        │
-│    ├── 요약 결과(3000자) + 검색 결과(8000자) 결합     │
-│    ├── 프롬프트 인젝션 방어 (RAG/키워드 양쪽 적용)    │
-│    ├── 대화 이력 포함 프롬프트 조립 (최대 10턴)       │
-│    ├── ai:generate(type:'qa')로 스트리밍 답변 생성     │
-│    └── 요약/Q&A 상호 배제 — 동시 실행 불가            │
+│ 6-a. RAG vector index build (automatic on load)      │
+│    ├── Embedding model availability check            │
+│    │   └── Ollama: auto-detects nomic-embed-text etc.│
+│    │       OpenAI: text-embedding-3-small            │
+│    │       Claude: Ollama fallback → else keyword    │
+│    ├── Overlapping chunking (500 tokens, 10% overlap)│
+│    ├── Batched embedding, 50 at a time (2min timeout)│
+│    │   └── ai:embed IPC → Main → embedding API       │
+│    │       → NaN/Infinity validation at IPC boundary │
+│    ├── Chunks + embeddings into in-memory store      │
+│    │   └── dimensions locked to the first chunk      │
+│    ├── buildId guard cancels on document switch      │
+│    └── UI: indexing progress → RAG badge when done   │
+└─────────────────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────────────────┐
+│ 6-b. Q&A chat (use-qa.ts + QaChat.tsx)               │
+│    ├── Question input (Enter sends, Shift+Enter LF)  │
+│    ├── RAG semantic search (cosine Top-5)            │
+│    │   ├── question embedding → vector store search  │
+│    │   ├── results below minScore 0.3 excluded       │
+│    │   └── 8000-char context cap                     │
+│    ├── Keyword TF-scoring fallback if RAG fails      │
+│    ├── Summary (3000 chars) + search (8000 chars)    │
+│    ├── Prompt-injection defenses (RAG + keyword)     │
+│    ├── Conversation history prompt (up to 10 turns)  │
+│    ├── Streaming answer via ai:generate(type:'qa')   │
+│    └── Summary/Q&A mutually exclusive — no overlap   │
 └─────────────────────────────────────────────────────┘
 ```
 
-추가로, 문서 콘텐츠 해시(SHA-256) 기준으로 요약·Q&A·파싱 텍스트는 JSON, 임베딩 인덱스는 Float32 바이너리 블롭으로 `userData/sessions/`에 영속화됩니다(원자적 tmp→rename, LRU 최대 30개/200MB). 같은 PDF 재오픈 시 해시 매칭으로 복원하고, 임베딩 모델·차원이 일치하면 인덱스를 역직렬화해 재임베딩·재요약 호출이 발생하지 않습니다.
+Additionally, sessions are persisted to `userData/sessions/` keyed by document content hash (SHA-256) — summaries/Q&A/parsed text as JSON, embedding indexes as Float32 binary blobs (atomic tmp→rename, LRU capped at 30 sessions/200MB). Reopening the same PDF restores by hash match, and if the embedding model and dimensions match, the index is deserialized with zero re-embedding or re-summarization calls.
 
-## AI 요약 프롬프트 설계
+## AI Summary Prompt Design
 
-각 요약 유형별로 시스템 지시 + 금지 사항이 포함된 프롬프트가 구성됩니다.
+Each summary type gets a prompt with system instructions plus prohibitions.
 
-| 유형 | 프롬프트 핵심 지시 |
-|------|-------------------|
-| `full` | 핵심 개념, 주요 내용, 수식/공식, 예제, 핵심 포인트 5개 항목 구조 |
-| `chapter` | 해당 섹션의 개념/정의, 수식, 예제, 3~5개 핵심 포인트 |
-| `keywords` | 키워드/설명/중요도 마크다운 테이블 (10~30개) |
-| `qa` | PDF 내용 기반 Q&A — 요약 + 원문 관련 청크를 컨텍스트로 제공, 대화 이력 포함 |
+| Type | Core prompt instructions |
+|------|--------------------------|
+| `full` | Five-part structure: key concepts, main content, formulas, examples, key points |
+| `chapter` | Per-section concepts/definitions, formulas, examples, 3–5 key points |
+| `keywords` | Keyword/description/importance markdown table (10–30 entries) |
+| `qa` | PDF-grounded Q&A — summary + relevant source chunks as context, with conversation history |
 
-**금지 사항** (요약 유형 공통): 인사말, 칭찬, 감상평, 대화형 멘트를 "절대 금지 사항"으로 강하게 지시합니다. 추가로 `stripConversationalText` 후처리 필터가 로컬 LLM이 생성한 대화형 멘트를 자동 제거합니다 (Q&A 답변에는 적용되지 않음).
+**Prohibitions** (all summary types): greetings, praise, commentary, and conversational filler are strongly forbidden in the prompt. A `stripConversationalText` post-processing filter additionally removes conversational filler produced by local LLMs (not applied to Q&A answers).
 
-### AI 요약 IPC 흐름
+### AI Summary IPC Flow
 
-1. Renderer에서 `ai:generate` IPC로 텍스트 + provider + model 전달
-2. Main 프로세스가 `safeStorage`에서 API 키를 복호화하여 직접 API 호출
-3. 스트리밍 토큰을 `ai:token` 이벤트로 Renderer에 전달
-4. Renderer의 `AiClient`가 AsyncGenerator로 토큰을 yield
+1. The renderer sends text + provider + model via the `ai:generate` IPC
+2. The Main process decrypts the API key from `safeStorage` and calls the API directly
+3. Streaming tokens are forwarded to the renderer as `ai:token` events
+4. The renderer's `AiClient` yields tokens through an AsyncGenerator
 
-새 Provider를 추가하려면 `src/main/ai-service.ts`에 생성 함수를 추가하고 `generate()` switch문에 등록합니다.
+To add a new provider, add a generator function in `src/main/ai-service.ts` and register it in the `generate()` switch.
 
-## 보안 설계
+## Security Design
 
-현재 적용 중인 위협 모델과 대응입니다. 버전별 상세 수정 이력은 [docs/HISTORY.md](docs/HISTORY.md)를 참고하세요.
+The threat model and mitigations currently in place. For the detailed per-version fix history, see [docs/HISTORY.md](docs/HISTORY.md) (Korean).
 
-| 영역 | 대응 |
-|------|------|
-| API 키 보호 | `safeStorage`(OS 키체인) 암호화, Main 프로세스에서만 복호화, Renderer에 키 미전달, prototype pollution 차단(`Object.create(null)` + provider 화이트리스트) |
-| SSRF | Ollama URL은 localhost만 허용(`isLocalhostHost` — IPv6 `[::1]` 정규화 포함), `ai:check-available` 등은 renderer 전달 URL 대신 설정 store의 정규 URL만 사용해 포트 프로브 오라클 차단 |
-| IPC 입력 검증 | 모든 IPC 핸들러에서 타입/범위/길이 검증, 공유 상수 모듈(`src/shared/constants.ts`)로 main/renderer drift 방지 |
-| 파일 접근 | `.pdf` 확장자 + `%PDF-` 매직바이트 선행 검사 + `lstat` 심볼릭링크 거부 + 100MB 캡. 세션 디렉토리는 콘텐츠 해시(`/^[a-f0-9]{64}$/` 화이트리스트)로 식별해 경로 traversal 차단 |
-| 네비게이션/권한 | `will-navigate` + `will-redirect` 차단(packaged renderer URL만 허용), 권한 요청/조회 기본 거부(`clipboard-sanitized-write`만 예외), 프로덕션 DevTools 비활성화, 외부 URL은 정확 호스트명 화이트리스트 |
-| Markdown/XSS | URL scheme allowlist(`https/http/mailto/#`), `javascript:`/`data:` 등 차단, 제어문자·bidi override 차단, 외부 이미지 차단 |
-| CSP | `script-src`에서 `unsafe-inline` 제거(FOUC 방지 스크립트만 sha256 화이트리스트), `frame-src/child-src/base-uri/form-action` 차단 |
-| 프롬프트 인젝션 | 사용자 질문/RAG 청크/요약 텍스트/대화 이력 모두 `sanitizePromptInput` 적용, OCR·Vision 프롬프트에 "이미지 내 지시사항 무시" 명시 |
-| 환각 완화 | Q&A 답변을 문장 단위로 분할 → RAG 임베딩 코사인 유사도 평가 → 약한 문장 다수 시 LLM 재정리 (다국어 종결부호 + Latin/CJK mixed 경계 인식) |
-| 리소스 상한 | 스트리밍 50MB / Vision 10MB / 에러 바디 64KB / PDF 100MB·500페이지 / 이미지 50장 캡 / 임베딩 동시 4건 / 대화 이력 4000자·10턴 / URL 2048자 |
-| RAG 무결성 | IPC 경계 NaN/Infinity 검증, 벡터 차원 고정(첫 청크 lock), 문서 전환 시 AbortController로 이전 빌드 취소 + docId 최종 검증 |
-| 프로세스 안정성 | `requestSingleInstanceLock` 이중 인스턴스 차단, Ollama 자식 프로세스 추적·종료(taskkill + SIGKILL fallback), 네트워크 단절 시 스트림 `close` 즉시 감지 |
-| 인스톨러/공급망 | Ollama 인스톨러 Authenticode 서명 검증, GitHub Actions third-party action SHA pin, `npm ci` + lockfile 동기화 게이트, 인스톨러 SHA-256 + Sigstore attestation 발급, sourcemap asar 제외 |
+| Area | Mitigation |
+|------|------------|
+| API key protection | `safeStorage` (OS keychain) encryption, decrypted only in Main, never sent to the renderer, prototype-pollution hardened (`Object.create(null)` + provider whitelist) |
+| SSRF | Ollama URLs restricted to localhost (`isLocalhostHost`, incl. IPv6 `[::1]` normalization); handlers like `ai:check-available` use the canonical URL from the settings store instead of renderer-supplied URLs, closing the port-probe oracle |
+| IPC input validation | Type/range/length validation in every IPC handler; shared constants module (`src/shared/constants.ts`) prevents main/renderer drift |
+| File access | `.pdf` extension + `%PDF-` magic-byte preflight + `lstat` symlink rejection + 100MB cap. Session directories are keyed by content hash (`/^[a-f0-9]{64}$/` whitelist), blocking path traversal |
+| Navigation/permissions | `will-navigate` + `will-redirect` blocked (only the packaged renderer URL allowed), permission requests/checks denied by default (`clipboard-sanitized-write` excepted), DevTools disabled in production, external URLs matched against an exact-hostname whitelist |
+| Markdown/XSS | URL scheme allowlist (`https/http/mailto/#`), `javascript:`/`data:` etc. blocked, control characters and bidi overrides blocked, external images blocked |
+| CSP | `unsafe-inline` removed from `script-src` (only the FOUC-prevention script whitelisted by sha256), `frame-src/child-src/base-uri/form-action` locked down |
+| Prompt injection | `sanitizePromptInput` applied to user questions, RAG chunks, summary text, and conversation history; OCR/Vision prompts explicitly instruct ignoring in-image instructions |
+| Hallucination mitigation | Q&A answers split into sentences → cosine-scored against RAG embeddings → refined by the LLM when too many sentences are weak (multilingual sentence boundaries + Latin/CJK mixed-boundary handling) |
+| Resource caps | Streaming 50MB / Vision 10MB / error bodies 64KB / PDF 100MB·500 pages / 50-image cap / 4 concurrent embeddings / history 4000 chars·10 turns / URLs 2048 chars |
+| RAG integrity | NaN/Infinity validation at the IPC boundary, vector dimensions locked to the first chunk, AbortController cancels stale builds on document switch + final docId check |
+| Process reliability | `requestSingleInstanceLock` against double instances, Ollama child-process tracking and teardown (taskkill + SIGKILL fallback), immediate stream-`close` detection on network loss |
+| Installer/supply chain | Authenticode signature verification of the Ollama installer, SHA-pinned third-party GitHub Actions, `npm ci` + lockfile sync gates, installer SHA-256 + Sigstore attestation, sourcemaps excluded from asar |
 
-## 품질 보증
+## Quality Assurance
 
-- **단위 테스트 762건 / 39파일** — renderer·shared 443 + main 319. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service까지 행위 테스트
-- **CI 게이트** — `tsc --noEmit`(strict), 커버리지 임계(44/40/44/46) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 20.11/22/24 매트릭스
-- **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, Critical/High 42라운드 연속 0건 유지
-- 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
+- **762 unit tests / 39 files** — renderer·shared 443 + main 319. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
+- **CI gates** — `tsc --noEmit` (strict), enforced coverage thresholds (44/40/44/46), lockfile version sync check, `npm audit` advisory, Node 20.11/22/24 matrix
+- **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical/High findings for 42 consecutive rounds
+- Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
-## 라이선스
+## License
 
 MIT License. See [LICENSE](LICENSE) for details.

@@ -1,7 +1,7 @@
 # README 상세 이력 아카이브
 
 > 2026-06 README 정리 과정에서, 본문을 길게 만들던 상세 기능 설명과 버전별 수정 이력을 이 문서로 이전했습니다.
-> 최신 기능 요약은 [README.md](../README.md)를, 버전별 변경 사항은 [GitHub Releases](https://github.com/wpdlf/local-pdf-analyzer/releases)를 참고하세요.
+> 최신 기능 요약은 [README.ko.md](../README.ko.md)를, 버전별 변경 사항은 [GitHub Releases](https://github.com/wpdlf/local-pdf-analyzer/releases)를 참고하세요.
 > 아래 내용은 정리 직전(v0.19.1) README 원문을 그대로 보존한 것입니다.
 
 ---
