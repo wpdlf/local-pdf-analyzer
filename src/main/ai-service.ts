@@ -364,8 +364,25 @@ async function generateGemini(
       return text || null;
     },
     // Gemini 는 만료/권한 없는 키에 401/403 을 반환. 형식이 잘못된 키는 400(INVALID_ARGUMENT)
-    // 이지만 400 은 입력 초과 등 일반 오류와 겹치므로 auth 매핑에서 제외 (오분류 방지).
+    // 이지만 400 은 입력 초과 등 일반 오류와 겹치므로 상태코드만으로는 auth 매핑하지 않고,
+    // 아래 mapHttpError 가 에러 바디의 'API key' 문구로 구분한다 (R43 I-1).
     checkAuthError: (statusCode) => statusCode === 401 || statusCode === 403,
+    // R43 H-1: safety block (`promptFeedback.blockReason` — candidates 자체가 없음) 또는
+    // 비정상 finishReason(SAFETY/RECITATION/MAX_TOKENS 등, 정상 종료는 'STOP')을 추적.
+    detectBlockReason: (parsed) => {
+      if (parsed.promptFeedback?.blockReason) return parsed.promptFeedback.blockReason;
+      const fr = parsed.candidates?.[0]?.finishReason;
+      return fr && fr !== 'STOP' ? fr : null;
+    },
+    mapHttpError: (status, detail) => {
+      if (status === 400 && /api key/i.test(detail)) {
+        return Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID' });
+      }
+      if (status === 429) {
+        return new Error('Gemini 요청 한도를 초과했습니다 (rate limit). 잠시 후 다시 시도해주세요.');
+      }
+      return null;
+    },
   }, win);
 }
 
@@ -381,7 +398,22 @@ interface StreamChunk {
   // OpenAI
   choices?: { delta?: { content?: string } }[];
   // Gemini
-  candidates?: { content?: { parts?: { text?: string }[] } }[];
+  candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+  promptFeedback?: { blockReason?: string };
+}
+
+/**
+ * API 에러 바디의 자격증명 마스킹 — httpPost / streamRequest 4xx 경로 공용.
+ * R43: streamRequest 가 에러 바디를 읽기 시작하면서 단일 출처로 추출 (redaction drift 방지).
+ */
+export function sanitizeApiErrorBody(rawBody: string): string {
+  return rawBody
+    // R30 P2 (v0.18.18): RFC 6750 token68 char class 에 `~` 가 포함되므로 누락 회피
+    .replace(/Bearer\s+[A-Za-z0-9._~\-+/=]+/gi, 'Bearer [REDACTED]')
+    .replace(/\bsk-ant-[A-Za-z0-9_\-]{20,}\b/g, 'sk-ant-[REDACTED]')
+    .replace(/\bsk-(?:proj-|test-|live-)?[A-Za-z0-9_\-]{20,}\b/g, 'sk-[REDACTED]')
+    // Google API 키 형식 (AIza + 35자) — Gemini 에러 바디 echo 유출 방지
+    .replace(/\bAIza[A-Za-z0-9_\-]{30,}\b/g, 'AIza[REDACTED]');
 }
 
 // ─── 공통 스트리밍 요청 ───
@@ -394,6 +426,18 @@ interface StreamConfig {
   isSSE?: boolean;
   extractToken: (parsed: StreamChunk) => string | null;
   checkAuthError?: (statusCode: number) => boolean;
+  /**
+   * R43 H-1: 비정상 종료 신호 감지 (Gemini safety block / MAX_TOKENS 등).
+   * 스트림이 토큰 0개로 정상 종료(HTTP 200)했을 때 마지막 감지 사유로 명시 실패 처리 —
+   * 이전엔 빈 응답이 ai:done 으로 "성공"해 무음 빈 요약/고아 Q&A 메시지가 발생했다.
+   */
+  detectBlockReason?: (parsed: StreamChunk) => string | null;
+  /**
+   * R43 I-1: 4xx 응답 바디 기반 provider 별 에러 매핑 (예: Gemini 400 'API key not valid'
+   * → API_KEY_INVALID, 429 → rate limit 안내). 미지정 시 기존처럼 바디를 읽지 않고
+   * 즉시 generic 에러로 거부 (행위 보존).
+   */
+  mapHttpError?: (statusCode: number, detail: string) => Error | null;
 }
 
 function streamRequest(
@@ -465,9 +509,45 @@ function streamRequest(
         }
 
         if (res.statusCode && res.statusCode >= 400) {
-          safeDeleteRequest();
-          safeReject(new Error(`API 요청 실패: HTTP ${res.statusCode}`));
-          res.destroy();
+          const errStatus = res.statusCode;
+          if (!config.mapHttpError) {
+            safeDeleteRequest();
+            safeReject(new Error(`API 요청 실패: HTTP ${errStatus}`));
+            res.destroy();
+            return;
+          }
+          // R43 I-1: provider 가 매퍼를 제공하면 에러 바디를 읽어 구체 에러로 변환.
+          // httpPost 의 finalizeError 와 동일한 64KB 캡 + redaction 패턴.
+          const errChunks: Buffer[] = [];
+          let errBytes = 0;
+          let errDone = false;
+          const finalizeHttpError = () => {
+            if (errDone) return;
+            errDone = true;
+            const sanitized = sanitizeApiErrorBody(
+              Buffer.concat(errChunks).toString('utf-8').slice(0, 2000),
+            );
+            let detail = sanitized.slice(0, 500);
+            try {
+              const p = JSON.parse(sanitized);
+              detail = p.error?.message || p.error || p.message || detail;
+            } catch { /* 비 JSON 응답은 그대로 사용 */ }
+            safeDeleteRequest();
+            safeReject(
+              config.mapHttpError!(errStatus, String(detail))
+                ?? new Error(`API 요청 실패: HTTP ${errStatus}`),
+            );
+          };
+          const MAX_ERR_BODY = 64 * 1024;
+          res.on('data', (c: Buffer) => {
+            if (errDone) return;
+            if (errBytes + c.length > MAX_ERR_BODY) { res.destroy(); finalizeHttpError(); return; }
+            errBytes += c.length;
+            errChunks.push(c);
+          });
+          res.on('end', finalizeHttpError);
+          res.on('close', finalizeHttpError);
+          res.on('error', finalizeHttpError);
           return;
         }
 
@@ -478,6 +558,9 @@ function streamRequest(
 
         let buffer = '';
         const decoder = new StringDecoder('utf8');
+        // R43 H-1: 토큰 0개 + 차단 사유로 끝난 스트림을 명시 실패 처리하기 위한 추적
+        let emittedTokens = 0;
+        let blockReason: string | null = null;
 
         const createIdleTimeout = () => setTimeout(() => {
           if (!streamAborted) {
@@ -554,7 +637,12 @@ function streamRequest(
               const parsed = JSON.parse(jsonStr);
               const token = config.extractToken(parsed);
               if (token) {
+                emittedTokens++;
                 safeSend('ai:token', requestId, token);
+              }
+              if (config.detectBlockReason) {
+                const reason = config.detectBlockReason(parsed);
+                if (reason) blockReason = reason;
               }
             } catch {
               // JSON 파싱 실패 무시
@@ -585,10 +673,26 @@ function streamRequest(
                 const parsed = JSON.parse(jsonStr);
                 const token = config.extractToken(parsed);
                 if (token) {
+                  emittedTokens++;
                   safeSend('ai:token', requestId, token);
+                }
+                if (config.detectBlockReason) {
+                  const reason = config.detectBlockReason(parsed);
+                  if (reason) blockReason = reason;
                 }
               } catch { /* 파싱 실패 무시 */ }
             }
+          }
+          // R43 H-1: 토큰을 하나도 방출하지 못한 채 차단 사유와 함께 정상 종료(HTTP 200)한
+          // 스트림은 성공이 아니다 — ai:done 을 보내면 renderer 가 빈 요약을 "완료"로 표시하고
+          // Q&A 는 user 메시지만 남는 고아 상태가 된다. 명시 거부로 에러 배너 노출.
+          if (emittedTokens === 0 && blockReason) {
+            safeDeleteRequest();
+            safeReject(Object.assign(
+              new Error(`AI 응답이 차단되었습니다 (사유: ${blockReason}). 문서 내용 또는 출력 한도를 확인해주세요.`),
+              { code: 'BLOCKED' },
+            ));
+            return;
           }
           safeDeleteRequest();
           safeSend('ai:done', requestId);
@@ -867,17 +971,8 @@ function httpPost(
           errSettled = true;
           const rawBody = Buffer.concat(errChunks).toString('utf-8').slice(0, 2000);
           // 응답 body에 의도치 않게 Bearer 토큰/API 키가 echo되는 경우 로그 유출 방지.
-          // - Bearer: RFC 6750 토큰 문자 집합
-          // - sk-... : OpenAI 형식(sk-proj-..., sk-test-... 포함). 20자 이상 단어 경계로 한정
-          //            해 오탐과 단편 매칭을 방지.
-          // - sk-ant-api... : Anthropic Claude 키 형식
-          const sanitized = rawBody
-            // R30 P2 (v0.18.18): RFC 6750 token68 char class 에 `~` 가 포함되므로 누락 회피
-            .replace(/Bearer\s+[A-Za-z0-9._~\-+/=]+/gi, 'Bearer [REDACTED]')
-            .replace(/\bsk-ant-[A-Za-z0-9_\-]{20,}\b/g, 'sk-ant-[REDACTED]')
-            .replace(/\bsk-(?:proj-|test-|live-)?[A-Za-z0-9_\-]{20,}\b/g, 'sk-[REDACTED]')
-            // Google API 키 형식 (AIza + 35자) — Gemini 에러 바디 echo 유출 방지
-            .replace(/\bAIza[A-Za-z0-9_\-]{30,}\b/g, 'AIza[REDACTED]');
+          // R43: redaction 체인을 sanitizeApiErrorBody 로 단일 출처화 (streamRequest 4xx 와 공용).
+          const sanitized = sanitizeApiErrorBody(rawBody);
           let detail = sanitized.slice(0, 500);
           try {
             const parsed = JSON.parse(sanitized);
@@ -1061,6 +1156,11 @@ async function embedOpenAi(
 /** Gemini 기본 임베딩 모델 — index.ts 의 ai:check-embed-model 과 동기화 */
 export const GEMINI_EMBED_MODEL = 'gemini-embedding-2';
 
+// R43: batchEmbedContents 는 호출당 100개 요청 상한. 현재 호출자(RAG 50건 배치 / 검증 최대
+// 100문장)는 경계 이내지만, IPC 검증(validateEmbedTexts)이 200개까지 통과시키므로
+// 상한 초과 입력을 분할 호출로 흡수해 잠복 폭탄을 제거한다.
+const GEMINI_EMBED_BATCH_LIMIT = 100;
+
 async function embedGemini(
   texts: string[],
   apiKey: string,
@@ -1068,30 +1168,33 @@ async function embedGemini(
   signal?: AbortSignal,
 ): Promise<EmbeddingResult> {
   const useModel = model || GEMINI_EMBED_MODEL;
-  const body = JSON.stringify({
-    requests: texts.map((t) => ({
-      model: `models/${useModel}`,
-      content: { parts: [{ text: t }] },
-    })),
-  });
-  const result = await httpPost(geminiModelUrl(useModel, 'batchEmbedContents', false), {
-    'Content-Type': 'application/json',
-    'x-goog-api-key': apiKey,
-  }, body, 60000, signal);
-  const parsed = JSON.parse(result);
-  if (!parsed.embeddings || !Array.isArray(parsed.embeddings)) {
-    throw new Error('Gemini 임베딩 응답 형식 오류');
-  }
-  if (parsed.embeddings.length !== texts.length) {
-    throw new Error(`Gemini 임베딩 개수 불일치: expected ${texts.length}, got ${parsed.embeddings.length}`);
-  }
-  // batchEmbedContents 는 요청 순서를 보존하므로 index 정렬 불필요 — values 배열만 검증·추출.
   const embeddings: number[][] = [];
-  for (const e of parsed.embeddings as { values?: unknown }[]) {
-    if (!e || !Array.isArray(e.values)) {
+  for (let i = 0; i < texts.length; i += GEMINI_EMBED_BATCH_LIMIT) {
+    const batch = texts.slice(i, i + GEMINI_EMBED_BATCH_LIMIT);
+    const body = JSON.stringify({
+      requests: batch.map((t) => ({
+        model: `models/${useModel}`,
+        content: { parts: [{ text: t }] },
+      })),
+    });
+    const result = await httpPost(geminiModelUrl(useModel, 'batchEmbedContents', false), {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    }, body, 60000, signal);
+    const parsed = JSON.parse(result);
+    if (!parsed.embeddings || !Array.isArray(parsed.embeddings)) {
       throw new Error('Gemini 임베딩 응답 형식 오류');
     }
-    embeddings.push(e.values as number[]);
+    if (parsed.embeddings.length !== batch.length) {
+      throw new Error(`Gemini 임베딩 개수 불일치: expected ${batch.length}, got ${parsed.embeddings.length}`);
+    }
+    // batchEmbedContents 는 요청 순서를 보존하므로 index 정렬 불필요 — values 배열만 검증·추출.
+    for (const e of parsed.embeddings as { values?: unknown }[]) {
+      if (!e || !Array.isArray(e.values)) {
+        throw new Error('Gemini 임베딩 응답 형식 오류');
+      }
+      embeddings.push(e.values as number[]);
+    }
   }
   return { embeddings, model: useModel, provider: 'gemini' };
 }

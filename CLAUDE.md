@@ -27,7 +27,7 @@ npm run package      # 빌드 + electron-builder 패키징
 - `gh release create`에 `--tag` 대신 태그 이름만 전달
 - **릴리즈 노트는 영/한 병기** (v0.20.x 부터): 릴리즈 타이틀과 본문은 영문으로 작성하고, 한국어 번역을 `<details><summary>🇰🇷 한국어</summary>` 접기 블록으로 하단에 병기. README 영문 메인 정책과 정합
 - 태그 푸시가 CI를 트리거하므로 수동 빌드/업로드 불필요
-- CI 빌드에 약 8~12분 소요 (Ubuntu/Windows test 매트릭스 → Windows-2025 cold cache → electron-builder NSIS 서명). 릴리즈 생성 직후에는 설치 파일 미첨부 상태가 정상.
+- CI 빌드에 약 8~12분 소요 (Ubuntu/Windows test 매트릭스 → Windows-2025 cold cache → electron-builder NSIS 패키징 + Sigstore provenance attest). 릴리즈 생성 직후에는 설치 파일 미첨부 상태가 정상.
 - 릴리즈 생성 후 `gh run watch <run-id> --exit-status`로 CI 완료를 확인하고, 설치 파일 첨부를 `gh release view` 로 검증할 것
 
 ## Code Signing

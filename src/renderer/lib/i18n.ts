@@ -190,7 +190,7 @@ export const _translations = {
   'settings.chunkSize': { ko: '청크 크기', en: 'Chunk size' },
   'settings.imageAnalysis': { ko: '이미지 분석', en: 'Image Analysis' },
   'settings.imageAnalysisLabel': { ko: 'PDF 이미지 자동 분석', en: 'Auto-analyze PDF images' },
-  'settings.imageAnalysisDesc': { ko: 'Vision 지원 모델 필요 (llava, Claude, GPT-4o 등)', en: 'Requires Vision model (llava, Claude, GPT-4o, etc.)' },
+  'settings.imageAnalysisDesc': { ko: 'Vision 지원 모델 필요 (llava, Claude, GPT-4o, Gemini 등)', en: 'Requires Vision model (llava, Claude, GPT-4o, Gemini, etc.)' },
   'settings.ocrTitle': { ko: '스캔 PDF OCR', en: 'Scanned PDF OCR' },
   'settings.ocrLabel': { ko: '스캔 PDF 자동 텍스트 인식 (OCR)', en: 'Auto text recognition for scanned PDFs (OCR)' },
   'settings.ocrDesc': {
@@ -238,7 +238,7 @@ export const _translations = {
   'setup.hint.installFail': { ko: '설치 중 오류가 발생했습니다. 관리자 권한 승인 여부와 네트워크를 확인하세요.', en: 'Installation error. Check admin permissions and network.' },
   'setup.hint.notRunning': { ko: 'Ollama 서비스가 시작되지 않았습니다. PC 재시작 후 다시 시도하세요.', en: 'Ollama service failed to start. Restart PC and try again.' },
   'setup.hint.modelNotFound': { ko: '모델을 찾을 수 없습니다. 네트워크 연결 후 다시 시도하세요.', en: 'Model not found. Check network and try again.' },
-  'setup.hint.pullFail': { ko: '모델 다운로드 실패. 디스크 공간(최소 4GB)과 네트워크를 확인하세요.', en: 'Model download failed. Check disk space (min 4GB) and network.' },
+  'setup.hint.pullFail': { ko: '모델 다운로드 실패. 디스크 공간(기본 구성 최소 4GB, 한국어 특화 모델 포함 시 약 9GB)과 네트워크를 확인하세요.', en: 'Model download failed. Check disk space (min 4GB for the default setup, ~9GB with the Korean-specialized model) and network.' },
   'setup.downloadReady': { ko: '다운로드 준비 중...', en: 'Preparing download...' },
   'setup.manualInstall': { ko: '수동 설치:', en: 'Manual install:' },
   'setup.cancel': { ko: '취소하고 다른 Provider 사용', en: 'Cancel and use another provider' },

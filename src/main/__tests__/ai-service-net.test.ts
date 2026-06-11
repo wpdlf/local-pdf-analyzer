@@ -102,11 +102,13 @@ describe('checkAvailability', () => {
     expect(M.httpGet).not.toHaveBeenCalled();
   });
 
-  it('claude/openai → apiKey 유무로 판정', async () => {
+  it('claude/openai/gemini → apiKey 유무로 판정', async () => {
     expect(await checkAvailability('claude', 'x', 'key')).toBe(true);
     expect(await checkAvailability('claude', 'x', undefined)).toBe(false);
     expect(await checkAvailability('openai', 'x', 'key')).toBe(true);
     expect(await checkAvailability('openai', 'x', undefined)).toBe(false);
+    expect(await checkAvailability('gemini', 'x', 'key')).toBe(true);
+    expect(await checkAvailability('gemini', 'x', undefined)).toBe(false);
   });
 });
 
@@ -153,6 +155,54 @@ describe('generateEmbeddings', () => {
     respond(M.httpsRequest, 200, { data: [{ index: 5, embedding: [0.1] }, { index: 0, embedding: [0.2] }] });
     await expect(generateEmbeddings(['a', 'b'], 'openai', 'x', 'key')).rejects.toThrow(/index 값이 유효하지 않습니다/);
   });
+
+  // R43 H-4: gemini 임베딩 경로 (batchEmbedContents)
+  it('gemini 정상 — values 추출 + 모델/provider', async () => {
+    respond(M.httpsRequest, 200, { embeddings: [{ values: [0.1, 0.2] }, { values: [0.3, 0.4] }] });
+    const r = await generateEmbeddings(['a', 'b'], 'gemini', 'x', 'gkey');
+    expect(r).toEqual({ embeddings: [[0.1, 0.2], [0.3, 0.4]], model: 'gemini-embedding-2', provider: 'gemini' });
+  });
+
+  it('gemini apiKey 없음 → null', async () => {
+    expect(await generateEmbeddings(['a'], 'gemini', 'x', undefined)).toBeNull();
+  });
+
+  it('gemini 개수 불일치 → throw', async () => {
+    respond(M.httpsRequest, 200, { embeddings: [{ values: [0.1] }] });
+    await expect(generateEmbeddings(['a', 'b'], 'gemini', 'x', 'gkey')).rejects.toThrow(/개수 불일치/);
+  });
+
+  it('gemini values 형식 오류 → throw', async () => {
+    respond(M.httpsRequest, 200, { embeddings: [{ notValues: true }] });
+    await expect(generateEmbeddings(['a'], 'gemini', 'x', 'gkey')).rejects.toThrow(/형식 오류/);
+  });
+
+  it('gemini 101개 입력 → 100건 상한으로 2회 분할 호출 (R43)', async () => {
+    const texts = Array.from({ length: 101 }, (_, i) => `t${i}`);
+    const batchRes = (n: number) => ({ embeddings: Array.from({ length: n }, () => ({ values: [0.1] })) });
+    M.httpsRequest
+      .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+        const req = makeReq();
+        queueMicrotask(() => {
+          const res = makeRes({ statusCode: 200 });
+          cb(res);
+          queueMicrotask(() => { res.emit('data', Buffer.from(JSON.stringify(batchRes(100)))); res.emit('end'); });
+        });
+        return req;
+      })
+      .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+        const req = makeReq();
+        queueMicrotask(() => {
+          const res = makeRes({ statusCode: 200 });
+          cb(res);
+          queueMicrotask(() => { res.emit('data', Buffer.from(JSON.stringify(batchRes(1)))); res.emit('end'); });
+        });
+        return req;
+      });
+    const r = await generateEmbeddings(texts, 'gemini', 'x', 'gkey');
+    expect(r?.embeddings).toHaveLength(101);
+    expect(M.httpsRequest).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('analyzeImage (callVision → httpPost)', () => {
@@ -184,6 +234,33 @@ describe('analyzeImage (callVision → httpPost)', () => {
 
   it('claude vision — apiKey 없으면 throw', async () => {
     await expect(analyzeImage('img', 'claude', 'm', 'x', undefined)).rejects.toThrow(/Claude API 키가 필요/);
+  });
+
+  // R43 H-4: gemini vision 경로
+  it('gemini vision — parts join 추출 + x-goog-api-key 헤더 (키는 URL 미포함)', async () => {
+    let captured: { hostname?: string; path?: string; headers?: Record<string, string> } = {};
+    M.httpsRequest.mockImplementation((opts: unknown, cb: (r: unknown) => void) => {
+      captured = opts as typeof captured;
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => {
+          res.emit('data', Buffer.from(JSON.stringify({ candidates: [{ content: { parts: [{ text: '그림 ' }, { text: '설명' }] } }] })));
+          res.emit('end');
+        });
+      });
+      return req;
+    });
+    expect(await analyzeImage('img', 'gemini', 'gemini-3.5-flash', 'x', 'AIzaTESTKEY')).toBe('그림 설명');
+    expect(captured.hostname).toBe('generativelanguage.googleapis.com');
+    expect(captured.path).toContain(':generateContent');
+    expect(captured.path).not.toContain('AIzaTESTKEY'); // 키 URL 유출 방지
+    expect(captured.headers?.['x-goog-api-key']).toBe('AIzaTESTKEY');
+  });
+
+  it('gemini vision — apiKey 없으면 throw', async () => {
+    await expect(analyzeImage('img', 'gemini', 'm', 'x', undefined)).rejects.toThrow(/Gemini API 키가 필요/);
   });
 });
 
@@ -236,6 +313,106 @@ describe('generate → streamRequest (스트리밍)', () => {
   it('claude provider + apiKey 없음 → API_KEY_MISSING', async () => {
     await expect(
       generate('r4', { text: 'x', type: 'qa', provider: 'claude', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never),
+    ).rejects.toMatchObject({ code: 'API_KEY_MISSING' });
+  });
+
+  // R43 H-4: gemini SSE 스트리밍 경로
+  it('gemini SSE — 토큰 순차 전송 + ai:done + ?alt=sse URL/헤더', async () => {
+    let captured: { path?: string; headers?: Record<string, string> } = {};
+    M.httpsRequest.mockImplementation((opts: unknown, cb: (r: unknown) => void) => {
+      captured = opts as typeof captured;
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => {
+          res.emit('data', Buffer.from(
+            'data: {"candidates":[{"content":{"parts":[{"text":"안녕"}]}}]}\n'
+            + 'data: {"candidates":[{"content":{"parts":[{"text":"하세요"}]},"finishReason":"STOP"}]}\n',
+          ));
+          res.emit('end');
+        });
+      });
+      return req;
+    });
+    const win = makeWin();
+    await generate('g1', { text: '본문', type: 'full', provider: 'gemini', model: 'gemini-3.5-flash', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', win as never);
+    expect(win.webContents.send).toHaveBeenNthCalledWith(1, 'ai:token', 'g1', '안녕');
+    expect(win.webContents.send).toHaveBeenNthCalledWith(2, 'ai:token', 'g1', '하세요');
+    expect(win.webContents.send).toHaveBeenNthCalledWith(3, 'ai:done', 'g1');
+    expect(captured.path).toContain(':streamGenerateContent?alt=sse');
+    expect(captured.headers?.['x-goog-api-key']).toBe('gkey');
+    expect(__activeRequestCount()).toBe(0);
+  });
+
+  // R43 H-1: safety block 이 빈 성공으로 끝나지 않고 명시 실패 처리되는지
+  it('gemini safety block (promptFeedback, 토큰 0) → BLOCKED reject + ai:done 미전송', async () => {
+    M.httpsRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => {
+          res.emit('data', Buffer.from('data: {"promptFeedback":{"blockReason":"SAFETY"}}\n'));
+          res.emit('end');
+        });
+      });
+      return req;
+    });
+    const win = makeWin();
+    await expect(
+      generate('g2', { text: 'x', type: 'full', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', win as never),
+    ).rejects.toMatchObject({ code: 'BLOCKED' });
+    expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'g2');
+    expect(__activeRequestCount()).toBe(0);
+  });
+
+  it('gemini finishReason MAX_TOKENS 라도 토큰을 방출했으면 정상 완료 (과차단 방지)', async () => {
+    M.httpsRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => {
+          res.emit('data', Buffer.from(
+            'data: {"candidates":[{"content":{"parts":[{"text":"부분 응답"}]}}]}\n'
+            + 'data: {"candidates":[{"finishReason":"MAX_TOKENS"}]}\n',
+          ));
+          res.emit('end');
+        });
+      });
+      return req;
+    });
+    const win = makeWin();
+    await generate('g3', { text: 'x', type: 'full', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', win as never);
+    expect(win.webContents.send).toHaveBeenCalledWith('ai:done', 'g3');
+  });
+
+  // R43 I-1: 400 키 오류가 바디 기반으로 API_KEY_INVALID 매핑 + 키 redaction
+  it('gemini 400 "API key not valid" → API_KEY_INVALID', async () => {
+    respond(M.httpsRequest, 400, { error: { message: 'API key not valid. Please pass a valid API key.', status: 'INVALID_ARGUMENT' } });
+    await expect(
+      generate('g4', { text: 'x', type: 'qa', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'badkey', makeWin() as never),
+    ).rejects.toMatchObject({ code: 'API_KEY_INVALID' });
+  });
+
+  it('gemini 429 → rate limit 안내 메시지', async () => {
+    respond(M.httpsRequest, 429, { error: { message: 'Resource has been exhausted' } });
+    await expect(
+      generate('g5', { text: 'x', type: 'qa', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', makeWin() as never),
+    ).rejects.toThrow(/요청 한도를 초과/);
+  });
+
+  it('gemini 400 일반 오류(키 무관) → generic HTTP 에러 (오분류 방지)', async () => {
+    respond(M.httpsRequest, 400, { error: { message: 'Request payload size exceeds the limit', status: 'INVALID_ARGUMENT' } });
+    await expect(
+      generate('g6', { text: 'x', type: 'full', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', makeWin() as never),
+    ).rejects.toThrow(/API 요청 실패: HTTP 400/);
+  });
+
+  it('gemini provider + apiKey 없음 → API_KEY_MISSING', async () => {
+    await expect(
+      generate('g7', { text: 'x', type: 'qa', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never),
     ).rejects.toMatchObject({ code: 'API_KEY_MISSING' });
   });
 

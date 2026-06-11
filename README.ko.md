@@ -166,7 +166,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - 렌더 오류 복구 — 예기치 못한 UI 오류 시 "다시 시도" 버튼으로 재시작 없이 복구
 
 **품질 보증**
-- 단위 테스트 782건 + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
+- 단위 테스트 800건 + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
 - 빌드 무결성 — 인스톨러 SHA-256 해시 + Sigstore attestation 자동 게시
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 
@@ -218,7 +218,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG는 공증 자격 확보 시까지 일시 중단) |
-| 테스트 | Vitest 단위 테스트 782건/40파일 (renderer·shared 451 + main 331) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (44/40/44/46) |
+| 테스트 | Vitest 단위 테스트 800건/40파일 (renderer·shared 455 + main 345) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (55/49/56/58) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -266,7 +266,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (782건, 40 파일)
+    │   └── __tests__/         # 단위 테스트 (800건, 40 파일)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -460,8 +460,8 @@ PDF 파일
 
 ## 품질 보증
 
-- **단위 테스트 782건 / 40파일** — renderer·shared 451 + main 331. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service까지 행위 테스트
-- **CI 게이트** — `tsc --noEmit`(strict), 커버리지 임계(44/40/44/46) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 20.11/22/24 매트릭스
+- **단위 테스트 800건 / 40파일** — renderer·shared 455 + main 345. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service까지 행위 테스트
+- **CI 게이트** — `tsc --noEmit`(strict), 커버리지 임계(55/49/56/58) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 20.11/22/24 매트릭스
 - **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, Critical/High 42라운드 연속 0건 유지
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 

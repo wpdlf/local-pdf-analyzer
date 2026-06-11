@@ -2,6 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { OPS } from 'pdfjs-dist';
 import type { PdfDocument, Chapter, PageImage, AppError } from '../types';
 import { useAppStore } from './store';
+import { t } from './i18n';
 import { restoreSessionForDocument } from './use-session';
 import { MAX_PDF_SIZE_BYTES } from '../../shared/constants';
 // Vite의 ?url 쿼리를 사용해 worker 파일을 정적 에셋으로 번들링.
@@ -70,8 +71,10 @@ export async function parsePdf(
   }
   if (pageCount > MAX_PAGE_COUNT) {
     await pdf.destroy().catch(() => { /* ignore */ });
+    // R43: 한국어 하드코딩 → i18n 키 사용 (영어 UI 사용자도 현재 언어로 에러를 보도록).
+    // t() 는 store 의 uiLanguage 를 읽는 순수 함수라 hook 컨텍스트 불필요.
     throw Object.assign(
-      new Error(`페이지 수가 너무 많습니다 (${pageCount}p). 최대 ${MAX_PAGE_COUNT}페이지까지 지원합니다. 문서를 분할해주세요.`),
+      new Error(t('uploader.tooManyPages', { pages: String(pageCount), max: String(MAX_PAGE_COUNT) })),
       { code: 'PDF_TOO_MANY_PAGES' },
     );
   }

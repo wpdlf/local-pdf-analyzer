@@ -95,6 +95,24 @@ export const SUMMARY_LANGUAGES: { value: SummaryLanguage; label: string }[] = [
 // AI 제공자
 export type AiProviderType = 'ollama' | 'claude' | 'openai' | 'gemini';
 
+// provider 표시 이름 — StatusBar/설정 토스트 공용 단일 출처.
+// R43 I-1: StatusBar 의 3-provider ternary 가 gemini 를 'OpenAI' 로 표시하던 결함의 재발 방지.
+export const PROVIDER_LABELS: Record<AiProviderType, string> = {
+  ollama: 'Ollama',
+  claude: 'Claude',
+  openai: 'OpenAI',
+  gemini: 'Gemini',
+};
+
+/**
+ * Ollama 설치 목록의 `name[:tag]` 항목이 베이스 모델명과 일치하는지 콜론 경계로 판정.
+ * R43 F1: 단순 startsWith 는 'gemma3' 가 실존 모델 'gemma3n:e4b' 와 오매칭되어
+ * 첫 설치가 스킵되고 기본 모델이 미설치 상태로 남는 결함이 있었다.
+ */
+export function matchesModel(installed: string, base: string): boolean {
+  return installed === base || installed.startsWith(base + ':');
+}
+
 // 앱 설정 (API 키는 Main 프로세스에서만 관리)
 export interface AppSettings {
   provider: AiProviderType;

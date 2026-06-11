@@ -88,11 +88,14 @@ export default defineConfig({
       // R38 P5: ai-service.ts 본체(순수 헬퍼 + 네트워크 경로) 분모 편입으로 베이스라인 상승.
       //   측정: Stmts 57.49 / Branch 51.24 / Funcs 57.53 / Lines 59.32 (-5pp 마진 적용).
       //   잔여 미답(index.ts UI/생성 경로 / install* 오케스트레이션 / E2E) 도입 시 본 임계 재상향 권장.
+      // R43: Gemini 네트워크 경로(SSE/safety block/400 매핑/임베딩 분할/Vision) + 로캘 감지 +
+      //   위자드 에러·재시도 테스트 추가로 베이스라인 상승.
+      //   측정: Stmts 60.91 / Branch 54.88 / Funcs 61.32 / Lines 63.17 (-5pp 마진 적용).
       thresholds: {
-        statements: 52,
-        branches: 46,
-        functions: 52,
-        lines: 54,
+        statements: 55,
+        branches: 49,
+        functions: 56,
+        lines: 58,
       },
     },
   },

@@ -82,13 +82,26 @@ const defaultSettings = {
 function localeAwareDefaults(): Record<string, unknown> {
   let lang: 'ko' | 'en' = 'ko';
   try {
-    lang = app.getLocale().toLowerCase().startsWith('ko') ? 'ko' : 'en';
+    // R43 F6: prefix 'ko' 는 'kok'(콘칸어) 로캘과 오매칭 — 정확히 ko 또는 ko-* 만 한국어 판정
+    const loc = app.getLocale().toLowerCase();
+    lang = (loc === 'ko' || loc.startsWith('ko-')) ? 'ko' : 'en';
   } catch { /* getLocale 실패 시 ko 유지 */ }
   return { ...defaultSettings, uiLanguage: lang, summaryLanguage: lang };
 }
 
 async function loadSettings(): Promise<Record<string, unknown>> {
-  return _loadSettings(settingsPath, localeAwareDefaults(), VALID_SETTINGS_KEYS_SET);
+  const settings = await _loadSettings(settingsPath, localeAwareDefaults(), VALID_SETTINGS_KEYS_SET);
+  // R43 F5: 레거시 가드 — uiLanguage 는 저장돼 있지만 summaryLanguage 키가 도입 전이라
+  // 파일에 없는 사용자(v0.16 이전 마지막 저장)가 비-ko 로캘 OS 에서 요약 언어만 묵시적으로
+  // en 으로 바뀌는 회귀 차단. 저장된 UI 언어를 따른다. (merge 결과로는 키 출처를 구분할 수
+  // 없어 원본 파일을 직접 검사 — 파일 부재/손상 시 로캘 기본값 유지)
+  try {
+    const raw = JSON.parse(await fsp.readFile(settingsPath, 'utf-8'));
+    if (raw && typeof raw === 'object' && 'uiLanguage' in raw && !('summaryLanguage' in raw)) {
+      settings.summaryLanguage = settings.uiLanguage;
+    }
+  } catch { /* 첫 실행(파일 없음)/손상 — localeAwareDefaults 유지 */ }
+  return settings;
 }
 
 async function saveSettings(settings: Record<string, unknown>): Promise<void> {

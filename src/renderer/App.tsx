@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from './lib/store';
-import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS } from './types';
+import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS, matchesModel } from './types';
 import { t, useT } from './lib/i18n';
 import { PdfUploader } from './components/PdfUploader';
 import { RecentDocuments } from './components/RecentDocuments';
@@ -60,8 +60,10 @@ export default function App() {
     let aborted = false;
 
     const ensureDefaultModels = async (installedModels: string[]) => {
+      // R43 F1: 콜론 경계 매칭 — startsWith 는 'gemma3' 가 'gemma3n:e4b' 와 오매칭되어
+      // 기본 모델 미설치 상태가 영구히 보정되지 않던 결함.
       const missing = INITIAL_INSTALL_MODELS.filter(
-        (model) => !installedModels.some((m) => m.startsWith(model)),
+        (model) => !installedModels.some((m) => matchesModel(m, model)),
       );
       if (missing.length === 0) return;
 
@@ -293,8 +295,9 @@ export default function App() {
       // split(':')[0] 은 input 이 빈 문자열이어도 빈 문자열 한 개 원소를 가진 배열을 반환하지만,
       // noUncheckedIndexedAccess 는 인덱싱 후 string|undefined 로 본다. fallback ''.
       const currentModel = settings.model.split(':')[0] ?? '';
+      // R43 F1 동류: startsWith 는 'gemma3n' 이 'gemma3' 추천에 오매칭 — 베이스명 정확 일치로 판정
       const isKoreanModel = KOREAN_RECOMMENDED_MODELS.some(
-        (m) => currentModel.startsWith(m),
+        (m) => currentModel === m,
       );
       if (!isKoreanModel) {
         setModelHint(

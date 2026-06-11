@@ -72,8 +72,11 @@ describe('OllamaSetupWizard 선택 설치', () => {
 
   afterEach(() => {
     cleanup();
-    // 언어 토글 테스트가 store 싱글톤의 uiLanguage 를 바꾸므로 매 테스트 후 ko 로 복원
-    useAppStore.setState((s) => ({ settings: { ...s.settings, uiLanguage: 'ko' as const } }));
+    // 언어 토글/취소 테스트가 store 싱글톤(언어·view)을 바꾸므로 매 테스트 후 복원
+    useAppStore.setState((s) => ({
+      settings: { ...s.settings, uiLanguage: 'ko' as const },
+      view: 'main' as const,
+    }));
   });
 
   it('welcome 우상단 토글로 영어 전환 — 문구 즉시 영어로, 다시 한국어 복귀', async () => {
@@ -134,7 +137,7 @@ describe('OllamaSetupWizard 선택 설치', () => {
     expect(ollamaMock.pullModel).toHaveBeenCalledWith(OPTIONAL_KOREAN_MODEL);
   });
 
-  it('이미 설치된 모델은 선택돼 있어도 pull 을 건너뛴다 (prefix 매칭)', async () => {
+  it('이미 설치된 모델은 선택돼 있어도 pull 을 건너뛴다 (콜론 경계 매칭)', async () => {
     // 사용자가 exaone3.5:2.4b 같은 작은 태그를 수동 설치한 경우 재다운로드하지 않는다
     // (beforeEach 의 mockResolvedValueOnce([]) 큐를 비우기 위해 reset 후 재설정)
     ollamaMock.listModels.mockReset();
@@ -147,5 +150,71 @@ describe('OllamaSetupWizard 선택 설치', () => {
 
     await waitFor(() => expect(ollamaMock.pullModel).toHaveBeenCalledTimes(1));
     expect(ollamaMock.pullModel).toHaveBeenCalledWith('nomic-embed-text');
+  });
+
+  it('R43 F1: gemma3n 만 설치된 경우 gemma3 으로 오인하지 않고 pull 한다', async () => {
+    ollamaMock.listModels.mockReset();
+    ollamaMock.listModels.mockResolvedValue(['gemma3n:e4b']);
+    const user = userEvent.setup();
+    render(<OllamaSetupWizard />);
+
+    await user.click(screen.getByText(t('setup.start')));
+
+    await waitFor(() => expect(ollamaMock.pullModel).toHaveBeenCalledWith('gemma3'));
+  });
+
+  it('R43: pull 실패 → 에러 화면 → 재시도로 복구', async () => {
+    ollamaMock.pullModel.mockResolvedValueOnce({ success: false, error: '네트워크 오류' });
+    const user = userEvent.setup();
+    render(<OllamaSetupWizard />);
+
+    await user.click(screen.getByText(t('setup.start')));
+
+    // 에러 화면: 실패 메시지 + 재시도/다른 Provider 버튼
+    await waitFor(() => expect(screen.getByText('네트워크 오류')).toBeTruthy());
+    expect(screen.getByText(t('common.retry'))).toBeTruthy();
+    expect(screen.getByText(t('setup.otherProvider'))).toBeTruthy();
+
+    // 재시도 — pullModel 기본 mock(success)으로 복구되어 done 단계 도달
+    await user.click(screen.getByText(t('common.retry')));
+    await waitFor(() => expect(screen.getByText(t('setup.done'))).toBeTruthy());
+  });
+
+  it('R43 F4: 최종 listModels 일시 실패(빈 배열) 시 1회 재조회로 거짓 실패를 거른다', async () => {
+    // 1차(설치 전 검사) [], pull 후 최종 검증 1차 [] → 재조회에서 정상 목록
+    ollamaMock.listModels.mockReset();
+    ollamaMock.listModels
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValue(['gemma3', 'nomic-embed-text']);
+    const user = userEvent.setup();
+    render(<OllamaSetupWizard />);
+
+    await user.click(screen.getByText(t('setup.start')));
+
+    await waitFor(() => expect(screen.getByText(t('setup.done'))).toBeTruthy());
+    expect(screen.queryByText(t('setup.noModels'))).toBeNull();
+  });
+
+  it('R43: 진행 중 취소 → 설정 화면 이동 + 이후 모델 pull 미진행', async () => {
+    // 첫 pull 을 pending 으로 잡아두고 취소 — cancelledRef 가드가 다음 단계를 차단해야 함
+    let resolvePull: (v: { success: boolean }) => void = () => {};
+    ollamaMock.pullModel.mockReset();
+    ollamaMock.pullModel.mockImplementationOnce(
+      () => new Promise((res) => { resolvePull = res; }),
+    );
+    const user = userEvent.setup();
+    render(<OllamaSetupWizard />);
+
+    await user.click(screen.getByText(t('setup.start')));
+    await waitFor(() => expect(ollamaMock.pullModel).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByText(t('setup.cancel')));
+    expect(useAppStore.getState().view).toBe('settings');
+
+    // 잡아둔 pull 이 완료돼도 취소 가드로 두 번째 모델 pull 은 시작되지 않는다
+    resolvePull({ success: true });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(ollamaMock.pullModel).toHaveBeenCalledTimes(1);
   });
 });

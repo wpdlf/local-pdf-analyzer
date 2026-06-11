@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import type { AppErrorCode } from '../types';
-import { INITIAL_INSTALL_MODELS, OPTIONAL_KOREAN_MODEL } from '../types';
+import { INITIAL_INSTALL_MODELS, OPTIONAL_KOREAN_MODEL, matchesModel } from '../types';
 
 type SetupStep = 'welcome' | 'progress' | 'done' | 'error';
 
@@ -20,7 +20,15 @@ export function OllamaSetupWizard() {
   // OS 로캘 감지(localeAwareDefaults)가 틀렸을 때의 탈출구로 토글을 직접 제공.
   const switchLanguage = (lang: 'ko' | 'en') => {
     if (settings.uiLanguage === lang) return;
-    updateSettings({ ...settings, uiLanguage: lang });
+    // R43 F2: 첫 실행 컨텍스트에서 요약 언어가 UI 언어와 짝(로캘 기본값)이라면 함께 전환 —
+    // 영문 OS 의 한국어 사용자가 토글 후 "UI 한국어 + 요약 영어"로 갈리는 문제 방지.
+    // 사용자가 요약 언어를 명시적으로 다르게 설정한 경우(ja 등)는 보존.
+    const syncSummary = settings.summaryLanguage === settings.uiLanguage;
+    updateSettings({
+      ...settings,
+      uiLanguage: lang,
+      ...(syncSummary ? { summaryLanguage: lang } : {}),
+    });
   };
   const doneTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // 사용자가 진행 중 취소를 요청하면 true. 각 await 뒤에서 체크되어 다음 단계 진입을 차단.
@@ -136,7 +144,8 @@ export function OllamaSetupWizard() {
         const itemIndex = 2 + i;
         updateItem(itemIndex, 'running');
 
-        const alreadyInstalled = existingModels.some((m) => m.startsWith(modelName));
+        // R43 F1: 콜론 경계 매칭 — startsWith 는 'gemma3' 가 'gemma3n:e4b' 와 오매칭
+        const alreadyInstalled = existingModels.some((m) => matchesModel(m, modelName));
         if (alreadyInstalled) {
           updateItem(itemIndex, 'done');
           continue;
@@ -158,10 +167,17 @@ export function OllamaSetupWizard() {
         updateItem(itemIndex, 'done');
       }
 
-      const finalModels = await window.electronAPI.ollama.listModels();
+      // R43 F4: listModels 는 일시적 통신 오류 시 빈 배열로 resolve 하므로, 방금 pull 이
+      // 모두 성공했는데 빈 결과가 오면 1회 재조회로 거짓 MODEL_NOT_FOUND 를 걸러낸다.
+      // 특정 모델 행(updateItem 매직 인덱스)을 error 로 마킹하지 않음 — 설치 실패가 아니라
+      // 최종 확인 실패이므로 멀쩡한 항목을 빨갛게 표시하던 오표시 제거.
+      let finalModels = await window.electronAPI.ollama.listModels();
       if (cancelledRef.current) return;
       if (finalModels.length === 0) {
-        updateItem(2, 'error');
+        finalModels = await window.electronAPI.ollama.listModels();
+        if (cancelledRef.current) return;
+      }
+      if (finalModels.length === 0) {
         handleError('MODEL_NOT_FOUND', t('setup.noModels'));
         return;
       }

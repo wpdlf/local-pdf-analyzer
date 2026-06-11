@@ -467,6 +467,7 @@ export function useSummarize() {
           ollama: 'Ollama가 실행 중이 아닙니다. 설정을 확인해주세요.',
           claude: 'Claude API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
           openai: 'OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
+          gemini: 'Gemini API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
         };
         setError({
           code: currentSettings.provider === 'ollama' ? 'OLLAMA_NOT_RUNNING' : 'API_KEY_MISSING',

@@ -1,5 +1,6 @@
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
+import { PROVIDER_LABELS } from '../types';
 
 export function StatusBar() {
   const ollamaStatus = useAppStore((s) => s.ollamaStatus);
@@ -18,9 +19,8 @@ export function StatusBar() {
     return <span className="text-green-600 dark:text-green-400">✅ {settings.model}</span>;
   };
 
-  const providerLabel = settings.provider === 'ollama'
-    ? 'Ollama'
-    : settings.provider === 'claude' ? 'Claude' : 'OpenAI';
+  // R43 I-1: 3-provider ternary 가 gemini 를 'OpenAI' 로 표시하던 결함 — 단일 출처 맵 사용
+  const providerLabel = PROVIDER_LABELS[settings.provider];
 
   return (
     <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-gray-800 text-sm">

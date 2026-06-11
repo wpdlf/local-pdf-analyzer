@@ -135,7 +135,10 @@ async function doPersistCurrentSession(): Promise<void> {
   const doc = s.document;
   const api = window.electronAPI?.session;
   if (!doc || !s.settings.persistSessions || !api) return;
-  if (s.isGenerating || s.isQaGenerating || s.sessionRestorePending) return;
+  // R43 I-2: ragState.isIndexing 가드 — provider 전환 재빌드 도중 디바운스가 발화하면
+  // 빌드 중간의 부분 청크(model/dim 은 이미 세팅됨)가 완전한 인덱스처럼 영속화되고,
+  // 그 창에서 앱을 종료하면 다음 복원이 잘린 인덱스를 채택해 검색 범위가 영구 축소된다.
+  if (s.isGenerating || s.isQaGenerating || s.sessionRestorePending || s.ragState.isIndexing) return;
   try {
     const docHash = await hashDocumentText(doc.extractedText);
     if (useAppStore.getState().document?.id !== doc.id) return; // 레이스
@@ -193,6 +196,7 @@ export function useSessionPersistence(): void {
   const summaryStream = useAppStore((s) => s.summaryStream);
   const qaMessages = useAppStore((s) => s.qaMessages);
   const ragChunkCount = useAppStore((s) => s.ragState.chunkCount);
+  const ragIsIndexing = useAppStore((s) => s.ragState.isIndexing);
   const isGenerating = useAppStore((s) => s.isGenerating);
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
   const persistEnabled = useAppStore((s) => s.settings.persistSessions);
@@ -200,10 +204,11 @@ export function useSessionPersistence(): void {
 
   useEffect(() => {
     if (!persistEnabled || !document || pending) return;
-    if (isGenerating || isQaGenerating) return; // 생성 중 보류 — 완료 후 settle 시 저장
+    // R43 I-2: 인덱싱 중 보류 — 완료 후 chunkCount settle 시 저장 (부분 인덱스 영속화 방지)
+    if (isGenerating || isQaGenerating || ragIsIndexing) return; // 생성 중 보류 — 완료 후 settle 시 저장
     const hasContent = !!summaryStream || qaMessages.length > 0 || ragChunkCount > 0;
     if (!hasContent) return;
     const timer = setTimeout(() => { void persistCurrentSession(); }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [document, summaryStream, qaMessages, ragChunkCount, isGenerating, isQaGenerating, persistEnabled, pending]);
+  }, [document, summaryStream, qaMessages, ragChunkCount, ragIsIndexing, isGenerating, isQaGenerating, persistEnabled, pending]);
 }

@@ -585,6 +585,15 @@ export function useRagBuilder(): void {
     prevKeyRef.current = key;
     const docId = document.id;
 
+    // R43 H-1: 복원 마커는 1회용 — 채택되지 않고 정상 빌드로 진입하는 순간 소비한다.
+    // 소비하지 않으면 provider 왕복(A 복원 → B 전환·재빌드 → A 복귀) 시 stale 마커가
+    // 위 채택 분기를 다시 통과시켜 B-provider 인덱스 위에서 재빌드를 skip → 질문 임베딩과
+    // 인덱스의 차원 불일치로 검색이 항상 빈 결과 → RAG 배지가 켜진 채 키워드 모드로
+    // 무음 강등 + 매 질문 검증 임베딩 헛과금이 발생한다.
+    if (restoredSession && restoredSession.docId === document.id) {
+      useAppStore.getState().setRestoredSession(null);
+    }
+
     // 이전 빌드가 아직 활성 상태라면 즉시 abort (새 빌드로 교체)
     activeBuildController?.abort();
     const controller = new AbortController();
