@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     start: () => ipcRenderer.invoke('ollama:start'),
     stop: () => ipcRenderer.invoke('ollama:stop'),
     pullModel: (model: string) => ipcRenderer.invoke('ollama:pull-model', model),
+    cancelPull: () => ipcRenderer.invoke('ollama:cancel-pull'),
     listModels: () => ipcRenderer.invoke('ollama:list-models'),
   },
   ai: {
@@ -92,6 +93,7 @@ export type ElectronAPI = {
     start: () => Promise<boolean>;
     stop: () => Promise<boolean>;
     pullModel: (model: string) => Promise<{ success: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string> }>;
+    cancelPull: () => Promise<{ success: boolean }>;
     listModels: () => Promise<string[]>;
   };
   ai: {

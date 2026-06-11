@@ -17,6 +17,7 @@ const ollamaMock = {
   start: vi.fn(),
   listModels: vi.fn(),
   pullModel: vi.fn(),
+  cancelPull: vi.fn(() => Promise.resolve({ success: true })),
 };
 
 // store.ts 는 module init 시 localStorage / window.electronAPI 를 참조한다.
@@ -211,6 +212,8 @@ describe('OllamaSetupWizard 선택 설치', () => {
 
     await user.click(screen.getByText(t('setup.cancel')));
     expect(useAppStore.getState().view).toBe('settings');
+    // R44 F9: 취소가 진행 중 다운로드를 실제로 중단 (orphan pull 차단 문제 해소)
+    expect(ollamaMock.cancelPull).toHaveBeenCalledTimes(1);
 
     // 잡아둔 pull 이 완료돼도 취소 가드로 두 번째 모델 pull 은 시작되지 않는다
     resolvePull({ success: true });

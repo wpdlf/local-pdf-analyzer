@@ -507,7 +507,15 @@ export function SettingsPanel() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                <p className="text-xs text-blue-600 dark:text-blue-400 truncate" title={pullProgress}>{pullProgress}</p>
+                <p className="flex-1 text-xs text-blue-600 dark:text-blue-400 truncate" title={pullProgress}>{pullProgress}</p>
+                {/* R44 F9: 수동 pull 도 취소 가능 — cancelPull 이 자식 프로세스를 중단하면
+                    in-flight pullModel 이 실패로 resolve 되어 handlePullModel 의 finally 가 정리 */}
+                <button
+                  onClick={() => { void window.electronAPI.ollama.cancelPull().catch(() => { /* 무시 */ }); }}
+                  className="shrink-0 px-2 py-0.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                >
+                  {t('common.cancel')}
+                </button>
               </div>
             </div>
           )}

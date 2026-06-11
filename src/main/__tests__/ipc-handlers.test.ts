@@ -196,6 +196,19 @@ describe('apikey:has / apikey:delete', () => {
     expect(H.store.delete).toHaveBeenCalledWith('claude');
   });
 
+  it('R44 F9: ollama:cancel-pull → killPullProcess 위임', async () => {
+    H.ollama.killPullProcess.mockResolvedValue(undefined);
+    expect(await invoke('ollama:cancel-pull')).toEqual({ success: true });
+    expect(H.ollama.killPullProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it('R44 F9: ollama:cancel-pull — killPullProcess throw 시 {success:false}', async () => {
+    H.ollama.killPullProcess.mockRejectedValue(new Error('boom'));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await invoke('ollama:cancel-pull')).toEqual({ success: false });
+    errSpy.mockRestore();
+  });
+
   it('gemini provider 키 저장/조회 — 화이트리스트 통과', async () => {
     expect(await invoke('apikey:save', 'gemini', 'AIza-test-key')).toEqual({ success: true });
     expect(H.store.save).toHaveBeenCalledWith('gemini', 'AIza-test-key');

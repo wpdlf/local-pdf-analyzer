@@ -531,6 +531,19 @@ export function registerIpcHandlers(): void {
     }
   });
 
+  // R44(R43 후속 F9): 진행 중인 모델 다운로드 취소. Ollama 는 부분 다운로드 레이어를
+  // 캐시하므로 중단해도 다음 pull 에서 이어받는다 — "취소" 의 멘탈 모델과 일치시키고,
+  // orphan pull 이 후속 수동 pull 을 '이미 진행 중' 에러로 차단하던 문제를 해소.
+  ipcMain.handle('ollama:cancel-pull', async () => {
+    try {
+      await ollamaManager.killPullProcess();
+      return { success: true };
+    } catch (err) {
+      console.error('[ollama:cancel-pull] failed:', err);
+      return { success: false };
+    }
+  });
+
   ipcMain.handle('ollama:list-models', async () => {
     try {
       return await ollamaManager.listModels();

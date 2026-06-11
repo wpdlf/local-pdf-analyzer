@@ -40,8 +40,10 @@ export function OllamaSetupWizard() {
   };
   const doneTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // 사용자가 진행 중 취소를 요청하면 true. 각 await 뒤에서 체크되어 다음 단계 진입을 차단.
-  // 이미 전송된 install/pullModel IPC 는 Main 에서 계속 실행되지만, UI 는 사용자를
-  // 즉시 설정 화면으로 이동시켜 다른 provider 선택이 가능하도록 함.
+  // R44(R43 후속 F9): 진행 중인 모델 다운로드는 cancelPull IPC 로 실제 중단한다 —
+  // Ollama 가 부분 레이어를 캐시하므로 다음 pull 에서 이어받아 중단 비용이 거의 없고,
+  // orphan pull 이 설정 화면의 수동 pull 을 '이미 진행 중' 으로 차단하던 문제가 사라진다.
+  // (Ollama 인스톨러 자체의 install IPC 는 외부 프로세스라 기존대로 계속 진행)
   const cancelledRef = useRef(false);
   const [step, setStep] = useState<SetupStep>('welcome');
   const [progress, setProgress] = useState<ProgressDisplay | null>(null);
@@ -91,6 +93,8 @@ export function OllamaSetupWizard() {
   const handleCancel = () => {
     cancelledRef.current = true;
     setProgress({ type: 'key', key: 'setup.cancelling' });
+    // R44 F9: 진행 중인 모델 다운로드 실제 중단 (best-effort — pull 미진행 시 no-op)
+    window.electronAPI.ollama.cancelPull().catch(() => { /* 무시 */ });
     // 설정 화면으로 이동 — 사용자가 다른 provider (Claude/OpenAI) 선택 가능
     setView('settings');
   };
