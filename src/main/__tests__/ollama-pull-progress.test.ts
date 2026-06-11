@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripAnsi, extractLastLine, toFriendlyMessage } from '../ollama-pull-progress';
+import { stripAnsi, extractLastLine, toProgressEvent } from '../ollama-pull-progress';
 
 /**
  * R37 P6 (v0.18.23) — `ollama pull` 출력 파싱 회귀 가드 (QA M5).
@@ -43,38 +43,40 @@ describe('extractLastLine', () => {
   });
 });
 
-describe('toFriendlyMessage', () => {
-  it('"pulling <hash> ... NN%" 에서 퍼센트를 추출해 다운로드 메시지로 변환', () => {
-    expect(toFriendlyMessage('pulling a1b2c3 100% ▕████▏ 1.2 GB')).toBe('모델 다운로드 중... 100%');
-    expect(toFriendlyMessage('pulling deadbeef  37%')).toBe('모델 다운로드 중... 37%');
+// R44(R43 후속 F3): 한국어 완성 문자열 → 구조화 이벤트로 전환. renderer i18n 의
+// mainprog.<key> 와 키가 일치해야 한다 (i18n.ts 양쪽 동기 갱신).
+describe('toProgressEvent', () => {
+  it('"pulling <hash> ... NN%" 에서 퍼센트를 추출해 pulling 이벤트로 변환', () => {
+    expect(toProgressEvent('pulling a1b2c3 100% ▕████▏ 1.2 GB')).toEqual({ key: 'pulling', params: { percent: '100%' } });
+    expect(toProgressEvent('pulling deadbeef  37%')).toEqual({ key: 'pulling', params: { percent: '37%' } });
   });
 
-  it('pulling manifest → 정보 확인 중', () => {
-    expect(toFriendlyMessage('pulling manifest')).toBe('모델 정보 확인 중...');
+  it('pulling manifest → pullingManifest', () => {
+    expect(toProgressEvent('pulling manifest')).toEqual({ key: 'pullingManifest' });
   });
 
-  it('verifying → 무결성 검증 중', () => {
-    expect(toFriendlyMessage('verifying sha256 digest')).toBe('무결성 검증 중...');
+  it('verifying → verifying', () => {
+    expect(toProgressEvent('verifying sha256 digest')).toEqual({ key: 'verifying' });
   });
 
-  it('writing → 설치 마무리 중', () => {
-    expect(toFriendlyMessage('writing manifest')).toBe('설치 마무리 중...');
+  it('writing → writing', () => {
+    expect(toProgressEvent('writing manifest')).toEqual({ key: 'writing' });
   });
 
-  it('success → 다운로드 완료', () => {
-    expect(toFriendlyMessage('success')).toBe('다운로드 완료!');
+  it('success → success', () => {
+    expect(toProgressEvent('success')).toEqual({ key: 'success' });
   });
 
-  it('퍼센트 없는 pulling <hash> 는 준비 중 메시지', () => {
-    expect(toFriendlyMessage('pulling a1b2c3d4')).toBe('모델 다운로드 준비 중...');
+  it('퍼센트 없는 pulling <hash> 는 preparing', () => {
+    expect(toProgressEvent('pulling a1b2c3d4')).toEqual({ key: 'preparing' });
   });
 
-  it('매핑되지 않는 줄은 원문 그대로 통과', () => {
-    expect(toFriendlyMessage('Error: connection refused')).toBe('Error: connection refused');
+  it('매핑되지 않는 줄은 raw passthrough', () => {
+    expect(toProgressEvent('Error: connection refused')).toEqual({ key: 'raw', params: { text: 'Error: connection refused' } });
   });
 
   it('대소문자 무관하게 상태를 인식한다', () => {
-    expect(toFriendlyMessage('VERIFYING sha256')).toBe('무결성 검증 중...');
-    expect(toFriendlyMessage('Success')).toBe('다운로드 완료!');
+    expect(toProgressEvent('VERIFYING sha256')).toEqual({ key: 'verifying' });
+    expect(toProgressEvent('Success')).toEqual({ key: 'success' });
   });
 });

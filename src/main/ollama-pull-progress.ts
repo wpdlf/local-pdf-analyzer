@@ -22,20 +22,32 @@ export function extractLastLine(raw: string): string {
   return parts.length > 0 ? (parts[parts.length - 1] ?? '') : '';
 }
 
-/** ollama pull 원본 출력 한 줄을 사용자 친화적 한국어 메시지로 변환 */
-export function toFriendlyMessage(line: string): string {
+/**
+ * R44(R43 후속 F3/F8): main → renderer 구조화 진행 이벤트.
+ * 이전엔 main 이 완성된 한국어 문자열을 보내 영어 UI 에서도 한국어 진행 메시지가 표시됐고,
+ * 진행 중 언어 토글 시 이전 언어 스냅샷이 잔존했다. key+params 로 보내고 renderer 가
+ * 렌더 시점 언어로 번역한다 (i18n.ts 의 `mainprog.<key>` / translateMainProgress).
+ * `raw` 는 매핑 불가 원문 passthrough (params.text).
+ */
+export interface MainProgressEvent {
+  key: string;
+  params?: Record<string, string>;
+}
+
+/** ollama pull 원본 출력 한 줄을 구조화 진행 이벤트로 변환 */
+export function toProgressEvent(line: string): MainProgressEvent {
   // "pulling abc123..." → 퍼센트 추출
   const pullMatch = line.match(/^pulling\s+\S+.*?(\d+%)/);
-  if (pullMatch) return `모델 다운로드 중... ${pullMatch[1]}`;
+  if (pullMatch) return { key: 'pulling', params: { percent: pullMatch[1] ?? '' } };
   // "pulling manifest"
-  if (/^pulling\s+manifest/i.test(line)) return '모델 정보 확인 중...';
+  if (/^pulling\s+manifest/i.test(line)) return { key: 'pullingManifest' };
   // "verifying sha256 digest"
-  if (/^verifying/i.test(line)) return '무결성 검증 중...';
+  if (/^verifying/i.test(line)) return { key: 'verifying' };
   // "writing manifest"
-  if (/^writing/i.test(line)) return '설치 마무리 중...';
+  if (/^writing/i.test(line)) return { key: 'writing' };
   // "success"
-  if (/^success/i.test(line)) return '다운로드 완료!';
+  if (/^success/i.test(line)) return { key: 'success' };
   // 그 외 (예: pulling hash without %)
-  if (/^pulling\s+[a-f0-9]/i.test(line)) return '모델 다운로드 준비 중...';
-  return line;
+  if (/^pulling\s+[a-f0-9]/i.test(line)) return { key: 'preparing' };
+  return { key: 'raw', params: { text: line } };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
-import { useT } from '../lib/i18n';
+import { useT, translateMainProgress, translateMainError } from '../lib/i18n';
 import type { AppSettings, AiProviderType } from '../types';
 import { PROVIDER_MODELS, UI_LANGUAGES, DEFAULT_SETTINGS, PROVIDER_LABELS, matchesModel } from '../types';
 import { applyTheme } from '../lib/theme';
@@ -250,8 +250,9 @@ export function SettingsPanel() {
     setPullProgress(t('setup.downloadReady'));
     // v0.18.4 H2: 이전 실패의 잔존 에러가 새 시도 중에 혼란을 주지 않도록 진입 시 클리어.
     setPullError('');
-    const unsubscribe = window.electronAPI.onSetupProgress((message) => {
-      if (mountedRef.current) setPullProgress(message);
+    // R44(R43 후속 F3): main 의 구조화 이벤트를 현재 UI 언어로 번역해 표시
+    const unsubscribe = window.electronAPI.onSetupProgress((ev) => {
+      if (mountedRef.current) setPullProgress(translateMainProgress(ev));
     });
     pullUnsubRef.current = unsubscribe;
     try {
@@ -269,7 +270,7 @@ export function SettingsPanel() {
       } else {
         // v0.18.4 H2: 에러는 isPulling 과 독립된 pullError 로 표시해 finally 의
         // setIsPulling(false) 후에도 사용자에게 계속 보이도록 함.
-        setPullError(result.error || t('setup.modelDownloadFail', { model: pullModelName }));
+        setPullError(translateMainError(result, t('setup.modelDownloadFail', { model: pullModelName })));
         setPullProgress('');
       }
     } finally {

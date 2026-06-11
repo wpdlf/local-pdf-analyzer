@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from './lib/store';
 import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS, matchesModel } from './types';
-import { t, useT } from './lib/i18n';
+import { t, useT, translateMainError } from './lib/i18n';
 import { PdfUploader } from './components/PdfUploader';
 import { RecentDocuments } from './components/RecentDocuments';
 import { SummaryViewer } from './components/SummaryViewer';
@@ -88,7 +88,7 @@ export default function App() {
             if (!aborted) setOllamaStatus(partialStatus);
           } catch { /* 무시 */ }
           if (aborted) return;
-          const errorMsg = result.error || t('app.modelDownloadFailDefault');
+          const errorMsg = translateMainError(result, t('app.modelDownloadFailDefault'));
           const message = succeeded.length > 0
             ? t('app.modelDownloadFailPartial', { model, error: errorMsg, succeeded: succeeded.join(', ') })
             : t('app.modelDownloadFail', { model, error: errorMsg });

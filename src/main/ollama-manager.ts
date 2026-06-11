@@ -12,7 +12,8 @@ import { app, BrowserWindow } from 'electron';
 import { psQuotePath } from './ps-quote';
 // R37 P6 (v0.18.23): pull 진행 출력 파싱 로직 분리 (QA M5) — 위 ps-quote 와 동일 사유.
 // `__tests__/ollama-pull-progress.test.ts` 가 ANSI/개행/퍼센트/상태 매핑 회귀를 가드.
-import { extractLastLine, toFriendlyMessage } from './ollama-pull-progress';
+import { extractLastLine, toProgressEvent } from './ollama-pull-progress';
+import type { MainProgressEvent } from './ollama-pull-progress';
 
 interface OllamaStatusResult {
   installed: boolean;
@@ -167,11 +168,11 @@ export class OllamaManager {
 
     try {
       // 1. 인스톨러 다운로드
-      this.sendProgress('Ollama 인스톨러 다운로드 중...');
+      this.sendProgress({ key: 'downloadingInstaller' });
       await this.downloadFile(installerUrl, installerPath);
 
       // 2. 다운로드 무결성 검증 (크기 + Authenticode 서명)
-      this.sendProgress('다운로드 무결성 검증 중...');
+      this.sendProgress({ key: 'verifyingDownload' });
       const hash = await this.computeFileHash(installerPath);
       const stat = fs.statSync(installerPath);
       if (stat.size < 1024 * 1024) { // 1MB 미만이면 비정상
@@ -188,7 +189,7 @@ export class OllamaManager {
       console.log(`[Ollama] Installer Authenticode verified: ${sig.subject}`);
 
       // 3. 설치 실행 (사용자가 설치 UI에서 완료할 때까지 대기)
-      this.sendProgress('Ollama 설치 창이 열립니다. 설치를 완료해주세요...');
+      this.sendProgress({ key: 'installerWindow' });
       await new Promise<void>((resolve, reject) => {
         // PowerShell 의 -Command 플래그는 뒤따르는 argv 를 단일 scriptblock 문자열로 재합치므로,
         // installerPath 에 공백/한글이 있으면 quote 정보가 소실되어 인스톨러 경로가 여러 토큰으로
@@ -213,7 +214,7 @@ export class OllamaManager {
       });
 
       // 4. 설치 후 대기 (프로세스 정리 및 PATH 반영)
-      this.sendProgress('설치 완료 확인 중...');
+      this.sendProgress({ key: 'confirmingInstall' });
       await new Promise((r) => setTimeout(r, 3000));
 
       // 5. 설치 확인
@@ -235,7 +236,7 @@ export class OllamaManager {
 
   private async installMac(): Promise<{ success: boolean; error?: string }> {
     try {
-      this.sendProgress('Ollama 설치 중 (Homebrew)...');
+      this.sendProgress({ key: 'installingBrew' });
       await new Promise<void>((resolve, reject) => {
         execFile('brew', ['install', 'ollama'], { timeout: 300000 }, (error) => {
           if (error) reject(error);
@@ -247,12 +248,12 @@ export class OllamaManager {
       // brew 실패 시 직접 다운로드 시도
       const zipPath = path.join(app.getPath('temp'), 'Ollama-darwin.zip');
       try {
-        this.sendProgress('Homebrew 실패. 직접 다운로드 시도 중...');
+        this.sendProgress({ key: 'brewFallback' });
         const zipUrl = 'https://ollama.com/download/Ollama-darwin.zip';
         await this.downloadFile(zipUrl, zipPath);
 
         // 다운로드 무결성 검증
-        this.sendProgress('다운로드 무결성 검증 중...');
+        this.sendProgress({ key: 'verifyingDownload' });
         const hash = await this.computeFileHash(zipPath);
         const stat = fs.statSync(zipPath);
         if (stat.size < 1024 * 1024) {
@@ -570,7 +571,9 @@ export class OllamaManager {
     });
   }
 
-  async pullModel(model: string): Promise<{ success: boolean; error?: string }> {
+  // R44(R43 후속 F3): error(한국어, 구버전 호환 fallback)에 더해 errorKey/errorParams 를
+  // 함께 반환 — renderer 가 i18n(mainerr.<key>)으로 현재 UI 언어 메시지를 렌더한다.
+  async pullModel(model: string): Promise<{ success: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string> }> {
     const ollamaPath = this.getOllamaPath();
     const PULL_TIMEOUT_MS = 1800000; // 30분
 
@@ -578,12 +581,12 @@ export class OllamaManager {
     // 않고 즉시 실패한다. 이전 구현은 this.pullProcess 단일 슬롯에 덮어쓰기만 해서
     // 첫 번째 자식 프로세스가 killPullProcess 에서 보이지 않는 orphan 이 될 수 있었음.
     if (this.pullProcess) {
-      return { success: false, error: '다른 모델 다운로드가 이미 진행 중입니다. 완료 후 다시 시도해주세요.' };
+      return { success: false, error: '다른 모델 다운로드가 이미 진행 중입니다. 완료 후 다시 시도해주세요.', errorKey: 'pullInProgress' };
     }
 
     return new Promise((resolve) => {
       let settled = false;
-      const safeResolve = (result: { success: boolean; error?: string }) => {
+      const safeResolve = (result: { success: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string> }) => {
         if (!settled) { settled = true; resolve(result); }
       };
 
@@ -598,7 +601,7 @@ export class OllamaManager {
         // killPullProcess 를 사용해 Windows taskkill /F /T 경로와 통일 — 향후 ollama pull 이
         // 헬퍼 자식을 spawn 하더라도 프로세스 트리 전체가 종료된다.
         this.killPullProcess().catch(() => { /* 이미 죽은 프로세스 무시 */ });
-        safeResolve({ success: false, error: '모델 다운로드 타임아웃 (30분). 네트워크를 확인 후 다시 시도해주세요.' });
+        safeResolve({ success: false, error: '모델 다운로드 타임아웃 (30분). 네트워크를 확인 후 다시 시도해주세요.', errorKey: 'pullTimeout' });
       }, PULL_TIMEOUT_MS);
 
       // ANSI 제거 · \r\n 혼용 분할 · 퍼센트/상태 매핑은 ./ollama-pull-progress 로 분리 (M5).
@@ -607,7 +610,7 @@ export class OllamaManager {
         const line = extractLastLine(data.toString());
         if (line && line !== lastProgress) {
           lastProgress = line;
-          this.sendProgress(toFriendlyMessage(line));
+          this.sendProgress(toProgressEvent(line));
         }
       });
 
@@ -615,14 +618,14 @@ export class OllamaManager {
         const line = extractLastLine(data.toString());
         if (line && line !== lastProgress) {
           lastProgress = line;
-          this.sendProgress(toFriendlyMessage(line));
+          this.sendProgress(toProgressEvent(line));
         }
       });
 
       proc.on('error', (err) => {
         clearTimeout(timeout);
         if (this.pullProcess === proc) this.pullProcess = null;
-        safeResolve({ success: false, error: `모델 다운로드 실패: ${err.message}` });
+        safeResolve({ success: false, error: `모델 다운로드 실패: ${err.message}`, errorKey: 'pullFailed', errorParams: { detail: err.message } });
       });
 
       proc.on('close', (code) => {
@@ -631,7 +634,7 @@ export class OllamaManager {
         if (code === 0) {
           safeResolve({ success: true });
         } else {
-          safeResolve({ success: false, error: `모델 다운로드 실패 (exit code: ${code})` });
+          safeResolve({ success: false, error: `모델 다운로드 실패 (exit code: ${code})`, errorKey: 'pullFailed', errorParams: { detail: `exit code: ${code}` } });
         }
       });
     });
@@ -658,11 +661,15 @@ export class OllamaManager {
     }
   }
 
-  /** renderer에 진행 상태 전송 */
-  private sendProgress(message: string): void {
+  /**
+   * renderer에 진행 상태 전송.
+   * R44(R43 후속 F3): 완성 문자열 대신 구조화 이벤트(key+params) — renderer 가 렌더 시점
+   * UI 언어로 번역해 영어 UI 한국어 메시지/언어 토글 스냅샷 잔존 문제를 해소.
+   */
+  private sendProgress(event: MainProgressEvent): void {
     const win = BrowserWindow.getAllWindows()[0];
     if (win && !win.isDestroyed()) {
-      win.webContents.send('setup:progress', message);
+      win.webContents.send('setup:progress', event);
     }
   }
 }

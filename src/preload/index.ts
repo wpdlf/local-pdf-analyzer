@@ -68,8 +68,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     if (typeof url !== 'string' || !url.startsWith('https://')) return Promise.resolve();
     return ipcRenderer.invoke('shell:open-external', url);
   },
-  onSetupProgress: (callback: (message: string) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
+  onSetupProgress: (callback: (event: { key: string; params?: Record<string, string> }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progressEvent: { key: string; params?: Record<string, string> }) => callback(progressEvent);
     ipcRenderer.on('setup:progress', handler);
     return () => ipcRenderer.removeListener('setup:progress', handler);
   },
@@ -91,7 +91,7 @@ export type ElectronAPI = {
     install: () => Promise<{ success: boolean; error?: string }>;
     start: () => Promise<boolean>;
     stop: () => Promise<boolean>;
-    pullModel: (model: string) => Promise<{ success: boolean; error?: string }>;
+    pullModel: (model: string) => Promise<{ success: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string> }>;
     listModels: () => Promise<string[]>;
   };
   ai: {
@@ -136,7 +136,7 @@ export type ElectronAPI = {
     stats: () => Promise<SessionStats>;
   };
   openExternal: (url: string) => Promise<void>;
-  onSetupProgress: (callback: (message: string) => void) => () => void;
+  onSetupProgress: (callback: (event: { key: string; params?: Record<string, string> }) => void) => () => void;
   onFileDropped: (callback: (file: { path: string; name: string; data: ArrayBuffer }) => void) => () => void;
 };
 

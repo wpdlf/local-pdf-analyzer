@@ -240,6 +240,23 @@ export const _translations = {
   'setup.hint.modelNotFound': { ko: '모델을 찾을 수 없습니다. 네트워크 연결 후 다시 시도하세요.', en: 'Model not found. Check network and try again.' },
   'setup.hint.pullFail': { ko: '모델 다운로드 실패. 디스크 공간(기본 구성 최소 4GB, 한국어 특화 모델 포함 시 약 9GB)과 네트워크를 확인하세요.', en: 'Model download failed. Check disk space (min 4GB for the default setup, ~9GB with the Korean-specialized model) and network.' },
   'setup.downloadReady': { ko: '다운로드 준비 중...', en: 'Preparing download...' },
+  // ─── main 프로세스 구조화 진행 이벤트 (R44: R43 후속 F3/F8) — translateMainProgress 가 매핑 ───
+  'mainprog.downloadingInstaller': { ko: 'Ollama 인스톨러 다운로드 중...', en: 'Downloading the Ollama installer...' },
+  'mainprog.verifyingDownload': { ko: '다운로드 무결성 검증 중...', en: 'Verifying download integrity...' },
+  'mainprog.installerWindow': { ko: 'Ollama 설치 창이 열립니다. 설치를 완료해주세요...', en: 'The Ollama installer window will open. Please complete the installation...' },
+  'mainprog.confirmingInstall': { ko: '설치 완료 확인 중...', en: 'Confirming installation...' },
+  'mainprog.installingBrew': { ko: 'Ollama 설치 중 (Homebrew)...', en: 'Installing Ollama (Homebrew)...' },
+  'mainprog.brewFallback': { ko: 'Homebrew 실패. 직접 다운로드 시도 중...', en: 'Homebrew failed. Trying direct download...' },
+  'mainprog.pulling': { ko: '모델 다운로드 중... {percent}', en: 'Downloading model... {percent}' },
+  'mainprog.pullingManifest': { ko: '모델 정보 확인 중...', en: 'Checking model info...' },
+  'mainprog.verifying': { ko: '무결성 검증 중...', en: 'Verifying integrity...' },
+  'mainprog.writing': { ko: '설치 마무리 중...', en: 'Finalizing installation...' },
+  'mainprog.success': { ko: '다운로드 완료!', en: 'Download complete!' },
+  'mainprog.preparing': { ko: '모델 다운로드 준비 중...', en: 'Preparing model download...' },
+  // ─── main 프로세스 구조화 에러 (pullModel errorKey) — translateMainError 가 매핑 ───
+  'mainerr.pullInProgress': { ko: '다른 모델 다운로드가 이미 진행 중입니다. 완료 후 다시 시도해주세요.', en: 'Another model download is already in progress. Please try again after it finishes.' },
+  'mainerr.pullTimeout': { ko: '모델 다운로드 타임아웃 (30분). 네트워크를 확인 후 다시 시도해주세요.', en: 'Model download timed out (30 min). Check your network and try again.' },
+  'mainerr.pullFailed': { ko: '모델 다운로드 실패: {detail}', en: 'Model download failed: {detail}' },
   'setup.manualInstall': { ko: '수동 설치:', en: 'Manual install:' },
   'setup.cancel': { ko: '취소하고 다른 Provider 사용', en: 'Cancel and use another provider' },
   'setup.cancelling': { ko: '취소 중... 진행 중인 작업은 백그라운드에서 완료됩니다.', en: 'Cancelling... ongoing operations will finish in the background.' },
@@ -311,6 +328,36 @@ export function t(key: TranslationKey, params?: Record<string, string | number>)
     return key.split('.').pop() ?? key;
   }
   return interpolate(entry[lang] || entry['ko'], params, key);
+}
+
+// ─── main 프로세스 구조화 메시지 번역 (R44: R43 후속 F3/F8) ───
+
+/** main 이 setup:progress 로 보내는 구조화 진행 이벤트 (ollama-pull-progress.ts 와 동형) */
+export interface MainProgressEvent {
+  key: string;
+  params?: Record<string, string>;
+}
+
+/**
+ * 구조화 진행 이벤트 → 현재 UI 언어 문자열.
+ * 'raw' 는 매핑 불가 원문 passthrough. 미지 키는 t() 의 missing-key 정책을 따른다.
+ */
+export function translateMainProgress(ev: MainProgressEvent): string {
+  if (!ev || typeof ev !== 'object' || typeof ev.key !== 'string') return '';
+  if (ev.key === 'raw') return ev.params?.text ?? '';
+  return t(`mainprog.${ev.key}` as TranslationKey, ev.params);
+}
+
+/**
+ * main 의 errorKey 동반 실패 결과 → 현재 UI 언어 에러 문자열.
+ * errorKey 가 없으면(구버전/미매핑) main 의 error 원문 → 호출자 fallback 순.
+ */
+export function translateMainError(
+  result: { error?: string; errorKey?: string; errorParams?: Record<string, string> },
+  fallback: string,
+): string {
+  if (result.errorKey) return t(`mainerr.${result.errorKey}` as TranslationKey, result.errorParams);
+  return result.error || fallback;
 }
 
 // ─── React 훅 ───

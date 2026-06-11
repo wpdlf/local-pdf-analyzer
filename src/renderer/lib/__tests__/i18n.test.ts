@@ -121,3 +121,51 @@ describe('t() 런타임 동작', () => {
     expect(out).toBe('Page 42 of 100');
   });
 });
+
+// R44(R43 후속 F3/F8): main 구조화 메시지 번역 헬퍼 + 키 동기화 가드
+describe('translateMainProgress / translateMainError', () => {
+  it('main 의 toProgressEvent 키가 전부 mainprog.* 로 정의돼 있다 (drift 가드)', async () => {
+    const { _translations } = await import('../i18n');
+    // ollama-pull-progress.toProgressEvent + ollama-manager sendProgress 가 방출하는 전체 키 집합.
+    // 한쪽만 갱신하면 사용자가 i18n missing-key fallback(마지막 segment)을 보게 된다.
+    const mainKeys = [
+      'pulling', 'pullingManifest', 'verifying', 'writing', 'success', 'preparing',
+      'downloadingInstaller', 'verifyingDownload', 'installerWindow', 'confirmingInstall',
+      'installingBrew', 'brewFallback',
+    ];
+    for (const k of mainKeys) {
+      expect(_translations[`mainprog.${k}` as keyof typeof _translations], `mainprog.${k} 미정의`).toBeTruthy();
+    }
+    for (const k of ['pullInProgress', 'pullTimeout', 'pullFailed']) {
+      expect(_translations[`mainerr.${k}` as keyof typeof _translations], `mainerr.${k} 미정의`).toBeTruthy();
+    }
+  });
+
+  it('이벤트를 현재 언어로 번역하고 params 를 치환한다', async () => {
+    const { translateMainProgress } = await import('../i18n');
+    const { useAppStore } = await import('../store');
+    useAppStore.setState((s) => ({ settings: { ...s.settings, uiLanguage: 'en' as const } }));
+    expect(translateMainProgress({ key: 'pulling', params: { percent: '42%' } })).toBe('Downloading model... 42%');
+    useAppStore.setState((s) => ({ settings: { ...s.settings, uiLanguage: 'ko' as const } }));
+    expect(translateMainProgress({ key: 'pulling', params: { percent: '42%' } })).toBe('모델 다운로드 중... 42%');
+  });
+
+  it('raw 이벤트는 원문 passthrough, 비정상 입력은 빈 문자열', async () => {
+    const { translateMainProgress } = await import('../i18n');
+    expect(translateMainProgress({ key: 'raw', params: { text: 'Error: x' } })).toBe('Error: x');
+    expect(translateMainProgress(undefined as never)).toBe('');
+  });
+
+  it('translateMainError — errorKey 우선, 없으면 error 원문, 둘 다 없으면 fallback', async () => {
+    const { translateMainError } = await import('../i18n');
+    const { useAppStore } = await import('../store');
+    useAppStore.setState((s) => ({ settings: { ...s.settings, uiLanguage: 'en' as const } }));
+    expect(translateMainError({ error: '한국어 원문', errorKey: 'pullInProgress' }, 'fb'))
+      .toBe('Another model download is already in progress. Please try again after it finishes.');
+    expect(translateMainError({ errorKey: 'pullFailed', errorParams: { detail: 'exit code: 1' } }, 'fb'))
+      .toBe('Model download failed: exit code: 1');
+    expect(translateMainError({ error: 'raw error' }, 'fb')).toBe('raw error');
+    expect(translateMainError({}, 'fb')).toBe('fb');
+    useAppStore.setState((s) => ({ settings: { ...s.settings, uiLanguage: 'ko' as const } }));
+  });
+});

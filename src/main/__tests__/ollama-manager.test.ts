@@ -194,25 +194,40 @@ describe('pullModel (spawn 생명주기)', () => {
     expect(M.spawn).toHaveBeenCalledTimes(1);
   });
 
-  it('exit code 비-0 → 에러 메시지', async () => {
+  // R44(R43 후속 F3): error(한국어 fallback)에 더해 renderer i18n 용 errorKey/errorParams 동반
+  it('exit code 비-0 → 에러 메시지 + errorKey', async () => {
     const mgr = new OllamaManager();
     const p = mgr.pullModel('gemma3');
     M.spawned[0]!.emit('close', 1);
-    expect(await p).toEqual({ success: false, error: '모델 다운로드 실패 (exit code: 1)' });
+    expect(await p).toEqual({
+      success: false,
+      error: '모델 다운로드 실패 (exit code: 1)',
+      errorKey: 'pullFailed',
+      errorParams: { detail: 'exit code: 1' },
+    });
   });
 
-  it('spawn error → 에러 메시지', async () => {
+  it('spawn error → 에러 메시지 + errorKey', async () => {
     const mgr = new OllamaManager();
     const p = mgr.pullModel('gemma3');
     M.spawned[0]!.emit('error', new Error('ENOENT'));
-    expect(await p).toEqual({ success: false, error: '모델 다운로드 실패: ENOENT' });
+    expect(await p).toEqual({
+      success: false,
+      error: '모델 다운로드 실패: ENOENT',
+      errorKey: 'pullFailed',
+      errorParams: { detail: 'ENOENT' },
+    });
   });
 
   it('재진입 가드 — 진행 중이면 두 번째 호출 즉시 거부 (spawn 1회)', async () => {
     const mgr = new OllamaManager();
     const p1 = mgr.pullModel('gemma3');
     const r2 = await mgr.pullModel('llava');
-    expect(r2).toEqual({ success: false, error: '다른 모델 다운로드가 이미 진행 중입니다. 완료 후 다시 시도해주세요.' });
+    expect(r2).toEqual({
+      success: false,
+      error: '다른 모델 다운로드가 이미 진행 중입니다. 완료 후 다시 시도해주세요.',
+      errorKey: 'pullInProgress',
+    });
     expect(M.spawn).toHaveBeenCalledTimes(1);
     // 정리: 첫 pull 종료 → 타이머 clear
     M.spawned[0]!.emit('close', 0);

@@ -1,12 +1,20 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAppStore } from '../lib/store';
-import { useT } from '../lib/i18n';
+import { useT, t as translate, translateMainProgress, translateMainError } from '../lib/i18n';
+import type { MainProgressEvent } from '../lib/i18n';
 import type { AppErrorCode } from '../types';
 import { INITIAL_INSTALL_MODELS, OPTIONAL_KOREAN_MODEL, matchesModel } from '../types';
 
 type SetupStep = 'welcome' | 'progress' | 'done' | 'error';
 
 type SetupItemStatus = 'pending' | 'running' | 'done' | 'error';
+
+// R44(R43 후속 F8): 진행 메시지를 완성 문자열이 아닌 키/이벤트로 보관 — 렌더 시점에
+// 현재 UI 언어로 번역해, 진행 중 언어 토글 시 이전 언어 스냅샷이 잔존하지 않도록 한다.
+type ProgressDisplay =
+  | { type: 'key'; key: Parameters<typeof translate>[0] }
+  | { type: 'model'; labelKey: Parameters<typeof translate>[0]; model: string }
+  | { type: 'main'; ev: MainProgressEvent };
 
 export function OllamaSetupWizard() {
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
@@ -36,7 +44,12 @@ export function OllamaSetupWizard() {
   // 즉시 설정 화면으로 이동시켜 다른 provider 선택이 가능하도록 함.
   const cancelledRef = useRef(false);
   const [step, setStep] = useState<SetupStep>('welcome');
-  const [progressMessage, setProgressMessage] = useState('');
+  const [progress, setProgress] = useState<ProgressDisplay | null>(null);
+  // 렌더 시점 번역 — 언어 토글이 진행 메시지에도 즉시 반영 (R44 F8)
+  const progressMessage = !progress ? ''
+    : progress.type === 'key' ? t(progress.key)
+    : progress.type === 'model' ? t('setup.downloadingModel', { label: t(progress.labelKey, { model: progress.model }) })
+    : translateMainProgress(progress.ev);
   const [errorCode, setErrorCode] = useState<AppErrorCode | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   // 한국어 특화 모델(exaone3.5, 약 4.8GB) 선택 설치 — 기본 해제로 첫 설치 용량을 줄인다.
@@ -65,9 +78,9 @@ export function OllamaSetupWizard() {
   ];
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.onSetupProgress((message) => {
+    const unsubscribe = window.electronAPI.onSetupProgress((ev) => {
       if (cancelledRef.current) return;
-      setProgressMessage(message);
+      setProgress({ type: 'main', ev });
     });
     return () => {
       unsubscribe();
@@ -77,7 +90,7 @@ export function OllamaSetupWizard() {
 
   const handleCancel = () => {
     cancelledRef.current = true;
-    setProgressMessage(t('setup.cancelling'));
+    setProgress({ type: 'key', key: 'setup.cancelling' });
     // 설정 화면으로 이동 — 사용자가 다른 provider (Claude/OpenAI) 선택 가능
     setView('settings');
   };
@@ -103,24 +116,24 @@ export function OllamaSetupWizard() {
 
     try {
       updateItem(0, 'running');
-      setProgressMessage(t('setup.checkingOllama'));
+      setProgress({ type: 'key', key: 'setup.checkingOllama' });
       const status = await window.electronAPI.ollama.getStatus();
       if (cancelledRef.current) return;
 
       if (!status.installed) {
-        setProgressMessage(t('setup.installingOllama'));
+        setProgress({ type: 'key', key: 'setup.installingOllama' });
         const installResult = await window.electronAPI.ollama.install();
         if (cancelledRef.current) return;
         if (!installResult.success) {
           updateItem(0, 'error');
-          handleError('OLLAMA_INSTALL_FAIL', installResult.error || t('setup.ollamaInstallFail'));
+          handleError('OLLAMA_INSTALL_FAIL', translateMainError(installResult, t('setup.ollamaInstallFail')));
           return;
         }
       }
       updateItem(0, 'done');
 
       updateItem(1, 'running');
-      setProgressMessage(t('setup.startingOllama'));
+      setProgress({ type: 'key', key: 'setup.startingOllama' });
       await window.electronAPI.ollama.start();
       if (cancelledRef.current) return;
 
@@ -151,17 +164,17 @@ export function OllamaSetupWizard() {
           continue;
         }
 
-        const modelLabel = modelName === 'nomic-embed-text'
-          ? t('setup.downloadingModelLabel.embed', { model: modelName })
+        const labelKey = modelName === 'nomic-embed-text'
+          ? 'setup.downloadingModelLabel.embed' as const
           : modelName === OPTIONAL_KOREAN_MODEL
-            ? t('setup.downloadingModelLabel.korean', { model: modelName })
-            : t('setup.downloadingModelLabel.base', { model: modelName });
-        setProgressMessage(t('setup.downloadingModel', { label: modelLabel }));
+            ? 'setup.downloadingModelLabel.korean' as const
+            : 'setup.downloadingModelLabel.base' as const;
+        setProgress({ type: 'model', labelKey, model: modelName });
         const pullResult = await window.electronAPI.ollama.pullModel(modelName);
         if (cancelledRef.current) return;
         if (!pullResult.success) {
           updateItem(itemIndex, 'error');
-          handleError('MODEL_PULL_FAIL', pullResult.error || t('setup.modelDownloadFail', { model: modelName }));
+          handleError('MODEL_PULL_FAIL', translateMainError(pullResult, t('setup.modelDownloadFail', { model: modelName })));
           return;
         }
         updateItem(itemIndex, 'done');
