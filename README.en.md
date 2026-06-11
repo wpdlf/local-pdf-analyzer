@@ -33,12 +33,13 @@ This document has two parts — **[User Guide](#user-guide)** (install · usage 
 1. Download the Windows installer from the link above
 2. Run the downloaded file to install
 3. Launch the app from the desktop shortcut or Start menu
-4. On first run, the AI engine (Ollama), Korean-optimized models (gemma3, exaone3.5), and the RAG embedding model (nomic-embed-text) are installed automatically — just follow the prompts
+4. On first run, the AI engine (Ollama), the base AI model (gemma3), and the RAG embedding model (nomic-embed-text) are installed automatically (~3.6GB) — just follow the prompts
+5. If you mainly analyze Korean documents, check the **Also install the Korean-specialized model (exaone3.5, ~4.8GB)** option on the setup screen for better Korean summaries. You can also add it later in Settings → Model Management
 
 <a id="smartscreen"></a>
 > **Windows SmartScreen notice**: Because an EV code-signing certificate is not yet in use, the first install may show a **"Windows protected your PC"** / **"Unknown publisher"** SmartScreen warning. This is expected — proceed via **More info → Run anyway**. You can verify the installer's authenticity with the [integrity verification](#installer-integrity-verification) below.
 
-> **Note**: Downloading the AI models requires about 8GB of disk space and several minutes.
+> **Note**: Downloading the AI models requires about 3.6GB of disk space for the default setup (~8.4GB with the Korean-specialized model) and several minutes.
 
 ### Installer integrity verification
 
@@ -168,7 +169,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 ## System Requirements
 
 - **Windows 10 or later**, or **macOS 12 (Monterey) or later**
-- At least 8GB free disk space (for AI models, when using Ollama)
+- At least 4GB free disk space (default AI models, when using Ollama — about 9GB with the Korean-specialized model)
 - Internet connection (first-time setup and paid API use)
 - PDF limits: max 100MB, max 500 pages (split larger documents)
 
@@ -177,7 +178,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Symptom | Solution |
 |---------|----------|
 | Ollama installation fails | Install manually from [ollama.com](https://ollama.com), or use the wizard's "Cancel and use another provider" button to switch to Claude/OpenAI |
-| Poor Korean summary quality | Check that gemma3 or exaone3.5 is selected in Settings |
+| Poor Korean summary quality | Install and select the Korean-specialized model (exaone3.5) under Settings → Model Management. It is an optional install during first-run setup and produces better Korean summaries than the base model (gemma3) |
 | Summarization is slow | Switch to a lighter model (e.g. phi3) or reduce the chunk size in Settings |
 | Text extraction fails | Make sure "Scanned PDF OCR" is enabled in Settings; a Vision model (llava, Claude, GPT-4o) is required |
 | OCR results are inaccurate | Ollama llava has low Korean accuracy; switching to Claude or OpenAI improves it significantly |
