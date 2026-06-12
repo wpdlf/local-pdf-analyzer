@@ -158,6 +158,11 @@ function createWindow(): BrowserWindow {
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
     win.webContents.openDevTools({ mode: 'detach' });
+    // dev 한정: 렌더러 콘솔(warn/error)을 터미널로 포워딩 — DevTools 없이도
+    // [tabs] 등 진단 로그를 dev 터미널에서 바로 확인할 수 있게 한다.
+    win.webContents.on('console-message', (_e, level, message) => {
+      if (level >= 2) console.log(`[renderer:${level === 3 ? 'error' : 'warn'}] ${message}`);
+    });
   } else {
     win.loadFile(path.join(__dirname, '../renderer/index.html'));
     // 프로덕션에서 DevTools 접근 차단

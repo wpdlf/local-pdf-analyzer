@@ -51,6 +51,7 @@ async function openTabTarget(tab: OpenTab): Promise<boolean> {
     await handlePdfData(result.data, result.name, result.path);
     return true;
   }
+  console.warn('[tabs] 파일 재읽기 실패 — 세션 fallback 시도:', tab.filePath, result.error);
 
   // ② 파일을 찾을 수 없음 — 영속 세션에서 분석 상태만 직접 복원 (뷰어 비활성)
   // 실패 지점별 진단 warn: 사용자 재현 시 DevTools 콘솔로 원인을 확정하기 위한 영구 로그
@@ -98,10 +99,22 @@ async function openTabTarget(tab: OpenTab): Promise<boolean> {
 /** 탭 전환 — 이미 활성이면 no-op. 파일/세션 모두 복원 불가 시 에러 배너 + 탭 유지 */
 export async function switchToTab(filePath: string): Promise<void> {
   const store = useAppStore.getState();
-  if (store.document?.filePath === filePath) return;
-  if (isTabSwitchBlocked()) return;
+  if (store.document?.filePath === filePath) {
+    console.warn('[tabs] 전환 no-op: 클릭한 탭이 이미 활성으로 판정', filePath);
+    return;
+  }
+  if (isTabSwitchBlocked()) {
+    console.warn('[tabs] 전환 차단:', {
+      isGenerating: store.isGenerating, isQaGenerating: store.isQaGenerating, isParsing: store.isParsing,
+    });
+    return;
+  }
   const tab = findTab(filePath);
-  if (!tab) return;
+  if (!tab) {
+    console.warn('[tabs] 전환 실패: openTabs 에 해당 filePath 없음', filePath,
+      useAppStore.getState().openTabs.map((tb) => tb.filePath));
+    return;
+  }
 
   // 현재 문서의 미저장 tail 보존 (persistChain 직렬화 — 내부에서 생성 중/게이트 검사)
   await persistCurrentSession();

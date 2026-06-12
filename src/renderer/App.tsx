@@ -227,6 +227,9 @@ export default function App() {
         // 이전엔 파일명만 전달돼 탭 전환/최근 문서 재오픈 시 원본을 찾지 못했다.
         // 합성 File(경로 없음)은 기존처럼 파일명 fallback — 전환 시 명확한 에러로 안내됨.
         const realPath = window.electronAPI.getPathForFile?.(file) || file.name;
+        if (realPath === file.name) {
+          console.warn('[tabs] 드롭 파일의 실경로 획득 실패 — 파일명 fallback (전환 시 세션 복원 의존)', file.name);
+        }
         await handlePdfData(buffer, file.name, realPath);
       } catch (err) {
         useAppStore.getState().setError({
