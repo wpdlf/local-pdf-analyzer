@@ -155,20 +155,25 @@ function createWindow(): BrowserWindow {
     return permission === 'clipboard-sanitized-write';
   });
 
-  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
-    win.loadURL(process.env['ELECTRON_RENDERER_URL']);
-    win.webContents.openDevTools({ mode: 'detach' });
-    // dev 한정: 렌더러 콘솔(warn/error)을 터미널로 포워딩 — DevTools 없이도
-    // [tabs] 등 진단 로그를 dev 터미널에서 바로 확인할 수 있게 한다.
+  // 비패키징(dev/preview) 한정: 렌더러 콘솔(warn/error)을 터미널로 포워딩 —
+  // DevTools 없이도 [tabs] 등 진단 로그를 실행 터미널에서 바로 확인할 수 있게 한다.
+  if (!app.isPackaged) {
     win.webContents.on('console-message', (_e, level, message) => {
       if (level >= 2) console.log(`[renderer:${level === 3 ? 'error' : 'warn'}] ${message}`);
     });
+  }
+
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(process.env['ELECTRON_RENDERER_URL']);
+    win.webContents.openDevTools({ mode: 'detach' });
   } else {
     win.loadFile(path.join(__dirname, '../renderer/index.html'));
-    // 프로덕션에서 DevTools 접근 차단
-    win.webContents.on('devtools-opened', () => {
-      win.webContents.closeDevTools();
-    });
+    // 패키징 빌드에서만 DevTools 접근 차단 — preview(비패키징 loadFile)는 진단을 위해 허용
+    if (app.isPackaged) {
+      win.webContents.on('devtools-opened', () => {
+        win.webContents.closeDevTools();
+      });
+    }
   }
 
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {

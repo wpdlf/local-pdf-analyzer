@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron } from '@playwright/test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
@@ -27,11 +27,14 @@ async function makePdf(text: string, pages = 1): Promise<Buffer> {
 
 test('실경로 두 문서 → 탭 전환 (file:dropped IPC)', async () => {
   const userDataDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-dbg-'));
-  const docsDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-docs-'));
+  // 한글 디렉토리/파일명 — 사용자 실데이터(Desktop\업무\... Section 0. ...와 소개.pdf)와
+  // 동일 조건. ASCII 전용 픽스처는 비ASCII 경로의 인코딩 회귀를 잡지 못한다.
+  const docsDir = join(mkdtempSync(join(tmpdir(), 'pdf-analyzer-docs-')), '업무 자료');
+  mkdirSync(docsDir, { recursive: true });
   writeFileSync(join(userDataDir, 'settings.json'),
     JSON.stringify({ provider: 'claude', uiLanguage: 'ko', theme: 'light' }), 'utf-8');
-  const pathA = join(docsDir, 'alpha.pdf');
-  const pathB = join(docsDir, 'beta.pdf');
+  const pathA = join(docsDir, '섹션 0. 소개 alpha.pdf');
+  const pathB = join(docsDir, '섹션 2. 게이트웨이 beta.pdf');
   const bufA = await makePdf('ALPHA document');
   const bufB = await makePdf('BETA document');
   writeFileSync(pathA, bufA);
@@ -65,15 +68,15 @@ test('실경로 두 문서 → 탭 전환 (file:dropped IPC)', async () => {
     }, { p, b64 });
 
     await sendDrop(pathA, bufA.toString('base64'));
-    await expect(page.getByText('alpha.pdf (1p)')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('섹션 0. 소개 alpha.pdf (1p)')).toBeVisible({ timeout: 20000 });
     await sendDrop(pathB, bufB.toString('base64'));
-    await expect(page.getByText('beta.pdf (1p)')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('섹션 2. 게이트웨이 beta.pdf (1p)')).toBeVisible({ timeout: 20000 });
 
     const tablist = page.getByRole('tablist');
     await expect(tablist.getByRole('tab')).toHaveCount(2);
     // alpha 탭 클릭 → 전환 (완전 복원 — 뷰어 포함)
     await tablist.getByRole('tab').filter({ hasText: 'alpha.pdf' }).getByTitle(/alpha\.pdf/).click();
-    await expect(page.getByText('alpha.pdf (1p)')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('섹션 0. 소개 alpha.pdf (1p)')).toBeVisible({ timeout: 20000 });
     await expect(tablist.getByRole('tab', { selected: true })).toContainText('alpha.pdf');
 
     expect(pageErrors, `렌더러 페이지 에러: ${pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
@@ -82,15 +85,15 @@ test('실경로 두 문서 → 탭 전환 (file:dropped IPC)', async () => {
     // (연속 드롭 교체 경로와 달리 + 경유는 setDocument(null) 후 업로드 화면에서 열린다)
     await page.getByRole('button', { name: '새 문서 열기' }).click();
     await expect(page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible();
-    const pathC = join(docsDir, 'gamma.pdf');
+    const pathC = join(docsDir, '감마 자료 gamma.pdf');
     const bufC = await makePdf('GAMMA document');
     writeFileSync(pathC, bufC);
     await sendDrop(pathC, bufC.toString('base64'));
-    await expect(page.getByText('gamma.pdf (1p)')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('감마 자료 gamma.pdf (1p)')).toBeVisible({ timeout: 20000 });
     await expect(tablist.getByRole('tab')).toHaveCount(3);
     // beta 탭으로 전환
     await tablist.getByRole('tab').filter({ hasText: 'beta.pdf' }).getByTitle(/beta\.pdf/).click();
-    await expect(page.getByText('beta.pdf (1p)')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('섹션 2. 게이트웨이 beta.pdf (1p)')).toBeVisible({ timeout: 20000 });
     await expect(tablist.getByRole('tab', { selected: true })).toContainText('beta.pdf');
 
     expect(pageErrors, `렌더러 페이지 에러: ${pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
