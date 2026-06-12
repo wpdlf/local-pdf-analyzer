@@ -101,6 +101,24 @@ test('PDF 드롭 → 파싱 → 문서 화면 전환 (pdfjs worker/cmaps 번들 
     await expect(r.page.getByText('sample.pdf (1p)')).toBeVisible({ timeout: 30000 });
     await expect(r.page.getByText('요약 유형')).toBeVisible();
 
+    // multi-doc Phase 1: 두 번째 PDF 드롭 → 탭 2개, 새 문서가 활성
+    await r.page.evaluate((b64) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const file = new File([bytes], 'second.pdf', { type: 'application/pdf' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, pdfBase64);
+    await expect(r.page.getByText('second.pdf (1p)')).toBeVisible({ timeout: 30000 });
+    const tablist = r.page.getByRole('tablist');
+    await expect(tablist.getByRole('tab')).toHaveCount(2);
+    await expect(tablist.getByRole('tab', { selected: true })).toContainText('second.pdf');
+
+    // 새 탭(+) → 업로드 화면 복귀하되 탭 2개 유지
+    await r.page.getByRole('button', { name: '새 문서 열기' }).click();
+    await expect(r.page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible();
+    await expect(tablist.getByRole('tab')).toHaveCount(2);
+
     expect(r.pageErrors, `렌더러 페이지 에러: ${r.pageErrors.map((e) => e.message).join('; ')}`)
       .toHaveLength(0);
   } finally {

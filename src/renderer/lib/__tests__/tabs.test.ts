@@ -1,0 +1,170 @@
+// @vitest-environment happy-dom
+
+// multi-doc Phase 1: 탭 오케스트레이션(lib/tabs.ts) 행위 가드.
+// 핵심 계약 — ① 전환은 flush → 재오픈 → handlePdfData 순서, ② 활성 탭이면 no-op,
+// ③ 재오픈 실패는 에러 배너 + 탭 유지, ④ 활성 탭 닫기는 오른쪽 이웃 우선 전환,
+// ⑤ 마지막 탭 닫기는 업로드 화면 정리, ⑥ 생성/파싱 중 전환·활성 닫기 차단.
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const M = vi.hoisted(() => ({
+  handlePdfData: vi.fn(() => Promise.resolve()),
+  persistCurrentSession: vi.fn(() => Promise.resolve()),
+  openPath: vi.fn(),
+}));
+
+vi.mock('../pdf-parser', () => ({ handlePdfData: M.handlePdfData }));
+vi.mock('../use-session', () => ({ persistCurrentSession: M.persistCurrentSession }));
+
+vi.stubGlobal('window', Object.assign(window, {
+  electronAPI: {
+    settings: { set: vi.fn(() => Promise.resolve()), get: vi.fn(() => Promise.resolve({})) },
+    ai: { embed: vi.fn(), abort: vi.fn(() => Promise.resolve()) },
+    file: { openPath: M.openPath },
+  },
+}));
+
+import { switchToTab, closeTab, openNewTabView } from '../tabs';
+import { useAppStore } from '../store';
+import type { PdfDocument } from '../../types';
+
+function makeDoc(filePath: string, fileName = 'a.pdf'): PdfDocument {
+  return {
+    id: `id-${filePath}`,
+    fileName,
+    filePath,
+    pageCount: 1,
+    extractedText: 'x'.repeat(60),
+    pageTexts: ['x'.repeat(60)],
+    chapters: [],
+    images: [],
+    createdAt: new Date(),
+  };
+}
+
+function seedTabs(paths: string[], activePath: string | null): void {
+  useAppStore.setState({
+    openTabs: paths.map((p) => ({ filePath: p, fileName: p.split('/').pop() ?? p, pageCount: 1 })),
+    document: activePath ? makeDoc(activePath, activePath.split('/').pop()) : null,
+    isGenerating: false,
+    isQaGenerating: false,
+    isParsing: false,
+    error: null,
+  });
+}
+
+beforeEach(() => {
+  M.openPath.mockResolvedValue({ path: '/docs/b.pdf', name: 'b.pdf', data: new ArrayBuffer(8) });
+  seedTabs([], null);
+});
+
+describe('store.upsertOpenTab / removeOpenTab', () => {
+  it('filePath 중복은 메타만 갱신 — 중복 탭 없음 + 순서 유지', () => {
+    const s = useAppStore.getState();
+    s.upsertOpenTab({ filePath: '/a.pdf', fileName: 'a.pdf', pageCount: 1 });
+    s.upsertOpenTab({ filePath: '/b.pdf', fileName: 'b.pdf', pageCount: 2 });
+    s.upsertOpenTab({ filePath: '/a.pdf', fileName: 'a.pdf', pageCount: 9 });
+    const tabs = useAppStore.getState().openTabs;
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0]).toEqual({ filePath: '/a.pdf', fileName: 'a.pdf', pageCount: 9 });
+    expect(tabs[1]?.filePath).toBe('/b.pdf');
+  });
+});
+
+describe('switchToTab', () => {
+  it('flush → openPath → handlePdfData 순서로 전환', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/b.pdf'], '/docs/a.pdf');
+    const order: string[] = [];
+    M.persistCurrentSession.mockImplementation(async () => { order.push('persist'); });
+    M.openPath.mockImplementation(async () => { order.push('open'); return { path: '/docs/b.pdf', name: 'b.pdf', data: new ArrayBuffer(8) }; });
+    M.handlePdfData.mockImplementation(async () => { order.push('parse'); });
+
+    await switchToTab('/docs/b.pdf');
+    expect(order).toEqual(['persist', 'open', 'parse']);
+    expect(M.openPath).toHaveBeenCalledWith('/docs/b.pdf');
+  });
+
+  it('이미 활성 탭이면 no-op', async () => {
+    seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+    await switchToTab('/docs/a.pdf');
+    expect(M.persistCurrentSession).not.toHaveBeenCalled();
+    expect(M.openPath).not.toHaveBeenCalled();
+  });
+
+  it('재오픈 실패(파일 이동/삭제) → 에러 배너 + 탭 유지 + 파싱 미진행', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/gone.pdf'], '/docs/a.pdf');
+    M.openPath.mockResolvedValue({ error: 'not found' });
+    await switchToTab('/docs/gone.pdf');
+    expect(M.handlePdfData).not.toHaveBeenCalled();
+    expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL');
+    expect(useAppStore.getState().openTabs).toHaveLength(2); // 탭 유지 — 파일 복구 후 재시도 가능
+  });
+
+  it('생성 중 전환 차단', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/b.pdf'], '/docs/a.pdf');
+    useAppStore.setState({ isGenerating: true });
+    await switchToTab('/docs/b.pdf');
+    expect(M.openPath).not.toHaveBeenCalled();
+    useAppStore.setState({ isGenerating: false });
+  });
+});
+
+describe('closeTab', () => {
+  it('비활성 탭 닫기 — 목록 제거만, persist/재오픈 없음 (생성 중에도 안전)', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/b.pdf'], '/docs/a.pdf');
+    useAppStore.setState({ isGenerating: true }); // 생성 중에도 비활성 닫기는 허용
+    await closeTab('/docs/b.pdf');
+    expect(useAppStore.getState().openTabs.map((tb) => tb.filePath)).toEqual(['/docs/a.pdf']);
+    expect(M.persistCurrentSession).not.toHaveBeenCalled();
+    expect(M.openPath).not.toHaveBeenCalled();
+    useAppStore.setState({ isGenerating: false });
+  });
+
+  it('활성 탭 닫기 — flush 후 오른쪽 이웃으로 전환', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/b.pdf', '/docs/c.pdf'], '/docs/b.pdf');
+    M.openPath.mockResolvedValue({ path: '/docs/c.pdf', name: 'c.pdf', data: new ArrayBuffer(8) });
+    await closeTab('/docs/b.pdf');
+    expect(M.persistCurrentSession).toHaveBeenCalledTimes(1);
+    expect(M.openPath).toHaveBeenCalledWith('/docs/c.pdf'); // 오른쪽 우선
+    expect(M.handlePdfData).toHaveBeenCalledTimes(1);
+  });
+
+  it('맨 오른쪽 활성 탭 닫기 — 왼쪽 이웃으로', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/b.pdf'], '/docs/b.pdf');
+    M.openPath.mockResolvedValue({ path: '/docs/a.pdf', name: 'a.pdf', data: new ArrayBuffer(8) });
+    await closeTab('/docs/b.pdf');
+    expect(M.openPath).toHaveBeenCalledWith('/docs/a.pdf');
+  });
+
+  it('마지막 탭 닫기 — 업로드 화면 정리 (document null)', async () => {
+    seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+    await closeTab('/docs/a.pdf');
+    expect(useAppStore.getState().openTabs).toHaveLength(0);
+    expect(useAppStore.getState().document).toBeNull();
+    expect(M.openPath).not.toHaveBeenCalled();
+  });
+
+  it('활성 탭 닫기는 생성 중 차단 (탭 목록도 불변)', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/b.pdf'], '/docs/a.pdf');
+    useAppStore.setState({ isQaGenerating: true });
+    await closeTab('/docs/a.pdf');
+    expect(useAppStore.getState().openTabs).toHaveLength(2);
+    useAppStore.setState({ isQaGenerating: false });
+  });
+});
+
+describe('openNewTabView', () => {
+  it('flush 후 업로드 화면 — 탭 목록은 유지', async () => {
+    seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+    await openNewTabView();
+    expect(M.persistCurrentSession).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().document).toBeNull();
+    expect(useAppStore.getState().openTabs).toHaveLength(1);
+  });
+
+  it('이미 업로드 화면이면 no-op', async () => {
+    seedTabs(['/docs/a.pdf'], null);
+    await openNewTabView();
+    expect(M.persistCurrentSession).not.toHaveBeenCalled();
+  });
+});

@@ -58,6 +58,7 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 ### 1. PDF 업로드
 - 앱 화면에 PDF 파일을 **드래그앤드롭**하거나, **파일 선택** 버튼 또는 **Ctrl+O**로 선택합니다
 - 이전에 분석한 PDF는 업로드 화면 하단 **최근 문서** 목록에서 바로 열 수 있고, 같은 PDF를 다시 열면 요약·Q&A·검색 인덱스가 **자동 복원**됩니다
+- **여러 문서를 탭으로** — 새 PDF를 열면 상단에 탭이 추가되고, 탭 클릭으로 문서를 오가며 각각의 요약·Q&A를 이어서 사용할 수 있습니다 (전환 시 자동 저장·복원). `＋` 버튼으로 문서를 추가합니다
 
 ### 2. 요약 유형 선택
 
@@ -157,6 +158,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - 실시간 스트리밍 — 요약이 생성되는 즉시 표시, 자동 스크롤 (직접 스크롤하면 멈춤)
 - 모든 장시간 작업 취소 가능 — 요약/파싱/OCR 중단, Ollama 설치 중도 취소 후 다른 Provider 전환
 - 파싱 중 파일 교체 — 분석 도중 다른 파일을 드롭하면 이전 작업을 자동 취소하고 새 파일로 전환
+- 다중 문서 탭 — 여러 PDF를 열어두고 전환, 무거운 상태는 활성 문서만 메모리에 유지(전환 시 세션 복원으로 즉시)
 - 다크모드, 한국어/English 즉시 전환 — 첫 실행 시 OS 언어 자동 감지, 설치 화면 우상단 토글로 바로 변경 가능, 스크린 리더·키보드 접근성
 
 **안정성 · 보안**
@@ -166,7 +168,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - 렌더 오류 복구 — 예기치 못한 UI 오류 시 "다시 시도" 버튼으로 재시작 없이 복구
 
 **품질 보증**
-- 단위 테스트 824건 + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
+- 단위 테스트 836건 + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
 - 빌드 무결성 — 인스톨러 SHA-256 해시 + Sigstore attestation 자동 게시
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 
@@ -220,7 +222,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG는 공증 자격 확보 시까지 일시 중단) |
-| 테스트 | Vitest 단위 테스트 824건/42파일 (renderer·shared 465 + main 359) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (57/51/58/59) |
+| 테스트 | Vitest 단위 테스트 836건/42파일 (renderer·shared 477 + main 359) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (57/51/58/59) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -271,7 +273,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (824건, 42 파일)
+    │   └── __tests__/         # 단위 테스트 (836건, 43 파일)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -465,7 +467,7 @@ PDF 파일
 
 ## 품질 보증
 
-- **단위 테스트 824건 / 40파일** — renderer·shared 465 + main 359. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service까지 행위 테스트
+- **단위 테스트 836건 / 40파일** — renderer·shared 477 + main 359. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service까지 행위 테스트
 - **CI 게이트** — `tsc --noEmit`(strict), 커버리지 임계(57/51/58/59) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 20.11/22/24 매트릭스
 - **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, Critical 43라운드 연속 0건 (검출된 High/Important 는 패치 릴리즈로 즉시 수정 — 최근: R43 19건 → v0.21.1)
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)

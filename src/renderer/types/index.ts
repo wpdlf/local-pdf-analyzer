@@ -210,6 +210,17 @@ export const INITIAL_INSTALL_MODELS = ['gemma3', 'nomic-embed-text'] as const;
 // 미설치 시에도 설정 → 모델 관리에서 언제든 추가 가능.
 export const OPTIONAL_KOREAN_MODEL = 'exaone3.5';
 
+// ─── 다중 문서 탭 (multi-doc Phase 1) ───
+// 탭은 메타데이터만 보관 — 무거운 상태(요약/Q&A/RAG 인덱스/pdfBytes)는 활성 문서 1개만
+// 메모리에 유지하고, 전환 시 세션 영속화(persist→재오픈→해시 복원)로 즉시 복원한다.
+// 키는 filePath: 같은 파일 재오픈 시 탭 중복을 막고, 전환 시 file:open-path 재읽기에 사용.
+export interface OpenTab {
+  /** 탭 식별자 겸 재오픈 경로. DOM 드롭(dev)은 파일명만일 수 있어 전환 실패 시 에러로 안내 */
+  filePath: string;
+  fileName: string;
+  pageCount: number;
+}
+
 // ─── 세션 영속화 (session-persistence) ───
 // Design Ref: §3 — 콘텐츠 해시 기준 세션·인덱스 캐싱. 본문 도메인 타입은 여기,
 // manifest/stats primitive 메타는 src/shared/session-types.ts.

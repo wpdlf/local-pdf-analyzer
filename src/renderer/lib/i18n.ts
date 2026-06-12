@@ -12,6 +12,11 @@ import { useAppStore } from './store';
 export const _translations = {
   // ─── 공통 ───
   'common.close': { ko: '닫기', en: 'Close' },
+  // ─── 다중 문서 탭 (multi-doc Phase 1) ───
+  'tabs.label': { ko: '열린 문서', en: 'Open documents' },
+  'tabs.close': { ko: '{name} 탭 닫기', en: 'Close tab {name}' },
+  'tabs.newTab': { ko: '새 문서 열기', en: 'Open a new document' },
+  'tabs.switchFail': { ko: '원본 PDF 파일을 찾을 수 없어 탭을 전환할 수 없습니다. 파일이 이동/삭제되었다면 다시 열어주세요.', en: 'Could not switch tabs because the original PDF file was not found. If it was moved or deleted, please open it again.' },
   'common.renderError': { ko: '렌더링 오류가 발생했습니다.', en: 'A rendering error occurred.' },
   'common.imagePlaceholder': { ko: '[이미지]', en: '[image]' },
   'common.blockedLink': { ko: '차단된 링크 (지원하지 않는 URL 형식)', en: 'Blocked link (unsupported URL scheme)' },

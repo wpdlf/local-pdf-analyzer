@@ -10,6 +10,7 @@ import type {
   ProgressInfo,
   RagIndexState,
 } from '../types';
+import type { OpenTab } from '../types';
 import { DEFAULT_SETTINGS } from '../types';
 import { VectorStore } from './vector-store';
 import { sanitizeErrorPath } from './error-sanitize';
@@ -91,6 +92,14 @@ interface AppState {
   isParsing: boolean;
   setDocument: (doc: PdfDocument | null) => void;
   setIsParsing: (v: boolean) => void;
+
+  // 다중 문서 탭 (multi-doc Phase 1) — 메타데이터만 보관, 무거운 상태는 활성 문서 단일 유지.
+  // 활성 탭 = document?.filePath 파생 (별도 state 없음 — drift 원천 차단).
+  openTabs: OpenTab[];
+  /** 성공 로드 시 탭 등록/갱신 — filePath 중복이면 메타만 갱신 (탭 순서 유지) */
+  upsertOpenTab: (tab: OpenTab) => void;
+  /** 탭 목록에서 제거만 담당 — 활성 문서 정리/이웃 전환은 lib/tabs.ts 가 오케스트레이션 */
+  removeOpenTab: (filePath: string) => void;
 
   // 요약
   summary: Summary | null;
@@ -202,6 +211,18 @@ export const useAppStore = create<AppState>((set) => ({
   // PDF
   document: null,
   isParsing: false,
+  // 다중 문서 탭 (multi-doc Phase 1)
+  openTabs: [],
+  upsertOpenTab: (tab) => set((s) => {
+    const idx = s.openTabs.findIndex((t) => t.filePath === tab.filePath);
+    if (idx === -1) return { openTabs: [...s.openTabs, tab] };
+    const next = s.openTabs.slice();
+    next[idx] = tab;
+    return { openTabs: next };
+  }),
+  removeOpenTab: (filePath) => set((s) => ({
+    openTabs: s.openTabs.filter((t) => t.filePath !== filePath),
+  })),
   setDocument: (document) => {
     if (!document) {
       // 문서 닫기 시 RAG 인덱스 + 요약/Q&A 상태 전부 해제. resetSummaryState 와 수렴.

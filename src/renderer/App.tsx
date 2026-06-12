@@ -4,6 +4,8 @@ import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS, matchesModel } from 
 import { t, useT, translateMainError } from './lib/i18n';
 import { PdfUploader } from './components/PdfUploader';
 import { RecentDocuments } from './components/RecentDocuments';
+import { TabBar } from './components/TabBar';
+import { closeTab } from './lib/tabs';
 import { SummaryViewer } from './components/SummaryViewer';
 import { SummaryTypeSelector } from './components/SummaryTypeSelector';
 import { StatusBar } from './components/StatusBar';
@@ -356,6 +358,9 @@ export default function App() {
         </div>
       </header>
 
+      {/* multi-doc Phase 1: 열린 문서 탭바 (열린 문서 없으면 자체적으로 숨김) */}
+      <TabBar />
+
       {/* 백그라운드 모델 다운로드 알림 */}
       {bgModelSync && (
         <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-400">
@@ -435,10 +440,9 @@ export default function App() {
               </span>
               <button
                 onClick={() => {
-                  setDocument(null);
-                  clearStream();
-                  setSummary(null);
-                  setProgress(0);
+                  // multi-doc Phase 1: 탭 닫기와 일원화 — 탭 목록에서도 제거하고
+                  // 이웃 탭 전환/업로드 화면 복귀를 closeTab 이 일관되게 처리.
+                  if (document) void closeTab(document.filePath);
                 }}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm"
                 aria-label={tr('app.removeFile')}

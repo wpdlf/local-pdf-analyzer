@@ -693,6 +693,9 @@ export async function handlePdfData(
     store.clearQa();
     store.setDocument(doc);
     store.setPdfBytes(pdfBytesCopy); // PdfViewer 가 참조할 원본
+    // multi-doc Phase 1: 모든 성공 로드 경로(드롭/다이얼로그/IPC/최근 문서/탭 전환)가 본
+    // 함수를 경유하므로 여기가 탭 등록의 단일 지점 — filePath 중복은 메타 갱신(중복 탭 없음).
+    store.upsertOpenTab({ filePath: doc.filePath, fileName: doc.fileName, pageCount: doc.pageCount });
     // session-persistence(module-3): setDocument 직후 복원 게이트 ON → useRagBuilder 자동
     // 재임베딩을 보류시키고, 콘텐츠 해시로 세션 복원을 시도한다. hit 시 재요약·재임베딩 0,
     // miss 시 게이트 해제 후 정상 빌드. (setDocument→resetSummaryState 가 게이트를 false 로
