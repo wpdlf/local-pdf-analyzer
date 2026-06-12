@@ -16,10 +16,12 @@ import { resolve } from 'node:path';
 //
 // 한계: main process 의 핸들러 채널과 cross-check 는 본 테스트 범위 밖.
 
+// R45 fix: CRLF 정규화 — Windows CI 체크아웃(autocrlf)은 줄당 +1자라 아래 길이 제한 윈도
+// 매칭이 OS 에 따라 갈렸다 (windows-2025 잡만 실패, ubuntu/로컬 LF 는 통과하던 비결정성 제거).
 const PRELOAD_SRC = readFileSync(
   resolve(import.meta.dirname, '../../../preload/index.ts'),
   'utf-8',
-);
+).replace(/\r\n/g, '\n');
 
 describe('preload contextBridge shape (R34 P2)', () => {
   it('expose target 은 정확히 `electronAPI` 라는 이름이어야 한다', () => {
@@ -89,7 +91,8 @@ describe('preload contextBridge shape (R34 P2)', () => {
     for (const name of onPatterns) {
       // 각 listener 가 ipcRenderer.removeListener 를 반환하는지 source 에서 패턴 매칭
       const escaped = name.replace(/\$/g, '\\$');
-      const block = PRELOAD_SRC.match(new RegExp(`${escaped}:[\\s\\S]{0,400}?removeListener`));
+      // R45: onSetupProgress 시그니처가 source/model 필드로 길어져 400자 윈도를 초과 — 600 으로 확장
+      const block = PRELOAD_SRC.match(new RegExp(`${escaped}:[\\s\\S]{0,600}?removeListener`));
       expect(block, `${name} 에서 removeListener 가 보이지 않음 — memory leak 회귀 가능`).not.toBeNull();
     }
   });
