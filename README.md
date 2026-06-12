@@ -245,6 +245,9 @@ npm test
 
 # Tests (watch mode)
 npm run test:watch
+
+# E2E smoke (builds, then drives the real Electron app — Playwright)
+npm run test:e2e
 ```
 
 ## Project Structure

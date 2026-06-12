@@ -245,6 +245,9 @@ npm test
 
 # 테스트 (watch 모드)
 npm run test:watch
+
+# E2E 스모크 (빌드 후 실제 Electron 기동 — Playwright)
+npm run test:e2e
 ```
 
 ## 프로젝트 구조

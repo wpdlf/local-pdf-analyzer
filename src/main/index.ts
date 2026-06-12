@@ -51,6 +51,14 @@ process.on('uncaughtException', (error) => {
   console.error('[Main] Uncaught Exception:', error);
 });
 
+// R45(E2E): Playwright 스모크 테스트 격리용 userData 오버라이드 — 테스트 러너가 임시
+// 디렉토리를 주입해 실사용자의 settings.json/sessions/api-keys.enc 를 오염시키지 않는다.
+// 아래 settingsPath/sessionsDir 등 모듈 상수가 userData 를 읽기 전에 실행돼야 하므로 최상단 배치.
+// 일반 실행에는 영향 없음(env 미설정 시 no-op).
+if (process.env.PDF_ANALYZER_USER_DATA) {
+  app.setPath('userData', process.env.PDF_ANALYZER_USER_DATA);
+}
+
 const ollamaManager = new OllamaManager();
 
 // electron-store는 ESM 전용이므로 JSON 파일로 직접 관리

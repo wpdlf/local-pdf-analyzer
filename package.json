@@ -15,7 +15,8 @@
     "package": "npm run build && electron-builder",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
     "pdfjs-dist": "^4.10.38",
@@ -27,6 +28,7 @@
   },
   "//testingPinPolicy": "R37 P3 (v0.18.23): 테스트 인프라 6종(@testing-library/* 3개, happy-dom, vitest, @vitest/coverage-v8)은 정확 핀. 사유: 테스팅 도구의 patch/minor 업데이트가 assertion 동작·매처·DOM 시뮬레이션 세부를 조용히 바꿔 CI 가 그린인 채로 false negative(또는 false positive) 가 발생한 전례가 다수. 본 repo 는 dependabot 미사용으로 수동 bump 라운드에서만 갱신하므로 핀 비용 0. 그 외 deps(electron/vite/react 등)는 SemVer 신뢰가 충분히 검증되어 캐럿 유지.",
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/jest-dom": "6.9.1",
@@ -40,6 +42,7 @@
     "electron-builder": "^26.8.1",
     "electron-vite": "^3.0.0",
     "happy-dom": "20.9.0",
+    "pdf-lib": "^1.17.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.3",
     "vite": "^6.2.0",
