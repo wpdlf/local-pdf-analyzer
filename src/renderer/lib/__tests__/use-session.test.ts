@@ -207,6 +207,52 @@ describe('persistCurrentSession (module-3)', () => {
     expect(api.session.save).not.toHaveBeenCalled();
   });
 
+  // multi-doc Phase 1 사용자 버그 계약: 인덱싱 중 flush 는 전체 skip 이 아니라
+  // 부분 인덱스만 제외하고 저장한다 — 탭 전환/새 탭(+)이 인덱싱 타이밍과 겹쳐도
+  // 텍스트·요약·Q&A 세션은 디스크에 남아 드롭 탭의 fallback 전환이 가능해야 한다.
+  it('인덱싱 중 flush → 부분 인덱스 제외(blob=null, embedModel=null)하되 세션은 저장', async () => {
+    const doc = makeDoc();
+    const partial = VectorStore.restore(makeIndexFixture()); // 빌드 중간의 부분 청크 시뮬레이션
+    useAppStore.setState({
+      document: doc,
+      summaryStream: '',
+      qaMessages: [{ id: 'q', role: 'user', content: 'q' }],
+      ragIndex: partial,
+      ragState: { isIndexing: true, progress: null, isAvailable: false, model: 'nomic-embed-text', chunkCount: 1 },
+    });
+    api.session.load.mockResolvedValue(null);
+
+    await persistCurrentSession();
+
+    expect(api.session.save).toHaveBeenCalledTimes(1);
+    const payload = api.session.save.mock.calls[0]![0] as { session: PersistedSession; blob: ArrayBuffer | null; meta: { chunkCount: number } };
+    expect(payload.session.extractedText).toBe(doc.extractedText); // 세션 본체는 저장
+    expect(payload.session.embedModel).toBeNull(); // 부분 인덱스 미영속화 (R43 I-2 유지)
+    expect(payload.session.chunkMeta).toEqual([]);
+    expect(payload.blob).toBeNull();
+    expect(payload.meta.chunkCount).toBe(0);
+  });
+
+  it('인덱싱 중 flush + 디스크에 완전한 기존 인덱스 → 기존 인덱스 보존 (재임베딩 0 유지)', async () => {
+    const doc = makeDoc();
+    const existing = persistedSession(doc, true); // 디스크의 완전한 세션(인덱스 포함)
+    useAppStore.setState({
+      document: doc,
+      summaryStream: '',
+      qaMessages: [{ id: 'q', role: 'user', content: 'q' }],
+      ragIndex: new VectorStore(), // 재빌드 시작 직후 — 메모리 인덱스는 비어 있음
+      ragState: { isIndexing: true, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+    });
+    api.session.load.mockResolvedValue(existing);
+
+    await persistCurrentSession();
+
+    const payload = api.session.save.mock.calls[0]![0] as { session: PersistedSession; blob: ArrayBuffer | null };
+    expect(payload.session.embedModel).toBe('nomic-embed-text'); // 기존 인덱스 유지
+    expect(payload.session.chunkMeta).toHaveLength(2);
+    expect(payload.blob).toBe(existing.blob); // 기존 블롭 그대로
+  });
+
   it('인덱스 없으면 blob=null 로 저장', async () => {
     const doc = makeDoc();
     useAppStore.setState({

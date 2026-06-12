@@ -140,22 +140,34 @@ async function doPersistCurrentSession(): Promise<void> {
   const doc = s.document;
   const api = window.electronAPI?.session;
   if (!doc || !s.settings.persistSessions || !api) return;
-  // R43 I-2: ragState.isIndexing 가드 — provider 전환 재빌드 도중 디바운스가 발화하면
-  // 빌드 중간의 부분 청크(model/dim 은 이미 세팅됨)가 완전한 인덱스처럼 영속화되고,
-  // 그 창에서 앱을 종료하면 다음 복원이 잘린 인덱스를 채택해 검색 범위가 영구 축소된다.
-  if (s.isGenerating || s.isQaGenerating || s.sessionRestorePending || s.ragState.isIndexing) return;
+  if (s.isGenerating || s.isQaGenerating || s.sessionRestorePending) return;
+  // R43 I-2: ragState.isIndexing 중 부분 인덱스(빌드 중간 청크) 영속화 금지는 유지하되,
+  // 전체 skip 은 하지 않는다 — 탭 전환/새 탭(+)의 명시적 flush 가 인덱싱 타이밍에 조용히
+  // skip 되면 방금 연 문서의 세션이 디스크에 없어, 경로가 없는 탭(드롭)의 세션 fallback
+  // 전환이 실패한다(multi-doc Phase 1 사용자 버그). 인덱싱 중에는 텍스트·요약·Q&A 만
+  // 저장하고 인덱스 필드/블롭은 기존 디스크 세션의 것을 보존한다.
+  const indexing = s.ragState.isIndexing;
   try {
     const docHash = await hashDocumentText(doc.extractedText);
     if (useAppStore.getState().document?.id !== doc.id) return; // 레이스
     const serialized = s.ragIndex.serialize();
-    const hasIndex = serialized.chunkMeta.length > 0;
+    const hasIndex = !indexing && serialized.chunkMeta.length > 0;
 
-    // 기존 세션의 타입별 요약을 머지(다른 요약 타입 보존)
+    // 기존 세션의 타입별 요약을 머지(다른 요약 타입 보존) + 인덱싱 중이면 기존 인덱스 보존
     let summaries: PersistedSession['summaries'] = {};
+    let prevIndex: { embedModel: string; embedDim: number; chunkMeta: PersistedSession['chunkMeta']; blob: ArrayBuffer } | null = null;
     try {
       const existing = await api.load(docHash);
       const existSession = existing?.session as PersistedSession | undefined;
       if (existSession?.summaries) summaries = { ...existSession.summaries };
+      if (indexing && existing?.blob && existSession?.embedModel && existSession.embedDim) {
+        prevIndex = {
+          embedModel: existSession.embedModel,
+          embedDim: existSession.embedDim,
+          chunkMeta: existSession.chunkMeta ?? [],
+          blob: existing.blob,
+        };
+      }
     } catch { /* 무시 */ }
     if (s.summaryStream && s.summary) {
       summaries[s.summary.type] = {
@@ -178,9 +190,9 @@ async function doPersistCurrentSession(): Promise<void> {
       summaries,
       summaryType: s.summaryType,
       qaMessages: s.qaMessages,
-      embedModel: hasIndex ? serialized.model : null,
-      embedDim: hasIndex ? serialized.dimension : null,
-      chunkMeta: serialized.chunkMeta,
+      embedModel: hasIndex ? serialized.model : prevIndex?.embedModel ?? null,
+      embedDim: hasIndex ? serialized.dimension : prevIndex?.embedDim ?? null,
+      chunkMeta: hasIndex ? serialized.chunkMeta : prevIndex?.chunkMeta ?? [],
     };
     const meta: SessionSaveMeta = {
       docHash,
@@ -189,9 +201,9 @@ async function doPersistCurrentSession(): Promise<void> {
       pageCount: doc.pageCount,
       embedModel: session.embedModel,
       embedDim: session.embedDim,
-      chunkCount: serialized.chunkMeta.length,
+      chunkCount: session.chunkMeta.length,
     };
-    await api.save({ meta, session, blob: hasIndex ? serialized.buffer : null });
+    await api.save({ meta, session, blob: hasIndex ? serialized.buffer : prevIndex?.blob ?? null });
   } catch { /* best-effort — 저장 실패는 작업을 막지 않음 */ }
 }
 

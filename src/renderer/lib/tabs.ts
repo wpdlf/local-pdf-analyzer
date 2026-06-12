@@ -53,10 +53,15 @@ async function openTabTarget(tab: OpenTab): Promise<boolean> {
   }
 
   // ② 파일을 찾을 수 없음 — 영속 세션에서 분석 상태만 직접 복원 (뷰어 비활성)
-  if (!tab.docHash) return false;
+  // 실패 지점별 진단 warn: 사용자 재현 시 DevTools 콘솔로 원인을 확정하기 위한 영구 로그
+  if (!tab.docHash) {
+    console.warn('[tabs] 전환 실패: 파일 재읽기 불가 + 탭에 docHash 없음', tab.filePath);
+    return false;
+  }
   const loaded = await window.electronAPI.session.load(tab.docHash).catch(() => null);
   const session = loaded?.session as PersistedSession | undefined;
   if (!session || typeof session.extractedText !== 'string' || !Array.isArray(session.pageTexts)) {
+    console.warn('[tabs] 전환 실패: 파일 재읽기 불가 + 영속 세션 없음/손상', tab.filePath, tab.docHash);
     return false;
   }
   const doc: PdfDocument = {

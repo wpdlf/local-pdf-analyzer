@@ -68,6 +68,23 @@ test('실경로 두 문서 → 탭 전환 (file:dropped IPC)', async () => {
     await expect(tablist.getByRole('tab', { selected: true })).toContainText('alpha.pdf');
 
     expect(pageErrors, `렌더러 페이지 에러: ${pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
+
+    // 사용자 보고 시나리오 재현: 문서 1 → 새 탭(+) → 문서 2 순차 업로드 → 탭 전환.
+    // (연속 드롭 교체 경로와 달리 + 경유는 setDocument(null) 후 업로드 화면에서 열린다)
+    await page.getByRole('button', { name: '새 문서 열기' }).click();
+    await expect(page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible();
+    const pathC = join(docsDir, 'gamma.pdf');
+    const bufC = await makePdf('GAMMA document');
+    writeFileSync(pathC, bufC);
+    await sendDrop(pathC, bufC.toString('base64'));
+    await expect(page.getByText('gamma.pdf (1p)')).toBeVisible({ timeout: 20000 });
+    await expect(tablist.getByRole('tab')).toHaveCount(3);
+    // beta 탭으로 전환
+    await tablist.getByRole('tab').filter({ hasText: 'beta.pdf' }).getByTitle(/beta\.pdf/).click();
+    await expect(page.getByText('beta.pdf (1p)')).toBeVisible({ timeout: 20000 });
+    await expect(tablist.getByRole('tab', { selected: true })).toContainText('beta.pdf');
+
+    expect(pageErrors, `렌더러 페이지 에러: ${pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
   } finally {
     await app.close().catch(() => {});
     rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3 });
