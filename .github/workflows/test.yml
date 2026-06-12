@@ -164,11 +164,11 @@ jobs:
   # R45: E2E 스모크 (Playwright + Electron) — 빌드 산출물(out/) 실행으로 단위 테스트가
   # 구조적으로 못 덮는 영역(electron-vite 번들, preload 실배선, pdfjs worker/cmaps 로딩,
   # main↔renderer IPC 왕복)을 검증. AI 백엔드 불필요(결정적 경로만 사용).
-  # 신규 도입 안정화 기간 동안 continue-on-error — 수 회 그린 확인 후 게이트로 승격 예정.
+  # R45+2: 도입 후 2회 연속 그린 + retry 1(playwright.config) 안정화 확인 → 게이트 승격
+  # (continue-on-error 제거). 실패 시 빌드가 red — 번들/IPC 배선 회귀를 차단한다.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       # actions/checkout@v6.0.2
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
