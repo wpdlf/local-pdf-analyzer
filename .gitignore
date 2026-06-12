@@ -13,3 +13,7 @@ coverage/
 .claude/
 # R29 (v0.18.13): CLAUDE.md 는 프로젝트에 체크인된 문서이므로 ignore 하지 않는다.
 # (이전엔 tracked 상태와 ignore 가 충돌해 contributor 가 변경을 git status 로 못 보던 모순)
+
+# Playwright E2E artifacts
+test-results/
+playwright-report/
