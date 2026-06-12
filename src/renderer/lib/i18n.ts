@@ -256,6 +256,12 @@ export const _translations = {
   'mainerr.pullTimeout': { ko: '모델 다운로드 타임아웃 (30분). 네트워크를 확인 후 다시 시도해주세요.', en: 'Model download timed out (30 min). Check your network and try again.' },
   'mainerr.pullFailed': { ko: '모델 다운로드 실패: {detail}', en: 'Model download failed: {detail}' },
   'mainerr.pullCancelled': { ko: '모델 다운로드가 취소되었습니다.', en: 'Model download was cancelled.' },
+  // R45(R44 후속): install 계열 에러도 errorKey 이행 — 영어 UI 에 한국어 설치 에러가 남던 잔존 경로
+  'mainerr.unsupportedOs': { ko: '지원하지 않는 운영체제입니다.', en: 'Unsupported operating system.' },
+  'mainerr.installerTooSmall': { ko: '다운로드 파일이 비정상적으로 작습니다 ({size} bytes). 네트워크를 확인 후 다시 시도해주세요.', en: 'The downloaded file is abnormally small ({size} bytes). Check your network and try again.' },
+  'mainerr.signatureInvalid': { ko: 'Ollama 인스톨러 서명 검증에 실패했습니다 ({reason}). 안전을 위해 설치가 중단되었습니다. https://ollama.com 에서 직접 다운로드 후 수동 설치해주세요.', en: 'Ollama installer signature verification failed ({reason}). Installation was stopped for safety. Please download and install manually from https://ollama.com.' },
+  'mainerr.installedButNotFound': { ko: 'Ollama 설치가 완료되었지만 실행 파일을 찾을 수 없습니다. PC를 재시작하거나 https://ollama.com 에서 수동 설치해주세요.', en: 'Ollama was installed but the executable could not be found. Restart your PC or install manually from https://ollama.com.' },
+  'mainerr.installFailed': { ko: '설치 실패: {detail}. https://ollama.com 에서 수동 설치해주세요.', en: 'Installation failed: {detail}. Please install manually from https://ollama.com.' },
   'setup.manualInstall': { ko: '수동 설치:', en: 'Manual install:' },
   'setup.cancel': { ko: '취소하고 다른 Provider 사용', en: 'Cancel and use another provider' },
 
@@ -334,6 +340,9 @@ export function t(key: TranslationKey, params?: Record<string, string | number>)
 export interface MainProgressEvent {
   key: string;
   params?: Record<string, string>;
+  /** R45: 발신원 — 수신자가 자기 작업(install vs 특정 모델 pull)의 이벤트만 필터링 */
+  source?: 'install' | 'pull';
+  model?: string;
 }
 
 /**

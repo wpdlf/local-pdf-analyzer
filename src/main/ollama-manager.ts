@@ -92,7 +92,7 @@ export class OllamaManager {
     }
   }
 
-  private async _installInternal(): Promise<{ success: boolean; error?: string }> {
+  private async _installInternal(): Promise<{ success: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string> }> {
     const platform = process.platform;
 
     if (platform === 'win32') {
@@ -101,7 +101,7 @@ export class OllamaManager {
       return this.installMac();
     }
 
-    return { success: false, error: '지원하지 않는 운영체제입니다.' };
+    return { success: false, error: '지원하지 않는 운영체제입니다.', errorKey: 'unsupportedOs' };
   }
 
   /** 다운로드 파일의 SHA-256 해시를 계산합니다 (로깅 + 에러 진단용) */
@@ -165,34 +165,34 @@ export class OllamaManager {
     });
   }
 
-  private async installWindows(): Promise<{ success: boolean; error?: string }> {
+  private async installWindows(): Promise<{ success: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string> }> {
     const installerUrl = 'https://ollama.com/download/OllamaSetup.exe';
     const installerPath = path.join(app.getPath('temp'), 'OllamaSetup.exe');
 
     try {
       // 1. 인스톨러 다운로드
-      this.sendProgress({ key: 'downloadingInstaller' });
+      this.sendProgress({ key: 'downloadingInstaller', source: 'install' });
       await this.downloadFile(installerUrl, installerPath);
 
       // 2. 다운로드 무결성 검증 (크기 + Authenticode 서명)
-      this.sendProgress({ key: 'verifyingDownload' });
+      this.sendProgress({ key: 'verifyingDownload', source: 'install' });
       const hash = await this.computeFileHash(installerPath);
       const stat = fs.statSync(installerPath);
       if (stat.size < 1024 * 1024) { // 1MB 미만이면 비정상
         fs.unlinkSync(installerPath);
-        return { success: false, error: `다운로드 파일이 비정상적으로 작습니다 (${stat.size} bytes). 네트워크를 확인 후 다시 시도해주세요. (sha256:${hash.slice(0, 16)}...)` };
+        return { success: false, error: `다운로드 파일이 비정상적으로 작습니다 (${stat.size} bytes). 네트워크를 확인 후 다시 시도해주세요. (sha256:${hash.slice(0, 16)}...)`, errorKey: 'installerTooSmall', errorParams: { size: String(stat.size) } };
       }
       // v0.17.7 (M1): Authenticode 서명 검증 — Ollama 발행자 인증서로 서명되었는지 확인
       const sig = await this.verifyInstallerSignature(installerPath);
       if (!sig.valid) {
         console.error(`[Ollama] Installer signature verification FAILED: ${sig.reason || sig.subject || 'unknown'} (sha256:${hash})`);
         fs.unlinkSync(installerPath);
-        return { success: false, error: `Ollama 인스톨러 서명 검증에 실패했습니다 (${sig.reason || '알 수 없는 서명자'}). 안전을 위해 설치가 중단되었습니다. https://ollama.com 에서 직접 다운로드 후 수동 설치해주세요.` };
+        return { success: false, error: `Ollama 인스톨러 서명 검증에 실패했습니다 (${sig.reason || '알 수 없는 서명자'}). 안전을 위해 설치가 중단되었습니다. https://ollama.com 에서 직접 다운로드 후 수동 설치해주세요.`, errorKey: 'signatureInvalid', errorParams: { reason: sig.reason || sig.subject || 'unknown' } };
       }
       console.log(`[Ollama] Installer Authenticode verified: ${sig.subject}`);
 
       // 3. 설치 실행 (사용자가 설치 UI에서 완료할 때까지 대기)
-      this.sendProgress({ key: 'installerWindow' });
+      this.sendProgress({ key: 'installerWindow', source: 'install' });
       await new Promise<void>((resolve, reject) => {
         // PowerShell 의 -Command 플래그는 뒤따르는 argv 를 단일 scriptblock 문자열로 재합치므로,
         // installerPath 에 공백/한글이 있으면 quote 정보가 소실되어 인스톨러 경로가 여러 토큰으로
@@ -217,13 +217,13 @@ export class OllamaManager {
       });
 
       // 4. 설치 후 대기 (프로세스 정리 및 PATH 반영)
-      this.sendProgress({ key: 'confirmingInstall' });
+      this.sendProgress({ key: 'confirmingInstall', source: 'install' });
       await new Promise((r) => setTimeout(r, 3000));
 
       // 5. 설치 확인
       const installed = await this.isInstalled();
       if (!installed) {
-        return { success: false, error: 'Ollama 설치가 완료되었지만 실행 파일을 찾을 수 없습니다. PC를 재시작하거나 https://ollama.com 에서 수동 설치해주세요.' };
+        return { success: false, error: 'Ollama 설치가 완료되었지만 실행 파일을 찾을 수 없습니다. PC를 재시작하거나 https://ollama.com 에서 수동 설치해주세요.', errorKey: 'installedButNotFound' };
       }
 
       return { success: true };
@@ -231,15 +231,17 @@ export class OllamaManager {
       return {
         success: false,
         error: `설치 실패: ${error instanceof Error ? error.message : String(error)}. https://ollama.com 에서 수동 설치해주세요.`,
+        errorKey: 'installFailed',
+        errorParams: { detail: error instanceof Error ? error.message : String(error) },
       };
     } finally {
       try { fs.unlinkSync(installerPath); } catch { /* 임시 파일 정리 실패 무시 */ }
     }
   }
 
-  private async installMac(): Promise<{ success: boolean; error?: string }> {
+  private async installMac(): Promise<{ success: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string> }> {
     try {
-      this.sendProgress({ key: 'installingBrew' });
+      this.sendProgress({ key: 'installingBrew', source: 'install' });
       await new Promise<void>((resolve, reject) => {
         execFile('brew', ['install', 'ollama'], { timeout: 300000 }, (error) => {
           if (error) reject(error);
@@ -251,12 +253,12 @@ export class OllamaManager {
       // brew 실패 시 직접 다운로드 시도
       const zipPath = path.join(app.getPath('temp'), 'Ollama-darwin.zip');
       try {
-        this.sendProgress({ key: 'brewFallback' });
+        this.sendProgress({ key: 'brewFallback', source: 'install' });
         const zipUrl = 'https://ollama.com/download/Ollama-darwin.zip';
         await this.downloadFile(zipUrl, zipPath);
 
         // 다운로드 무결성 검증
-        this.sendProgress({ key: 'verifyingDownload' });
+        this.sendProgress({ key: 'verifyingDownload', source: 'install' });
         const hash = await this.computeFileHash(zipPath);
         const stat = fs.statSync(zipPath);
         if (stat.size < 1024 * 1024) {
@@ -297,6 +299,8 @@ export class OllamaManager {
         return {
           success: false,
           error: `설치 실패: ${error instanceof Error ? error.message : String(error)}. https://ollama.com 에서 수동 설치해주세요.`,
+          errorKey: 'installFailed',
+          errorParams: { detail: error instanceof Error ? error.message : String(error) },
         };
       } finally {
         try { fs.unlinkSync(zipPath); } catch { /* 무시 */ }
@@ -614,7 +618,7 @@ export class OllamaManager {
         const line = extractLastLine(data.toString());
         if (line && line !== lastProgress) {
           lastProgress = line;
-          this.sendProgress(toProgressEvent(line));
+          this.sendProgress({ ...toProgressEvent(line), source: 'pull', model });
         }
       });
 
@@ -622,7 +626,7 @@ export class OllamaManager {
         const line = extractLastLine(data.toString());
         if (line && line !== lastProgress) {
           lastProgress = line;
-          this.sendProgress(toProgressEvent(line));
+          this.sendProgress({ ...toProgressEvent(line), source: 'pull', model });
         }
       });
 

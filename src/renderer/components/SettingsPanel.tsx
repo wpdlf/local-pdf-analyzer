@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT, translateMainProgress, translateMainError } from '../lib/i18n';
+import type { MainProgressEvent } from '../lib/i18n';
 import type { AppSettings, AiProviderType } from '../types';
 import { PROVIDER_MODELS, UI_LANGUAGES, DEFAULT_SETTINGS, PROVIDER_LABELS, matchesModel } from '../types';
 import { applyTheme } from '../lib/theme';
@@ -27,7 +28,11 @@ export function SettingsPanel() {
   const [ollamaModels, setOllamaModels] = useState<string[]>(ollamaStatus.models);
   const [pullModelName, setPullModelName] = useState('');
   const [isPulling, setIsPulling] = useState(false);
-  const [pullProgress, setPullProgress] = useState('');
+  // R45(R44 후속): 진행 메시지를 이벤트로 보관하고 렌더 시점에 번역 — pull 중 언어 토글이
+  // 다음 진행 이벤트를 기다리지 않고 즉시 반영 (위자드 F8 패턴과 통일)
+  const [pullProgress, setPullProgress] = useState<
+    { kind: 'local'; key: 'setup.downloadReady' } | { kind: 'main'; ev: MainProgressEvent } | null
+  >(null);
   // v0.18.4 H2 fix: 모델 pull 실패 시 기존에는 `setPullProgress(error)` 후 같은 batch 에서
   // `setIsPulling(false)` 가 실행되어 렌더 조건 `{isPulling && pullProgress}` 가 false 가 되므로
   // 에러가 0 프레임 보임 (유저가 원인을 절대 알 수 없었음). 에러만 별도 state 로 승격해
@@ -245,18 +250,21 @@ export function SettingsPanel() {
   };
 
   const handlePullModel = async () => {
-    if (!pullModelName.trim()) return;
+    const targetModel = pullModelName.trim();
+    if (!targetModel) return;
     setIsPulling(true);
-    setPullProgress(t('setup.downloadReady'));
+    setPullProgress({ kind: 'local', key: 'setup.downloadReady' });
     // v0.18.4 H2: 이전 실패의 잔존 에러가 새 시도 중에 혼란을 주지 않도록 진입 시 클리어.
     setPullError('');
-    // R44(R43 후속 F3): main 의 구조화 이벤트를 현재 UI 언어로 번역해 표시
+    // R45(R44 후속 F4): 자기 pull 의 이벤트만 반영 — 위자드 취소 후 계속 진행되는 install
+    // 이벤트나 백그라운드 보정 pull 이벤트가 이 진행줄에 섞이던 cross-talk 차단.
     const unsubscribe = window.electronAPI.onSetupProgress((ev) => {
-      if (mountedRef.current) setPullProgress(translateMainProgress(ev));
+      if (ev.source !== 'pull' || ev.model !== targetModel) return;
+      if (mountedRef.current) setPullProgress({ kind: 'main', ev });
     });
     pullUnsubRef.current = unsubscribe;
     try {
-      const result = await window.electronAPI.ollama.pullModel(pullModelName.trim());
+      const result = await window.electronAPI.ollama.pullModel(targetModel);
       if (!mountedRef.current) return;
       if (result.success) {
         const updated = await window.electronAPI.ollama.listModels();
@@ -266,15 +274,15 @@ export function SettingsPanel() {
         if (!mountedRef.current) return;
         setOllamaStatus(status);
         setPullModelName('');
-        setPullProgress('');
+        setPullProgress(null);
       } else if (result.errorKey === 'pullCancelled') {
         // R44 I-1: 사용자가 직접 취소한 경우 — 에러 배너 없이 조용히 정리
-        setPullProgress('');
+        setPullProgress(null);
       } else {
         // v0.18.4 H2: 에러는 isPulling 과 독립된 pullError 로 표시해 finally 의
         // setIsPulling(false) 후에도 사용자에게 계속 보이도록 함.
         setPullError(translateMainError(result, t('setup.modelDownloadFail', { model: pullModelName })));
-        setPullProgress('');
+        setPullProgress(null);
       }
     } finally {
       unsubscribe();
@@ -508,14 +516,19 @@ export function SettingsPanel() {
               {isPulling ? t('settings.downloading') : t('settings.addModel')}
             </button>
           </div>
-          {isPulling && pullProgress && (
+          {isPulling && pullProgress && (() => {
+            // 렌더 시점 번역 — 언어 토글 즉시 반영 (R45)
+            const progressText = pullProgress.kind === 'local'
+              ? t(pullProgress.key)
+              : translateMainProgress(pullProgress.ev);
+            return (
             <div className="mb-3">
               <div className="flex items-center gap-2 mb-1">
                 <svg aria-hidden="true" className="animate-spin h-4 w-4 text-blue-500" viewBox="0 0 24 24" fill="none">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                <p className="flex-1 text-xs text-blue-600 dark:text-blue-400 truncate" title={pullProgress}>{pullProgress}</p>
+                <p className="flex-1 text-xs text-blue-600 dark:text-blue-400 truncate" title={progressText}>{progressText}</p>
                 {/* R44 F9: 수동 pull 도 취소 가능 — cancelPull 이 자식 프로세스를 중단하면
                     in-flight pullModel 이 실패로 resolve 되어 handlePullModel 의 finally 가 정리 */}
                 <button
@@ -526,7 +539,8 @@ export function SettingsPanel() {
                 </button>
               </div>
             </div>
-          )}
+            );
+          })()}
           <div className="flex gap-2">
             <button onClick={handleRestartOllama} className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
               {t('settings.restartOllama')}

@@ -32,6 +32,14 @@ export function extractLastLine(raw: string): string {
 export interface MainProgressEvent {
   key: string;
   params?: Record<string, string>;
+  /**
+   * R45(R44 후속 F4): 발신원 구분 — setup:progress 가 단일 채널 브로드캐스트라
+   * 위자드 취소 후 계속 진행되는 install 이벤트나 백그라운드 보정 pull 이벤트가
+   * 설정 화면의 수동 pull 진행줄에 섞여 표시되던 cross-talk 차단용.
+   */
+  source?: 'install' | 'pull';
+  /** source==='pull' 일 때 대상 모델명 — 수신자가 자기 pull 의 이벤트만 필터링 */
+  model?: string;
 }
 
 /** ollama pull 원본 출력 한 줄을 구조화 진행 이벤트로 변환 */

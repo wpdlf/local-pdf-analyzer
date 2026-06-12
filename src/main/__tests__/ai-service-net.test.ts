@@ -25,6 +25,7 @@ import {
   cleanupAiService,
   __activeRequestCount,
   retryOn429,
+  parseRetryAfterMs,
 } from '../ai-service';
 
 function makeReq() {
@@ -292,7 +293,9 @@ describe('analyzeImage (callVision → httpPost)', () => {
         });
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const p = analyzeImage('img', 'gemini', 'm', 'x', 'gkey');
-      await vi.advanceTimersByTimeAsync(2100); // 1차 백오프(2s) 경과
+      // R45: 1차 백오프 2s + jitter(최대 +25% = 2.5s) 커버 — 부족하면 본 테스트가 타임아웃되고
+      // fake timer 미복원으로 후속 retry 테스트까지 연쇄 hang 하므로 여유를 둔다
+      await vi.advanceTimersByTimeAsync(2600);
       expect(await p).toBe('재시도 성공');
       expect(M.httpsRequest).toHaveBeenCalledTimes(2);
       errSpy.mockRestore();
@@ -337,6 +340,38 @@ describe('retryOn429', () => {
     controller.abort();
     await expect(p).rejects.toThrow('Aborted');
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  // R45(R44 후속): 서버 지정 Retry-After 우선 존중
+  it('err.retryAfterMs 가 있으면 지수 백오프 대신 그 값으로 대기한다', async () => {
+    let calls = 0;
+    const fn = vi.fn(async () => {
+      calls++;
+      if (calls === 1) throw Object.assign(new Error('HTTP 429'), { status: 429, retryAfterMs: 1 });
+      return 'ok';
+    });
+    // baseDelayMs 60s — retryAfterMs(1ms) 를 무시했다면 테스트 타임아웃으로 실패한다
+    expect(await retryOn429(fn, undefined, 2, 60000)).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('parseRetryAfterMs (R45)', () => {
+  it.each([
+    ['초 단위 숫자', '30', 30000],
+    ['0초 — 즉시 재시도 허용', '0', 0],
+    ['60초 캡 초과', '3600', 60000],
+    ['배열 헤더는 첫 값', ['5', '10'] as string[], 5000],
+  ])('%s: %j → %d', (_l, h, expected) => {
+    expect(parseRetryAfterMs(h)).toBe(expected);
+  });
+
+  it.each([
+    ['undefined', undefined],
+    ['HTTP-date 형식 (미지원)', 'Wed, 21 Oct 2026 07:28:00 GMT'],
+    ['음수', '-5'],
+  ])('파싱 불가: %s → undefined', (_l, h) => {
+    expect(parseRetryAfterMs(h as never)).toBeUndefined();
   });
 });
 

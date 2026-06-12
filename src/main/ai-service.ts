@@ -39,10 +39,26 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * R44(R43 후속 M5): HTTP 429 한정 지수 백오프 재시도 (기본 2s → 4s, 최대 2회).
+ * Retry-After 헤더 파싱 (초 단위 숫자만 — HTTP-date 형식은 드물어 미지원).
+ * 60초 캡: 비정상적으로 큰 값이 vision timeout(60~90s)을 넘겨 무의미해지는 것 방지.
+ * @internal 테스트 노출용 export
+ */
+export function parseRetryAfterMs(header: string | string[] | undefined): number | undefined {
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (raw === undefined) return undefined;
+  const s = Number(raw);
+  if (!Number.isFinite(s) || s < 0) return undefined;
+  return Math.min(s * 1000, 60000);
+}
+
+/**
+ * R44(R43 후속 M5): HTTP 429 한정 백오프 재시도 (최대 2회).
  * Gemini 무료 티어는 분당 요청 한도가 낮아 Vision/OCR 배치에서 429 가 흔한데,
  * 이전엔 즉시 실패해 이미지 설명이 조용히 누락됐다. 429 외 에러는 즉시 전파,
  * 사용자 취소(signal)는 대기 중에도 즉시 중단.
+ * R45(R44 후속): 서버가 보낸 Retry-After(httpPost 가 err.retryAfterMs 로 부착)를
+ * 우선 존중하고, 없으면 지수 백오프(2s→4s)에 ±25% jitter — 동시 배치 3건이 같은
+ * 간격으로 재시도가 동기화돼 재충돌하던 패턴 완화.
  * @internal 테스트 노출용 export
  */
 export async function retryOn429<T>(
@@ -56,9 +72,12 @@ export async function retryOn429<T>(
     try {
       return await fn();
     } catch (err) {
-      const status = (err as Error & { status?: number })?.status;
-      if (status !== 429 || attempt >= retries) throw err;
-      await sleepWithAbort(baseDelayMs * Math.pow(2, attempt), signal);
+      const e = err as Error & { status?: number; retryAfterMs?: number };
+      if (e?.status !== 429 || attempt >= retries) throw err;
+      const delay = e.retryAfterMs !== undefined
+        ? e.retryAfterMs
+        : baseDelayMs * Math.pow(2, attempt) * (1 + Math.random() * 0.25);
+      await sleepWithAbort(delay, signal);
       attempt++;
     }
   }
@@ -1029,8 +1048,12 @@ function httpPost(
             detail = parsed.error?.message || parsed.error || parsed.message || detail;
           } catch { /* 비 JSON 응답은 그대로 사용 */ }
           console.error(`Vision API error: HTTP ${errStatus}${truncated ? ' (body truncated)' : ''}`, detail);
-          // R44: status 부착 — retryOn429 가 429 만 선별 재시도할 수 있도록
-          safeReject(Object.assign(new Error(`Vision API 요청 실패: HTTP ${errStatus}`), { status: errStatus }));
+          // R44: status 부착 — retryOn429 가 429 만 선별 재시도할 수 있도록.
+          // R45: Retry-After 헤더도 함께 부착 — 서버 지정 대기 시간 존중.
+          safeReject(Object.assign(new Error(`Vision API 요청 실패: HTTP ${errStatus}`), {
+            status: errStatus,
+            retryAfterMs: parseRetryAfterMs(res.headers['retry-after']),
+          }));
         };
         // 에러 바디 사이즈는 바이트 기준으로 제한 — chunk 개수 기준은 공격적/버그 서버가
         // 초대형 chunk 를 보낼 때 실질 상한이 없어짐. 성공 경로(10MB)와 달리 에러는
