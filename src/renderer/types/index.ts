@@ -219,6 +219,11 @@ export interface OpenTab {
   filePath: string;
   fileName: string;
   pageCount: number;
+  /**
+   * 콘텐츠 해시 — 세션 복원 흐름이 채움. 파일 재읽기가 실패해도(경로가 이름뿐/파일 이동)
+   * 영속 세션에서 직접 복원하는 전환 fallback 의 키 (뷰어만 비활성, 분석은 전부 복원).
+   */
+  docHash?: string;
 }
 
 // ─── 세션 영속화 (session-persistence) ───

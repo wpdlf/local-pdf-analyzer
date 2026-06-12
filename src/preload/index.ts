@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { SessionManifestEntry, SessionStats, SessionSaveMeta } from '../shared/session-types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -69,6 +69,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     if (typeof url !== 'string' || !url.startsWith('https://')) return Promise.resolve();
     return ipcRenderer.invoke('shell:open-external', url);
   },
+  // multi-doc Phase 1 fix: DOM 드래그앤드롭의 File 에서 실제 절대경로 획득 (Electron 공식
+  // webUtils API — sandboxed preload 허용 모듈). 이전엔 드롭 경로가 파일명뿐이라 탭 전환/
+  // 최근 문서 재오픈 시 file:open-path 가 파일을 찾지 못했다. 합성 File(테스트 등) 은 ''.
+  getPathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file) || '';
+    } catch {
+      return '';
+    }
+  },
   onSetupProgress: (callback: (event: { key: string; params?: Record<string, string>; source?: 'install' | 'pull'; model?: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progressEvent: { key: string; params?: Record<string, string>; source?: 'install' | 'pull'; model?: string }) => callback(progressEvent);
     ipcRenderer.on('setup:progress', handler);
@@ -138,6 +148,7 @@ export type ElectronAPI = {
     stats: () => Promise<SessionStats>;
   };
   openExternal: (url: string) => Promise<void>;
+  getPathForFile: (file: File) => string;
   onSetupProgress: (callback: (event: { key: string; params?: Record<string, string>; source?: 'install' | 'pull'; model?: string }) => void) => () => void;
   onFileDropped: (callback: (file: { path: string; name: string; data: ArrayBuffer }) => void) => () => void;
 };

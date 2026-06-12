@@ -28,7 +28,10 @@ export class OllamaManager {
   // R44 I-1: killPullProcess 가 사용자 취소 의도를 기록 — close 핸들러가 비-0 exit 를
   // '다운로드 실패'가 아닌 'pullCancelled' 로 구분해 renderer 가 에러 배너를 띄우지 않도록 한다.
   private pullCancelRequested = false;
-  private baseUrl = 'http://localhost:11434';
+  // E2E 전용 오버라이드(PDF_ANALYZER_USER_DATA 와 동일 패턴): 호스트에 실제 Ollama 가
+  // 실행 중이어도 죽은 포트를 가리키게 해 콜드 스타트 시나리오를 결정적으로 만든다.
+  // localhost 전용 정책 유지 — 외부 호스트 연결 용도가 아님.
+  private baseUrl = process.env['PDF_ANALYZER_OLLAMA_URL'] || 'http://localhost:11434';
   private startPromise: Promise<boolean> | null = null; // 동시 start() 호출 시 동일 Promise 반환
   private installPromise: Promise<{ success: boolean; error?: string }> | null = null; // 동시 install() 호출 시 동일 Promise 반환
 

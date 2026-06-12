@@ -10,17 +10,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const M = vi.hoisted(() => ({
   handlePdfData: vi.fn(() => Promise.resolve()),
   persistCurrentSession: vi.fn(() => Promise.resolve()),
+  restoreSessionForDocument: vi.fn(() => Promise.resolve()),
   openPath: vi.fn(),
+  sessionLoad: vi.fn(),
 }));
 
 vi.mock('../pdf-parser', () => ({ handlePdfData: M.handlePdfData }));
-vi.mock('../use-session', () => ({ persistCurrentSession: M.persistCurrentSession }));
+vi.mock('../use-session', () => ({
+  persistCurrentSession: M.persistCurrentSession,
+  restoreSessionForDocument: M.restoreSessionForDocument,
+}));
 
 vi.stubGlobal('window', Object.assign(window, {
   electronAPI: {
     settings: { set: vi.fn(() => Promise.resolve()), get: vi.fn(() => Promise.resolve({})) },
     ai: { embed: vi.fn(), abort: vi.fn(() => Promise.resolve()) },
     file: { openPath: M.openPath },
+    session: { load: M.sessionLoad },
   },
 }));
 
@@ -55,6 +61,7 @@ function seedTabs(paths: string[], activePath: string | null): void {
 
 beforeEach(() => {
   M.openPath.mockResolvedValue({ path: '/docs/b.pdf', name: 'b.pdf', data: new ArrayBuffer(8) });
+  M.sessionLoad.mockResolvedValue(null);
   seedTabs([], null);
 });
 
@@ -91,13 +98,48 @@ describe('switchToTab', () => {
     expect(M.openPath).not.toHaveBeenCalled();
   });
 
-  it('재오픈 실패(파일 이동/삭제) → 에러 배너 + 탭 유지 + 파싱 미진행', async () => {
+  it('재오픈 실패 + docHash 없음 → 에러 배너 + 탭 유지 + 파싱 미진행', async () => {
     seedTabs(['/docs/a.pdf', '/docs/gone.pdf'], '/docs/a.pdf');
     M.openPath.mockResolvedValue({ error: 'not found' });
     await switchToTab('/docs/gone.pdf');
     expect(M.handlePdfData).not.toHaveBeenCalled();
     expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL');
     expect(useAppStore.getState().openTabs).toHaveLength(2); // 탭 유지 — 파일 복구 후 재시도 가능
+  });
+
+  it('재오픈 실패 + docHash 있음 → 영속 세션에서 직접 복원 (뷰어만 비활성, 에러 없음)', async () => {
+    seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+    useAppStore.setState((s) => ({
+      openTabs: [...s.openTabs, { filePath: 'name-only.pdf', fileName: 'name-only.pdf', pageCount: 2, docHash: 'h'.repeat(64) }],
+    }));
+    M.openPath.mockResolvedValue({ error: 'not found' });
+    M.sessionLoad.mockResolvedValue({
+      session: {
+        schemaVersion: 1,
+        docHash: 'h'.repeat(64),
+        fileName: 'name-only.pdf',
+        filePath: 'name-only.pdf',
+        pageCount: 2,
+        extractedText: '복원된 본문 '.repeat(10),
+        pageTexts: ['p1', 'p2'],
+        chapters: [],
+        summaries: {},
+        qaMessages: [],
+        embedModel: null,
+        embedDim: null,
+        chunkMeta: [],
+      },
+      blob: null,
+    });
+
+    await switchToTab('name-only.pdf');
+
+    expect(M.handlePdfData).not.toHaveBeenCalled(); // 파일 경로 아닌 세션 복원 경로
+    expect(M.sessionLoad).toHaveBeenCalledWith('h'.repeat(64));
+    const st = useAppStore.getState();
+    expect(st.document?.fileName).toBe('name-only.pdf'); // 전환 성공
+    expect(st.error).toBeNull(); // 에러 배너 없음
+    expect(M.restoreSessionForDocument).toHaveBeenCalledTimes(1); // 요약/Q&A/인덱스 복원 위임
   });
 
   it('생성 중 전환 차단', async () => {

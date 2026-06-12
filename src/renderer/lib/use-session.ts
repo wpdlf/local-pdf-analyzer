@@ -29,6 +29,11 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
   }
   try {
     const docHash = await hashDocumentText(doc.extractedText);
+    // multi-doc Phase 1: 탭에 콘텐츠 해시 기록 — 파일 재읽기가 불가능한 탭(이름-경로/파일
+    // 이동)도 영속 세션에서 직접 복원해 전환할 수 있게 하는 fallback 키 (tabs.ts).
+    useAppStore.getState().upsertOpenTab({
+      filePath: doc.filePath, fileName: doc.fileName, pageCount: doc.pageCount, docHash,
+    });
     const res = await api.load(docHash);
     // abort-replace 레이스: 그 사이 다른 문서로 교체됐으면 아무것도 건드리지 않음(새 흐름이 관리)
     if (useAppStore.getState().document?.id !== doc.id) return;

@@ -34,7 +34,13 @@ async function launchApp(seedSettings?: Record<string, unknown>): Promise<Launch
       // sandbox 가 실패할 수 있어 CI 한정 비활성화. 로컬 실행은 샌드박스 유지.
       ...(process.env.CI ? ['--no-sandbox'] : []),
     ],
-    env: { ...process.env, PDF_ANALYZER_USER_DATA: userDataDir },
+    env: {
+      ...process.env,
+      PDF_ANALYZER_USER_DATA: userDataDir,
+      // 호스트에 실제 Ollama 가 실행 중이어도(개발 머신) 죽은 포트로 격리 —
+      // 콜드 스타트 위자드 노출 등 Ollama 상태 의존 시나리오를 결정적으로 만든다.
+      PDF_ANALYZER_OLLAMA_URL: 'http://127.0.0.1:59999',
+    },
   });
   const page = await app.firstWindow();
   const pageErrors: Error[] = [];
@@ -47,13 +53,17 @@ async function teardown(r: LaunchResult): Promise<void> {
   rmSync(r.userDataDir, { recursive: true, force: true, maxRetries: 3 });
 }
 
-/** 텍스트 50자 이상(파서의 PDF_NO_TEXT 임계)을 담은 1페이지 PDF 를 생성해 base64 로 반환 */
-async function makeSamplePdfBase64(): Promise<string> {
+/**
+ * 텍스트 50자 이상(파서의 PDF_NO_TEXT 임계)을 담은 1페이지 PDF 를 생성해 base64 로 반환.
+ * marker 로 내용을 구분 — 동일 내용 두 파일은 콘텐츠 해시가 같아 세션을 공유하므로,
+ * 멀티탭 시나리오에서는 반드시 서로 다른 내용이어야 한다.
+ */
+async function makeSamplePdfBase64(marker: string): Promise<string> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([595, 842]);
   const font = await doc.embedFont(StandardFonts.Helvetica);
   page.drawText(
-    'E2E smoke test document. This sample PDF contains enough extractable text '
+    `${marker} — E2E smoke test document. This sample PDF contains enough extractable text `
     + 'to pass the minimum length threshold of the parser pipeline.',
     { x: 50, y: 780, size: 12, font, maxWidth: 500, lineHeight: 16 },
   );
@@ -61,7 +71,9 @@ async function makeSamplePdfBase64(): Promise<string> {
 }
 
 test('콜드 스타트 — 셋업 위자드 노출 + 언어 토글 동작', async () => {
-  const r = await launchApp(); // 설정 없음 → provider 기본 ollama + 미설치 → 위자드
+  // 설정 없음 → provider 기본 ollama. PDF_ANALYZER_OLLAMA_URL(죽은 포트)로 호스트의
+  // 실제 Ollama 와 무관하게 running=false → 위자드가 결정적으로 노출된다.
+  const r = await launchApp();
   try {
     // 위자드 welcome (기본 한국어 로캘 기준 — CI 영문 로캘이어도 토글로 양방향 검증됨)
     const startKo = r.page.getByText('설정 시작');
@@ -88,7 +100,7 @@ test('PDF 드롭 → 파싱 → 문서 화면 전환 (pdfjs worker/cmaps 번들 
     await expect(r.page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible({ timeout: 15000 });
 
     // 합성 드롭 — App.tsx 의 window capture drop 핸들러 경로 (실사용 HTML5 드롭과 동일)
-    const pdfBase64 = await makeSamplePdfBase64();
+    const pdfBase64 = await makeSamplePdfBase64('SAMPLE-A');
     await r.page.evaluate((b64) => {
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const file = new File([bytes], 'sample.pdf', { type: 'application/pdf' });
@@ -101,18 +113,25 @@ test('PDF 드롭 → 파싱 → 문서 화면 전환 (pdfjs worker/cmaps 번들 
     await expect(r.page.getByText('sample.pdf (1p)')).toBeVisible({ timeout: 30000 });
     await expect(r.page.getByText('요약 유형')).toBeVisible();
 
-    // multi-doc Phase 1: 두 번째 PDF 드롭 → 탭 2개, 새 문서가 활성
+    // multi-doc Phase 1: 두 번째 PDF 드롭 → 탭 2개, 새 문서가 활성 (내용은 반드시 상이 — 해시 분리)
+    const secondBase64 = await makeSamplePdfBase64('SAMPLE-B');
     await r.page.evaluate((b64) => {
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const file = new File([bytes], 'second.pdf', { type: 'application/pdf' });
       const dt = new DataTransfer();
       dt.items.add(file);
       window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
-    }, pdfBase64);
+    }, secondBase64);
     await expect(r.page.getByText('second.pdf (1p)')).toBeVisible({ timeout: 30000 });
     const tablist = r.page.getByRole('tablist');
     await expect(tablist.getByRole('tab')).toHaveCount(2);
     await expect(tablist.getByRole('tab', { selected: true })).toContainText('second.pdf');
+
+    // 탭 전환 — 합성 드롭은 실경로가 없어 파일 재읽기가 불가능한 최악 케이스:
+    // 영속 세션 fallback 으로 분석 상태가 복원되어 전환이 성공해야 한다 (사용자 버그 재현 가드)
+    await tablist.getByRole('tab').filter({ hasText: 'sample.pdf' }).getByTitle(/sample\.pdf/).click();
+    await expect(r.page.getByText('sample.pdf (1p)')).toBeVisible({ timeout: 20000 });
+    await expect(tablist.getByRole('tab', { selected: true })).toContainText('sample.pdf');
 
     // 새 탭(+) → 업로드 화면 복귀하되 탭 2개 유지
     await r.page.getByRole('button', { name: '새 문서 열기' }).click();

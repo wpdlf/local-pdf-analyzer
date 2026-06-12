@@ -31,7 +31,7 @@ describe('preload contextBridge shape (R34 P2)', () => {
   it('top-level 키 집합 — ollama / ai / file / settings / apiKey / openExternal / onSetupProgress / onFileDropped', () => {
     const expectedTopKeys = [
       'ollama:', 'ai:', 'file:', 'settings:', 'apiKey:',
-      'openExternal:', 'onSetupProgress:', 'onFileDropped:',
+      'openExternal:', 'onSetupProgress:', 'onFileDropped:', 'getPathForFile:',
     ];
     for (const key of expectedTopKeys) {
       expect(PRELOAD_SRC).toContain(`  ${key}`);

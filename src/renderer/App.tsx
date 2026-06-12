@@ -223,7 +223,11 @@ export default function App() {
       // isParsing 선제 마킹은 제거 — handlePdfData 가 내부에서 올리고, 실패 시에도 유출 없음.
       try {
         const buffer = await file.arrayBuffer();
-        await handlePdfData(buffer, file.name, file.name);
+        // multi-doc Phase 1 fix: 드롭 File 의 실제 절대경로 사용 (webUtils.getPathForFile).
+        // 이전엔 파일명만 전달돼 탭 전환/최근 문서 재오픈 시 원본을 찾지 못했다.
+        // 합성 File(경로 없음)은 기존처럼 파일명 fallback — 전환 시 명확한 에러로 안내됨.
+        const realPath = window.electronAPI.getPathForFile?.(file) || file.name;
+        await handlePdfData(buffer, file.name, realPath);
       } catch (err) {
         useAppStore.getState().setError({
           code: 'PDF_PARSE_FAIL',

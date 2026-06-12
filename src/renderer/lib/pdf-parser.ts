@@ -3,7 +3,7 @@ import { OPS } from 'pdfjs-dist';
 import type { PdfDocument, Chapter, PageImage, AppError } from '../types';
 import { useAppStore } from './store';
 import { t } from './i18n';
-import { restoreSessionForDocument } from './use-session';
+import { restoreSessionForDocument, persistCurrentSession } from './use-session';
 import { MAX_PDF_SIZE_BYTES } from '../../shared/constants';
 // Vite의 ?url 쿼리를 사용해 worker 파일을 정적 에셋으로 번들링.
 // bare specifier + import.meta.url 패턴은 Vite에서 dev/build 동작이 다를 수 있어
@@ -683,6 +683,13 @@ export async function handlePdfData(
     // abort-replace 로 우리가 초과(supersede)된 경우, 성공한 파싱 결과를 store 에 반영하지 않는다.
     // 그렇지 않으면 오래된 문서가 새 문서를 덮어쓰는 경쟁 조건이 발생.
     if (activeParseController !== controller) return;
+    // multi-doc Phase 1: 새 문서로 교체하기 전에 이전 문서의 미저장 tail 을 flush.
+    // 자동 영속화는 1.5s 디바운스라, 로드 직후 다른 문서로 갈아타면(연속 드롭/빠른 탭 작업)
+    // 이전 세션이 디스크에 없어 탭 전환 fallback·최근 문서 복원이 실패했다.
+    if (useAppStore.getState().document) {
+      try { await persistCurrentSession(); } catch { /* best-effort */ }
+      if (activeParseController !== controller) return; // flush 중 supersede 재확인
+    }
     // 새 문서로 교체되므로 이전 문서의 요약/Q&A/진행률 상태를 모두 초기화
     // (드롭/Ctrl+O로 덮어쓸 때 이전 문서의 summaryStream·qaMessages가 새 문서의 헤더와
     // 섞여 표시되는 버그 방지)
