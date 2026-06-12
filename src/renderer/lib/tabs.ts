@@ -98,6 +98,7 @@ async function openTabTarget(tab: OpenTab): Promise<boolean> {
 
 /** 탭 전환 — 이미 활성이면 no-op. 파일/세션 모두 복원 불가 시 에러 배너 + 탭 유지 */
 export async function switchToTab(filePath: string): Promise<void> {
+  console.warn('[tabs] switchToTab 진입:', filePath);
   const store = useAppStore.getState();
   if (store.document?.filePath === filePath) {
     console.warn('[tabs] 전환 no-op: 클릭한 탭이 이미 활성으로 판정', filePath);
@@ -122,6 +123,8 @@ export async function switchToTab(filePath: string): Promise<void> {
   const ok = await openTabTarget(tab);
   if (!ok) {
     useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('tabs.switchFail') });
+  } else {
+    console.warn('[tabs] 전환 완료:', filePath);
   }
 }
 

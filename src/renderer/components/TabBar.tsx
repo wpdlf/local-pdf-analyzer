@@ -31,6 +31,14 @@ export function TabBar() {
             key={tab.filePath}
             role="tab"
             aria-selected={isActive}
+            // 진단(영구): 내부 버튼이 disabled 면 클릭 이벤트가 소실돼 어떤 로그도 남지 않는다 —
+            // 부모에서 클릭을 항상 관찰해 "무반응" 보고 시 차단 상태를 콘솔로 확정한다.
+            onClick={() => {
+              console.warn('[tabs] tab click', {
+                target: tab.filePath, isActive, blocked,
+                isGenerating, isQaGenerating, isParsing, activePath,
+              });
+            }}
             className={`group flex items-center gap-1 max-w-48 shrink-0 rounded-t px-2 py-1 text-xs border-b-2 transition-colors ${
               isActive
                 ? 'border-blue-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 font-medium'

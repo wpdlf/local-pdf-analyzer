@@ -57,6 +57,12 @@ export default function App() {
   // session-persistence(module-3): 요약·Q&A·인덱스 변경이 settle 되면 자동 저장.
   useSessionPersistence();
 
+  // 코드 신선도 마커(임시 진단): dev 재시작/HMR 반영 여부를 콘솔에서 즉시 판별.
+  // 탭 전환 버그 확정 후 제거 예정.
+  useEffect(() => {
+    console.warn('[diag] tabs-diag-v3 active — 탭 클릭 시 [tabs] tab click 로그가 반드시 출력됩니다');
+  }, []);
+
   // 초기화: 설정 로드 + Ollama 상태 확인
   useEffect(() => {
     let aborted = false;
