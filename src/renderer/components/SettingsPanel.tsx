@@ -495,7 +495,7 @@ export function SettingsPanel() {
           <div className="flex flex-wrap gap-1.5 mb-3">
             {[
               { name: 'gemma3', desc: t('settings.koreanGood') },
-              { name: 'qwen2.5', desc: t('settings.multilingual') },
+              { name: 'qwen3.5:4b', desc: t('settings.multilingual') },
               { name: 'exaone3.5', desc: t('settings.koreanSpecial') },
               { name: 'llama3.2', desc: t('settings.generalLight') },
               { name: 'phi3', desc: t('settings.ultraLight') },

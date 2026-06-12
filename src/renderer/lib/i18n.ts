@@ -84,8 +84,8 @@ export const _translations = {
   'selector.summaryType': { ko: '요약 유형', en: 'Summary type' },
   'selector.summaryLang': { ko: '요약 언어', en: 'Output language' },
   'selector.modelWarning': {
-    ko: '{model}은 한국어 특화 모델이라 다른 언어 출력이 제한적입니다. 설정에서 gemma3 또는 qwen2.5로 변경하면 더 나은 결과를 얻을 수 있습니다.',
-    en: '{model} is a Korean-specialized model with limited multilingual output. Switch to gemma3 or qwen2.5 in settings for better results.',
+    ko: '{model}은 한국어 특화 모델이라 다른 언어 출력이 제한적입니다. 설정에서 gemma3 또는 qwen3.5로 변경하면 더 나은 결과를 얻을 수 있습니다.',
+    en: '{model} is a Korean-specialized model with limited multilingual output. Switch to gemma3 or qwen3.5 in settings for better results.',
   },
 
   // ─── SummaryViewer ───
@@ -151,7 +151,7 @@ export const _translations = {
   'settings.model': { ko: '모델', en: 'Model' },
   'settings.apiBilling': { ko: 'API 사용량에 따라 요금이 부과됩니다.', en: 'Charges apply based on API usage.' },
   'settings.noModels': { ko: 'Ollama에 설치된 모델이 없습니다. 아래에서 모델을 추가해주세요.', en: 'No models installed in Ollama. Please add a model below.' },
-  'settings.modelRecommend': { ko: '한국어 요약에는 gemma3, qwen2.5 모델을 권장합니다.', en: 'gemma3 and qwen2.5 are recommended for Korean summaries.' },
+  'settings.modelRecommend': { ko: '한국어 요약에는 gemma3, qwen3.5 모델을 권장합니다.', en: 'gemma3 and qwen3.5 are recommended for Korean summaries.' },
   'settings.dismissPullError': { ko: '오류 메시지 닫기', en: 'Dismiss error message' },
   'settings.closePanel': { ko: '설정 패널 닫기', en: 'Close settings panel' },
   'settings.apiKeyMgmt': { ko: 'API 키 관리', en: 'API Key Management' },
@@ -170,9 +170,9 @@ export const _translations = {
   'settings.ollamaStopped': { ko: '⚠️ 중지됨', en: '⚠️ Stopped' },
   'settings.installedModels': { ko: '설치된 모델', en: 'Installed models' },
   'settings.recommendedModels': { ko: '추천 모델 (클릭하여 설치):', en: 'Recommended models (click to install):' },
-  'settings.koreanGood': { ko: '한국어 우수', en: 'Good Korean' },
-  'settings.multilingual': { ko: '다국어 강점', en: 'Multilingual' },
-  'settings.koreanSpecial': { ko: '한국어 특화', en: 'Korean specialized' },
+  'settings.koreanGood': { ko: '한국어 우수 (약 3.3GB)', en: 'Good Korean (~3.3GB)' },
+  'settings.multilingual': { ko: '다국어·멀티모달 (약 3.4GB)', en: 'Multilingual · multimodal (~3.4GB)' },
+  'settings.koreanSpecial': { ko: '한국어 특화 (약 4.8GB)', en: 'Korean specialized (~4.8GB)' },
   'settings.generalLight': { ko: '범용 경량', en: 'General lightweight' },
   'settings.ultraLight': { ko: '초경량', en: 'Ultra light' },
   'settings.modelPlaceholder': { ko: '모델명 (예: gemma3)', en: 'Model name (e.g., gemma3)' },

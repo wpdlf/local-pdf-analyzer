@@ -9,6 +9,8 @@ export default defineConfig({
   timeout: 60000,
   // Electron 은 requestSingleInstanceLock — 같은 userData 가 아니어도 직렬 실행이 안전
   workers: 1,
-  retries: process.env.CI ? 1 : 0,
+  // 첫 Electron 콜드 기동이 간헐적으로 느려(빌드 직후 파일 캐시 미적재) 가시성 타임아웃을
+  // 넘기는 flake 가 관측됨 — 신규 트랙 안정화 동안 로컬도 1회 재시도.
+  retries: 1,
   reporter: process.env.CI ? 'line' : 'list',
 });

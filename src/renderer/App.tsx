@@ -302,9 +302,10 @@ export default function App() {
       // split(':')[0] 은 input 이 빈 문자열이어도 빈 문자열 한 개 원소를 가진 배열을 반환하지만,
       // noUncheckedIndexedAccess 는 인덱싱 후 string|undefined 로 본다. fallback ''.
       const currentModel = settings.model.split(':')[0] ?? '';
-      // R43 F1 동류: startsWith 는 'gemma3n' 이 'gemma3' 추천에 오매칭 — 베이스명 정확 일치로 판정
+      // R43 F1 동류: startsWith 는 'gemma3n' 이 'gemma3' 추천에 오매칭 — 베이스명 정확 일치로 판정.
+      // R45: 추천 목록이 태그 포함 항목('qwen3.5:4b')을 가지므로 양쪽 모두 베이스명으로 비교.
       const isKoreanModel = KOREAN_RECOMMENDED_MODELS.some(
-        (m) => currentModel === m,
+        (m) => currentModel === (m.split(':')[0] ?? m),
       );
       if (!isKoreanModel) {
         setModelHint(

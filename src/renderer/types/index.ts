@@ -194,8 +194,12 @@ export interface AppError {
   details?: string;
 }
 
-// 한국어 성능이 우수한 Ollama 추천 모델
-export const KOREAN_RECOMMENDED_MODELS = ['gemma3', 'qwen2.5', 'exaone3.5'];
+// 한국어 성능이 우수한 Ollama 추천 모델 — "보급형 크기(3~5GB)" 큐레이션.
+// R45: qwen2.5 → qwen3.5:4b 세대교체. 태그를 명시하는 이유: bare 'qwen3.5' 는 기본 태그
+// (9b, 6.6GB)로 설치돼 목록의 크기 대역을 벗어난다. 소비자 매칭 주의 — App.tsx 힌트는
+// 베이스명 비교이므로 항목의 베이스(`split(':')[0]`)와 대조해야 한다.
+// gemma4 는 최소 변형이 7.2GB(e2b)라 보류 — 소형 변형 출시 시 재검토.
+export const KOREAN_RECOMMENDED_MODELS = ['gemma3', 'qwen3.5:4b', 'exaone3.5'];
 
 // 초기 설치 시 반드시 다운로드할 모델 (범용 요약 + RAG 임베딩, 약 3.6GB).
 // exaone3.5(약 4.8GB)는 한국어 특화 품질 부스터라 첫 설치에서 선택 옵션으로 분리 —
