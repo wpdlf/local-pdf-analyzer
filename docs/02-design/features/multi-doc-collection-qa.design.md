@@ -16,7 +16,7 @@ version_project: 0.22.0
 > **Version**: 0.22.0
 > **Author**: jjw
 > **Date**: 2026-06-15
-> **Status**: Scope Confirmed (§12 Open Questions 전부 보수적 기본값으로 확정 — Do 착수 가능)
+> **Status**: Implemented (module-1~3 완료, v0.22.0 기준 — §13 Implementation Status 참조)
 > **Depends on**: multi-doc Phase 1 (v0.22.0, openTabs/탭 전환), session-persistence (index.bin/PersistedSession)
 
 ---
@@ -363,9 +363,30 @@ src/renderer/
 
 ---
 
+## 13. Implementation Status (module-3 gap 분석)
+
+구현 완료. SCOPE In 항목과 결정 5건의 구현·테스트 매핑:
+
+| 요구 (SCOPE In / 결정) | 구현 위치 | 테스트 |
+|------------------------|-----------|--------|
+| 컬렉션 Q&A 모드 | store.collection + use-qa.handleAsk 분기 | store L3, collection E2E |
+| 멤버 선택 UI + 동질성 배지 | components/CollectionBar.tsx | CollectionBar L3 (6) |
+| 멤버별 온디맨드 인덱스 로드 | use-qa.loadMemberIndex (활성=메모리/비활성=세션 복원, 캐시) | qa-collection-search L2 |
+| 병합 검색 | collection.mergeSearchResults + collectionRagSearch | collection L1, L2 |
+| 동질성 게이트 | collection.resolveMembers | collection L1 (전 분기) |
+| 결정3 문서명 인용 클릭 → 탭전환+페이지점프 | citation.ts(명명그룹) + CitationButton(docName) | citation L1(교차5), CitationButton L3(교차5) |
+| 결정5 컬렉션 인덱스 답변 검증(질의 내 캐시 재사용) | RagVerifier(storeVerifier/collectionVerifier) | qa-collection-verify (6) |
+| 전체 통합(요약→토글→교차질문) | — | collection.spec.ts E2E (로컬, 실 Ollama) |
+
+**Gap / 관찰 (후속 검토용, 차단 아님)**:
+- QaChat 은 `summaryStream && !isGenerating` 일 때만 마운트 → 컬렉션 바는 **활성 문서 요약 후** 노출. Q&A 자체가 요약 후 기능이라 정합적이나, 멤버(타 문서)도 검색되려면 각자 세션 인덱스가 있어야 함(요약/인덱싱 선행). 의도된 제약.
+- `collection.enabled`/`memberHashes` 는 문서 닫기/전환 시 리셋하지 않음. stale docHash 는 resolveMembers 가 `missing` 으로 안전 제외하고, CollectionBar 는 후보를 openTabs 로 한정하므로 무해(YAGNI — 리셋 미도입).
+- 페이지 메타 없는 청크의 컨텍스트 라벨은 `[문서명]`(페이지 없음)이라 인용 토큰으로 파싱되지 않음 — pageTexts 있는 정상 문서에선 발생 거의 없음.
+
 ## Version History
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
 | 0.1 | 2026-06-15 | Initial draft (Option C selected) — Plan 선행 없이 범위 합의용 초안 | jjw |
 | 0.2 | 2026-06-15 | §12 Open Questions 전부 보수적 기본값으로 확정 → Status: Scope Confirmed | jjw |
+| 0.3 | 2026-06-15 | module-1~3 구현 완료 + §13 gap 분석 → Status: Implemented | jjw |
