@@ -41,30 +41,50 @@ function safeId(): string {
 }
 
 /**
- * 탭 대상 문서 열기 — ① 파일 재읽기(정상 경로) → ② 실패 시 영속 세션 직접 복원.
+ * 탭 대상 문서 열기 — ① 영속 세션 우선 복원(재파싱 0, 즉시 전환) → ② 세션 없을 때만 전체 파싱.
  * 성공 시 true. 둘 다 불가하면 false (호출자가 에러 표시/정리 담당).
+ *
+ * ★ 핵심: 탭 전환마다 handlePdfData(parsePdf) 로 PDF 를 통째로 재파싱하면 대용량/이미지
+ * PDF 에서 이미지 추출·OCR 에 수십 초가 걸려 "전환이 안 되는" 것처럼 보인다(parsePdf 가
+ * 끝날 때까지 isParsing=true 로 후속 클릭까지 차단). 파싱 결과는 이미 세션에 영속화돼 있으므로
+ * 재사용해 즉시 전환하고, 뷰어용 원본 바이트만 파싱 없이 파일에서 읽어 주입한다.
  */
 async function openTabTarget(tab: OpenTab): Promise<boolean> {
-  // ① 보안 가드 동일 적용된 재읽기 → 파싱 → 해시 복원 (뷰어 포함 완전 복원)
+  // ① 세션 우선: 콘텐츠 해시로 저장된 분석 상태(텍스트/요약/Q&A/인덱스)를 즉시 복원
+  if (tab.docHash) {
+    if (await restoreTabFromSession(tab)) return true;
+    console.warn('[tabs] 세션 복원 불가 — 파일 재파싱 fallback:', tab.filePath);
+  }
+
+  // ② 세션 미생성(요약/인덱스 전 + persist off 등) — 파일에서 전체 파싱 (보안 가드 동일 적용)
   const result = await window.electronAPI.file.openPath(tab.filePath).catch(() => ({ error: 'ipc' as const }));
   if (!('error' in result)) {
     await handlePdfData(result.data, result.name, result.path);
     return true;
   }
-  console.warn('[tabs] 파일 재읽기 실패 — 세션 fallback 시도:', tab.filePath, result.error);
+  console.warn('[tabs] 전환 실패: 세션 없음 + 파일 재읽기 불가', tab.filePath, result.error);
+  return false;
+}
 
-  // ② 파일을 찾을 수 없음 — 영속 세션에서 분석 상태만 직접 복원 (뷰어 비활성)
-  // 실패 지점별 진단 warn: 사용자 재현 시 DevTools 콘솔로 원인을 확정하기 위한 영구 로그
-  if (!tab.docHash) {
-    console.warn('[tabs] 전환 실패: 파일 재읽기 불가 + 탭에 docHash 없음', tab.filePath);
-    return false;
-  }
+/**
+ * 영속 세션에서 탭을 복원 — 재파싱 없이 즉시 전환. 뷰어용 원본 바이트는 파싱 없이 파일만
+ * 읽어 주입(읽기 실패 시 뷰어만 비활성, 분석은 그대로 복원). 세션 부재/손상 시 false.
+ */
+async function restoreTabFromSession(tab: OpenTab): Promise<boolean> {
+  if (!tab.docHash) return false;
   const loaded = await window.electronAPI.session.load(tab.docHash).catch(() => null);
   const session = loaded?.session as PersistedSession | undefined;
   if (!session || typeof session.extractedText !== 'string' || !Array.isArray(session.pageTexts)) {
-    console.warn('[tabs] 전환 실패: 파일 재읽기 불가 + 영속 세션 없음/손상', tab.filePath, tab.docHash);
     return false;
   }
+
+  // 뷰어용 원본 바이트: 파일만 읽음(파싱 없음 — 빠름). 실패해도 분석 복원은 진행(뷰어만 비활성).
+  let pdfBytes: Uint8Array | null = null;
+  const fileRes = await window.electronAPI.file.openPath(tab.filePath).catch(() => null);
+  if (fileRes && !('error' in fileRes)) {
+    try { pdfBytes = new Uint8Array(fileRes.data); } catch { pdfBytes = null; }
+  }
+
   const doc: PdfDocument = {
     id: safeId(),
     // 세션은 콘텐츠 주소(해시) 기반이라 동일 내용의 다른 파일이 마지막 저장자의 이름으로
@@ -75,11 +95,11 @@ async function openTabTarget(tab: OpenTab): Promise<boolean> {
     extractedText: session.extractedText,
     pageTexts: session.pageTexts,
     chapters: Array.isArray(session.chapters) ? session.chapters : [],
-    images: [],
+    images: [], // 이미지는 미영속화 — 재요약 시에만 필요, 전환 즉시성 우선
     createdAt: new Date(),
     isOcr: session.isOcr,
   };
-  // handlePdfData 성공 블록과 동일한 정리 시퀀스 (pdfBytes 만 null — 뷰어 비활성)
+  // handlePdfData 성공 블록과 동일한 정리 시퀀스
   const s = useAppStore.getState();
   s.clearStream();
   s.setSummary(null);
@@ -87,35 +107,23 @@ async function openTabTarget(tab: OpenTab): Promise<boolean> {
   s.setProgressInfo(null);
   s.clearQa();
   s.setDocument(doc);
-  s.setPdfBytes(null);
+  s.setPdfBytes(pdfBytes);
   s.upsertOpenTab({ filePath: tab.filePath, fileName: doc.fileName, pageCount: doc.pageCount, docHash: tab.docHash });
   s.setSessionRestorePending(true);
   // 동일 콘텐츠 → 동일 해시 → 복원 hit (요약/Q&A/인덱스, 재임베딩 0)
   void restoreSessionForDocument(doc);
   s.setError(null);
+  s.setNotice(null);
   return true;
 }
 
 /** 탭 전환 — 이미 활성이면 no-op. 파일/세션 모두 복원 불가 시 에러 배너 + 탭 유지 */
 export async function switchToTab(filePath: string): Promise<void> {
-  console.warn('[tabs] switchToTab 진입:', filePath);
   const store = useAppStore.getState();
-  if (store.document?.filePath === filePath) {
-    console.warn('[tabs] 전환 no-op: 클릭한 탭이 이미 활성으로 판정', filePath);
-    return;
-  }
-  if (isTabSwitchBlocked()) {
-    console.warn('[tabs] 전환 차단:', {
-      isGenerating: store.isGenerating, isQaGenerating: store.isQaGenerating, isParsing: store.isParsing,
-    });
-    return;
-  }
+  if (store.document?.filePath === filePath) return;
+  if (isTabSwitchBlocked()) return;
   const tab = findTab(filePath);
-  if (!tab) {
-    console.warn('[tabs] 전환 실패: openTabs 에 해당 filePath 없음', filePath,
-      useAppStore.getState().openTabs.map((tb) => tb.filePath));
-    return;
-  }
+  if (!tab) return;
 
   // 현재 문서의 미저장 tail 보존 (persistChain 직렬화 — 내부에서 생성 중/게이트 검사)
   await persistCurrentSession();
@@ -123,8 +131,6 @@ export async function switchToTab(filePath: string): Promise<void> {
   const ok = await openTabTarget(tab);
   if (!ok) {
     useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('tabs.switchFail') });
-  } else {
-    console.warn('[tabs] 전환 완료:', filePath);
   }
 }
 
