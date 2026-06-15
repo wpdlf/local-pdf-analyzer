@@ -94,8 +94,12 @@ describe('buildCollectionSummaryPrompt (L1)', () => {
     expect(p).toContain('통합');
   });
 
-  it('비교: 비교 지시(ko)', () => {
-    expect(buildCollectionSummaryPrompt('comparison', blocks, 'ko')).toContain('비교');
+  it('비교: 비교 지시 + 표 금지 + 공통점/차이점 섹션(ko) — 소형 모델 표 깨짐 방지', () => {
+    const p = buildCollectionSummaryPrompt('comparison', blocks, 'ko');
+    expect(p).toContain('비교');
+    expect(p).toContain('표는 사용하지 말고'); // 마크다운 표 금지
+    expect(p).toContain('공통점');
+    expect(p).toContain('차이점');
   });
 
   it('en 은 영문 지시', () => {

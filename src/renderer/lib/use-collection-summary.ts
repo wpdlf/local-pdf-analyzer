@@ -45,8 +45,10 @@ export function buildCollectionSummaryPrompt(
   const ko = language === 'ko'; // ko 외(en/ja 등)는 중립적 영문 지시
   const instruction = kind === 'comparison'
     ? (ko
-      ? '다음 여러 문서의 내용을 항목별로 비교 분석하라. 공통점·차이점을 표 또는 항목으로 정리하고, 각 근거에 출처를 [문서명 p.N] 형식으로 표기하라.'
-      : 'Compare the following documents point by point. Summarize commonalities and differences as a table or bullet list, citing each point with [filename p.N].')
+      // 소형 로컬 모델은 마크다운 표 구분선(|---|)을 자주 빠뜨려 표가 깨진다. 글머리표를
+      // 우선시키고 표는 금지해 렌더 안정성을 확보(R: 비교 결과 깨짐 수정).
+      ? '다음 여러 문서의 내용을 비교 분석하라. **마크다운 표는 사용하지 말고**, "## 공통점"과 "## 차이점" 두 섹션으로 나눠 각 항목을 글머리표(- )로 정리하라. 차이점은 문서별로 어떻게 다른지 명시하고, 각 근거에 출처를 [문서명 p.N] 형식으로 표기하라.'
+      : 'Compare the following documents. **Do not use markdown tables.** Use two sections "## Commonalities" and "## Differences" with bullet points (- ); for differences, state how each document differs, and cite each point with [filename p.N].')
     : (ko
       ? '다음 여러 문서의 내용을 하나로 통합 요약하라. 문서 간 관계를 드러내고, 각 핵심 사실에 출처를 [문서명 p.N] 형식으로 표기하라.'
       : 'Synthesize the following documents into one unified summary. Surface relationships across documents and cite each key fact with [filename p.N].');
