@@ -103,7 +103,7 @@ export async function saveCollection(
   if (docHashes.length === 0 || name.length === 0) return { ok: false }; // 빈 멤버/이름은 거부
   const nowIso = new Date(now).toISOString();
   try {
-    const collections = await loadFile(filePath);
+    let collections = await loadFile(filePath);
     const id = typeof input.id === 'string' && input.id.length > 0 ? input.id : randomUUID();
     const existing = collections.find((c) => c.id === id);
     if (existing) {
@@ -113,10 +113,18 @@ export async function saveCollection(
     } else {
       collections.push({ id, name, docHashes, createdAt: nowIso, lastAccessed: nowIso });
     }
-    // LRU: 개수 초과 시 가장 오래된 것부터 제거
+    // LRU: 개수 초과 시 가장 오래된 것부터 제거. 단 방금 저장/갱신한 id 는 절대 제거 대상에서
+    // 제외(R47: 동률 lastAccessed 에서 신규 항목이 evict 돼 ok:true 인데 디스크엔 없는 문제 차단).
     if (collections.length > COLLECTION_MAX_COUNT) {
-      collections.sort((a, b) => a.lastAccessed.localeCompare(b.lastAccessed));
-      collections.splice(0, collections.length - COLLECTION_MAX_COUNT);
+      const evictCount = collections.length - COLLECTION_MAX_COUNT;
+      const evictIds = new Set(
+        [...collections]
+          .filter((c) => c.id !== id)
+          .sort((a, b) => a.lastAccessed.localeCompare(b.lastAccessed))
+          .slice(0, evictCount)
+          .map((c) => c.id),
+      );
+      collections = collections.filter((c) => !evictIds.has(c.id));
     }
     await saveFile(filePath, collections);
     return { ok: true, id };

@@ -84,7 +84,9 @@ export function CollectionBar() {
   const memberHashesToSave = candidates
     .filter((c) => c.docHash === activeDocHash || collection.memberHashes.includes(c.docHash as string))
     .map((c) => c.docHash as string);
-  const defaultName = candidates.find((c) => c.docHash === memberHashesToSave[0])?.fileName
+  // 기본 이름은 활성 문서명 우선(없으면 첫 멤버) — 활성 강제 포함 정책과 명명 직관 일치(R47)
+  const defaultName = activeTab?.fileName
+    ?? candidates.find((c) => c.docHash === memberHashesToSave[0])?.fileName
     ?? candidates[0]?.fileName ?? '';
 
   const handleSave = async (): Promise<void> => {
@@ -92,7 +94,12 @@ export function CollectionBar() {
     if (!name || memberHashesToSave.length < 2) return;
     setSaving(false);
     const r = await saveCollection({ name, docHashes: memberHashesToSave });
-    useAppStore.getState().setNotice({ message: r.ok ? t('collection.saved') : t('collection.saveFail') });
+    if (r.ok) {
+      useAppStore.getState().setNotice({ message: t('collection.saved') });
+    } else {
+      // 실패는 setError(닫기 전까지 잔존)로 통일 — notice(자동소멸)면 놓치기 쉬움(R47)
+      useAppStore.getState().setError({ code: 'GENERATE_FAIL', message: t('collection.saveFail') });
+    }
     setSaveName('');
   };
 

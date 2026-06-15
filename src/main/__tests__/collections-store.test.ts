@@ -108,6 +108,21 @@ describe('saveCollection', () => {
     // 가장 오래된 c0 은 제거됨
     expect(file.collections.some((c) => c.name === 'c0')).toBe(false);
   });
+
+  it('R47: 동률 lastAccessed 에서도 방금 저장한 항목은 evict 되지 않음', async () => {
+    const hashFor = (i: number) => i.toString(16).padStart(2, '0').repeat(32);
+    // 상한까지 모두 같은 시각(T0)으로 채움
+    for (let i = 0; i < COLLECTION_MAX_COUNT; i++) {
+      await saveCollection(FILE, { name: `c${i}`, docHashes: [hashFor(i)] }, T0);
+    }
+    // 상한 초과 신규 항목을 같은 시각(T0)으로 추가 — 동률
+    const r = await saveCollection(FILE, { name: 'newest', docHashes: [hashFor(99)] }, T0);
+    expect(r.ok).toBe(true);
+    const file = readFile();
+    expect(file.collections.length).toBe(COLLECTION_MAX_COUNT);
+    // 동률이어도 방금 저장한 newest 는 살아있어야 함(ok:true 인데 디스크엔 없는 문제 차단)
+    expect(file.collections.some((c) => c.id === r.id && c.name === 'newest')).toBe(true);
+  });
 });
 
 describe('deleteCollection', () => {

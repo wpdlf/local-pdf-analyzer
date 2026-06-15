@@ -199,7 +199,10 @@ export async function openNewTabView(): Promise<void> {
 export async function openCollection(docHashes: string[]): Promise<{ opened: number; total: number }> {
   let opened = 0;
   let activated = false;
+  const seen = new Set<string>(); // R47: 중복 docHash 가 opened 를 과다 집계하지 않도록
   for (const docHash of docHashes) {
+    if (seen.has(docHash)) continue;
+    seen.add(docHash);
     const loaded = await window.electronAPI.session.load(docHash).catch(() => null);
     const session = loaded?.session as PersistedSession | undefined;
     if (!session || typeof session.fileName !== 'string' || typeof session.filePath !== 'string') {
@@ -219,5 +222,5 @@ export async function openCollection(docHashes: string[]): Promise<{ opened: num
       activated = true;
     }
   }
-  return { opened, total: docHashes.length };
+  return { opened, total: seen.size }; // 고유 멤버 기준(중복 제외)으로 부분 복원 판정
 }
