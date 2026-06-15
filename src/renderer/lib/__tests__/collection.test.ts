@@ -13,9 +13,10 @@ function entry(over: Partial<SessionManifestEntry> & { docHash: string }): Sessi
     fileName: over.fileName ?? `${over.docHash}.pdf`,
     filePath: over.filePath ?? `/d/${over.docHash}.pdf`,
     pageCount: over.pageCount ?? 10,
-    // 명시적 null 을 보존해야 'embedModel null → no-index' 케이스가 검증된다(?? 는 null 을 기본값으로 덮음)
-    embedModel: 'embedModel' in over ? over.embedModel : 'nomic-embed-text',
-    embedDim: 'embedDim' in over ? over.embedDim : 768,
+    // 명시적 null 을 보존해야 'embedModel null → no-index' 케이스가 검증된다.
+    // 키 미존재 시에만 기본값, 존재 시 값 유지(undefined 만 null 로 정규화 — 타입 string|null 충족).
+    embedModel: 'embedModel' in over ? (over.embedModel ?? null) : 'nomic-embed-text',
+    embedDim: 'embedDim' in over ? (over.embedDim ?? null) : 768,
     chunkCount: over.chunkCount ?? 5,
     byteSize: over.byteSize ?? 1000,
     createdAt: over.createdAt ?? '2026-06-15T00:00:00.000Z',
