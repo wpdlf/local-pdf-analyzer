@@ -542,12 +542,12 @@ async function loadReadyMemberStores(
 export async function resolveCollectionSearch(
   question: string,
   signal?: AbortSignal,
-): Promise<{ ragResult: string | null; verifier?: RagVerifier }> {
+): Promise<{ ragResult: string | null; verifier?: RagVerifier; degraded: boolean }> {
   const st = useAppStore.getState();
-  if (!st.collection.enabled) return { ragResult: null };
+  if (!st.collection.enabled) return { ragResult: null, degraded: false };
   const activeTab = st.openTabs.find((tb) => tb.filePath === st.document?.filePath);
   const activeDocHash = activeTab?.docHash;
-  if (!activeDocHash) return { ragResult: null };
+  if (!activeDocHash) return { ragResult: null, degraded: false };
 
   const memberHashes = st.collection.memberHashes.includes(activeDocHash)
     ? st.collection.memberHashes
@@ -559,12 +559,16 @@ export async function resolveCollectionSearch(
     manifest,
     st.openTabs,
   );
+  const readyCount = members.filter((m) => m.status === 'ready').length;
   // 검색·검증이 같은 cache 공유 → 멤버 인덱스 1회만 로드(설계 §12-5)
   const cache = new Map<string, VectorStore>();
   const ragResult = await collectionRagSearch(question, members, activeDocHash, signal, cache);
-  if (!ragResult) return { ragResult: null };
+  // 강등 판정: 컬렉션을 켰는데 (교차 결과 없음 → 단일 폴백) 또는 (검색 가능 멤버가 1개뿐)인 경우.
+  // 호출자가 사용자에게 "현재 문서로만 답변" 안내를 띄우도록 신호.
+  const degraded = !ragResult || readyCount < 2;
+  if (!ragResult) return { ragResult: null, degraded };
   const stores = await loadReadyMemberStores(members, activeDocHash, cache);
-  return { ragResult, verifier: stores.length > 0 ? collectionVerifier(stores) : undefined };
+  return { ragResult, verifier: stores.length > 0 ? collectionVerifier(stores) : undefined, degraded };
 }
 
 // ─── 답변 검증 (v0.18.0) ───
@@ -961,6 +965,14 @@ export function useQa() {
         const collected = await resolveCollectionSearch(trimmed, ragSignal);
         ragResult = collected.ragResult;
         answerVerifier = collected.verifier;
+        // 컬렉션 강등 안내: 교차 검색이 제한되어 일부 문서로만 답한 경우 사용자에게 통지.
+        // 정상 교차 검색이면 직전에 띄운 우리 강등 안내만 정리(다른 notice 는 보존).
+        const notice = useAppStore.getState().notice;
+        if (collected.degraded) {
+          useAppStore.getState().setNotice({ message: t('collection.degradedNotice') });
+        } else if (notice?.message === t('collection.degradedNotice')) {
+          useAppStore.getState().setNotice(null);
+        }
       }
 
       // 단일 문서 경로(컬렉션 비활성 또는 ready 멤버 0)

@@ -73,21 +73,40 @@ beforeEach(() => {
 });
 
 describe('resolveCollectionSearch', () => {
-  it('컬렉션 비활성이면 즉시 null (session.list/embed 미호출)', async () => {
+  it('컬렉션 비활성이면 즉시 null (session.list/embed 미호출), degraded=false', async () => {
     setActive(['a'.repeat(64), 'b'.repeat(64)], false);
     const out = await resolveCollectionSearch('질문');
-    expect(out).toEqual({ ragResult: null });
+    expect(out).toEqual({ ragResult: null, degraded: false });
     expect(mockSessionList).not.toHaveBeenCalled();
     expect(mockEmbed).not.toHaveBeenCalled();
   });
 
-  it('활성+비활성 멤버 교차 검색 → 두 문서 출처 포함 + 컬렉션 verifier 반환', async () => {
+  it('활성+비활성 멤버 교차 검색 → 두 문서 출처 포함 + verifier + degraded=false', async () => {
     seedActiveIndex();
     setActive(['a'.repeat(64), 'b'.repeat(64)]);
     const out = await resolveCollectionSearch('질문');
     expect(out.ragResult).toContain('[Alpha.pdf p.2]');
     expect(out.ragResult).toContain('[Beta.pdf p.7]');
     expect(out.verifier?.size).toBeGreaterThan(0); // 멤버 인덱스 기반 검증기
+    expect(out.degraded).toBe(false); // ready 2개 + 교차 결과 → 정상
+  });
+
+  it('검색 가능 멤버가 활성 1개뿐(나머지 모델 불일치)이면 degraded=true', async () => {
+    seedActiveIndex();
+    mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), 'other-model', 1536)]); // Beta 제외
+    setActive(['a'.repeat(64), 'b'.repeat(64)]);
+    const out = await resolveCollectionSearch('질문');
+    expect(out.ragResult).toContain('[Alpha.pdf p.2]'); // 활성으로 답변은 됨
+    expect(out.degraded).toBe(true); // 단 검색 가능 문서가 1개뿐 → 강등 통지
+  });
+
+  it('교차 결과 없음(임베딩 실패)이면 ragResult null + degraded=true', async () => {
+    seedActiveIndex();
+    mockEmbed.mockResolvedValue({ success: false, error: 'fail' });
+    setActive(['a'.repeat(64), 'b'.repeat(64)]);
+    const out = await resolveCollectionSearch('질문');
+    expect(out.ragResult).toBeNull();
+    expect(out.degraded).toBe(true);
   });
 
   it('활성 문서가 memberHashes 에 없어도 강제 포함되어 검색됨', async () => {
@@ -112,6 +131,6 @@ describe('resolveCollectionSearch', () => {
       collection: { enabled: true, memberHashes: [] },
     });
     const out = await resolveCollectionSearch('질문');
-    expect(out).toEqual({ ragResult: null });
+    expect(out).toEqual({ ragResult: null, degraded: false });
   });
 });

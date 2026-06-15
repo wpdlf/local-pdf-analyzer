@@ -136,6 +136,7 @@ export const _translations = {
   'collection.statusMissing': { ko: '저장된 세션 없음 — 제외됨', en: 'no saved session — excluded' },
   'collection.noneSearchable': { ko: '검색 가능한 문서가 없어 현재 문서만으로 답변합니다.', en: 'No searchable documents — answering from the current document only.' },
   'collection.searchingCount': { ko: '{count}개 문서에서 검색', en: 'Searching {count} documents' },
+  'collection.degradedNotice': { ko: '컬렉션 교차 검색이 제한되어 일부 문서로만 답변했습니다 (위 목록의 제외 사유 확인).', en: 'Cross-document search was limited — answered from fewer documents (see exclusion reasons above).' },
 
   // ─── ProgressBar ───
   'progress.seconds': { ko: '{s}초', en: '{s}s' },
