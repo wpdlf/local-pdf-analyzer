@@ -226,6 +226,34 @@ export interface OpenTab {
   docHash?: string;
 }
 
+// ─── 다중 문서 컬렉션 Q&A (multi-doc Phase 2) ───
+// Design Ref: docs/02-design/features/multi-doc-collection-qa.design.md §3
+
+/** 컬렉션 Q&A 모드 상태 (Zustand store). 멤버는 openTabs 의 부분집합(docHash 기준) */
+export interface CollectionState {
+  enabled: boolean;       // 컬렉션 Q&A 모드 on/off (기본 off — 단일 문서 Q&A 보존)
+  memberHashes: string[]; // 질의 대상 docHash 부분집합
+}
+
+/** 멤버 동질성 게이트 산출 — 검색 가능 여부와 사유를 UI 배지로 표시 */
+export interface ResolvedMember {
+  docHash: string;
+  fileName: string;
+  source: 'memory' | 'session';                              // 활성(메모리) vs 비활성(세션 로드)
+  status: 'ready' | 'no-index' | 'model-mismatch' | 'missing';
+}
+
+/** 컬렉션 검색 결과 — 단일 문서 SearchResult 에 출처(문서) 식별자 부착 */
+export interface CollectionSearchResult {
+  text: string;
+  score: number;
+  index: number;
+  pageStart?: number;
+  pageEnd?: number;
+  docHash: string;
+  fileName: string;
+}
+
 // ─── 세션 영속화 (session-persistence) ───
 // Design Ref: §3 — 콘텐츠 해시 기준 세션·인덱스 캐싱. 본문 도메인 타입은 여기,
 // manifest/stats primitive 메타는 src/shared/session-types.ts.

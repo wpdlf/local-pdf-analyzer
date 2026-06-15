@@ -4,7 +4,9 @@ import { AiClient } from './ai-client';
 import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage } from './chunker';
 import { formatPageLabel, normalizeCitationPlacement, stripCitations } from './citation';
 import { t } from './i18n';
-import type { QaMessage } from '../types';
+import { VectorStore } from './vector-store';
+import { mergeSearchResults } from './collection';
+import type { QaMessage, ResolvedMember, CollectionSearchResult, PersistedSession } from '../types';
 
 const MAX_QUESTION_LENGTH = 1000;
 const MAX_QA_CONTEXT_CHARS = 8000;
@@ -12,6 +14,9 @@ const RAG_CHUNK_SIZE = 500;       // RAG 청크 토큰 수 (작은 청크)
 const RAG_BATCH_SIZE = 50;        // 임베딩 배치 크기
 const RAG_TOP_K = 5;              // 검색 상위 K개 청크
 const RAG_MIN_SCORE = 0.3;        // 최소 유사도 점수
+// 컬렉션 Q&A(multi-doc Phase 2): 멤버별로 RAG_TOP_K 만큼 뽑아 전역 병합 후 이 수로 컷.
+// 단일 문서(RAG_TOP_K=5)보다 약간 넉넉하게 — 여러 문서의 근거를 함께 담되 컨텍스트는 동일 상한.
+const COLLECTION_TOP_K = 8;
 const RAG_BATCH_TIMEOUT_MS = 120000; // 배치당 타임아웃 2분
 
 // ─── 답변 검증(Hallucination 감지) 파라미터 ───
@@ -379,6 +384,127 @@ async function ragSearch(question: string, signal?: AbortSignal): Promise<string
       totalLen += segment.length;
     }
     return parts.join('\n\n');
+  } catch {
+    return null;
+  }
+}
+
+// ─── 다중 문서 컬렉션 Q&A (multi-doc Phase 2, module-1) ───
+
+/**
+ * 멤버의 VectorStore 인덱스를 확보. 활성 문서는 메모리 인덱스를 그대로 쓰고, 비활성 멤버는
+ * 세션의 index.bin 을 복원한다(재임베딩 0). 1질의 내 캐시(Map)로 같은 멤버 중복 로드 방지
+ * (답변 검증 단계에서도 재사용 — 설계 §12 결정 5).
+ *
+ * @returns 확보한 VectorStore, 또는 로드 실패/인덱스 없음 시 null(해당 멤버 skip)
+ */
+async function loadMemberIndex(
+  member: ResolvedMember,
+  activeDocHash: string,
+  cache: Map<string, VectorStore>,
+): Promise<VectorStore | null> {
+  const cached = cache.get(member.docHash);
+  if (cached) return cached;
+
+  // 활성 문서 = 메모리 인덱스 (재로드 없음)
+  if (member.source === 'memory' || member.docHash === activeDocHash) {
+    const idx = useAppStore.getState().ragIndex;
+    cache.set(member.docHash, idx);
+    return idx;
+  }
+
+  // 비활성 멤버 = 세션 index.bin 복원
+  try {
+    const loaded = await window.electronAPI.session.load(member.docHash);
+    const session = loaded?.session as PersistedSession | undefined;
+    if (!loaded || !loaded.blob || !session || !session.embedModel || !session.embedDim) {
+      return null;
+    }
+    const vs = VectorStore.restore({
+      model: session.embedModel,
+      dimension: session.embedDim,
+      chunkMeta: session.chunkMeta ?? [],
+      buffer: loaded.blob,
+    });
+    cache.set(member.docHash, vs);
+    return vs;
+  } catch {
+    return null; // 손상/IO 실패 → 멤버 skip(부분 성공)
+  }
+}
+
+/**
+ * 컬렉션 RAG 검색 — 여러 문서에 걸쳐 시맨틱 검색 후 출처(문서명·페이지)를 부착한 컨텍스트 생성.
+ *
+ * Design Ref: docs/02-design/features/multi-doc-collection-qa.design.md §2.2
+ *
+ * 흐름: ready 멤버만 대상 → 질문 1회 임베딩 → 멤버별 search(메모리/세션 인덱스) →
+ *       전역 score 병합(COLLECTION_TOP_K) → "[문서명 p.N] 본문" 컨텍스트(상한 컷).
+ * ready 멤버가 0이면 null 반환(호출자가 단일 문서 Q&A 로 강등).
+ *
+ * @param question 사용자 질문
+ * @param members resolveMembers 산출 멤버 목록(내부에서 status==='ready' 만 사용)
+ * @param activeDocHash 활성 문서 docHash(메모리 인덱스 식별)
+ * @param signal 취소 시그널(임베딩 abort)
+ */
+export async function collectionRagSearch(
+  question: string,
+  members: ResolvedMember[],
+  activeDocHash: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const ready = members.filter((m) => m.status === 'ready');
+  if (ready.length === 0) return null;
+
+  try {
+    const embedResult = await embedWithTimeout([question], signal);
+    if (!embedResult.success || !embedResult.embeddings || embedResult.embeddings.length === 0) {
+      return null;
+    }
+    const queryEmbedding = embedResult.embeddings[0];
+    if (!queryEmbedding) return null;
+
+    const cache = new Map<string, VectorStore>();
+    const perMember: CollectionSearchResult[][] = [];
+    for (const member of ready) {
+      if (signal?.aborted) break;
+      const idx = await loadMemberIndex(member, activeDocHash, cache);
+      if (!idx || idx.size === 0) continue;
+      // 차원 불일치 멤버는 search 가 [] 를 반환하므로 자연히 제외(동질성 게이트 2차 방어)
+      const hits = idx.search(queryEmbedding, RAG_TOP_K, RAG_MIN_SCORE);
+      if (hits.length === 0) continue;
+      perMember.push(hits.map((h) => ({
+        text: h.text,
+        score: h.score,
+        index: h.index,
+        pageStart: h.pageStart,
+        pageEnd: h.pageEnd,
+        docHash: member.docHash,
+        fileName: member.fileName,
+      })));
+    }
+
+    const merged = mergeSearchResults(perMember, COLLECTION_TOP_K);
+    if (merged.length === 0) return null;
+
+    // 컨텍스트: 출처(문서명+페이지)를 라벨로 명시해 LLM 이 교차 문서 인용을 하도록 유도.
+    // 같은 문서의 청크는 원본 순서(index)로 묶어 문맥 흐름 유지.
+    merged.sort((a, b) => {
+      if (a.docHash !== b.docHash) return a.docHash < b.docHash ? -1 : 1;
+      return a.index - b.index;
+    });
+    const parts: string[] = [];
+    let totalLen = 0;
+    for (const r of merged) {
+      const pageLabel = formatPageLabel(r.pageStart); // "[p.N]" 또는 ''
+      const page = pageLabel ? ` ${pageLabel.replace(/^\[|\]$/g, '')}` : ''; // "p.N"
+      const label = `[${r.fileName}${page}]`;
+      const segment = `${label}\n${r.text}`;
+      if (totalLen + segment.length > MAX_QA_CONTEXT_CHARS) break;
+      parts.push(segment);
+      totalLen += segment.length;
+    }
+    return parts.length > 0 ? parts.join('\n\n') : null;
   } catch {
     return null;
   }
