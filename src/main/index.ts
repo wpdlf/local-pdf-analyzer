@@ -155,11 +155,15 @@ function createWindow(): BrowserWindow {
     return permission === 'clipboard-sanitized-write';
   });
 
-  // 비패키징(dev/preview) 한정: 렌더러 콘솔(warn/error)을 터미널로 포워딩 —
+  // 비패키징(dev/preview) 한정: 렌더러 콘솔(warning/error)을 터미널로 포워딩 —
   // DevTools 없이도 [tabs] 등 진단 로그를 실행 터미널에서 바로 확인할 수 있게 한다.
+  // Electron 41 신 시그니처: 단일 이벤트 객체(event.level 은 문자열 'warning'|'error'…).
+  // 구 `(event, level:number, message)` 콜백은 deprecation 경고를 띄우므로 사용 안 함.
   if (!app.isPackaged) {
-    win.webContents.on('console-message', (_e, level, message) => {
-      if (level >= 2) console.log(`[renderer:${level === 3 ? 'error' : 'warn'}] ${message}`);
+    win.webContents.on('console-message', (event) => {
+      if (event.level === 'warning' || event.level === 'error') {
+        console.log(`[renderer:${event.level}] ${event.message}`);
+      }
     });
   }
 
