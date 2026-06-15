@@ -206,7 +206,9 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     // (canvas 재할당 비용은 어차피 즉시 enqueue 로 다시 발생하므로 사실상 동일.)
     for (const wrapper of pageRefs.current) {
       if (wrapper) {
-        wrapper.querySelector('canvas')?.remove();
+        // canvas 뿐 아니라 이전 렌더에서 박힌 "페이지 렌더링 실패" 에러 placeholder 까지 모두 제거.
+        // (canvas 만 지우면 문서 교체 후에도 에러 div 가 새 문서 위에 잔존하던 문제 — 빨간 문구 고착)
+        wrapper.replaceChildren();
         // 기존에 actual height 가 인라인으로 박혀 있다면 placeholder min-height 로 복귀.
         // 다음 렌더에서 새 scale 의 실제 높이로 다시 박힘.
         wrapper.style.width = '';
@@ -242,6 +244,10 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
           renderedPagesRef.current.add(pageNum);
           continue;
         }
+        // 문서 교체 가드: doc-load effect 가 pdfBytes 변경 시 이 doc 을 파기했을 수 있다
+        // (렌더 effect 는 loadState/totalPages 가 갱신될 때까지 재실행 안 됨). 파기된 doc 으로
+        // 렌더를 시작하지 않고 종료 — 곧 새 doc 의 렌더 effect 가 인수한다.
+        if (pdfDocRef.current !== doc) { pumping = false; return; }
         try {
           const page = await doc.getPage(pageNum);
           try {
@@ -275,6 +281,11 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
         } catch (err) {
           currentTask = null;
           if (cancelled) { pumping = false; return; }
+          // 문서 교체/파기 레이스: doc-load effect 가 pdfBytes 변경 시 이전 doc 을 destroy 하면
+          // 진행 중이던 render 가 'Transport destroyed' 등으로 실패한다. 이는 곧 새 doc 렌더가
+          // 인수하므로 에러("페이지 렌더링 실패")를 표시하지 않고 조용히 종료. (교차 문서 인용
+          // 클릭으로 탭 전환 시 빨간 문구가 박히던 사용자 버그의 근본 원인)
+          if (pdfDocRef.current !== doc) { pumping = false; return; }
           if ((err as { name?: string })?.name === 'RenderingCancelledException') {
             // QA(low): effect 는 살아있는데 pdfjs 내부 사유로 렌더가 취소된 경우, 큐 잔여 항목이
             // 다음 스크롤 발화 전까지 방치(빈 페이지)되지 않도록 즉시 재가동한다.
