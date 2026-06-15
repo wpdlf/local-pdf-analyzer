@@ -197,6 +197,11 @@ export async function openNewTabView(): Promise<void> {
  * @returns { opened, total } — 부분 복원 시 호출자가 안내(opened < total).
  */
 export async function openCollection(docHashes: string[]): Promise<{ opened: number; total: number }> {
+  // 교체 시맨틱(R47 UX): "이 컬렉션을 연다" = 현재 탭 세트를 컬렉션 멤버로 교체. 업로드 화면
+  // (document=null)에서만 호출되고 세션은 이미 영속화돼 있어 기존 탭 목록만 비우면 데이터 손실 없음.
+  // 기존 additive 는 다른 작업 세트와 섞여 탭이 예상외로 불어났다.
+  useAppStore.setState({ openTabs: [], collection: { enabled: false, memberHashes: [] } });
+
   let opened = 0;
   let activated = false;
   const seen = new Set<string>(); // R47: 중복 docHash 가 opened 를 과다 집계하지 않도록

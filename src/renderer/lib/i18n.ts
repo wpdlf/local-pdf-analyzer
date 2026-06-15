@@ -146,6 +146,7 @@ export const _translations = {
   'collection.saveFail': { ko: '컬렉션 저장에 실패했습니다.', en: 'Failed to save collection.' },
   'collection.savedTitle': { ko: '저장된 컬렉션', en: 'Saved collections' },
   'collection.savedEmpty': { ko: '저장된 컬렉션이 없습니다.', en: 'No saved collections.' },
+  'collection.savedEmptyHint': { ko: '여러 PDF를 탭으로 열고 요약한 뒤 "여러 문서에 걸쳐 질문"을 켜면 묶음을 컬렉션으로 저장할 수 있습니다.', en: 'Open several PDFs as tabs, summarize, then turn on "Ask across documents" to save the set as a collection.' },
   'collection.docCount': { ko: '문서 {count}개', en: '{count} documents' },
   'collection.open': { ko: '열기', en: 'Open' },
   'collection.delete': { ko: '삭제', en: 'Delete' },
@@ -158,6 +159,8 @@ export const _translations = {
   'collection.compareRequest': { ko: '선택한 문서들을 비교 분석해줘', en: 'Compare and contrast the selected documents' },
   'collection.summaryNeedsMembers': { ko: '교차 요약은 검색 가능한 문서가 2개 이상일 때 가능합니다.', en: 'Cross-document summary needs at least 2 searchable documents.' },
   'collection.summaryFail': { ko: '교차 요약 생성에 실패했습니다.', en: 'Failed to generate the cross-document summary.' },
+  'collection.unifiedResultTitle': { ko: '📑 통합 요약 ({count}개 문서)', en: '📑 Unified summary ({count} documents)' },
+  'collection.compareResultTitle': { ko: '⚖ 비교 분석 ({count}개 문서)', en: '⚖ Comparison ({count} documents)' },
 
   // ─── ProgressBar ───
   'progress.seconds': { ko: '{s}초', en: '{s}s' },

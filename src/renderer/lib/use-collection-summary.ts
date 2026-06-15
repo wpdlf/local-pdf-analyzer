@@ -118,6 +118,10 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
       useAppStore.getState().setNotice({ message: t('collection.summaryNeedsMembers') });
       return;
     }
+    // 결과 배지(R47 UX): 교차 요약 결과를 일반 Q&A 답변과 구분하도록 제목 헤더를 앞에 붙인다.
+    const resultTitle = kind === 'comparison'
+      ? t('collection.compareResultTitle', { count: blocks.length })
+      : t('collection.unifiedResultTitle', { count: blocks.length });
 
     const prompt = buildCollectionSummaryPrompt(kind, blocks, st.settings.summaryLanguage || 'ko');
     const client = new AiClient(st.settings);
@@ -146,7 +150,7 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
     if (post.qaRequestId === requestId) {
       post.flushQaStream();
       post.clearQaStream();
-      if (answer.trim()) post.addQaMessage({ role: 'assistant', content: answer });
+      if (answer.trim()) post.addQaMessage({ role: 'assistant', content: `**${resultTitle}**\n\n${answer}` });
     }
   } catch (err) {
     if (useAppStore.getState().qaRequestId === requestId) {

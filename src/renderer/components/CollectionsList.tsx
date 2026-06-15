@@ -47,8 +47,18 @@ export function CollectionsList() {
     void refresh();
   }, [refresh]);
 
-  if (!persistEnabled || items.length === 0) {
-    return null; // 컬렉션이 없으면 노출하지 않음(최근 문서와 달리 빈 안내는 생략 — 발견성은 저장 버튼이 담당)
+  if (!persistEnabled) return null;
+
+  // 발견성(R47 UX): 컬렉션이 없을 때도 한 줄 안내로 기능 존재/생성 방법을 알린다.
+  if (items.length === 0) {
+    return (
+      <div className="w-full max-w-2xl mx-auto mt-6">
+        <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2 px-1">
+          {tr('collection.savedTitle')}
+        </h2>
+        <p className="text-xs text-gray-400 dark:text-gray-500 px-1 py-2">{tr('collection.savedEmptyHint')}</p>
+      </div>
+    );
   }
 
   return (

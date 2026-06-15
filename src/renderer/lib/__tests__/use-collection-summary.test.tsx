@@ -132,7 +132,9 @@ describe('generateCollectionSummary (L2)', () => {
     expect(M.prompt).toContain('## Beta.pdf');
     expect(M.prompt).toContain('베타 요약');
     const msgs = useAppStore.getState().qaMessages;
-    expect(msgs.at(-1)).toMatchObject({ role: 'assistant', content: '통합 결과' });
+    expect(msgs.at(-1)?.role).toBe('assistant');
+    expect(msgs.at(-1)?.content).toContain('통합 결과');       // 본문
+    expect(msgs.at(-1)?.content).toContain('통합 요약');       // 결과 배지(제목)
     expect(msgs.some((m) => m.role === 'user')).toBe(true); // 요청 메시지
   });
 
