@@ -4,6 +4,7 @@ import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS, matchesModel } from 
 import { t, useT, translateMainError } from './lib/i18n';
 import { PdfUploader } from './components/PdfUploader';
 import { RecentDocuments } from './components/RecentDocuments';
+import { CollectionsList } from './components/CollectionsList';
 import { TabBar } from './components/TabBar';
 import { closeTab } from './lib/tabs';
 import { SummaryViewer } from './components/SummaryViewer';
@@ -415,6 +416,7 @@ export default function App() {
         {!document && !summaryStream && (
           <>
             <PdfUploader />
+            <CollectionsList />
             <RecentDocuments />
           </>
         )}

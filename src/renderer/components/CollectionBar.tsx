@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { resolveMembers } from '../lib/collection';
+import { saveCollection } from '../lib/collections-client';
 import type { SessionManifestEntry } from '../../shared/session-types';
 import type { ResolvedMember } from '../types';
 
@@ -23,6 +24,8 @@ export function CollectionBar() {
   const toggleCollectionMember = useAppStore((s) => s.toggleCollectionMember);
 
   const [manifest, setManifest] = useState<SessionManifestEntry[]>([]);
+  const [saving, setSaving] = useState(false);     // 이름 입력 표시 여부
+  const [saveName, setSaveName] = useState('');
 
   // docHash 가 기록된 탭만 컬렉션 멤버 후보 (전환·세션 복원 흐름이 docHash 를 채움)
   const candidates = openTabs.filter((tb) => tb.docHash);
@@ -69,6 +72,22 @@ export function CollectionBar() {
       case 'missing': return t('collection.statusMissing');
       default: return '';
     }
+  };
+
+  // 저장 대상 멤버 = 체크된 멤버 + 활성 문서(강제 포함). 컬렉션은 2개 이상일 때만 의미.
+  const memberHashesToSave = candidates
+    .filter((c) => c.docHash === activeDocHash || collection.memberHashes.includes(c.docHash as string))
+    .map((c) => c.docHash as string);
+  const defaultName = candidates.find((c) => c.docHash === memberHashesToSave[0])?.fileName
+    ?? candidates[0]?.fileName ?? '';
+
+  const handleSave = async (): Promise<void> => {
+    const name = saveName.trim();
+    if (!name || memberHashesToSave.length < 2) return;
+    setSaving(false);
+    const r = await saveCollection({ name, docHashes: memberHashesToSave });
+    useAppStore.getState().setNotice({ message: r.ok ? t('collection.saved') : t('collection.saveFail') });
+    setSaveName('');
   };
 
   return (
@@ -128,6 +147,43 @@ export function CollectionBar() {
           })}
           {readyCount === 0 && (
             <p className="text-amber-600 dark:text-amber-400">{t('collection.noneSearchable')}</p>
+          )}
+
+          {/* 컬렉션 저장 — 멤버 2개 이상일 때. 이름 입력 인라인 토글. */}
+          {saving ? (
+            <div className="mt-2 flex items-center gap-1">
+              <input
+                type="text"
+                value={saveName}
+                onChange={(e) => setSaveName(e.target.value)}
+                placeholder={t('collection.saveNamePlaceholder')}
+                aria-label={t('collection.saveNamePlaceholder')}
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void handleSave(); }}
+                className="flex-1 min-w-0 rounded border dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <button
+                onClick={() => void handleSave()}
+                disabled={!saveName.trim()}
+                className="shrink-0 rounded bg-blue-500 px-2 py-1 text-white disabled:opacity-50"
+              >
+                {t('collection.saveConfirm')}
+              </button>
+              <button
+                onClick={() => { setSaving(false); setSaveName(''); }}
+                className="shrink-0 rounded px-2 py-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+              >
+                {t('collection.saveCancel')}
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => { setSaveName(defaultName); setSaving(true); }}
+              disabled={memberHashesToSave.length < 2}
+              className="mt-2 rounded px-2 py-1 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              💾 {t('collection.save')}
+            </button>
           )}
         </div>
       )}

@@ -8,6 +8,8 @@ import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const mockSessionList = vi.fn();
+const mockSaveCollection = vi.hoisted(() => vi.fn(() => Promise.resolve({ ok: true, id: 'new' })));
+vi.mock('../../lib/collections-client', () => ({ saveCollection: mockSaveCollection }));
 vi.stubGlobal('window', Object.assign(window, {
   electronAPI: {
     settings: { set: vi.fn(() => Promise.resolve()), get: vi.fn(() => Promise.resolve({})) },
@@ -115,6 +117,25 @@ describe('CollectionBar 동작', () => {
     const betaLabel = screen.getByText(/Beta\.pdf/).closest('label')!;
     const betaBox = betaLabel.querySelector('input[type=checkbox]') as HTMLInputElement;
     expect(betaBox.disabled).toBe(true);
+  });
+
+  it('컬렉션 저장: 멤버 2개+ 일 때 버튼 노출, 클릭→이름 입력→saveCollection 호출', async () => {
+    mockSaveCollection.mockClear();
+    useAppStore.setState({ collection: { enabled: true, memberHashes: ['a'.repeat(64), 'b'.repeat(64)] } });
+    const user = userEvent.setup();
+    render(<CollectionBar />);
+    // 저장 버튼 노출(멤버 2개)
+    const saveBtn = await screen.findByRole('button', { name: /컬렉션 저장/ });
+    await user.click(saveBtn);
+    // 이름 입력 → 저장
+    const input = screen.getByPlaceholderText('컬렉션 이름');
+    await user.clear(input);
+    await user.type(input, '나의 묶음');
+    await user.click(screen.getByRole('button', { name: '저장' }));
+    expect(mockSaveCollection).toHaveBeenCalledWith(
+      expect.objectContaining({ name: '나의 묶음', docHashes: ['a'.repeat(64), 'b'.repeat(64)] }),
+    );
+    expect(useAppStore.getState().notice).not.toBeNull(); // 저장 안내
   });
 
   it('활성 문서에 "현재" 배지', async () => {

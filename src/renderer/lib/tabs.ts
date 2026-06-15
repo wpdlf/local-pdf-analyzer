@@ -188,3 +188,36 @@ export async function openNewTabView(): Promise<void> {
   s.setSummary(null);
   s.setProgress(0);
 }
+
+/**
+ * 저장된 컬렉션 재오픈 (multi-doc Phase 3 / module-2) — 멤버 docHash 들을 탭 세트로 복원.
+ * 각 멤버는 세션에서 메타(파일명/경로/페이지)를 읽어 탭으로 등록하고, **첫 멤버를 활성 문서로
+ * 전체 복원**(세션-우선 — 재파싱·재임베딩 0)한다. 세션이 없는 멤버(LRU 삭제/손상)는 건너뛴다.
+ *
+ * @returns { opened, total } — 부분 복원 시 호출자가 안내(opened < total).
+ */
+export async function openCollection(docHashes: string[]): Promise<{ opened: number; total: number }> {
+  let opened = 0;
+  let activated = false;
+  for (const docHash of docHashes) {
+    const loaded = await window.electronAPI.session.load(docHash).catch(() => null);
+    const session = loaded?.session as PersistedSession | undefined;
+    if (!session || typeof session.fileName !== 'string' || typeof session.filePath !== 'string') {
+      continue; // 멤버 세션 부재/손상 → skip(부분 복원)
+    }
+    const tab: OpenTab = {
+      filePath: session.filePath,
+      fileName: session.fileName,
+      pageCount: session.pageCount,
+      docHash,
+    };
+    useAppStore.getState().upsertOpenTab(tab);
+    opened++;
+    // 첫 유효 멤버를 활성 문서로 전체 복원(나머지는 탭으로만 등록 — 클릭 시 세션-우선 복원).
+    if (!activated) {
+      await restoreTabFromSession(tab);
+      activated = true;
+    }
+  }
+  return { opened, total: docHashes.length };
+}

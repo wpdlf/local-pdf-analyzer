@@ -137,6 +137,20 @@ export const _translations = {
   'collection.noneSearchable': { ko: '검색 가능한 문서가 없어 현재 문서만으로 답변합니다.', en: 'No searchable documents — answering from the current document only.' },
   'collection.searchingCount': { ko: '{count}개 문서에서 검색', en: 'Searching {count} documents' },
   'collection.degradedNotice': { ko: '컬렉션 교차 검색이 제한되어 일부 문서로만 답변했습니다 (위 목록의 제외 사유 확인).', en: 'Cross-document search was limited — answered from fewer documents (see exclusion reasons above).' },
+  // 컬렉션 저장/목록 (multi-doc Phase 3 module-2)
+  'collection.save': { ko: '컬렉션 저장', en: 'Save collection' },
+  'collection.saveNamePlaceholder': { ko: '컬렉션 이름', en: 'Collection name' },
+  'collection.saveConfirm': { ko: '저장', en: 'Save' },
+  'collection.saveCancel': { ko: '취소', en: 'Cancel' },
+  'collection.saved': { ko: '컬렉션을 저장했습니다.', en: 'Collection saved.' },
+  'collection.saveFail': { ko: '컬렉션 저장에 실패했습니다.', en: 'Failed to save collection.' },
+  'collection.savedTitle': { ko: '저장된 컬렉션', en: 'Saved collections' },
+  'collection.savedEmpty': { ko: '저장된 컬렉션이 없습니다.', en: 'No saved collections.' },
+  'collection.docCount': { ko: '문서 {count}개', en: '{count} documents' },
+  'collection.open': { ko: '열기', en: 'Open' },
+  'collection.delete': { ko: '삭제', en: 'Delete' },
+  'collection.openFail': { ko: '컬렉션을 열 수 없습니다.', en: 'Could not open the collection.' },
+  'collection.partialOpen': { ko: '{total}개 중 {opened}개 문서만 복원되었습니다 (나머지는 세션이 없음).', en: 'Restored {opened} of {total} documents (the rest have no saved session).' },
 
   // ─── ProgressBar ───
   'progress.seconds': { ko: '{s}초', en: '{s}s' },

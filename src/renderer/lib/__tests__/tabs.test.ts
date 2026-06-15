@@ -30,7 +30,7 @@ vi.stubGlobal('window', Object.assign(window, {
   },
 }));
 
-import { switchToTab, closeTab, openNewTabView } from '../tabs';
+import { switchToTab, closeTab, openNewTabView, openCollection } from '../tabs';
 import { useAppStore } from '../store';
 import type { PdfDocument } from '../../types';
 
@@ -238,5 +238,48 @@ describe('openNewTabView', () => {
     seedTabs(['/docs/a.pdf'], null);
     await openNewTabView();
     expect(M.persistCurrentSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('openCollection (multi-doc Phase 3)', () => {
+  function sessionFor(docHash: string) {
+    return {
+      session: {
+        schemaVersion: 1, docHash, fileName: `${docHash}.pdf`, filePath: `/d/${docHash}.pdf`,
+        pageCount: 3, extractedText: 'x'.repeat(60), pageTexts: ['x'.repeat(60)], chapters: [],
+        summaries: {}, summaryType: 'full', qaMessages: [], embedModel: null, embedDim: null, chunkMeta: [],
+      },
+      blob: null,
+    };
+  }
+
+  it('멤버 docHash 들을 탭으로 복원하고 첫 멤버를 활성으로', async () => {
+    seedTabs([], null);
+    M.sessionLoad.mockImplementation((h: string) => Promise.resolve(sessionFor(h)));
+    M.openPath.mockResolvedValue({ error: 'no-file' }); // 뷰어 바이트 없음(분석만 복원)
+    const r = await openCollection(['h1', 'h2']);
+    expect(r).toEqual({ opened: 2, total: 2 });
+    const st = useAppStore.getState();
+    expect(st.openTabs.map((tb) => tb.docHash)).toEqual(['h1', 'h2']);
+    expect(st.document?.fileName).toBe('h1.pdf'); // 첫 멤버 활성
+    expect(M.restoreSessionForDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it('세션 없는 멤버는 건너뜀(부분 복원)', async () => {
+    seedTabs([], null);
+    M.sessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(h === 'gone' ? null : sessionFor(h)));
+    M.openPath.mockResolvedValue({ error: 'no-file' });
+    const r = await openCollection(['h1', 'gone', 'h3']);
+    expect(r).toEqual({ opened: 2, total: 3 });
+    expect(useAppStore.getState().openTabs.map((tb) => tb.docHash)).toEqual(['h1', 'h3']);
+  });
+
+  it('전원 세션 없음 → opened 0', async () => {
+    seedTabs([], null);
+    M.sessionLoad.mockResolvedValue(null);
+    const r = await openCollection(['x', 'y']);
+    expect(r).toEqual({ opened: 0, total: 2 });
+    expect(useAppStore.getState().openTabs).toHaveLength(0);
   });
 });
