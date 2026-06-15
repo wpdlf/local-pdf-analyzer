@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { SessionManifestEntry, SessionStats, SessionSaveMeta } from '../shared/session-types';
+import type { SavedCollection } from '../shared/collection-types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   ollama: {
@@ -64,6 +65,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (docHash: string) => ipcRenderer.invoke('session:delete', docHash),
     clear: () => ipcRenderer.invoke('session:clear'),
     stats: () => ipcRenderer.invoke('session:stats'),
+  },
+  // multi-doc Phase 3 (module-1): 컬렉션 영속화
+  collections: {
+    list: () => ipcRenderer.invoke('collections:list'),
+    save: (input: { id?: string; name: string; docHashes: string[] }) =>
+      ipcRenderer.invoke('collections:save', input),
+    delete: (id: string) => ipcRenderer.invoke('collections:delete', id),
   },
   openExternal: (url: string) => {
     if (typeof url !== 'string' || !url.startsWith('https://')) return Promise.resolve();
@@ -146,6 +154,11 @@ export type ElectronAPI = {
     delete: (docHash: string) => Promise<{ ok: boolean }>;
     clear: () => Promise<{ ok: boolean }>;
     stats: () => Promise<SessionStats>;
+  };
+  collections: {
+    list: () => Promise<SavedCollection[]>;
+    save: (input: { id?: string; name: string; docHashes: string[] }) => Promise<{ ok: boolean; id?: string }>;
+    delete: (id: string) => Promise<{ ok: boolean }>;
   };
   openExternal: (url: string) => Promise<void>;
   getPathForFile: (file: File) => string;

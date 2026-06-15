@@ -41,6 +41,8 @@ import {
   isValidDocHash,
 } from './session-store';
 import type { SessionSaveMeta } from '../shared/session-types';
+// multi-doc Phase 3 (module-1): 컬렉션 영속화. collectionsFile 주입으로 electron-free.
+import { listCollections, saveCollection, deleteCollection } from './collections-store';
 
 // 전역 에러 핸들러: unhandled rejection/exception으로 인한 무음 크래시 방지
 process.on('unhandledRejection', (reason) => {
@@ -65,6 +67,8 @@ const ollamaManager = new OllamaManager();
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 // session-persistence: 세션 저장 루트. docHash 화이트리스트로 traversal 차단(session-store).
 const sessionsDir = path.join(app.getPath('userData'), 'sessions');
+// multi-doc Phase 3: 컬렉션 영속화 단일 파일(멤버 docHash 참조 목록).
+const collectionsFile = path.join(app.getPath('userData'), 'collections.json');
 // 기본 설정값 (src/renderer/types/index.ts의 DEFAULT_SETTINGS와 동기화 필요)
 const defaultSettings = {
   provider: 'ollama',
@@ -504,6 +508,34 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('session:stats', async () => {
     return sessionStats(sessionsDir);
+  });
+
+  // ─── multi-doc Phase 3: 컬렉션 영속화 (module-1) ───
+  // Design Ref: multi-doc-phase3.design.md §4. 검증·LRU·원자적 저장은 collections-store 에 위임.
+  let collectionsWriteChain: Promise<unknown> = Promise.resolve();
+  function serializeCollectionsWrite<T>(task: () => Promise<T>): Promise<T> {
+    const next = collectionsWriteChain.then(task, task);
+    collectionsWriteChain = next.catch(() => undefined);
+    return next;
+  }
+
+  ipcMain.handle('collections:list', async () => {
+    return listCollections(collectionsFile);
+  });
+
+  ipcMain.handle('collections:save', async (_event, input: unknown) => {
+    const p = input as { id?: unknown; name?: unknown; docHashes?: unknown } | null;
+    if (!p || typeof p.name !== 'string' || !Array.isArray(p.docHashes)) return { ok: false };
+    const saveInput = {
+      id: typeof p.id === 'string' ? p.id : undefined,
+      name: p.name,
+      docHashes: p.docHashes as unknown[] as string[],
+    };
+    return serializeCollectionsWrite(() => saveCollection(collectionsFile, saveInput, Date.now()));
+  });
+
+  ipcMain.handle('collections:delete', async (_event, id: unknown) => {
+    return serializeCollectionsWrite(() => deleteCollection(collectionsFile, id));
   });
 
   ipcMain.handle('ollama:status', async () => {

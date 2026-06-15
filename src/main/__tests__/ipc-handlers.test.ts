@@ -577,3 +577,35 @@ describe('settings:get 로캘 기반 언어 기본값', () => {
     expect(lastDefaults().uiLanguage).toBe('ko');
   });
 });
+
+// multi-doc Phase 3 module-1: collections:* 핸들러 입력 검증 + 위임.
+// 저장 로직 자체는 collections-store L1 이 검증 — 여기선 핸들러의 입력 shape 가드와 배선만.
+describe('collections:* 핸들러', () => {
+  const H64 = 'a'.repeat(64);
+
+  it('등록됨', () => {
+    for (const ch of ['collections:list', 'collections:save', 'collections:delete']) {
+      expect(H.handlers.has(ch), `${ch} 미등록`).toBe(true);
+    }
+  });
+
+  it('save: name 비문자열/ docHashes 비배열은 store 호출 전 거부', async () => {
+    expect(await invoke('collections:save', { name: 123, docHashes: [H64] })).toEqual({ ok: false });
+    expect(await invoke('collections:save', { name: 'x', docHashes: 'nope' })).toEqual({ ok: false });
+    expect(await invoke('collections:save', null)).toEqual({ ok: false });
+  });
+
+  it('save: 유효 입력은 위임되어 ok + id 반환', async () => {
+    const r = await invoke('collections:save', { name: '묶음', docHashes: [H64] }) as { ok: boolean; id?: string };
+    expect(r.ok).toBe(true);
+    expect(typeof r.id).toBe('string');
+  });
+
+  it('list: 배열 반환(파일 없음 → 빈 배열)', async () => {
+    expect(await invoke('collections:list')).toEqual([]);
+  });
+
+  it('delete: 위임되어 ok 반환', async () => {
+    expect(await invoke('collections:delete', 'some-id')).toEqual({ ok: true });
+  });
+});
