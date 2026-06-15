@@ -229,9 +229,22 @@ export const useAppStore = create<AppState>((set) => ({
     next[idx] = tab;
     return { openTabs: next };
   }),
-  removeOpenTab: (filePath) => set((s) => ({
-    openTabs: s.openTabs.filter((t) => t.filePath !== filePath),
-  })),
+  removeOpenTab: (filePath) => set((s) => {
+    const removed = s.openTabs.find((t) => t.filePath === filePath);
+    const openTabs = s.openTabs.filter((t) => t.filePath !== filePath);
+    // 닫힌 탭의 docHash 를 컬렉션 멤버에서도 제거 — 닫은 문서가 조용히 검색되거나
+    // memberHashes 가 openTabs 와 어긋나 stale 상태로 남는 것을 방지.
+    let collection = s.collection;
+    if (removed?.docHash && collection.memberHashes.includes(removed.docHash)) {
+      collection = { ...collection, memberHashes: collection.memberHashes.filter((h) => h !== removed.docHash) };
+    }
+    // 모든 탭이 닫히면(문서 묶음 종료) 컬렉션 모드도 초기화 — 다음 묶음에 이전 상태가 새지 않도록.
+    // (탭 전환/+ 새 탭은 openTabs 가 비지 않으므로 컬렉션 상태 유지)
+    if (openTabs.length === 0 && (collection.enabled || collection.memberHashes.length > 0)) {
+      collection = { enabled: false, memberHashes: [] };
+    }
+    return { openTabs, collection };
+  }),
 
   // 다중 문서 컬렉션 Q&A (multi-doc Phase 2)
   collection: { enabled: false, memberHashes: [] },

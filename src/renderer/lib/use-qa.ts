@@ -528,6 +528,45 @@ async function loadReadyMemberStores(
   return stores;
 }
 
+/**
+ * 컬렉션 모드 검색 오케스트레이션 — handleAsk 에서 추출(단위 테스트 가능화, R46 Important).
+ *
+ * 멤버 해석(resolveMembers) → 교차 검색(collectionRagSearch) → 답변 검증용 verifier 준비를
+ * 한 곳에 모은다. 검색과 검증이 동일 멤버 캐시를 공유해 멤버 인덱스를 1질의 1회만 로드한다.
+ *
+ * **활성 문서 강제 포함**: 사용자가 멤버 체크에서 활성 문서를 빼더라도, 현재 보는 문서가
+ * 검색·검증에서 누락되면 안 되므로 activeDocHash 를 항상 멤버에 union 한다(설계 §6 불변).
+ *
+ * @returns 컬렉션 비활성/활성 인덱스 부재/ready 멤버 0 이면 { ragResult: null } → 호출자가 단일 강등.
+ */
+export async function resolveCollectionSearch(
+  question: string,
+  signal?: AbortSignal,
+): Promise<{ ragResult: string | null; verifier?: RagVerifier }> {
+  const st = useAppStore.getState();
+  if (!st.collection.enabled) return { ragResult: null };
+  const activeTab = st.openTabs.find((tb) => tb.filePath === st.document?.filePath);
+  const activeDocHash = activeTab?.docHash;
+  if (!activeDocHash) return { ragResult: null };
+
+  const memberHashes = st.collection.memberHashes.includes(activeDocHash)
+    ? st.collection.memberHashes
+    : [activeDocHash, ...st.collection.memberHashes];
+  const manifest = await window.electronAPI.session.list().catch(() => []);
+  const members = resolveMembers(
+    memberHashes,
+    { docHash: activeDocHash, model: st.ragIndex.model, dim: st.ragIndex.dimension },
+    manifest,
+    st.openTabs,
+  );
+  // 검색·검증이 같은 cache 공유 → 멤버 인덱스 1회만 로드(설계 §12-5)
+  const cache = new Map<string, VectorStore>();
+  const ragResult = await collectionRagSearch(question, members, activeDocHash, signal, cache);
+  if (!ragResult) return { ragResult: null };
+  const stores = await loadReadyMemberStores(members, activeDocHash, cache);
+  return { ragResult, verifier: stores.length > 0 ? collectionVerifier(stores) : undefined };
+}
+
 // ─── 답변 검증 (v0.18.0) ───
 
 /**
@@ -916,28 +955,12 @@ export function useQa() {
       let answerVerifier: RagVerifier | undefined;
 
       // multi-doc Phase 2: 컬렉션 모드면 여러 문서에 걸쳐 검색. ready 멤버가 없으면(전원 제외/
-      // 인덱스 없음) collectionRagSearch 가 null 을 반환해 단일 문서 Q&A 로 자연 강등된다.
-      const collection = useAppStore.getState().collection;
-      if (collection.enabled) {
-        const st = useAppStore.getState();
-        const activeTab = st.openTabs.find((tb) => tb.filePath === st.document?.filePath);
-        const activeDocHash = activeTab?.docHash;
-        if (activeDocHash) {
-          const manifest = await window.electronAPI.session.list().catch(() => []);
-          const members = resolveMembers(
-            collection.memberHashes,
-            { docHash: activeDocHash, model: st.ragIndex.model, dim: st.ragIndex.dimension },
-            manifest,
-            st.openTabs,
-          );
-          // 검색과 검증이 같은 cache 를 공유 → 멤버 인덱스 1회만 로드(설계 §12-5)
-          const memberCache = new Map<string, VectorStore>();
-          ragResult = await collectionRagSearch(trimmed, members, activeDocHash, ragSignal, memberCache);
-          if (ragResult) {
-            const stores = await loadReadyMemberStores(members, activeDocHash, memberCache);
-            if (stores.length > 0) answerVerifier = collectionVerifier(stores);
-          }
-        }
+      // 인덱스 없음) null 을 반환해 단일 문서 Q&A 로 자연 강등된다. (배선은 resolveCollectionSearch 로
+      // 추출 — 단위 테스트 가능화 + 활성 문서 강제 포함)
+      {
+        const collected = await resolveCollectionSearch(trimmed, ragSignal);
+        ragResult = collected.ragResult;
+        answerVerifier = collected.verifier;
       }
 
       // 단일 문서 경로(컬렉션 비활성 또는 ready 멤버 0)

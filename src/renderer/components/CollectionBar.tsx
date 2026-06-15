@@ -92,18 +92,26 @@ export function CollectionBar() {
             const docHash = tab.docHash as string;
             const status = statusByHash.get(docHash)?.status ?? 'ready';
             const selectable = status === 'ready';
-            const checked = collection.memberHashes.includes(docHash) && selectable;
             const isActive = docHash === activeDocHash;
+            // 활성 문서는 항상 검색에 포함(해제 불가) — resolveCollectionSearch 의 강제 union 과 일치.
+            const forced = isActive && selectable;
+            const checked = forced || (collection.memberHashes.includes(docHash) && selectable);
+            const disabled = !selectable || forced;
+            // a11y: 비활성 사유/활성 표시를 체크박스 접근명에 묶어 스크린리더가 함께 읽도록.
+            const ariaLabel = [tab.fileName,
+              isActive ? t('collection.activeBadge') : null,
+              !selectable ? statusLabel(status) : null].filter(Boolean).join(', ');
             return (
               <label
                 key={tab.filePath}
-                className={`flex items-center gap-2 ${selectable ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
+                className={`flex items-center gap-2 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'} ${selectable ? '' : 'opacity-60'}`}
               >
                 <input
                   type="checkbox"
                   checked={checked}
-                  disabled={!selectable}
+                  disabled={disabled}
                   onChange={() => toggleCollectionMember(docHash)}
+                  aria-label={ariaLabel}
                   className="accent-blue-500"
                 />
                 <span className="truncate text-gray-700 dark:text-gray-300">📄 {tab.fileName}</span>

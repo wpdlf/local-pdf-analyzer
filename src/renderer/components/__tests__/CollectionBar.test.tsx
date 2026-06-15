@@ -92,14 +92,18 @@ describe('CollectionBar 동작', () => {
     expect(useAppStore.getState().collection.memberHashes).toEqual(['a'.repeat(64), 'b'.repeat(64)]);
   });
 
-  it('동일 모델 멤버는 선택 가능(ready)', async () => {
+  it('동일 모델 비활성 멤버는 선택 가능(ready), 활성 문서는 강제 포함(체크+비활성)', async () => {
     mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), 'm', 3)]);
     useAppStore.setState({ collection: { enabled: true, memberHashes: ['a'.repeat(64), 'b'.repeat(64)] } });
     render(<CollectionBar />);
     await waitFor(() => expect(screen.getByText(/Beta\.pdf/)).toBeTruthy());
-    // 멤버 체크박스(활성 토글 제외)들이 모두 enabled
-    const boxes = screen.getAllByRole('checkbox');
-    expect(boxes.every((b) => !(b as HTMLInputElement).disabled)).toBe(true);
+    // 비활성 ready 멤버(Beta)는 토글 가능
+    const beta = screen.getByRole('checkbox', { name: /Beta\.pdf/ }) as HTMLInputElement;
+    expect(beta.disabled).toBe(false);
+    // 활성 문서(Alpha)는 항상 검색 포함 — 체크된 채 비활성(해제 불가)
+    const alpha = screen.getByRole('checkbox', { name: /Alpha\.pdf/ }) as HTMLInputElement;
+    expect(alpha.checked).toBe(true);
+    expect(alpha.disabled).toBe(true);
   });
 
   it('모델 불일치 멤버는 비활성 + 배지 표시', async () => {

@@ -332,3 +332,29 @@ describe('stripCitations (C-L1)', () => {
     }
   });
 });
+
+// R46 보안: 두 인용 정규식의 ReDoS 회귀 가드. 악성 입력(악성 PDF→LLM 답변)에서도
+// 정규식 처리가 선형 시간에 끝나야 한다(과거 isStandaloneCitationLine 지수 / CITATION_REGEX 이차).
+describe('ReDoS 회귀 가드 (R46)', () => {
+  it('CITATION_REGEX: 닫히지 않은 [ + 다량 공백 입력도 즉시 처리(<200ms)', () => {
+    const evil = '[p.' + ' '.repeat(100000);
+    const t0 = Date.now();
+    stripCitations(evil); // 내부에서 CITATION_REGEX 사용
+    parseCitations(evil);
+    expect(Date.now() - t0).toBeLessThan(200);
+  });
+
+  it('CITATION_REGEX: 문서명 접두 유사 + 다량 공백도 즉시 처리(<200ms)', () => {
+    const evil = '[Annex' + ' '.repeat(100000) + 'x';
+    const t0 = Date.now();
+    parseCitations(evil);
+    expect(Date.now() - t0).toBeLessThan(200);
+  });
+
+  it('normalizeCitationPlacement: 한 줄 다수 인용 클러스터 + 비매칭 꼬리도 즉시 처리(<200ms)', () => {
+    const evil = '[p.5] '.repeat(2000) + 'x'; // 과거 standalone 정규식의 지수 백트래킹 트리거
+    const t0 = Date.now();
+    normalizeCitationPlacement(evil);
+    expect(Date.now() - t0).toBeLessThan(200);
+  });
+});

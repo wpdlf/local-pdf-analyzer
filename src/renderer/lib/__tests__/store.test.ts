@@ -572,4 +572,28 @@ describe('컬렉션 Q&A 상태 (multi-doc Phase 2)', () => {
     s.toggleCollectionMember('a'); // 제외
     expect(useAppStore.getState().collection.memberHashes).toEqual(['b']);
   });
+
+  // R46 Important: 닫힌 탭의 docHash 가 컬렉션 멤버에 stale 로 남지 않아야 함
+  it('removeOpenTab 은 닫힌 탭의 docHash 를 컬렉션 멤버에서도 제거', () => {
+    useAppStore.setState({
+      openTabs: [
+        { filePath: '/a', fileName: 'a.pdf', pageCount: 1, docHash: 'ha' },
+        { filePath: '/b', fileName: 'b.pdf', pageCount: 1, docHash: 'hb' },
+      ],
+      collection: { enabled: true, memberHashes: ['ha', 'hb'] },
+    });
+    useAppStore.getState().removeOpenTab('/b');
+    expect(useAppStore.getState().collection.memberHashes).toEqual(['ha']);
+    expect(useAppStore.getState().collection.enabled).toBe(true); // 탭 남아있으면 모드 유지
+  });
+
+  it('removeOpenTab 으로 모든 탭이 닫히면 컬렉션 모드 초기화', () => {
+    useAppStore.setState({
+      openTabs: [{ filePath: '/a', fileName: 'a.pdf', pageCount: 1, docHash: 'ha' }],
+      collection: { enabled: true, memberHashes: ['ha'] },
+    });
+    useAppStore.getState().removeOpenTab('/a');
+    expect(useAppStore.getState().openTabs).toHaveLength(0);
+    expect(useAppStore.getState().collection).toEqual({ enabled: false, memberHashes: [] });
+  });
 });
