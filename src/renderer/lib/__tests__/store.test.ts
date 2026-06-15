@@ -545,3 +545,31 @@ describe('session-persistence store fields', () => {
     expect(useAppStore.getState().sessionRestorePending).toBe(false);
   });
 });
+
+describe('컬렉션 Q&A 상태 (multi-doc Phase 2)', () => {
+  beforeEach(() => {
+    useAppStore.setState({ collection: { enabled: false, memberHashes: [] } });
+  });
+
+  it('기본값은 비활성 + 빈 멤버', () => {
+    expect(useAppStore.getState().collection).toEqual({ enabled: false, memberHashes: [] });
+  });
+
+  it('setCollectionEnabled 는 멤버를 보존한 채 모드만 토글', () => {
+    useAppStore.getState().setCollectionMembers(['a', 'b']);
+    useAppStore.getState().setCollectionEnabled(true);
+    expect(useAppStore.getState().collection).toEqual({ enabled: true, memberHashes: ['a', 'b'] });
+    useAppStore.getState().setCollectionEnabled(false);
+    expect(useAppStore.getState().collection.memberHashes).toEqual(['a', 'b']); // 멤버 보존
+  });
+
+  it('toggleCollectionMember 는 포함/제외를 번갈아 적용', () => {
+    const s = useAppStore.getState();
+    s.toggleCollectionMember('a');
+    expect(useAppStore.getState().collection.memberHashes).toEqual(['a']);
+    s.toggleCollectionMember('b');
+    expect(useAppStore.getState().collection.memberHashes).toEqual(['a', 'b']);
+    s.toggleCollectionMember('a'); // 제외
+    expect(useAppStore.getState().collection.memberHashes).toEqual(['b']);
+  });
+});

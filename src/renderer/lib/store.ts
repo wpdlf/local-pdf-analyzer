@@ -10,7 +10,7 @@ import type {
   ProgressInfo,
   RagIndexState,
 } from '../types';
-import type { OpenTab } from '../types';
+import type { OpenTab, CollectionState } from '../types';
 import { DEFAULT_SETTINGS } from '../types';
 import { VectorStore } from './vector-store';
 import { sanitizeErrorPath } from './error-sanitize';
@@ -100,6 +100,15 @@ interface AppState {
   upsertOpenTab: (tab: OpenTab) => void;
   /** 탭 목록에서 제거만 담당 — 활성 문서 정리/이웃 전환은 lib/tabs.ts 가 오케스트레이션 */
   removeOpenTab: (filePath: string) => void;
+
+  // 다중 문서 컬렉션 Q&A (multi-doc Phase 2) — 여러 문서에 걸친 교차 RAG 검색 대상 선택.
+  collection: CollectionState;
+  /** 컬렉션 Q&A 모드 on/off. on 전환 시 멤버 목록은 호출자(UI)가 기본값으로 채운다. */
+  setCollectionEnabled: (enabled: boolean) => void;
+  /** 질의 대상 멤버 docHash 목록 교체 */
+  setCollectionMembers: (memberHashes: string[]) => void;
+  /** 단일 멤버 포함/제외 토글 (체크박스) */
+  toggleCollectionMember: (docHash: string) => void;
 
   // 요약
   summary: Summary | null;
@@ -223,6 +232,22 @@ export const useAppStore = create<AppState>((set) => ({
   removeOpenTab: (filePath) => set((s) => ({
     openTabs: s.openTabs.filter((t) => t.filePath !== filePath),
   })),
+
+  // 다중 문서 컬렉션 Q&A (multi-doc Phase 2)
+  collection: { enabled: false, memberHashes: [] },
+  setCollectionEnabled: (enabled) => set((s) => ({
+    collection: { ...s.collection, enabled },
+  })),
+  setCollectionMembers: (memberHashes) => set((s) => ({
+    collection: { ...s.collection, memberHashes },
+  })),
+  toggleCollectionMember: (docHash) => set((s) => {
+    const has = s.collection.memberHashes.includes(docHash);
+    const memberHashes = has
+      ? s.collection.memberHashes.filter((h) => h !== docHash)
+      : [...s.collection.memberHashes, docHash];
+    return { collection: { ...s.collection, memberHashes } };
+  }),
   setDocument: (document) => {
     if (!document) {
       // 문서 닫기 시 RAG 인덱스 + 요약/Q&A 상태 전부 해제. resetSummaryState 와 수렴.

@@ -122,6 +122,16 @@ export const _translations = {
   'qa.stopAria': { ko: '답변 중지', en: 'Stop answer' },
   'qa.answerCancelled': { ko: '(답변이 취소되었습니다)', en: '(Answer cancelled)' },
   'qa.sendAria': { ko: '질문 전송', en: 'Send question' },
+  // ─── 다중 문서 컬렉션 Q&A (multi-doc Phase 2) ───
+  'collection.toggle': { ko: '여러 문서에 걸쳐 질문', en: 'Ask across documents' },
+  'collection.toggleHint': { ko: '열어둔 문서들을 묶어 함께 검색합니다', en: 'Search the open documents together' },
+  'collection.members': { ko: '검색 대상 문서', en: 'Documents to search' },
+  'collection.activeBadge': { ko: '현재', en: 'active' },
+  'collection.statusModelMismatch': { ko: '임베딩 모델 불일치 — 제외됨', en: 'embedding model mismatch — excluded' },
+  'collection.statusNoIndex': { ko: '인덱스 없음 (요약/Q&A 먼저 필요) — 제외됨', en: 'no index (summarize/Q&A first) — excluded' },
+  'collection.statusMissing': { ko: '저장된 세션 없음 — 제외됨', en: 'no saved session — excluded' },
+  'collection.noneSearchable': { ko: '검색 가능한 문서가 없어 현재 문서만으로 답변합니다.', en: 'No searchable documents — answering from the current document only.' },
+  'collection.searchingCount': { ko: '{count}개 문서에서 검색', en: 'Searching {count} documents' },
 
   // ─── ProgressBar ───
   'progress.seconds': { ko: '{s}초', en: '{s}s' },

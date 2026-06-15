@@ -5,7 +5,7 @@ import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage } from './c
 import { formatPageLabel, normalizeCitationPlacement, stripCitations } from './citation';
 import { t } from './i18n';
 import { VectorStore } from './vector-store';
-import { mergeSearchResults } from './collection';
+import { mergeSearchResults, resolveMembers } from './collection';
 import type { QaMessage, ResolvedMember, CollectionSearchResult, PersistedSession } from '../types';
 
 const MAX_QUESTION_LENGTH = 1000;
@@ -452,6 +452,7 @@ export async function collectionRagSearch(
   members: ResolvedMember[],
   activeDocHash: string,
   signal?: AbortSignal,
+  cache: Map<string, VectorStore> = new Map(),
 ): Promise<string | null> {
   const ready = members.filter((m) => m.status === 'ready');
   if (ready.length === 0) return null;
@@ -464,7 +465,6 @@ export async function collectionRagSearch(
     const queryEmbedding = embedResult.embeddings[0];
     if (!queryEmbedding) return null;
 
-    const cache = new Map<string, VectorStore>();
     const perMember: CollectionSearchResult[][] = [];
     for (const member of ready) {
       if (signal?.aborted) break;
@@ -510,7 +510,66 @@ export async function collectionRagSearch(
   }
 }
 
+/**
+ * ready 멤버들의 VectorStore 인덱스를 모두 확보(활성=메모리, 비활성=세션 복원). 1질의 캐시 공유.
+ * collectionRagSearch 와 답변 검증이 같은 cache 를 공유해 멤버 인덱스를 1회만 로드(설계 §12-5).
+ */
+async function loadReadyMemberStores(
+  members: ResolvedMember[],
+  activeDocHash: string,
+  cache: Map<string, VectorStore>,
+): Promise<VectorStore[]> {
+  const stores: VectorStore[] = [];
+  for (const m of members) {
+    if (m.status !== 'ready') continue;
+    const idx = await loadMemberIndex(m, activeDocHash, cache);
+    if (idx && idx.size > 0) stores.push(idx);
+  }
+  return stores;
+}
+
 // ─── 답변 검증 (v0.18.0) ───
+
+/**
+ * 답변 검증용 인덱스 추상화. 단일 문서는 store.ragIndex 하나, 컬렉션은 여러 멤버 인덱스에 대해
+ * 문장별 최대 근거 점수를 구한다. verifyAnswerSentences 가 검증 대상을 모드와 무관하게 다루도록.
+ */
+export interface RagVerifier {
+  size: number;
+  dimension: number | null;
+  maxScore: (embedding: number[]) => number;
+}
+
+/** 단일 VectorStore 기반 verifier (기존 단일 문서 Q&A 동작과 동일) */
+export function storeVerifier(vs: VectorStore): RagVerifier {
+  return {
+    size: vs.size,
+    dimension: vs.dimension,
+    maxScore: (emb) => {
+      const hits = vs.search(emb, 1, 0);
+      return hits.length > 0 ? (hits[0]?.score ?? 0) : 0;
+    },
+  };
+}
+
+/** 여러 멤버 인덱스에 걸쳐 문장별 전역 최대 점수를 구하는 컬렉션 verifier */
+export function collectionVerifier(stores: VectorStore[]): RagVerifier {
+  const dimension = stores.find((s) => s.dimension !== null)?.dimension ?? null;
+  const size = stores.reduce((n, s) => n + s.size, 0);
+  return {
+    size,
+    dimension,
+    maxScore: (emb) => {
+      let max = 0;
+      for (const s of stores) {
+        const hits = s.search(emb, 1, 0);
+        const score = hits.length > 0 ? (hits[0]?.score ?? 0) : 0;
+        if (score > max) max = score;
+      }
+      return max;
+    },
+  };
+}
 
 /**
  * 답변 텍스트를 문장 단위로 분할. 한국어/중국어/일본어/영어 종결 구두점 지원.
@@ -556,9 +615,11 @@ export function splitIntoSentences(text: string): string[] {
 export async function verifyAnswerSentences(
   answer: string,
   signal?: AbortSignal,
+  verifier?: RagVerifier,
 ): Promise<{ needsRefine: boolean; avgScore: number; weakCount: number; totalSentences: number }> {
-  const ragIndex = useAppStore.getState().ragIndex;
-  if (ragIndex.size === 0) {
+  // 컬렉션 모드면 멤버 인덱스 전체에 대해 검증(설계 §12-5), 아니면 활성 단일 인덱스.
+  const v = verifier ?? storeVerifier(useAppStore.getState().ragIndex);
+  if (v.size === 0) {
     return { needsRefine: false, avgScore: 1, weakCount: 0, totalSentences: 0 };
   }
 
@@ -579,7 +640,7 @@ export async function verifyAnswerSentences(
   // 이 경우 모든 문장이 maxScore=0 → 약문장으로 오분류되어 refine 이 강제 트리거된다.
   // fail-safe 의도(검증 불가 시 draft 유지)와 동일하게 needsRefine=false 로 처리.
   const verifyDim = result.embeddings[0]?.length ?? 0;
-  if (ragIndex.dimension !== null && verifyDim !== ragIndex.dimension) {
+  if (v.dimension !== null && verifyDim !== v.dimension) {
     return { needsRefine: false, avgScore: 1, weakCount: 0, totalSentences: sentences.length };
   }
 
@@ -589,9 +650,8 @@ export async function verifyAnswerSentences(
     if (signal?.aborted) break;
     const emb = result.embeddings[i];
     if (!emb) continue;
-    // minScore=0 으로 호출 — top-1 의 실제 유사도가 해당 문장의 최대 근거 점수.
-    const hits = ragIndex.search(emb, 1, 0);
-    const maxScore = hits.length > 0 ? (hits[0]?.score ?? 0) : 0;
+    // 문장의 최대 근거 점수 (단일 인덱스 top-1, 또는 컬렉션 멤버 전역 최대).
+    const maxScore = v.maxScore(emb);
     totalScore += maxScore;
     if (maxScore < VERIFY_WEAK_SCORE) weakCount++;
   }
@@ -849,8 +909,41 @@ export function useQa() {
 
       // RAG 시맨틱 검색 시도 → 실패 시 키워드 기반 fallback.
       // v0.18.4 M1: verifyAbortRef.signal 을 넘겨 draft 이전 embedding 도 Stop 즉시 취소.
+      const ragSignal = verifyAbortRef.current?.signal;
       let relevantChunks: string;
-      const ragResult = await ragSearch(trimmed, verifyAbortRef.current?.signal);
+      let ragResult: string | null = null;
+      // 답변 검증용 verifier — 컬렉션 모드면 멤버 인덱스 전체, 아니면 활성 단일(undefined → 기본).
+      let answerVerifier: RagVerifier | undefined;
+
+      // multi-doc Phase 2: 컬렉션 모드면 여러 문서에 걸쳐 검색. ready 멤버가 없으면(전원 제외/
+      // 인덱스 없음) collectionRagSearch 가 null 을 반환해 단일 문서 Q&A 로 자연 강등된다.
+      const collection = useAppStore.getState().collection;
+      if (collection.enabled) {
+        const st = useAppStore.getState();
+        const activeTab = st.openTabs.find((tb) => tb.filePath === st.document?.filePath);
+        const activeDocHash = activeTab?.docHash;
+        if (activeDocHash) {
+          const manifest = await window.electronAPI.session.list().catch(() => []);
+          const members = resolveMembers(
+            collection.memberHashes,
+            { docHash: activeDocHash, model: st.ragIndex.model, dim: st.ragIndex.dimension },
+            manifest,
+            st.openTabs,
+          );
+          // 검색과 검증이 같은 cache 를 공유 → 멤버 인덱스 1회만 로드(설계 §12-5)
+          const memberCache = new Map<string, VectorStore>();
+          ragResult = await collectionRagSearch(trimmed, members, activeDocHash, ragSignal, memberCache);
+          if (ragResult) {
+            const stores = await loadReadyMemberStores(members, activeDocHash, memberCache);
+            if (stores.length > 0) answerVerifier = collectionVerifier(stores);
+          }
+        }
+      }
+
+      // 단일 문서 경로(컬렉션 비활성 또는 ready 멤버 0)
+      if (ragResult === null) {
+        ragResult = await ragSearch(trimmed, ragSignal);
+      }
       if (ragResult) {
         relevantChunks = ragResult;
       } else {
@@ -881,8 +974,12 @@ export function useQa() {
       //  - RAG 가 unavailable 하거나 인덱스가 비어있으면
       //  → 기존 단일 pass 스트리밍 fast path.
       const useVerification = settings.enableAnswerVerification !== false
-        && useAppStore.getState().ragState.isAvailable
-        && useAppStore.getState().ragIndex.size > 0;
+        && (
+          // 컬렉션 모드: 멤버 인덱스(answerVerifier)로 검증
+          (answerVerifier !== undefined && answerVerifier.size > 0)
+          // 단일 문서: 활성 인덱스 가용 시
+          || (useAppStore.getState().ragState.isAvailable && useAppStore.getState().ragIndex.size > 0)
+        );
 
       let answer = '';
       if (!useVerification) {
@@ -913,7 +1010,7 @@ export function useQa() {
           // Step 2. 문장 단위 RAG 대조 (내부 임베딩 호출).
           // signal 을 전달해 사용자가 "멈춤" 을 누르면 OpenAI embedding 소켓을 즉시 파괴
           // (v0.17.12 embed abort 인프라와 연결) — 불필요 토큰 과금 방지.
-          const verification = await verifyAnswerSentences(draft, verifyAbortRef.current?.signal);
+          const verification = await verifyAnswerSentences(draft, verifyAbortRef.current?.signal, answerVerifier);
 
           // abort 재확인 — 검증 중 사용자가 취소했을 수 있음. finally 가 qaVerifying 해제.
           if (!useAppStore.getState().isQaGenerating) {

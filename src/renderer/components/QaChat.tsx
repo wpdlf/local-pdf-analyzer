@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { useQa } from '../lib/use-qa';
 import { useT } from '../lib/i18n';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
+import { CollectionBar } from './CollectionBar';
 
 export function QaChat() {
   const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, qaVerifying, ragState } = useQa();
@@ -87,6 +88,9 @@ export function QaChat() {
           </span>
         ) : null}
       </div>
+
+      {/* 다중 문서 컬렉션 Q&A (multi-doc Phase 2) — 열린 문서 2개 이상일 때만 노출 */}
+      <CollectionBar />
 
       {/* 빈 상태 안내 */}
       {qaMessages.length === 0 && !qaStream && (
