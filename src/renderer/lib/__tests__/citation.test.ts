@@ -202,7 +202,7 @@ describe('formatPageLabel', () => {
     const re = new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags);
     const matches = Array.from(label.matchAll(re));
     expect(matches).toHaveLength(1);
-    expect(matches[0]?.[1]).toBe('7');
+    expect(matches[0]?.groups?.page).toBe('7');
   });
 });
 
@@ -241,6 +241,39 @@ describe('CITATION_REGEX', () => {
 
   it('i flag 포함 (대소문자 무시)', () => {
     expect(CITATION_REGEX.flags).toContain('i');
+  });
+});
+
+// multi-doc Phase 2: 교차 문서 인용 `[문서명 p.N]` 파싱 (후방 호환 — `[p.N]` 은 docName 없음)
+describe('parseCitations — 교차 문서 인용 (multi-doc Phase 2)', () => {
+  it('단일 문서 인용 [p.N] 은 docName 없음 (후방 호환)', () => {
+    const segs = parseCitations('결론 [p.12].');
+    const cite = segs.find((s) => s.type === 'citation');
+    expect(cite).toMatchObject({ page: 12 });
+    expect(cite?.docName).toBeUndefined();
+  });
+
+  it('[문서명 p.N] 은 docName + page 파싱', () => {
+    const segs = parseCitations('교차 근거 [Beta.pdf p.5] 입니다.');
+    const cite = segs.find((s) => s.type === 'citation');
+    expect(cite).toMatchObject({ page: 5, docName: 'Beta.pdf' });
+  });
+
+  it('공백 포함 한글 문서명도 파싱', () => {
+    const segs = parseCitations('[Section 0 소개.pdf p.49] 참고');
+    const cite = segs.find((s) => s.type === 'citation');
+    expect(cite).toMatchObject({ page: 49, docName: 'Section 0 소개.pdf' });
+  });
+
+  it('[p. 5] (p 뒤 공백) 은 docName 으로 오인하지 않음', () => {
+    const segs = parseCitations('본문 [p. 5] 끝');
+    const cite = segs.find((s) => s.type === 'citation');
+    expect(cite).toMatchObject({ page: 5 });
+    expect(cite?.docName).toBeUndefined();
+  });
+
+  it('stripCitations 는 교차 문서 인용도 제거', () => {
+    expect(stripCitations('본문 [Beta.pdf p.5] 끝')).toBe('본문  끝');
   });
 });
 

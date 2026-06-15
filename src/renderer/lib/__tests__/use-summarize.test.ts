@@ -58,7 +58,7 @@ describe('labelParagraphsWithPages — 요약 경로 페이지 라벨링', () =>
     const matches = Array.from(out.matchAll(re));
     // 단락 3개 → 라벨 3개, 모두 단일 페이지
     expect(matches).toHaveLength(3);
-    expect(matches.map((m) => m[1])).toEqual(['1', '1', '2']);
+    expect(matches.map((m) => m.groups?.page)).toEqual(['1', '1', '2']);
 
     // parseCitations 로도 클릭 가능한 citation 세그먼트로 복원되어야 한다
     const citations = parseCitations(out).filter((s) => s.type === 'citation');

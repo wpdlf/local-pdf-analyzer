@@ -113,7 +113,7 @@ function renderWithCitations(children: ReactNode): ReactNode {
     }
     segments.forEach((seg, segIdx) => {
       if (seg.type === 'citation' && seg.page !== undefined) {
-        out.push(<CitationButton key={`${idx}-${segIdx}`} page={seg.page} />);
+        out.push(<CitationButton key={`${idx}-${segIdx}`} page={seg.page} docName={seg.docName} />);
       } else if (seg.type === 'text' && seg.content) {
         out.push(<Fragment key={`${idx}-${segIdx}`}>{seg.content}</Fragment>);
       }

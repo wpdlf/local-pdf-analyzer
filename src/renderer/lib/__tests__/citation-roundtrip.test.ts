@@ -54,7 +54,7 @@ describe('R35 round-trip: 라벨 생산 ↔ 인용 소비 포맷 정합성', () 
       const re = new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags);
       const matches = Array.from(label.matchAll(re));
       expect(matches).toHaveLength(1);
-      expect(matches[0]?.[1]).toBe(String(page));
+      expect(matches[0]?.groups?.page).toBe(String(page));
     }
   });
 

@@ -3,17 +3,21 @@
 
 /**
  * 페이지 인용 토큰 정규식.
- * 매칭 예시: `[p.12]`, `[p. 5]`, `[P.100]`
- * 캡처 그룹 1: 페이지 번호 (숫자)
+ * 매칭 예시: `[p.12]`, `[p. 5]`, `[P.100]`, 그리고 컬렉션 Q&A 의 문서명 접두 `[Beta.pdf p.5]`
+ * 명명 그룹 `page`: 페이지 번호 (숫자), `doc`: 선택적 문서명 접두 (multi-doc Phase 2)
  *
  * 'g' flag — matchAll 반복 사용
  * 'i' flag — 대소문자 무시 (LLM 이 간혹 `[P.5]` 출력)
+ *
+ * multi-doc Phase 2: 여러 문서에 걸친 답변은 출처를 `[문서명 p.N]` 으로 인용한다. 접두 그룹
+ * `(?:(?<doc>[^[\]|]+?)\s+)?` 은 선택적 — `[p.5]` 는 doc 없이 그대로 매칭(후방 호환). doc 명은
+ * 대괄호/파이프를 포함할 수 없고 `p.` 직전 공백으로 구분된다.
  *
  * 파이프 이후의 quote 포맷(`[p.N|...]`)도 관용적으로 허용 — 과거 DR-03 하이라이트 기능에서
  * 사용한 확장이지만 기능이 제거된 후에도 LLM 이 quote 를 포함할 수 있어, 정규식이 호환적으로
  * 인식하되 quote 내용은 무시한다. `\s*\|\s*[^\]]*` 는 선택적으로 소비만 한다.
  */
-export const CITATION_REGEX = /\[p\.\s*(\d+)(?:\s*\|\s*[^\]]*)?\s*\]/gi;
+export const CITATION_REGEX = /\[(?:(?<doc>[^[\]|]+?)\s+)?p\.\s*(?<page>\d+)(?:\s*\|\s*[^\]]*)?\s*\]/gi;
 
 /**
  * 텍스트에서 모든 인용 토큰(`[p.N]`, `[p.N|quote]`) 을 제거.
@@ -42,6 +46,8 @@ export interface CitationSegment {
   type: 'text' | 'citation';
   content?: string;
   page?: number;
+  /** 컬렉션 Q&A 교차 문서 인용의 출처 문서명 (`[문서명 p.N]`). 단일 문서 인용은 undefined. */
+  docName?: string;
   raw?: string;
 }
 
@@ -63,15 +69,16 @@ export function parseCitations(text: string): CitationSegment[] {
   const re = new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags);
   for (const match of text.matchAll(re)) {
     const raw = match[0];
-    const pageStr = match[1];
+    const pageStr = match.groups?.page;
     if (!pageStr) continue;
+    const docName = match.groups?.doc?.trim() || undefined;
     const start = match.index ?? 0;
     if (start > lastIdx) {
       segments.push({ type: 'text', content: text.slice(lastIdx, start) });
     }
     const page = Number.parseInt(pageStr, 10);
     if (Number.isFinite(page) && page >= 1) {
-      segments.push({ type: 'citation', page, raw });
+      segments.push({ type: 'citation', page, docName, raw });
     } else {
       // 0 이나 invalid 는 원본 text 를 유지 (LLM 이 잘못 생성한 경우 대비)
       segments.push({ type: 'text', content: raw });

@@ -25,6 +25,10 @@ export const _translations = {
   'citation.aria': { ko: '{page} 페이지 원문 열기', en: 'Open source page {page}' },
   'citation.tooltip': { ko: '클릭하여 {page} 페이지 원문 확인', en: 'Click to view source on page {page}' },
   'citation.invalid': { ko: '유효하지 않은 페이지 ({page})', en: 'Invalid page ({page})' },
+  // 컬렉션 Q&A 교차 문서 인용 (multi-doc Phase 2)
+  'citation.crossTooltip': { ko: '클릭하여 {name} {page}페이지로 이동', en: 'Click to open {name} on page {page}' },
+  'citation.crossAria': { ko: '{name} {page}페이지 원문 열기', en: 'Open {name} page {page}' },
+  'citation.docClosed': { ko: '{name} 문서가 열려 있지 않아 이동할 수 없습니다', en: 'Cannot navigate — {name} is not open' },
   'pdfviewer.title': { ko: '원문 보기', en: 'Source Viewer' },
   'pdfviewer.close': { ko: '뷰어 닫기', en: 'Close viewer' },
   'pdfviewer.loading': { ko: 'PDF 로드 중...', en: 'Loading PDF...' },

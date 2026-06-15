@@ -20,6 +20,10 @@ vi.stubGlobal('window', Object.assign(window, {
   },
 }));
 
+// 교차 문서 인용 클릭 시 탭 전환 — lib/tabs.switchToTab 호출만 검증(부수효과는 tabs 테스트 담당)
+const mockSwitchToTab = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock('../../lib/tabs', () => ({ switchToTab: mockSwitchToTab }));
+
 import { CitationButton } from '../CitationButton';
 import { useAppStore } from '../../lib/store';
 
@@ -157,5 +161,64 @@ describe('CitationButton (Top5 #4) — active 상태', () => {
     useAppStore.setState({ citationTarget: null });
     render(<CitationButton page={3} />);
     expect(screen.getByRole('button').className).toMatch(/bg-transparent/);
+  });
+});
+
+describe('CitationButton — 교차 문서 인용 (multi-doc Phase 2)', () => {
+  function setActiveAndTabs(): void {
+    useAppStore.setState({
+      document: {
+        id: 'active', fileName: 'Alpha.pdf', filePath: '/d/Alpha.pdf', pageCount: 5,
+        extractedText: '', pageTexts: [], chapters: [], images: [], createdAt: new Date(),
+      },
+      citationTarget: null,
+      openTabs: [
+        { filePath: '/d/Alpha.pdf', fileName: 'Alpha.pdf', pageCount: 5, docHash: 'a'.repeat(64) },
+        { filePath: '/d/Beta.pdf', fileName: 'Beta.pdf', pageCount: 9, docHash: 'b'.repeat(64) },
+      ],
+    });
+  }
+
+  beforeEach(() => {
+    mockSwitchToTab.mockClear();
+    setActiveAndTabs();
+  });
+
+  it('docName=현재 문서면 단일 문서 인용처럼 [p.N] 렌더 + 전환 없음', async () => {
+    const user = userEvent.setup();
+    render(<CitationButton page={3} docName="Alpha.pdf" />);
+    const btn = screen.getByRole('button');
+    expect(btn.textContent).toBe('[p.3]');
+    await user.click(btn);
+    expect(mockSwitchToTab).not.toHaveBeenCalled();
+    expect(useAppStore.getState().citationTarget).toEqual({ page: 3 });
+  });
+
+  it('교차 문서 인용은 [문서명 p.N] 라벨 + 대상 탭 pageCount 로 검증', () => {
+    // Beta 는 9페이지 — Alpha(5p) 범위를 넘는 page=8 도 교차 검증으로 유효
+    render(<CitationButton page={8} docName="Beta.pdf" />);
+    const btn = screen.getByRole('button');
+    expect(btn.textContent).toBe('[Beta.pdf p.8]');
+    expect(btn.getAttribute('aria-disabled')).toBeNull();
+  });
+
+  it('교차 문서 인용 클릭 → 해당 탭으로 전환 후 페이지 점프', async () => {
+    const user = userEvent.setup();
+    render(<CitationButton page={8} docName="Beta.pdf" />);
+    await user.click(screen.getByRole('button'));
+    expect(mockSwitchToTab).toHaveBeenCalledWith('/d/Beta.pdf');
+    expect(useAppStore.getState().citationTarget).toEqual({ page: 8 });
+  });
+
+  it('대상 문서가 열려 있지 않으면 비활성 (이동 불가)', () => {
+    render(<CitationButton page={3} docName="Gamma.pdf" />);
+    const el = screen.getByText('[Gamma.pdf p.3]');
+    expect(el.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('교차 문서 인용이 대상 탭 범위도 벗어나면 비활성', () => {
+    render(<CitationButton page={99} docName="Beta.pdf" />); // Beta 9p < 99
+    const el = screen.getByText('[Beta.pdf p.99]');
+    expect(el.getAttribute('aria-disabled')).toBe('true');
   });
 });
