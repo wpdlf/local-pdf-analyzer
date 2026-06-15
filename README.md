@@ -11,6 +11,7 @@ Most AI summarization services require uploading your PDF to an external server 
 - **Scanned PDF OCR** — image-based scanned PDFs are recognized page by page with Vision AI
 - **RAG-based Q&A chat** — embedding-based semantic search finds the most relevant parts of your PDF, and answers are automatically verified against the source
 - **Page citations + PDF viewer** — summaries and answers carry `[p.12]` source citations; click one to open the original page instantly
+- **Multi-document tabs + cross-document Q&A** — open several PDFs as tabs and ask a single question across them; answers cite the source document and jump to the right page
 - **Automatic session save & restore** — reopen an analyzed PDF and your summary, Q&A history, and search index are restored instantly, with no re-summarization or re-embedding
 - **Safe for sensitive material** — exam papers, internal documents, paper drafts and other private files can be summarized with confidence
 - **Korean/English UI · external AI option** — switch to Claude/OpenAI/Gemini API easily when you need higher quality
@@ -77,6 +78,7 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 - Ask a question and the AI answers using the most relevant parts of the PDF found via embedding similarity (up to 10 turns of conversation context)
 - Without an embedding model, Q&A falls back to keyword search automatically (same feature, lower accuracy)
 - **Automatic answer verification** — each sentence of the answer is checked against the PDF embeddings; if too many sentences lack grounding, the answer is automatically refined once more (can be disabled in Settings)
+- **Cross-document Q&A (collection mode)** — with two or more documents open, toggle **"Ask across documents"** to search several PDFs at once. Pick members with checkboxes; the question is searched across each selected document's index and merged **without re-embedding**. Answers cite the source document (e.g. `[Service Discovery.pdf p.5]`); click a citation to switch to that document and jump to the page. Documents indexed with a different embedding model are automatically excluded with a reason.
 - `Enter`: send / `Shift+Enter`: new line
 
 ### 5. Page Citations + PDF Viewer
@@ -158,7 +160,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Real-time streaming — summaries appear as they are generated, with auto-scroll (pauses when you scroll manually)
 - Every long-running task is cancellable — stop summarization/parsing/OCR, cancel Ollama setup midway and switch providers
 - File swap during parsing — dropping another file cancels the previous job and switches immediately
-- Multi-document tabs — keep several PDFs open and switch between them; only the active document's heavy state stays in memory (instant restore on switch)
+- Multi-document tabs — keep several PDFs open and switch between them; only the active document's heavy state stays in memory (instant restore on switch). Collection mode searches across the open documents in a single question, with source-attributed citations
 - Dark mode, instant Korean/English switching — the UI language is auto-detected from your OS locale on first run, with a toggle on the setup screen; screen-reader and keyboard accessibility
 
 **Reliability · Security**
@@ -168,7 +170,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Render error recovery — unexpected UI errors offer a "Try again" button, no restart needed
 
 **Quality assurance**
-- 840 unit tests + CI quality gates, plus a 4-agent parallel QA round on every release
+- 896 unit tests + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -222,7 +224,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | State management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
-| Testing | Vitest, 840 unit tests / 43 files (renderer·shared 479 + main 361) + `tsc --noEmit` type check + CI coverage gates (57/51/58/59) |
+| Testing | Vitest, 896 unit tests / 48 files (renderer·shared 535 + main 361) + `tsc --noEmit` type check + CI coverage gates (57/51/58/59) |
 | i18n | In-house (i18n.ts) — 172+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -273,7 +275,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (840, 43 files)
+    │   └── __tests__/         # Unit tests (896, 48 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -467,7 +469,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **840 unit tests / 43 files** — renderer·shared 479 + main 361. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
+- **896 unit tests / 48 files** — renderer·shared 535 + main 361. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
 - **CI gates** — `tsc --noEmit` (strict), enforced coverage thresholds (57/51/58/59), lockfile version sync check, `npm audit` advisory, Node 20.11/22/24 matrix
 - **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings for 43 consecutive rounds (detected High/Important issues are fixed immediately in patch releases — most recently: 19 findings in R43 → v0.21.1)
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
