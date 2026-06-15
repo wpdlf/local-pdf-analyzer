@@ -19,7 +19,7 @@ version_project: 0.23.2
 > **Version**: 0.23.2
 > **Author**: jjw
 > **Date**: 2026-06-15
-> **Status**: Scope Confirmed (§10 Open Questions 전부 보수적 권고값으로 확정 — module-1(B 영속화) 착수)
+> **Status**: Implemented (module-1~4 완료, v0.23.2 기준 — §11 Implementation Status 참조)
 > **Depends on**: Phase 1(탭/세션-우선 복원), Phase 2(컬렉션 멤버 해석·collection.ts·collectionRagSearch),
 > session-persistence(manifest/session.json/index.bin), use-summarize(요약 파이프라인)
 
@@ -274,9 +274,37 @@ interface CollectionSummary {
 
 ---
 
+## 11. Implementation Status (module-4 gap 분석)
+
+구현 완료. SCOPE In 항목과 결정 매핑:
+
+| 요구 (SCOPE In / 결정) | 구현 위치 | 테스트 |
+|------------------------|-----------|--------|
+| B: 컬렉션 저장/이름(명시) | CollectionBar 저장 버튼 + collections-client | CollectionBar L3, store L1 |
+| B: 영속 저장소(전용) | shared/collection-types + main/collections-store + collections:* IPC | collections-store L1(11) + IPC L2(5) |
+| B: 목록/삭제 | CollectionsList | CollectionsList L3(5) |
+| B: 재오픈(탭 세트 복원) | tabs.openCollection(세션-우선) | tabs L3(3) + collection-phase3 E2E |
+| B: 멤버 일부 부재 → 부분 복원 | openCollection skip + notice | tabs L3, CollectionsList L3 |
+| A: 교차 요약/비교(map-reduce) | use-collection-summary | L1(3) + L2(3) |
+| A: 저장 요약 재사용(재요약 0) | gatherMemberBlocks(pickSummary) | L2 |
+| A: 통합/비교 2종 | CollectionBar 버튼 + buildCollectionSummaryPrompt | L1/L2 |
+| A: 멤버 수 상한(10) | COLLECTION_SUMMARY_MAX_MEMBERS | (slice) |
+| A: 결과 표시(요약 영역 재사용) | QaChat 스레드(요청+결과 메시지) — 새 패널 없음 | collection-phase3 E2E |
+| 전체 통합 | — | collection-phase3.spec.ts(통합 요약 + 저장→재오픈, 로컬) |
+
+**Gap / 의도적 단순화 (차단 아님)**:
+- **Q-A2 변경**: 요약 부재 멤버는 인라인 생성·영속화(타 문서 세션 cross-write 위험) 대신 본문
+  발췌(1500자)로 대체. 인라인 생성+세션 저장은 차기 refinement.
+- **A 결과 표시**: Q-A5의 "요약 영역 재사용"을 QaChat 스레드(기존 영역, 새 패널 없음) 재사용으로
+  구현 — 활성 문서 요약 영역을 덮어쓰지 않아 더 안전(취지 동일).
+- 교차 요약의 `[문서명 p.N]` 인용은 LLM 준수에 의존(멤버 요약의 기존 `[p.N]`은 활성 문서 인용으로
+  렌더될 수 있음 — 정확도 한정적, 휘발성 결과라 영향 작음).
+- 컬렉션 영속 RAG 인덱스는 Out(질의 시 온디맨드 — Phase 2 정책 유지).
+
 ## Version History
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
 | 0.1 | 2026-06-15 | Initial draft (A: map-reduce / B: 전용 collections-store 선택) | jjw |
 | 0.2 | 2026-06-15 | §10 Open Questions 8건 보수적 권고값 확정 → Status: Scope Confirmed | jjw |
+| 0.3 | 2026-06-15 | module-1~4 구현 완료 + §11 gap 분석 → Status: Implemented | jjw |
