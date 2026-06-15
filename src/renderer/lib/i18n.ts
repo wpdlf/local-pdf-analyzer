@@ -151,6 +151,13 @@ export const _translations = {
   'collection.delete': { ko: '삭제', en: 'Delete' },
   'collection.openFail': { ko: '컬렉션을 열 수 없습니다.', en: 'Could not open the collection.' },
   'collection.partialOpen': { ko: '{total}개 중 {opened}개 문서만 복원되었습니다 (나머지는 세션이 없음).', en: 'Restored {opened} of {total} documents (the rest have no saved session).' },
+  // 교차 문서 요약/비교 (multi-doc Phase 3 module-3)
+  'collection.unified': { ko: '📑 통합 요약', en: '📑 Unified summary' },
+  'collection.compare': { ko: '⚖ 비교 분석', en: '⚖ Compare' },
+  'collection.unifiedRequest': { ko: '선택한 문서들의 통합 요약을 작성해줘', en: 'Write a unified summary of the selected documents' },
+  'collection.compareRequest': { ko: '선택한 문서들을 비교 분석해줘', en: 'Compare and contrast the selected documents' },
+  'collection.summaryNeedsMembers': { ko: '교차 요약은 검색 가능한 문서가 2개 이상일 때 가능합니다.', en: 'Cross-document summary needs at least 2 searchable documents.' },
+  'collection.summaryFail': { ko: '교차 요약 생성에 실패했습니다.', en: 'Failed to generate the cross-document summary.' },
 
   // ─── ProgressBar ───
   'progress.seconds': { ko: '{s}초', en: '{s}s' },

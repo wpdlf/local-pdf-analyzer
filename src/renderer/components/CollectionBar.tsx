@@ -3,6 +3,7 @@ import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { resolveMembers } from '../lib/collection';
 import { saveCollection } from '../lib/collections-client';
+import { generateCollectionSummary } from '../lib/use-collection-summary';
 import type { SessionManifestEntry } from '../../shared/session-types';
 import type { ResolvedMember } from '../types';
 
@@ -22,6 +23,11 @@ export function CollectionBar() {
   const setCollectionEnabled = useAppStore((s) => s.setCollectionEnabled);
   const setCollectionMembers = useAppStore((s) => s.setCollectionMembers);
   const toggleCollectionMember = useAppStore((s) => s.toggleCollectionMember);
+  // 교차 요약/저장 버튼 비활성 판정 — 생성/파싱/인덱싱 중에는 차단
+  const isQaGenerating = useAppStore((s) => s.isQaGenerating);
+  const isGenerating = useAppStore((s) => s.isGenerating);
+  const ragIsIndexing = useAppStore((s) => s.ragState.isIndexing);
+  const isBusy = isQaGenerating || isGenerating || ragIsIndexing;
 
   const [manifest, setManifest] = useState<SessionManifestEntry[]>([]);
   const [saving, setSaving] = useState(false);     // 이름 입력 표시 여부
@@ -147,6 +153,26 @@ export function CollectionBar() {
           })}
           {readyCount === 0 && (
             <p className="text-amber-600 dark:text-amber-400">{t('collection.noneSearchable')}</p>
+          )}
+
+          {/* 교차 문서 요약/비교 — 검색 가능 멤버 2개 이상일 때 */}
+          {readyCount >= 2 && (
+            <div className="mt-2 flex items-center gap-1">
+              <button
+                onClick={() => void generateCollectionSummary('unified')}
+                disabled={isBusy}
+                className="rounded bg-blue-500 px-2 py-1 text-white hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {t('collection.unified')}
+              </button>
+              <button
+                onClick={() => void generateCollectionSummary('comparison')}
+                disabled={isBusy}
+                className="rounded border border-blue-500 px-2 py-1 text-blue-600 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {t('collection.compare')}
+              </button>
+            </div>
           )}
 
           {/* 컬렉션 저장 — 멤버 2개 이상일 때. 이름 입력 인라인 토글. */}
