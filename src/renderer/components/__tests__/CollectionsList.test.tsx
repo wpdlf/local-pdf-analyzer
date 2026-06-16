@@ -84,6 +84,15 @@ describe('CollectionsList', () => {
     await waitFor(() => expect(useAppStore.getState().notice).not.toBeNull());
   });
 
+  it('R48: 전원 복원 실패(opened 0) → COLLECTION_OPEN_FAIL 에러', async () => {
+    M.openCollection.mockResolvedValue({ opened: 0, total: 2 });
+    const user = userEvent.setup();
+    render(<CollectionsList />);
+    await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: '열기' }));
+    await waitFor(() => expect(useAppStore.getState().error?.code).toBe('COLLECTION_OPEN_FAIL'));
+  });
+
   it('부분 복원 시 안내 notice', async () => {
     M.openCollection.mockResolvedValue({ opened: 2, total: 3 });
     const user = userEvent.setup();

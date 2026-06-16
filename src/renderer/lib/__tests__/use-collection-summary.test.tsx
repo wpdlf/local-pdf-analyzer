@@ -220,6 +220,59 @@ describe('generateCollectionSummary (L2)', () => {
     expect(st.isQaGenerating).toBe(true);
   });
 
+  it('mid-stream 문서 전환(R48): document.id 교체 시 stale 스트림은 커밋하지 않음', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf', '요약', 't')));
+    // qaRequestId 는 그대로 두고 활성 문서만 교체 → 소유권 가드의 document.id 절이 결정 조건.
+    // (requestId 절이 단축평가로 가려지지 않도록 분리 검증)
+    M.midStream = () => useAppStore.setState({
+      document: { id: 'B', fileName: 'Other.pdf', filePath: '/d/Other.pdf', pageCount: 1, extractedText: 'x', pageTexts: [], chapters: [], images: [], createdAt: new Date() },
+    });
+
+    await generateCollectionSummary('unified');
+
+    // 문서가 바뀌었으므로 stale → assistant 결과 미커밋(전환된 문서 스레드 오염 방지)
+    expect(useAppStore.getState().qaMessages.some((m) => m.role === 'assistant')).toBe(false);
+  });
+
+  it('R48 MED-2: 총량 예산 소진 시 후속 멤버는 reduce 프롬프트에서 제외', async () => {
+    seedActive(); // active model 'm', dim 3
+    const hA = 'a'.repeat(64), hB = 'b'.repeat(64), hC = 'c'.repeat(64), hD = 'd'.repeat(64), hE = 'e'.repeat(64);
+    // 활성 + 4 비활성 전부 ready(동일 model/dim) 매니페스트
+    mockSessionList.mockResolvedValue([
+      manifestEntry(hB, MODEL, 3), manifestEntry(hC, MODEL, 3),
+      manifestEntry(hD, MODEL, 3), manifestEntry(hE, MODEL, 3),
+    ]);
+    useAppStore.setState({
+      document: { id: 'A', fileName: 'Alpha.pdf', filePath: '/d/Alpha.pdf', pageCount: 5, extractedText: 'x', pageTexts: [], chapters: [], images: [], createdAt: new Date() },
+      openTabs: [
+        { filePath: '/d/Alpha.pdf', fileName: 'Alpha.pdf', pageCount: 5, docHash: hA },
+        { filePath: '/d/Beta.pdf', fileName: 'Beta.pdf', pageCount: 5, docHash: hB },
+        { filePath: '/d/Gamma.pdf', fileName: 'Gamma.pdf', pageCount: 5, docHash: hC },
+        { filePath: '/d/Delta.pdf', fileName: 'Delta.pdf', pageCount: 5, docHash: hD },
+        { filePath: '/d/Epsilon.pdf', fileName: 'Epsilon.pdf', pageCount: 5, docHash: hE },
+      ],
+      collection: { enabled: true, memberHashes: [hA, hB, hC, hD, hE] },
+      qaMessages: [], qaStream: '', isGenerating: false, isQaGenerating: false, qaRequestId: null,
+      ragState: { isIndexing: false, progress: null, isAvailable: true, model: MODEL, chunkCount: 1 },
+      notice: null, error: null,
+      settings: { ...useAppStore.getState().settings, summaryLanguage: 'ko' },
+    });
+    // 각 멤버 5000자 요약 → 블록당 3000 캡. 예산 12000 / 3000 = 정확히 4멤버에서 소진 → 5번째 제외.
+    mockSessionLoad.mockImplementation(() => Promise.resolve(memberSession('x.pdf', '요'.repeat(5000), 't')));
+
+    await generateCollectionSummary('unified');
+
+    // 예산 내 앞 4개 헤더만 존재, 5번째(Epsilon) 제외
+    expect(M.prompt).toContain('## Alpha.pdf');
+    expect(M.prompt).toContain('## Beta.pdf');
+    expect(M.prompt).toContain('## Gamma.pdf');
+    expect(M.prompt).toContain('## Delta.pdf');
+    expect(M.prompt).not.toContain('## Epsilon.pdf');
+  });
+
   it('재진입 가드: 동시 2회 호출 시 한 번만 실행', async () => {
     seedActive();
     setStore(['a'.repeat(64), 'b'.repeat(64)]);

@@ -93,6 +93,7 @@ async function gatherMemberBlocks(
       : (typeof session.extractedText === 'string' ? session.extractedText.slice(0, MEMBER_EXCERPT_CHARS) : null);
     if (!raw || !raw.trim()) continue;
     const content = raw.length > budget ? raw.slice(0, budget) : raw;
+    if (!content.trim()) continue; // 예산 절단으로 공백만 남은 블록은 제외(빈 헤더 방지)
     budget -= content.length;
     blocks.push({ fileName: m.fileName, content });
   }
