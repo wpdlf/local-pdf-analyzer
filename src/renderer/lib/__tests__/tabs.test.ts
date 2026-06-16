@@ -282,4 +282,40 @@ describe('openCollection (multi-doc Phase 3)', () => {
     expect(r).toEqual({ opened: 0, total: 2 });
     expect(useAppStore.getState().openTabs).toHaveLength(0);
   });
+
+  it('R48: 중복 docHash 는 한 번만 열고 total 도 고유 기준', async () => {
+    seedTabs([], null);
+    M.sessionLoad.mockImplementation((h: string) => Promise.resolve(sessionFor(h)));
+    M.openPath.mockResolvedValue({ error: 'no-file' });
+    const r = await openCollection(['h1', 'h1', 'h2']);
+    expect(r).toEqual({ opened: 2, total: 2 }); // 고유 2개(중복 과다집계 없음)
+    expect(useAppStore.getState().openTabs.map((tb) => tb.docHash)).toEqual(['h1', 'h2']);
+  });
+
+  it('R48: 교체 시맨틱 — 기존 탭/컬렉션 상태를 비우고 멤버로 대체(additive 아님)', async () => {
+    useAppStore.setState({
+      openTabs: [{ filePath: '/old.pdf', fileName: 'old.pdf', pageCount: 1, docHash: 'old' }],
+      collection: { enabled: true, memberHashes: ['old'] },
+      document: null, isGenerating: false, isQaGenerating: false, isParsing: false,
+    });
+    M.sessionLoad.mockImplementation((h: string) => Promise.resolve(sessionFor(h)));
+    M.openPath.mockResolvedValue({ error: 'no-file' });
+    const r = await openCollection(['h1', 'h2']);
+    expect(r).toEqual({ opened: 2, total: 2 });
+    const st = useAppStore.getState();
+    expect(st.openTabs.map((tb) => tb.docHash)).toEqual(['h1', 'h2']); // 기존 'old' 제거
+    expect(st.collection.enabled).toBe(false);
+    expect(st.collection.memberHashes).toEqual([]);
+  });
+
+  it('R48: 생성 중이면 no-op — 탭 세트 보존 + {0,0}', async () => {
+    useAppStore.setState({
+      openTabs: [{ filePath: '/keep.pdf', fileName: 'keep.pdf', pageCount: 1, docHash: 'keep' }],
+      document: null, isGenerating: false, isQaGenerating: true, isParsing: false,
+    });
+    M.sessionLoad.mockImplementation((h: string) => Promise.resolve(sessionFor(h)));
+    const r = await openCollection(['h1', 'h2']);
+    expect(r).toEqual({ opened: 0, total: 0 });
+    expect(useAppStore.getState().openTabs.map((tb) => tb.docHash)).toEqual(['keep']); // wipe 안 됨
+  });
 });

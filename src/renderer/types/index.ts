@@ -186,7 +186,12 @@ export type AppErrorCode =
   | 'OCR_FAIL'
   | 'API_KEY_MISSING'
   | 'API_KEY_INVALID'
-  | 'SETTINGS_SAVE_FAIL';
+  | 'SETTINGS_SAVE_FAIL'
+  // 컬렉션 전용 코드(R48 LOW): PDF_PARSE_FAIL/GENERATE_FAIL 재사용은 메시지는 맞아도 code 가
+  // 의미와 어긋나 텔레메트리/분기를 오도한다. 실패 출처를 명확히 하도록 전용 코드 분리.
+  | 'COLLECTION_OPEN_FAIL'
+  | 'COLLECTION_SAVE_FAIL'
+  | 'COLLECTION_SUMMARY_FAIL';
 
 export interface AppError {
   code: AppErrorCode;

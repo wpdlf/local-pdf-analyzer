@@ -151,6 +151,7 @@ export const _translations = {
   'collection.open': { ko: '열기', en: 'Open' },
   'collection.delete': { ko: '삭제', en: 'Delete' },
   'collection.openFail': { ko: '컬렉션을 열 수 없습니다.', en: 'Could not open the collection.' },
+  'collection.busy': { ko: '생성/분석이 진행 중입니다. 끝난 뒤 다시 시도하세요.', en: 'A generation/analysis is in progress. Try again when it finishes.' },
   'collection.partialOpen': { ko: '{total}개 중 {opened}개 문서만 복원되었습니다 (나머지는 세션이 없음).', en: 'Restored {opened} of {total} documents (the rest have no saved session).' },
   // 교차 문서 요약/비교 (multi-doc Phase 3 module-3)
   'collection.unified': { ko: '📑 통합 요약', en: '📑 Unified summary' },

@@ -98,7 +98,7 @@ export function CollectionBar() {
       useAppStore.getState().setNotice({ message: t('collection.saved') });
     } else {
       // 실패는 setError(닫기 전까지 잔존)로 통일 — notice(자동소멸)면 놓치기 쉬움(R47)
-      useAppStore.getState().setError({ code: 'GENERATE_FAIL', message: t('collection.saveFail') });
+      useAppStore.getState().setError({ code: 'COLLECTION_SAVE_FAIL', message: t('collection.saveFail') });
     }
     setSaveName('');
   };

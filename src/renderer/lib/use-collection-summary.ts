@@ -22,6 +22,19 @@ export type CollectionSummaryKind = 'unified' | 'comparison';
 export const COLLECTION_SUMMARY_MAX_MEMBERS = 10;
 /** 요약이 없는 멤버의 본문 발췌 상한(문자) */
 const MEMBER_EXCERPT_CHARS = 1500;
+/**
+ * 멤버 요약 블록 1개의 상한(문자). 저장된 단일-문서 요약은 발췌보다 밀도가 높아 상한을 더
+ * 두지만, 무제한이면 멤버 10개 합성 시 소형 로컬 모델(gemma3 등) 컨텍스트를 초과해 출력이
+ * 깨졌다 — R48 MED-1: 발췌 분기만 캡돼 있던 것을 요약 분기에도 캡 적용.
+ */
+const MEMBER_SUMMARY_CHARS = 3000;
+/**
+ * reduce 프롬프트에 넣는 멤버 본문 총량 상한(문자). 멤버 수×블록 상한이 누적돼 컨텍스트를
+ * 넘기는 것을 막는 토큰/비용 가드(설계 §10 Q-A4 연장). 남은 예산이 MIN_BLOCK_CHARS 미만이면 중단.
+ */
+const COLLECTION_REDUCE_TOTAL_CHARS = 12000;
+/** 남은 예산이 이보다 작으면 의미 있는 블록을 못 만들어 수집 중단 */
+const MIN_BLOCK_CHARS = 200;
 
 interface MemberBlock { fileName: string; content: string; }
 
@@ -66,14 +79,22 @@ async function gatherMemberBlocks(
   summaryType: string,
 ): Promise<MemberBlock[]> {
   const blocks: MemberBlock[] = [];
+  let budget = COLLECTION_REDUCE_TOTAL_CHARS;
   for (const m of members.slice(0, COLLECTION_SUMMARY_MAX_MEMBERS)) {
+    if (budget < MIN_BLOCK_CHARS) break; // 총량 예산 소진 — 이후 멤버는 제외(컨텍스트 초과 방지)
     const loaded = await window.electronAPI.session.load(m.docHash).catch(() => null);
     const session = loaded?.session as PersistedSession | undefined;
     if (!session) continue;
     const summary = pickSummary(session, summaryType);
-    const content = summary
-      ?? (typeof session.extractedText === 'string' ? session.extractedText.slice(0, MEMBER_EXCERPT_CHARS) : null);
-    if (content && content.trim()) blocks.push({ fileName: m.fileName, content });
+    // 요약 우선(밀도 높음, 상한 MEMBER_SUMMARY_CHARS) → 없으면 본문 발췌(상한 MEMBER_EXCERPT_CHARS).
+    // 무제한 연결로 인한 컨텍스트 초과(R48 MED-1)는 블록당 캡 + 총량 예산으로 이중 차단.
+    const raw = summary != null
+      ? summary.slice(0, MEMBER_SUMMARY_CHARS)
+      : (typeof session.extractedText === 'string' ? session.extractedText.slice(0, MEMBER_EXCERPT_CHARS) : null);
+    if (!raw || !raw.trim()) continue;
+    const content = raw.length > budget ? raw.slice(0, budget) : raw;
+    budget -= content.length;
+    blocks.push({ fileName: m.fileName, content });
   }
   return blocks;
 }
@@ -93,6 +114,9 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
   const activeTab = st.openTabs.find((tb) => tb.filePath === st.document?.filePath);
   const activeDocHash = activeTab?.docHash;
   if (!activeDocHash) return;
+  // 소유권 가드용 활성 문서 정체성(R48 LOW): handleAsk 와 동형으로 document.id 도 함께 확인해
+  // stale 스트림이 (전환이 풀린 뒤) 다른 문서의 Q&A 스레드에 결과를 쓰는 것을 방어한다.
+  const activeDocId = st.document?.id;
   collectionSummaryInFlight = true;
 
   let requestId: string | null = null;
@@ -139,15 +163,16 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
 
     let answer = '';
     for await (const token of client.summarize(prompt, 'qa', requestId)) {
-      // 소유권 가드(R47): 사용자 Stop 후 새 Q&A 가 시작됐으면(qaRequestId 교체) stale 스트림은 종료.
+      // 소유권 가드(R47/R48): 사용자 Stop 후 새 Q&A 가 시작됐으면(qaRequestId 교체) 또는 문서가
+      // 바뀌었으면(document.id 교체) stale 스트림은 종료 — handleAsk 의 stillOurs 가드와 동형.
       const s = useAppStore.getState();
-      if (!s.isQaGenerating || s.qaRequestId !== requestId) break;
+      if (!s.isQaGenerating || s.qaRequestId !== requestId || s.document?.id !== activeDocId) break;
       s.appendQaStream(token);
       answer += token;
     }
     // 소유권 확인 후에만 flush/커밋 — handleAsk 의 stillOurs 가드와 동형(고아 메시지/클로버링 방지)
     const post = useAppStore.getState();
-    if (post.qaRequestId === requestId) {
+    if (post.qaRequestId === requestId && post.document?.id === activeDocId) {
       post.flushQaStream();
       post.clearQaStream();
       if (answer.trim()) post.addQaMessage({ role: 'assistant', content: `**${resultTitle}**\n\n${answer}` });
@@ -155,7 +180,7 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
   } catch (err) {
     if (useAppStore.getState().qaRequestId === requestId) {
       useAppStore.getState().setError({
-        code: 'GENERATE_FAIL',
+        code: 'COLLECTION_SUMMARY_FAIL',
         message: err instanceof Error ? err.message : t('collection.summaryFail'),
       });
     }

@@ -197,6 +197,10 @@ export async function openNewTabView(): Promise<void> {
  * @returns { opened, total } — 부분 복원 시 호출자가 안내(opened < total).
  */
 export async function openCollection(docHashes: string[]): Promise<{ opened: number; total: number }> {
+  // 방어 가드(R48 LOW): 생성/파싱 중에는 탭 세트를 비우면 진행 중 작업과 충돌하므로 no-op.
+  // 주 UX 경로(CollectionsList)는 호출 전에 isTabSwitchBlocked 로 안내하지만, 다른 호출자가
+  // 우회하더라도 상태를 훼손하지 않도록 함수 진입부에서 한 번 더 차단(switchToTab 등과 대칭).
+  if (isTabSwitchBlocked()) return { opened: 0, total: 0 };
   // 교체 시맨틱(R47 UX): "이 컬렉션을 연다" = 현재 탭 세트를 컬렉션 멤버로 교체. 업로드 화면
   // (document=null)에서만 호출되고 세션은 이미 영속화돼 있어 기존 탭 목록만 비우면 데이터 손실 없음.
   // 기존 additive 는 다른 작업 세트와 섞여 탭이 예상외로 불어났다.

@@ -12,13 +12,14 @@ const M = vi.hoisted(() => ({
   list: vi.fn(),
   del: vi.fn(() => Promise.resolve({ ok: true })),
   openCollection: vi.fn(() => Promise.resolve({ opened: 2, total: 2 })),
+  blocked: vi.fn(() => false),
 }));
 vi.mock('../../lib/collections-client', () => ({
   listCollections: M.list,
   deleteCollection: M.del,
   saveCollection: vi.fn(),
 }));
-vi.mock('../../lib/tabs', () => ({ openCollection: M.openCollection }));
+vi.mock('../../lib/tabs', () => ({ openCollection: M.openCollection, isTabSwitchBlocked: M.blocked }));
 
 vi.stubGlobal('window', Object.assign(window, {
   electronAPI: {
@@ -38,6 +39,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   M.list.mockResolvedValue([coll('c1', '강의 묶음', 3)]);
   M.openCollection.mockResolvedValue({ opened: 2, total: 2 });
+  M.blocked.mockReturnValue(false);
   useAppStore.setState({
     settings: { ...useAppStore.getState().settings, persistSessions: true },
     notice: null, error: null,
@@ -70,6 +72,16 @@ describe('CollectionsList', () => {
     await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());
     await user.click(screen.getByRole('button', { name: '열기' }));
     expect(M.openCollection).toHaveBeenCalledWith(['c1-0', 'c1-1', 'c1-2']);
+  });
+
+  it('R48: 생성/분석 중이면 열기 차단 + busy 안내(openCollection 미호출)', async () => {
+    M.blocked.mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<CollectionsList />);
+    await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: '열기' }));
+    expect(M.openCollection).not.toHaveBeenCalled();
+    await waitFor(() => expect(useAppStore.getState().notice).not.toBeNull());
   });
 
   it('부분 복원 시 안내 notice', async () => {

@@ -66,6 +66,9 @@ async function loadFile(filePath: string): Promise<SavedCollection[]> {
     const raw = await fsp.readFile(filePath, 'utf-8');
     const parsed = JSON.parse(raw) as CollectionStoreFile;
     if (!parsed || !Array.isArray(parsed.collections)) return [];
+    // schemaVersion 분기 없음(현재 v1). COLLECTION_SCHEMA_VERSION 을 올릴 때는 여기서
+    // parsed.schemaVersion 에 따라 마이그레이션을 수행할 것 — 지금은 normalizeCollection 이
+    // 누락 필드를 보정하므로 v1 한정으로 무손실(R48 LOW 메모).
     return parsed.collections
       .map(normalizeCollection)
       .filter((c): c is SavedCollection => c !== null);

@@ -5,13 +5,17 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const M = vi.hoisted(() => ({ prompt: '', tokens: ['통합', ' 결과'], throwAfter: false }));
+const M = vi.hoisted(() => ({ prompt: '', tokens: ['통합', ' 결과'], throwAfter: false, midStream: null as null | (() => void) }));
 vi.mock('../ai-client', () => ({
   AiClient: class {
     prepareSummarize() { return 'req'; }
     async *summarize(p: string) {
       M.prompt = p;
-      for (const tk of M.tokens) yield tk;
+      let i = 0;
+      for (const tk of M.tokens) {
+        yield tk;
+        if (++i === 1) M.midStream?.(); // 첫 토큰 직후 side-effect 훅(소유권 교체 시뮬레이션)
+      }
       if (M.throwAfter) throw new Error('stream fail');
     }
   },
@@ -79,6 +83,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   M.prompt = '';
   M.throwAfter = false;
+  M.midStream = null;
   mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), MODEL, 3)]);
   useAppStore.getState().ragIndex.clear();
 });
@@ -149,6 +154,20 @@ describe('generateCollectionSummary (L2)', () => {
     expect(M.prompt).toContain('베타 본문 발췌');
   });
 
+  it('R48 MED-1: 과대 요약은 블록당 상한으로 잘려 무제한 연결을 막음', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    const huge = '요'.repeat(10000); // 10000자 > MEMBER_SUMMARY_CHARS(3000)
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf', huge, 't')));
+    await generateCollectionSummary('unified');
+    // 캡 적용 시 ≈ 지시문 + 2×(헤더+3000) ≈ 6.6k. 무제한이면 2×10000=20k+ → 분명히 구분됨.
+    expect(M.prompt.length).toBeLessThan(12000);
+    // 그래도 두 멤버 헤더는 유지(합성 자체는 정상)
+    expect(M.prompt).toContain('## Alpha.pdf');
+    expect(M.prompt).toContain('## Beta.pdf');
+  });
+
   it('ready 멤버 1개뿐이면 안내 후 중단(AiClient 미호출)', async () => {
     seedActive();
     mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), 'other-model', 1536)]); // Beta 제외
@@ -178,9 +197,27 @@ describe('generateCollectionSummary (L2)', () => {
       Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf', '요약', 't')));
     M.throwAfter = true; // 토큰 yield 후 throw
     await generateCollectionSummary('unified');
-    expect(useAppStore.getState().error?.code).toBe('GENERATE_FAIL');
+    expect(useAppStore.getState().error?.code).toBe('COLLECTION_SUMMARY_FAIL');
     expect(useAppStore.getState().isQaGenerating).toBe(false); // finally 복구
     expect(useAppStore.getState().qaRequestId).toBeNull();
+  });
+
+  it('mid-stream 소유권 교체(R48): stale 스트림은 결과 커밋/플래그 해제를 하지 않음', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf', '요약', 't')));
+    // 첫 토큰 직후 새 Q&A 세션이 시작된 상황 모사: qaRequestId 교체 + isQaGenerating 유지
+    M.midStream = () => useAppStore.setState({ qaRequestId: 'other-session', isQaGenerating: true });
+
+    await generateCollectionSummary('unified');
+
+    const st = useAppStore.getState();
+    // 우리 스트림은 stale → assistant 결과를 커밋하지 않음(새 세션 클로버링 방지)
+    expect(st.qaMessages.some((m) => m.role === 'assistant')).toBe(false);
+    // 새 세션의 소유 상태를 우리 finally 가 끄지 않음(고아 해제 방지)
+    expect(st.qaRequestId).toBe('other-session');
+    expect(st.isQaGenerating).toBe(true);
   });
 
   it('재진입 가드: 동시 2회 호출 시 한 번만 실행', async () => {

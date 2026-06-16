@@ -11,7 +11,7 @@ permissions:
 jobs:
   test:
     # R37 P4-3 (v0.18.23): Node matrix 도입.
-    # 기존엔 Node 20.11 단일이었으나 package.json `engines.node` 가 `>=20.11 <23` 으로 22 까지
+    # 기존엔 Node 20.11 단일이었으나 package.json `engines.node` 가 `>=20.11 <25` 로 24 까지
     # 허용하고 사용자의 실제 개발 환경이 Node 22 LTS 인 경우가 증가. 20.11 EoL (2026-04) 임박과
     # 함께 22 검증 선행 필요. fail-fast: false — 한 Node 버전의 플레이크가 다른 버전 신호를
     # 가리지 않도록.

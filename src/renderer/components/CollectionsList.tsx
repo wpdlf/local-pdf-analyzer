@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useT } from '../lib/i18n';
 import { useAppStore } from '../lib/store';
 import { listCollections, deleteCollection } from '../lib/collections-client';
-import { openCollection } from '../lib/tabs';
+import { openCollection, isTabSwitchBlocked } from '../lib/tabs';
 import type { SavedCollection } from '../../shared/collection-types';
 
 /**
@@ -33,11 +33,16 @@ export function CollectionsList() {
   }, [persistEnabled, refresh]);
 
   const handleOpen = useCallback(async (c: SavedCollection) => {
+    // 생성/파싱 중이면 탭 세트 교체가 진행 중 작업과 충돌 — 안내 후 중단(switchToTab 등과 동일 가드)
+    if (isTabSwitchBlocked()) {
+      useAppStore.getState().setNotice({ message: tr('collection.busy') });
+      return;
+    }
     setBusy(c.id);
     try {
       const { opened, total } = await openCollection(c.docHashes);
       if (opened === 0) {
-        useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: tr('collection.openFail') });
+        useAppStore.getState().setError({ code: 'COLLECTION_OPEN_FAIL', message: tr('collection.openFail') });
       } else if (opened < total) {
         // 부분 복원 — 안내(컬렉션 항목은 유지). 성공 멤버는 이미 탭으로 열렸으므로 notice 채널 사용.
         useAppStore.getState().setNotice({ message: tr('collection.partialOpen', { opened, total }) });
