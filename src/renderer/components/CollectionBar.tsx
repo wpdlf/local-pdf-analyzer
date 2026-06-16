@@ -193,7 +193,8 @@ export function CollectionBar() {
                 aria-label={t('collection.saveNamePlaceholder')}
                 autoFocus
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void handleSave(); }}
-                className="flex-1 min-w-0 rounded border dark:border-gray-600 bg-white dark:bg-gray-900 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                // 입력 텍스트 색 명시 — 미지정 시 상속 색이 배경(white/gray-900)과 비슷해 글씨가 안 보였다
+                className="flex-1 min-w-0 rounded border dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               <button
                 onClick={() => void handleSave()}

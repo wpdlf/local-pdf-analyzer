@@ -16,7 +16,12 @@ export function CollectionsList() {
   const [items, setItems] = useState<SavedCollection[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // StrictMode(dev) 더블 마운트 가드: 재마운트 시 true 로 리셋하지 않으면 첫 언마운트가 false 로
+  // 만든 뒤 refresh 결과를 가드가 버려 목록이 빈 채로 남는다(dev 한정 — production 은 단일 마운트).
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const refresh = useCallback(async () => {
     const list = await listCollections();

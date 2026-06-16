@@ -102,6 +102,8 @@ export function SettingsPanel() {
   }, [settings]);
 
   useEffect(() => {
+    // StrictMode(dev) 더블 마운트 가드: 재마운트 시 true 리셋(동일 패턴 회귀 방지)
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       pullUnsubRef.current?.();

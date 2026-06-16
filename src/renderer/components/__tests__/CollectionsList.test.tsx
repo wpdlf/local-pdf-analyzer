@@ -4,6 +4,7 @@
 // 삭제 / 부분 복원 안내.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { StrictMode } from 'react';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -55,6 +56,12 @@ describe('CollectionsList', () => {
     render(<CollectionsList />);
     await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());
     expect(screen.getByText(/문서 3개/)).toBeTruthy();
+  });
+
+  it('StrictMode 더블 마운트에서도 목록이 표시된다 (dev 빈 목록 회귀 가드)', async () => {
+    // mountedRef 가 재마운트 시 true 로 리셋되지 않으면 refresh 결과가 버려져 목록이 빈 채로 남는다.
+    render(<StrictMode><CollectionsList /></StrictMode>);
+    await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());
   });
 
   it('열기 → openCollection(docHashes) 호출', async () => {

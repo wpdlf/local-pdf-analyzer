@@ -18,7 +18,12 @@ export function RecentDocuments() {
   // (App 의 `!document` 조건). 이후 finally setBusy / refresh setEntries 가 언마운트 상태에서
   // 실행되므로 가드한다 (SettingsPanel 의 mountedRef 패턴과 일치).
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // StrictMode(dev) 더블 마운트 가드: 재마운트 시 true 리셋이 없으면 첫 언마운트가 false 로 만든 뒤
+  // refresh 결과를 가드가 버려 최근 목록이 빈 채로 남는다(dev 한정).
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
