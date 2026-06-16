@@ -159,6 +159,7 @@ export const _translations = {
   'collection.unifiedRequest': { ko: '선택한 문서들의 통합 요약을 작성해줘', en: 'Write a unified summary of the selected documents' },
   'collection.compareRequest': { ko: '선택한 문서들을 비교 분석해줘', en: 'Compare and contrast the selected documents' },
   'collection.summaryNeedsMembers': { ko: '교차 요약은 검색 가능한 문서가 2개 이상일 때 가능합니다.', en: 'Cross-document summary needs at least 2 searchable documents.' },
+  'collection.preparingMember': { ko: '요약 준비 중: {name}…', en: 'Preparing summary: {name}…' },
   'collection.summaryFail': { ko: '교차 요약 생성에 실패했습니다.', en: 'Failed to generate the cross-document summary.' },
   'collection.unifiedResultTitle': { ko: '📑 통합 요약 ({count}개 문서)', en: '📑 Unified summary ({count} documents)' },
   'collection.compareResultTitle': { ko: '⚖ 비교 분석 ({count}개 문서)', en: '⚖ Comparison ({count} documents)' },

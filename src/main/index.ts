@@ -33,6 +33,7 @@ import { ApiKeyStore } from './api-keys-store';
 import {
   readSession,
   writeSession,
+  mergeSessionSummary,
   touchSession,
   deleteSession,
   clearAll as clearAllSessions,
@@ -491,6 +492,20 @@ export function registerIpcHandlers(): void {
     const session = p.session;
     const blob = p.blob ?? null;
     return serializeSessionWrite(() => writeSession(sessionsDir, { meta, session, blob, now: Date.now() }));
+  });
+
+  // 컬렉션 인라인 요약 영속화(multi-doc Phase 3): summaries[type] 한 칸만 병합. session:save 와
+  // 동일 mutex 로 직렬화해 활성 문서 auto-persist 와 원자성 유지. 비활성 멤버 cross-write 안전.
+  ipcMain.handle('session:saveSummary', async (_event, payload: unknown) => {
+    const p = payload as { docHash?: unknown; type?: unknown; summary?: { content?: unknown; model?: unknown; provider?: unknown } } | null;
+    if (!p || !isValidDocHash(p.docHash) || typeof p.type !== 'string') return { ok: false };
+    const s = p.summary;
+    if (!s || typeof s.content !== 'string') return { ok: false };
+    return serializeSessionWrite(() => mergeSessionSummary(sessionsDir, p.docHash as string, p.type as string, {
+      content: s.content as string,
+      model: typeof s.model === 'string' ? s.model : '',
+      provider: typeof s.provider === 'string' ? s.provider : '',
+    }, Date.now()));
   });
 
   ipcMain.handle('session:list', async () => {

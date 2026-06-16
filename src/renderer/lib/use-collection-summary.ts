@@ -3,17 +3,19 @@ import { AiClient } from './ai-client';
 import { resolveMembers } from './collection';
 import { t } from './i18n';
 import { sanitizePromptInput } from './use-qa';
-import type { PersistedSession, ResolvedMember } from '../types';
+import type { PersistedSession, ResolvedMember, SummaryType, AppSettings } from '../types';
 
 /**
  * 교차 문서 요약/비교 (multi-doc Phase 3 / module-3, A).
  *
  * Design Ref: multi-doc-phase3.design.md §2.A — map-reduce. 각 멤버의 **저장된 단일-문서 요약**을
- * 재사용(재요약 0)하고, 없으면 본문 발췌로 대체한 뒤 reduce 프롬프트(통합 요약 또는 비교 분석)로
- * 합성한다. 결과는 QaChat 메시지 영역(기존 UI 재사용 — 새 패널 없음)에 스트리밍한다.
+ * 재사용(재요약 0)하고, 없으면 본문에서 인라인 생성한 뒤 reduce 프롬프트(통합 요약 또는 비교
+ * 분석)로 합성한다. 결과는 QaChat 메시지 영역(기존 UI 재사용 — 새 패널 없음)에 스트리밍한다.
  *
- * Q-A2 단순화: 요약 부재 멤버는 그 자리에서 생성·저장하지 않고 본문 발췌(EXCERPT)로 대체한다
- * (타 문서 세션에 cross-write 하는 위험 회피 — 인라인 생성+영속화는 차기 refinement).
+ * 인라인 요약 생성+영속화(Q-A2 refinement): 요약 부재 멤버는 그 자리에서 본문(앞 N자 캡)으로
+ * 단일-문서 요약을 생성하고, **그 멤버 세션의 summaries 한 칸만** 병합 저장(session:saveSummary)한다.
+ * 비활성 멤버에 cross-write 하지만 메인의 read-merge-write(쓰기 mutex 직렬화)로 다른 필드를 stale
+ * 값으로 덮지 않아 안전하다(설계 검토 결론). 생성/영속화 실패 시 본문 발췌(EXCERPT) fallback 유지.
  */
 
 export type CollectionSummaryKind = 'unified' | 'comparison';
@@ -35,8 +37,27 @@ const MEMBER_SUMMARY_CHARS = 3000;
 const COLLECTION_REDUCE_TOTAL_CHARS = 12000;
 /** 남은 예산이 이보다 작으면 의미 있는 블록을 못 만들어 수집 중단 */
 const MIN_BLOCK_CHARS = 200;
+/**
+ * 인라인 요약 생성 시 모델에 넣는 본문 입력 상한(문자). v1 단순화 — useSummarize 의 청킹 대신
+ * 앞 N자만 요약해 소형 로컬 모델 컨텍스트 초과를 원천 차단한다(발췌 1500자보다 월등, 정식
+ * 청킹 요약보다는 약간 낮은 품질 — 차기 업그레이드 여지). 설계 검토 결정 사항.
+ */
+const INLINE_SUMMARY_INPUT_CHARS = 6000;
 
 interface MemberBlock { fileName: string; content: string; }
+
+/**
+ * 멤버 본문에서 단일-문서 요약을 인라인 생성(헤드리스 — 활성 문서 store 미오염). 토큰을 문자열로
+ * 수집해 반환. reduce 단계와 동일한 AiClient.summarize 경로(임베딩/RAG 비의존)를 재사용한다.
+ */
+async function generateMemberSummary(client: AiClient, text: string, summaryType: SummaryType): Promise<string> {
+  const reqId = client.prepareSummarize();
+  let out = '';
+  for await (const tk of client.summarize(text.slice(0, INLINE_SUMMARY_INPUT_CHARS), summaryType, reqId)) {
+    out += tk;
+  }
+  return out;
+}
 
 /** 세션의 타입별 요약 중 현재 타입 우선, 없으면 첫 항목 선택. 둘 다 없으면 null. */
 function pickSummary(session: PersistedSession, summaryType: string): string | null {
@@ -73,10 +94,16 @@ export function buildCollectionSummaryPrompt(
   return `${instruction}\n\n${body}`;
 }
 
-/** ready 멤버들의 표현(요약 우선, 없으면 본문 발췌)을 수집. session.load 로 본문/요약을 읽음. */
+/**
+ * ready 멤버들의 표현을 수집. session.load 로 본문/요약을 읽고, 요약이 없으면 본문에서 인라인
+ * 생성(+그 멤버 세션에 영속화)한다. 생성 실패 시 본문 발췌 fallback. summaryType 키로 생성·조회해
+ * 다음 합성/단일 열람에서 재사용(재요약 0)되게 한다.
+ */
 async function gatherMemberBlocks(
   members: ResolvedMember[],
-  summaryType: string,
+  summaryType: SummaryType,
+  client: AiClient,
+  settings: AppSettings,
 ): Promise<MemberBlock[]> {
   const blocks: MemberBlock[] = [];
   let budget = COLLECTION_REDUCE_TOTAL_CHARS;
@@ -85,8 +112,26 @@ async function gatherMemberBlocks(
     const loaded = await window.electronAPI.session.load(m.docHash).catch(() => null);
     const session = loaded?.session as PersistedSession | undefined;
     if (!session) continue;
-    const summary = pickSummary(session, summaryType);
-    // 요약 우선(밀도 높음, 상한 MEMBER_SUMMARY_CHARS) → 없으면 본문 발췌(상한 MEMBER_EXCERPT_CHARS).
+    let summary = pickSummary(session, summaryType);
+
+    // 요약 부재 멤버: 본문에서 인라인 생성 → 그 멤버 세션에 영속화(Q-A2 refinement). 생성 실패 시
+    // 아래 발췌 fallback 으로 자연 강등. 진행 표시는 첫 생성 시 notice 한 번(map 단계는 스트리밍 X).
+    if (summary == null && typeof session.extractedText === 'string' && session.extractedText.trim().length > 0) {
+      useAppStore.getState().setNotice({ message: t('collection.preparingMember', { name: m.fileName }) });
+      const gen = await generateMemberSummary(client, session.extractedText, summaryType).catch(() => '');
+      if (gen.trim().length > 0) {
+        summary = gen;
+        // 영속화는 best-effort — 실패해도 이번 합성에는 생성분을 그대로 사용. saveSummary 부재(구
+        // preload) 환경에서도 옵셔널 체이닝으로 안전.
+        void window.electronAPI.session.saveSummary?.({
+          docHash: m.docHash,
+          type: summaryType,
+          summary: { content: gen, model: settings.model, provider: settings.provider },
+        }).catch(() => undefined);
+      }
+    }
+
+    // 요약(저장/생성) 우선(상한 MEMBER_SUMMARY_CHARS) → 없으면 본문 발췌(상한 MEMBER_EXCERPT_CHARS).
     // 무제한 연결로 인한 컨텍스트 초과(R48 MED-1)는 블록당 캡 + 총량 예산으로 이중 차단.
     const raw = summary != null
       ? summary.slice(0, MEMBER_SUMMARY_CHARS)
@@ -138,18 +183,21 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
       return;
     }
 
-    const blocks = await gatherMemberBlocks(ready, st.summaryType);
+    // client 를 gather 전에 생성 — 요약 부재 멤버의 인라인 생성에도 동일 인스턴스를 재사용.
+    const client = new AiClient(st.settings);
+    const blocks = await gatherMemberBlocks(ready, st.summaryType, client, st.settings);
     if (blocks.length < 2) {
       useAppStore.getState().setNotice({ message: t('collection.summaryNeedsMembers') });
       return;
     }
+    // 인라인 생성 진행 notice 제거 — 곧 reduce 스트리밍이 시작되어 결과가 표시된다.
+    useAppStore.getState().setNotice(null);
     // 결과 배지(R47 UX): 교차 요약 결과를 일반 Q&A 답변과 구분하도록 제목 헤더를 앞에 붙인다.
     const resultTitle = kind === 'comparison'
       ? t('collection.compareResultTitle', { count: blocks.length })
       : t('collection.unifiedResultTitle', { count: blocks.length });
 
     const prompt = buildCollectionSummaryPrompt(kind, blocks, st.settings.summaryLanguage || 'ko');
-    const client = new AiClient(st.settings);
     requestId = client.prepareSummarize();
 
     // 사용자 요청 메시지 + assistant 결과를 기존 Q&A 스레드에 표시(요약 영역 재사용 — 새 패널 없음)

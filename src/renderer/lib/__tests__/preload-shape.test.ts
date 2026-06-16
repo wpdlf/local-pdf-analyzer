@@ -48,6 +48,7 @@ describe('preload contextBridge shape (R34 P2)', () => {
       'file:save', 'file:open-pdf',
       'settings:get', 'settings:set',
       'apikey:save', 'apikey:has', 'apikey:delete',
+      'session:save', 'session:saveSummary', 'session:load',
       'shell:open-external',
       'setup:progress', 'file:dropped',
     ];

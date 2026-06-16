@@ -61,6 +61,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     load: (docHash: string) => ipcRenderer.invoke('session:load', docHash),
     save: (payload: { meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null }) =>
       ipcRenderer.invoke('session:save', payload),
+    saveSummary: (payload: { docHash: string; type: string; summary: { content: string; model: string; provider: string } }) =>
+      ipcRenderer.invoke('session:saveSummary', payload),
     list: () => ipcRenderer.invoke('session:list'),
     delete: (docHash: string) => ipcRenderer.invoke('session:delete', docHash),
     clear: () => ipcRenderer.invoke('session:clear'),
@@ -150,6 +152,7 @@ export type ElectronAPI = {
   session: {
     load: (docHash: string) => Promise<{ session: unknown; blob: ArrayBuffer | null } | null>;
     save: (payload: { meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null }) => Promise<{ ok: boolean }>;
+    saveSummary: (payload: { docHash: string; type: string; summary: { content: string; model: string; provider: string } }) => Promise<{ ok: boolean }>;
     list: () => Promise<SessionManifestEntry[]>;
     delete: (docHash: string) => Promise<{ ok: boolean }>;
     clear: () => Promise<{ ok: boolean }>;

@@ -23,10 +23,11 @@ vi.mock('../ai-client', () => ({
 
 const mockSessionList = vi.fn();
 const mockSessionLoad = vi.fn();
+const mockSaveSummary = vi.fn(() => Promise.resolve({ ok: true }));
 vi.stubGlobal('window', {
   electronAPI: {
     ai: { embed: vi.fn(), abort: vi.fn(() => Promise.resolve()) },
-    session: { list: mockSessionList, load: mockSessionLoad },
+    session: { list: mockSessionList, load: mockSessionLoad, saveSummary: mockSaveSummary },
   },
 });
 vi.stubGlobal('crypto', { randomUUID: () => 'test-uuid' });
@@ -143,15 +144,36 @@ describe('generateCollectionSummary (L2)', () => {
     expect(msgs.some((m) => m.role === 'user')).toBe(true); // 요청 메시지
   });
 
-  it('요약 없는 멤버는 본문 발췌로 대체', async () => {
+  it('요약 없는 멤버는 인라인 생성 후 영속화 + 생성분으로 합성', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf',
+        null, h === 'a'.repeat(64) ? '알파 본문' : '베타 본문')));
+    await generateCollectionSummary('comparison');
+    // 발췌가 아니라 인라인 생성 결과('통합 결과')가 reduce 프롬프트 블록 본문으로 들어감
+    expect(M.prompt).toContain('통합 결과');
+    expect(M.prompt).not.toContain('알파 본문'); // 생성 성공 시 발췌 미사용
+    // 두 멤버 모두 그 세션에 summaries 병합 저장(best-effort, summaryType 키)
+    expect(mockSaveSummary).toHaveBeenCalledTimes(2);
+    expect(mockSaveSummary).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'full',
+      summary: expect.objectContaining({ content: '통합 결과' }),
+    }));
+  });
+
+  it('생성 실패 멤버는 본문 발췌로 fallback(영속화 skip)', async () => {
     seedActive();
     setStore(['a'.repeat(64), 'b'.repeat(64)]);
     mockSessionLoad.mockImplementation((h: string) =>
       Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf',
         null, h === 'a'.repeat(64) ? '알파 본문 발췌' : '베타 본문 발췌')));
+    M.throwAfter = true; // 인라인 생성 스트림이 throw → 빈 생성물 → 발췌 fallback
     await generateCollectionSummary('comparison');
+    // 생성 실패 → 본문 발췌가 블록으로 사용됨
     expect(M.prompt).toContain('알파 본문 발췌');
     expect(M.prompt).toContain('베타 본문 발췌');
+    expect(mockSaveSummary).not.toHaveBeenCalled(); // 생성 실패분은 영속화 안 함
   });
 
   it('R48 MED-1: 과대 요약은 블록당 상한으로 잘려 무제한 연결을 막음', async () => {

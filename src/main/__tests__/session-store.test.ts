@@ -41,7 +41,7 @@ vi.mock('fs/promises', () => {
 });
 
 import {
-  writeSession, readSession, deleteSession, clearAll,
+  writeSession, readSession, mergeSessionSummary, deleteSession, clearAll,
   listSessions, sessionStats, enforceLru, isValidDocHash, loadManifest,
 } from '../session-store';
 
@@ -61,6 +61,56 @@ describe('isValidDocHash', () => {
     expect(isValidDocHash('ABC')).toBe(false);
     expect(isValidDocHash('g'.repeat(64))).toBe(false);
     expect(isValidDocHash(123)).toBe(false);
+  });
+});
+
+describe('mergeSessionSummary (컬렉션 인라인 요약 영속화)', () => {
+  it('기존 세션에 summaries[type] 병합 — 다른 필드 보존', async () => {
+    const h = hashOf(1);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, extractedText: 'body', summaries: {}, qaMessages: [{ role: 'user', content: 'q' }] },
+      blob: null, now: 1000,
+    });
+    const r = await mergeSessionSummary(DIR, h, 'full', { content: '요약본', model: 'm', provider: 'ollama' }, 2000);
+    expect(r).toEqual({ ok: true });
+    const s = (await readSession(DIR, h))?.session as Record<string, unknown>;
+    expect((s.summaries as Record<string, unknown>).full).toEqual({ content: '요약본', model: 'm', provider: 'ollama' });
+    expect(s.extractedText).toBe('body');                          // 본문 보존
+    expect((s.qaMessages as unknown[])).toHaveLength(1);           // Q&A 보존
+  });
+
+  it('기존 다른 타입 요약은 보존하고 해당 타입만 갱신', async () => {
+    const h = hashOf(2);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, summaries: { keywords: { content: 'kw', model: 'm', provider: 'ollama' } } },
+      blob: null, now: 1000,
+    });
+    await mergeSessionSummary(DIR, h, 'full', { content: 'full요약', model: 'm', provider: 'ollama' }, 2000);
+    const sm = ((await readSession(DIR, h))?.session as { summaries: Record<string, { content: string }> }).summaries;
+    expect(sm.keywords?.content).toBe('kw');     // 기존 타입 보존
+    expect(sm.full?.content).toBe('full요약');   // 신규 타입 병합
+  });
+
+  it('세션 부재 → {ok:false} (쓰기 없음)', async () => {
+    const r = await mergeSessionSummary(DIR, hashOf(9), 'full', { content: 'x', model: 'm', provider: 'ollama' }, 1000);
+    expect(r).toEqual({ ok: false });
+  });
+
+  it('잘못된 docHash / 빈 content 거부', async () => {
+    expect(await mergeSessionSummary(DIR, 'bad', 'full', { content: 'x', model: 'm', provider: 'ollama' }, 1)).toEqual({ ok: false });
+    const h = hashOf(3);
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h, summaries: {} }, blob: null, now: 1 });
+    expect(await mergeSessionSummary(DIR, h, 'full', { content: '   ', model: 'm', provider: 'ollama' }, 1)).toEqual({ ok: false });
+  });
+
+  it('manifest lastAccessed 갱신', async () => {
+    const h = hashOf(4);
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h, summaries: {} }, blob: null, now: 1000 });
+    await mergeSessionSummary(DIR, h, 'full', { content: 'y', model: 'm', provider: 'ollama' }, 5000);
+    const entry = (await loadManifest(DIR)).entries.find((e) => e.docHash === h);
+    expect(entry?.lastAccessed).toBe(new Date(5000).toISOString());
   });
 });
 

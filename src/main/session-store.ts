@@ -218,6 +218,70 @@ export async function writeSession(
   }
 }
 
+/**
+ * 세션의 summaries[type] 한 칸만 병합 저장 (multi-doc Phase 3: 컬렉션 인라인 요약 영속화).
+ *
+ * 전체 세션 덮어쓰기(writeSession)와 달리 **디스크의 최신 session.json 을 읽어 summaries 한 칸만**
+ * 갱신하므로, 비활성 멤버 세션에 cross-write 해도 다른 필드(qa/임베딩/텍스트)를 렌더러 메모리의
+ * stale 값으로 덮지 않는다. 호출자(session:saveSummary 핸들러)가 session:save 와 동일한 쓰기
+ * mutex 로 직렬화하므로 활성 문서 auto-persist 와도 원자적이다.
+ *
+ * 세션 부재/손상 시 {ok:false} — 요약을 붙일 본문이 없으므로 호출자는 발췌 fallback 을 유지한다.
+ * index.bin(임베딩)은 건드리지 않는다(요약은 임베딩과 무관).
+ */
+export async function mergeSessionSummary(
+  sessionsDir: string,
+  docHash: string,
+  type: string,
+  summary: { content: string; model: string; provider: string },
+  now: number,
+): Promise<{ ok: boolean }> {
+  if (!isValidDocHash(docHash)) return { ok: false };
+  if (typeof type !== 'string' || type.length === 0 || type.length > 64) return { ok: false };
+  if (!summary || typeof summary.content !== 'string' || summary.content.trim().length === 0) {
+    return { ok: false };
+  }
+  try {
+    const dir = sessionDir(sessionsDir, docHash);
+    const jsonPath = path.join(dir, SESSION_JSON);
+    let session: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(await fsp.readFile(jsonPath, 'utf-8'));
+      if (!parsed || typeof parsed !== 'object') return { ok: false };
+      session = parsed as Record<string, unknown>;
+    } catch {
+      return { ok: false }; // 세션 부재/손상 → 인라인 영속화 skip(호출자 발췌 유지)
+    }
+    const summaries = (session.summaries && typeof session.summaries === 'object')
+      ? session.summaries as Record<string, unknown>
+      : {};
+    // 렌더러 제공 필드 정규화(거대 문자열/비문자열 방어) — writeSession meta 정규화와 동일 정신.
+    summaries[type] = {
+      content: summary.content,
+      model: typeof summary.model === 'string' ? summary.model.slice(0, 128) : '',
+      provider: typeof summary.provider === 'string' ? summary.provider.slice(0, 64) : '',
+    };
+    session.summaries = summaries;
+    const jsonStr = JSON.stringify(session);
+    await writeFileAtomic(jsonPath, jsonStr);
+
+    // manifest: lastAccessed 갱신 + byteSize 재계산(json + 기존 index.bin). 엔트리 없으면 skip(고아 best-effort).
+    let blobBytes = 0;
+    try { blobBytes = (await fsp.stat(path.join(dir, INDEX_BIN))).size; } catch { blobBytes = 0; }
+    const manifest = await loadManifest(sessionsDir);
+    const entry = manifest.entries.find((e) => e.docHash === docHash);
+    if (entry) {
+      entry.byteSize = Buffer.byteLength(jsonStr) + blobBytes;
+      entry.lastAccessed = new Date(now).toISOString();
+      await saveManifest(sessionsDir, manifest);
+    }
+    return { ok: true };
+  } catch (err) {
+    console.warn('[session] summary merge failed:', (err as Error)?.message);
+    return { ok: false };
+  }
+}
+
 /** load 시 lastAccessed 갱신(최근 사용 표시). 실패는 무시(best-effort). */
 export async function touchSession(sessionsDir: string, docHash: string, now: number): Promise<void> {
   if (!isValidDocHash(docHash)) return;
