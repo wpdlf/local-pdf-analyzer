@@ -173,7 +173,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Render error recovery — unexpected UI errors offer a "Try again" button, no restart needed
 
 **Quality assurance**
-- 942 unit tests + CI quality gates, plus a 4-agent parallel QA round on every release
+- 958 unit tests + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -227,7 +227,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | State management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
-| Testing | Vitest, 942 unit tests / 53 files (renderer·shared 564 + main 378) + `tsc --noEmit` type check + CI coverage gates (57/51/58/59) |
+| Testing | Vitest, 958 unit tests / 53 files (renderer·shared 575 + main 383) + `tsc --noEmit` type check + CI coverage gates (57/51/58/59) |
 | i18n | In-house (i18n.ts) — 172+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -278,7 +278,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (942, 53 files)
+    │   └── __tests__/         # Unit tests (958, 53 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -472,7 +472,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **942 unit tests / 53 files** — renderer·shared 564 + main 378. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
+- **958 unit tests / 53 files** — renderer·shared 575 + main 383. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service
 - **CI gates** — `tsc --noEmit` (strict), enforced coverage thresholds (57/51/58/59), lockfile version sync check, `npm audit` advisory, Node 20.11/22/24 matrix
 - **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings for 43 consecutive rounds (detected High/Important issues are fixed immediately in patch releases — most recently: 19 findings in R43 → v0.21.1)
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
