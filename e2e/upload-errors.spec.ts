@@ -59,6 +59,8 @@ test('텍스트 없는 PDF + OCR 비활성 → PDF_NO_TEXT 에러 배너', async
     await sendDrop(r.app, 'scan.pdf', empty.toString('base64'));
     // OCR 비활성 → 추출 실패가 OCR 로 넘어가지 않고 즉시 PDF_NO_TEXT 배너로 수렴
     await expect(r.page.getByText(/텍스트를 추출할 수 없습니다/)).toBeVisible({ timeout: 30000 });
+    // 에러 경로라도 처리되지 않은(uncaught) 렌더러 예외는 없어야 한다(다른 결정적 스펙과 동일 가드).
+    expect(r.pageErrors, `렌더러 에러: ${r.pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
   } finally {
     await r.app.close().catch(() => { /* 이미 종료 */ });
     rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3 });
@@ -75,6 +77,7 @@ test('매직바이트 불일치(위장 바이너리) → 유효하지 않은 PDF
     const notPdf = Buffer.from('This is plainly not a PDF document, just some plain text bytes.', 'utf-8');
     await sendDrop(r.app, 'fake.pdf', notPdf.toString('base64'));
     await expect(r.page.getByText('유효한 PDF 파일이 아닙니다.')).toBeVisible({ timeout: 15000 });
+    expect(r.pageErrors, `렌더러 에러: ${r.pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
   } finally {
     await r.app.close().catch(() => { /* 이미 종료 */ });
     rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3 });
