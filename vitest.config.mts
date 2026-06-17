@@ -112,11 +112,16 @@ export default defineConfig({
       //   h*/td/th/blockquote) 인용 주입을 실제 렌더로 가드.
       //   측정: Stmts 77.74 / Branch 70.74 / Funcs 79.29 / Lines 80.88 (-5pp 마진 적용).
       //   잔여 미커버: pdf-parser(pdfjs 의존)·use-session 일부, ollama-manager install 오케스트레이션, E2E.
+      // use-session: useSessionPersistence 훅(디바운스 자동저장 게이트, 미테스트)과 restore 미커버
+      //   분기(load catch / checkEmbedModel 불가·throw / blob-without-embedModel)를 renderHook+fake timer
+      //   로 보강 → use-session.ts 43%→98%(라인 100%).
+      //   측정: Stmts 78.37 / Branch 71.3 / Funcs 80.68 / Lines 81.3 (-5pp 마진 적용).
+      //   잔여 미커버: pdf-parser(pdfjs 의존), ollama-manager install 오케스트레이션, src/preload, E2E.
       thresholds: {
-        statements: 72,
-        branches: 65,
-        functions: 74,
-        lines: 75,
+        statements: 73,
+        branches: 66,
+        functions: 75,
+        lines: 76,
       },
     },
   },
