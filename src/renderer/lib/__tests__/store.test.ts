@@ -604,6 +604,8 @@ describe('updateSettings — 디바운스 저장 실패 처리', () => {
     useAppStore.setState({ error: null });
   });
   afterEach(() => {
+    // 모듈 레벨 settingsSaveTimer 가 미발화로 남아 다음 테스트로 새지 않도록 정리.
+    vi.clearAllTimers();
     vi.useRealTimers();
     useAppStore.setState({ error: null });
   });

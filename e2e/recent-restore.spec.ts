@@ -65,54 +65,61 @@ function sendDrop(app: ElectronApplication, realPath: string, b64: string): Prom
 const SEED = { provider: 'claude', uiLanguage: 'ko', summaryLanguage: 'ko', theme: 'light', persistSessions: true };
 
 test('세션 영속 → 앱 재시작 후 최근 문서에서 재오픈', async () => {
+  // 콜드 Electron 2회 기동 + 파싱 대기가 기본 60s 에 근접할 수 있어 여유 부여.
+  test.setTimeout(120000);
   const userDataDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-restore-'));
   const docsDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-restore-docs-'));
-  const pathA = join(docsDir, 'alpha.pdf');
-  const pathB = join(docsDir, 'beta.pdf');
-  const bufA = await makePdf('ALPHA');
-  const bufB = await makePdf('BETA');
-  writeFileSync(pathA, bufA);
-  writeFileSync(pathB, bufB);
-
-  // ── 1차 기동: A 파싱 → B 파싱(=A 를 manifest 로 flush) ──
-  const r1 = await launchApp(userDataDir, SEED);
+  // temp 디렉터리 정리는 어느 단계에서 throw 하더라도 항상 도달하도록 바깥 finally 에 둔다.
   try {
-    await expect(r1.page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible({ timeout: 15000 });
+    const pathA = join(docsDir, 'alpha.pdf');
+    const pathB = join(docsDir, 'beta.pdf');
+    const bufA = await makePdf('ALPHA');
+    const bufB = await makePdf('BETA');
+    writeFileSync(pathA, bufA);
+    writeFileSync(pathB, bufB);
 
-    await sendDrop(r1.app, pathA, bufA.toString('base64'));
-    await expect(r1.page.getByText('alpha.pdf (1p)')).toBeVisible({ timeout: 30000 });
-    // A 의 세션 복원(restore-pending)이 settle 되어야 다음 드롭의 flush 가 A 를 저장한다.
-    await r1.page.waitForTimeout(1500);
+    // ── 1차 기동: A 파싱 → B 파싱(=A 를 manifest 로 flush) ──
+    const r1 = await launchApp(userDataDir, SEED);
+    try {
+      await expect(r1.page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible({ timeout: 15000 });
 
-    // 두 번째 문서 드롭 → 이전 문서(A)의 미저장 세션을 persistCurrentSession 으로 flush.
-    await sendDrop(r1.app, pathB, bufB.toString('base64'));
-    await expect(r1.page.getByText('beta.pdf (1p)')).toBeVisible({ timeout: 30000 });
-    await r1.page.waitForTimeout(500);
+      await sendDrop(r1.app, pathA, bufA.toString('base64'));
+      await expect(r1.page.getByText('alpha.pdf (1p)')).toBeVisible({ timeout: 30000 });
+      // A 의 세션 복원(restore-pending)이 settle 되어야 다음 드롭의 flush 가 A 를 저장한다.
+      // miss 경로(첫 실행)는 거의 즉시 게이트가 풀리지만, 느린 CI 러너 대비 여유 마진을 둔다.
+      await r1.page.waitForTimeout(2000);
 
-    expect(r1.pageErrors, `1차 렌더러 에러: ${r1.pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
+      // 두 번째 문서 드롭 → 이전 문서(A)의 미저장 세션을 persistCurrentSession 으로 flush.
+      await sendDrop(r1.app, pathB, bufB.toString('base64'));
+      await expect(r1.page.getByText('beta.pdf (1p)')).toBeVisible({ timeout: 30000 });
+      await r1.page.waitForTimeout(500);
+
+      expect(r1.pageErrors, `1차 렌더러 에러: ${r1.pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
+    } finally {
+      await r1.app.close().catch(() => { /* 이미 종료 */ });
+    }
+
+    // ── 2차 기동: 같은 userData → 최근 문서에 A 노출 → 재오픈 ──
+    const r2 = await launchApp(userDataDir, SEED);
+    try {
+      await expect(r2.page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible({ timeout: 15000 });
+
+      // session-store manifest → RecentDocuments 실배선: A 항목 + 페이지 수 표기
+      await expect(r2.page.getByText('최근 문서')).toBeVisible({ timeout: 15000 });
+      const row = r2.page.locator('li', { hasText: 'alpha.pdf' });
+      await expect(row).toBeVisible();
+      await expect(row.getByText('1페이지')).toBeVisible();
+
+      // 재오픈: file:open-path 로 실제 파일 재파싱 → 문서 화면 복귀
+      await row.getByRole('button', { name: '열기' }).click();
+      await expect(r2.page.getByText('alpha.pdf (1p)')).toBeVisible({ timeout: 30000 });
+      await expect(r2.page.getByText('요약 유형')).toBeVisible();
+
+      expect(r2.pageErrors, `2차 렌더러 에러: ${r2.pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
+    } finally {
+      await r2.app.close().catch(() => { /* 이미 종료 */ });
+    }
   } finally {
-    await r1.app.close().catch(() => { /* 이미 종료 */ });
-  }
-
-  // ── 2차 기동: 같은 userData → 최근 문서에 A 노출 → 재오픈 ──
-  const r2 = await launchApp(userDataDir, SEED);
-  try {
-    await expect(r2.page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible({ timeout: 15000 });
-
-    // session-store manifest → RecentDocuments 실배선: A 항목 + 페이지 수 표기
-    await expect(r2.page.getByText('최근 문서')).toBeVisible({ timeout: 15000 });
-    const row = r2.page.locator('li', { hasText: 'alpha.pdf' });
-    await expect(row).toBeVisible();
-    await expect(row.getByText('1페이지')).toBeVisible();
-
-    // 재오픈: file:open-path 로 실제 파일 재파싱 → 문서 화면 복귀
-    await row.getByRole('button', { name: '열기' }).click();
-    await expect(r2.page.getByText('alpha.pdf (1p)')).toBeVisible({ timeout: 30000 });
-    await expect(r2.page.getByText('요약 유형')).toBeVisible();
-
-    expect(r2.pageErrors, `2차 렌더러 에러: ${r2.pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
-  } finally {
-    await r2.app.close().catch(() => { /* 이미 종료 */ });
     rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3 });
     rmSync(docsDir, { recursive: true, force: true, maxRetries: 3 });
   }
