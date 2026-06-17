@@ -124,3 +124,54 @@ test('세션 영속 → 앱 재시작 후 최근 문서에서 재오픈', async 
     rmSync(docsDir, { recursive: true, force: true, maxRetries: 3 });
   }
 });
+
+test('최근 문서 재오픈 — 원본 파일 이동/삭제 시 graceful 에러(목록 유지)', async () => {
+  test.setTimeout(120000);
+  const userDataDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-restore-'));
+  const docsDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-restore-docs-'));
+  try {
+    const pathA = join(docsDir, 'gamma.pdf');
+    const pathB = join(docsDir, 'delta.pdf');
+    const bufA = await makePdf('GAMMA');
+    const bufB = await makePdf('DELTA');
+    writeFileSync(pathA, bufA);
+    writeFileSync(pathB, bufB);
+
+    // ── 1차 기동: A 파싱 → B 파싱(=A 를 manifest 로 flush) ──
+    const r1 = await launchApp(userDataDir, SEED);
+    try {
+      await expect(r1.page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible({ timeout: 15000 });
+      await sendDrop(r1.app, pathA, bufA.toString('base64'));
+      await expect(r1.page.getByText('gamma.pdf (1p)')).toBeVisible({ timeout: 30000 });
+      await r1.page.waitForTimeout(2000);
+      await sendDrop(r1.app, pathB, bufB.toString('base64'));
+      await expect(r1.page.getByText('delta.pdf (1p)')).toBeVisible({ timeout: 30000 });
+      await r1.page.waitForTimeout(500);
+    } finally {
+      await r1.app.close().catch(() => { /* 이미 종료 */ });
+    }
+
+    // 원본 파일 삭제(이동/삭제 시나리오) — manifest 항목은 남지만 디스크 파일은 사라진 상태
+    rmSync(pathA, { force: true });
+
+    // ── 2차 기동: 최근 문서에 A 노출 → 열기 → file:open-path 실패 → graceful 배너 + 목록 유지 ──
+    const r2 = await launchApp(userDataDir, SEED);
+    try {
+      await expect(r2.page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible({ timeout: 15000 });
+      await expect(r2.page.getByText('최근 문서')).toBeVisible({ timeout: 15000 });
+      const row = r2.page.locator('li', { hasText: 'gamma.pdf' });
+      await expect(row).toBeVisible();
+
+      await row.getByRole('button', { name: '열기' }).click();
+      // openPath 실패 → recent.openFail 배너, 문서 화면 전환은 일어나지 않고 목록은 유지
+      await expect(r2.page.getByText(/문서를 열 수 없습니다/)).toBeVisible({ timeout: 15000 });
+      await expect(row).toBeVisible(); // 항목 잔존(클릭이 먹히지 않은 것처럼 사라지지 않음)
+      await expect(r2.page.getByText('gamma.pdf (1p)')).toHaveCount(0); // 문서 헤더로 전환되지 않음
+    } finally {
+      await r2.app.close().catch(() => { /* 이미 종료 */ });
+    }
+  } finally {
+    rmSync(userDataDir, { recursive: true, force: true, maxRetries: 3 });
+    rmSync(docsDir, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
