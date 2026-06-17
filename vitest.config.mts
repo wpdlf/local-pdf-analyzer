@@ -101,11 +101,17 @@ export default defineConfig({
       //   components 폴더 자체가 79/74/81/83% 로 전체 평균을 상회 → 편입이 베이스라인을 끌어올림(드래그 아님).
       //   측정: Stmts 72.1 / Branch 66.11 / Funcs 73.53 / Lines 74.84 (-5pp 마진 적용).
       //   잔여 미커버: PdfViewer 의 canvas 렌더 경로(happy-dom 한계, E2E 영역) / SettingsPanel 일부 분기.
+      // use-summarize 오케스트레이션: 5.91% 에 머물던 요약 훅(useSummarize/summarizeFull/
+      //   summarizeByChapter/analyzeDocumentImages)을 renderHook 으로 구동해 가드/가용성/전체·챕터·
+      //   다청크 통합·PDF_NO_TEXT·후처리·이미지 preflight·abort 경로 커버 → use-summarize.ts 82% 라인.
+      //   측정: Stmts 76.78 / Branch 69.83 / Funcs 76.94 / Lines 79.77 (-5pp 마진 적용).
+      //   잔여 미커버: use-summarize 의 timeout/중간 취소 race 분기, pdf-parser·safe-markdown·
+      //   use-session 등 renderer/lib 일부, ollama-manager install 오케스트레이션.
       thresholds: {
-        statements: 67,
-        branches: 61,
-        functions: 68,
-        lines: 69,
+        statements: 71,
+        branches: 64,
+        functions: 71,
+        lines: 74,
       },
     },
   },
