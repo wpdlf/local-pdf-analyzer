@@ -107,11 +107,16 @@ export default defineConfig({
       //   측정: Stmts 76.78 / Branch 69.83 / Funcs 76.94 / Lines 79.77 (-5pp 마진 적용).
       //   잔여 미커버: use-summarize 의 timeout/중간 취소 race 분기, pdf-parser·safe-markdown·
       //   use-session 등 renderer/lib 일부, ollama-manager install 오케스트레이션.
+      // app-error-boundary(0%→100%) + safe-markdown 렌더 경로(41%→100%): AppErrorBoundary 폴백/
+      //   reset/reload/메시지 절단 + MarkdownErrorBoundary.render + renderWithCitations(p/li/em/strong/
+      //   h*/td/th/blockquote) 인용 주입을 실제 렌더로 가드.
+      //   측정: Stmts 77.74 / Branch 70.74 / Funcs 79.29 / Lines 80.88 (-5pp 마진 적용).
+      //   잔여 미커버: pdf-parser(pdfjs 의존)·use-session 일부, ollama-manager install 오케스트레이션, E2E.
       thresholds: {
-        statements: 71,
-        branches: 64,
-        functions: 71,
-        lines: 74,
+        statements: 72,
+        branches: 65,
+        functions: 74,
+        lines: 75,
       },
     },
   },
