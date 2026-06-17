@@ -155,11 +155,16 @@ describe('useSessionPersistence — 디바운스 자동저장 게이트', () => 
     await vi.advanceTimersByTimeAsync(ms);
   }
 
-  it('콘텐츠 있고 settle → 디바운스 후 자동 저장', async () => {
+  it('콘텐츠 있고 settle → 디바운스 후 자동 저장(payload 형상 포함)', async () => {
     resetStore({ document: makeDoc(), summaryStream: '요약 내용' });
     renderHook(() => useSessionPersistence());
     await settle(1600);
     expect(api.session.save).toHaveBeenCalledTimes(1);
+    // preload 계약: save({ meta, session, blob }) — 형상 회귀 가드
+    const arg = (api.session.save.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+    expect(arg).toHaveProperty('meta');
+    expect(arg).toHaveProperty('session');
+    expect(arg).toHaveProperty('blob');
   });
 
   it('persistSessions=false → 저장 안 함', async () => {

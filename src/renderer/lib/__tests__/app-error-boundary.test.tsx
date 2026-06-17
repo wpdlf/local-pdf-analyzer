@@ -10,6 +10,8 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { AppErrorBoundary } from '../app-error-boundary';
 
 let consoleSpy: ReturnType<typeof vi.spyOn>;
+// reload 테스트가 window.location 을 재정의하므로 원본을 보관해 테스트 간 누수를 막는다.
+const origLocationDesc = Object.getOwnPropertyDescriptor(window, 'location');
 beforeEach(() => {
   // React 가 error boundary 캐치 시 console.error 로 로깅 — 테스트 노이즈 억제
   consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -17,6 +19,9 @@ beforeEach(() => {
 afterEach(() => {
   consoleSpy.mockRestore();
   cleanup();
+  if (origLocationDesc) {
+    try { Object.defineProperty(window, 'location', origLocationDesc); } catch { /* 복원 불가 환경 무시 */ }
+  }
 });
 
 describe('AppErrorBoundary', () => {

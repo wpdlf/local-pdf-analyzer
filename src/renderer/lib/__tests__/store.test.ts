@@ -597,3 +597,40 @@ describe('컬렉션 Q&A 상태 (multi-doc Phase 2)', () => {
     expect(useAppStore.getState().collection).toEqual({ enabled: false, memberHashes: [] });
   });
 });
+
+describe('updateSettings — 디바운스 저장 실패 처리', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useAppStore.setState({ error: null });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    useAppStore.setState({ error: null });
+  });
+
+  it('settings.set IPC 실패 → SETTINGS_SAVE_FAIL 에러 설정', async () => {
+    vi.mocked(window.electronAPI.settings.set).mockRejectedValueOnce(new Error('disk full'));
+    useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, theme: 'dark' });
+    // 300ms 디바운스 만료 + .catch 마이크로태스크 flush
+    await vi.advanceTimersByTimeAsync(300);
+    expect(useAppStore.getState().error?.code).toBe('SETTINGS_SAVE_FAIL');
+  });
+
+  it('성공하면 에러를 설정하지 않는다', async () => {
+    // 기본 stub(set: () => Promise.resolve())이 성공 경로 — 별도 override 불필요.
+    useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, theme: 'light' });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(useAppStore.getState().error).toBeNull();
+  });
+
+  it('빠른 연속 변경은 마지막 1건만 IPC 전송(디바운스)', async () => {
+    const setMock = vi.mocked(window.electronAPI.settings.set);
+    const base = useAppStore.getState().settings;
+    useAppStore.getState().updateSettings({ ...base, maxChunkSize: 2000 });
+    useAppStore.getState().updateSettings({ ...base, maxChunkSize: 3000 });
+    useAppStore.getState().updateSettings({ ...base, maxChunkSize: 4000 });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setMock).toHaveBeenCalledTimes(1);
+    expect((setMock.mock.calls[0]![0] as { maxChunkSize: number }).maxChunkSize).toBe(4000);
+  });
+});

@@ -22,7 +22,8 @@ vi.mock('../ai-client', () => ({
     constructor(_settings: unknown) { /* noop */ }
     async isAvailable() { return M.available; }
     prepareSummarize() { return `req-${++M.reqCounter}`; }
-    async *summarize(text: string, type: string): AsyncGenerator<string> {
+    // 실제 시그니처: summarize(text, type, requestId?) — 계약 패리티를 위해 3번째 인자 포함.
+    async *summarize(text: string, type: string, _requestId?: string): AsyncGenerator<string> {
       M.summarizeCalls.push({ text, type });
       for (const tk of M.tokens) yield tk;
     }
