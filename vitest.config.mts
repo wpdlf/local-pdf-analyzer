@@ -43,9 +43,10 @@ export default defineConfig({
       //   1) 표준 인프라/빌드 산출물: node_modules, out, dist, test, scripts, *.config, *.d.ts
       //   2) 테스트 파일 자체: **/__tests__/** — coverage 의 분모에서 테스트 코드를 제외
       //      (테스트 파일은 측정 대상이 아니라 측정 수단)
-      //   3) 단위 테스트 없는 영역: src/preload/**, src/renderer/components/**
+      //   3) 단위 테스트 없는 영역: src/preload/**
       //      — 0% coverage 가 분모를 비현실적으로 만들어 미래 임계 게이트를 방해하므로
       //      "아직 측정하지 않는" 영역으로 명시. 각 영역에 테스트가 도입되면 라인 제거.
+      //      (src/renderer/components/** 는 16종 전수 행위 테스트 도입으로 분모 편입 — 아래 측정 주석 참고)
       //   R38 P1: 기존 `src/main/**` 통째 제외를 해제하고, "실질적으로" 단위 테스트된 순수
       //      모듈(ipc-validators / ollama-pull-progress / ps-quote / settings-store /
       //      settings-keys)을 분모에 포함시킨다. config 주석의 "테스트 도입 시 라인 제거" 절차 실행.
@@ -68,7 +69,7 @@ export default defineConfig({
         'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
         '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
         'src/main/index.ts',
-        'src/preload/**', 'src/renderer/components/**',
+        'src/preload/**',
       ],
       // R37 P4-2 (v0.18.23): 후퇴 방지 게이트 도입.
       // 각 지표에서 -5pp 마진을 빼고 게이트 — 우발적 회귀(테스트 누락, 함수 추가 시 미커버)는
@@ -94,11 +95,17 @@ export default defineConfig({
       // R44: useRagBuilder 훅 회귀 가드 + SettingsPanel 취소 흐름 + pullCancelled +
       //   i18n 정적 스캔 drift 가드 추가로 베이스라인 상승.
       //   측정: Stmts 62.54 / Branch 56.2 / Funcs 63.65 / Lines 64.79 (-5pp 마진 적용).
+      // 컴포넌트 전수 테스트: 무테스트였던 렌더러 컴포넌트 8종(TabBar/SummaryTypeSelector/
+      //   StatusBar/ProgressBar/RecentDocuments/SummaryViewer/QaChat/PdfUploader) + ResizeHandle/
+      //   SettingsPanel 본체/PdfViewer 까지 도입해 src/renderer/components/** 분모 편입.
+      //   components 폴더 자체가 79/74/81/83% 로 전체 평균을 상회 → 편입이 베이스라인을 끌어올림(드래그 아님).
+      //   측정: Stmts 72.1 / Branch 66.11 / Funcs 73.53 / Lines 74.84 (-5pp 마진 적용).
+      //   잔여 미커버: PdfViewer 의 canvas 렌더 경로(happy-dom 한계, E2E 영역) / SettingsPanel 일부 분기.
       thresholds: {
-        statements: 57,
-        branches: 51,
-        functions: 58,
-        lines: 59,
+        statements: 67,
+        branches: 61,
+        functions: 68,
+        lines: 69,
       },
     },
   },
