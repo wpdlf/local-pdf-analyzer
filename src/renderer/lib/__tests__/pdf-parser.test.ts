@@ -99,6 +99,73 @@ describe('PDF Parser - parsePdf success', () => {
   });
 });
 
+// detectChapters 멀티챕터 분할 — 기존 단위 테스트는 production regex 를 문자열로 재선언해
+// 소스와 silent divergence 위험이 있었다. parsePdf 경유로 실제 detectChapters(실 regex) 를
+// 구동해 헤딩 분할/페이지 범위/서문 병합/헤딩 부재 fallback 을 가드한다.
+describe('PDF Parser - detectChapters via parsePdf (multi-chapter)', () => {
+  function mockPdfWithPages(pageTexts: string[]) {
+    return {
+      numPages: pageTexts.length,
+      getPage: vi.fn((n: number) => Promise.resolve({
+        getTextContent: () => Promise.resolve({ items: [{ str: pageTexts[n - 1] }] }),
+        getOperatorList: () => Promise.resolve({ fnArray: [], argsArray: [] }),
+        objs: { get: vi.fn() },
+        cleanup: vi.fn(),
+      })),
+      destroy: vi.fn(() => Promise.resolve()),
+    };
+  }
+
+  it('헤딩으로 다중 챕터를 분할하고 페이지 범위를 채운다', async () => {
+    const pages = [
+      '제1장 서론 이 문서의 도입부 본문 텍스트입니다 충분히 길게 작성',
+      '본문 페이지 내용이 이어집니다 챕터 헤딩 아님',
+      '제2장 본론 두 번째 장의 시작 본문 텍스트입니다 충분히 길게',
+    ];
+    (pdfjsLib.getDocument as ReturnType<typeof vi.fn>).mockReturnValue({ promise: Promise.resolve(mockPdfWithPages(pages)) });
+    const { parsePdf } = await import('../pdf-parser');
+    const doc = await parsePdf(new ArrayBuffer(10), 'm.pdf', '/m.pdf');
+    expect(doc.chapters).toHaveLength(2);
+    const c1 = doc.chapters[0]!;
+    const c2 = doc.chapters[1]!;
+    expect(c1.title).toMatch(/제1장 서론/);
+    expect(c1.startPage).toBe(1);
+    expect(c1.endPage).toBe(2); // 헤딩 없는 p2 가 ch1 에 병합
+    expect(c2.title).toMatch(/제2장 본론/);
+    expect(c2.startPage).toBe(3);
+    expect(c2.endPage).toBe(3);
+  });
+
+  it('첫 챕터 이전 페이지(서문)는 첫 챕터에 병합되고 startPage=1', async () => {
+    const pages = [
+      '머리말 서문 페이지 본문 텍스트입니다 챕터 헤딩 아님 충분히 길게',
+      '제1장 시작 본문 텍스트입니다 충분히 길게 작성된 내용',
+    ];
+    (pdfjsLib.getDocument as ReturnType<typeof vi.fn>).mockReturnValue({ promise: Promise.resolve(mockPdfWithPages(pages)) });
+    const { parsePdf } = await import('../pdf-parser');
+    const doc = await parsePdf(new ArrayBuffer(10), 'm.pdf', '/m.pdf');
+    expect(doc.chapters).toHaveLength(1);
+    const c1 = doc.chapters[0]!;
+    expect(c1.startPage).toBe(1);
+    expect(c1.text).toMatch(/머리말 서문/);
+    expect(c1.text).toMatch(/제1장 시작/);
+  });
+
+  it('헤딩이 전혀 없으면 10페이지 단위 청크로 분할(fallback)', async () => {
+    const pages = Array.from({ length: 12 }, (_, i) => `${i + 1}페이지 일반 본문 텍스트입니다 충분히 길게 작성된 내용`);
+    (pdfjsLib.getDocument as ReturnType<typeof vi.fn>).mockReturnValue({ promise: Promise.resolve(mockPdfWithPages(pages)) });
+    const { parsePdf } = await import('../pdf-parser');
+    const doc = await parsePdf(new ArrayBuffer(10), 'm.pdf', '/m.pdf');
+    expect(doc.chapters).toHaveLength(2); // 12p → 1~10, 11~12
+    const c1 = doc.chapters[0]!;
+    const c2 = doc.chapters[1]!;
+    expect(c1.startPage).toBe(1);
+    expect(c1.endPage).toBe(10);
+    expect(c2.startPage).toBe(11);
+    expect(c2.endPage).toBe(12);
+  });
+});
+
 // R28 회귀: MAX_TOTAL_IMAGES=50 캡이 배치 동시성으로 우회되지 않는지 확인.
 // 모든 페이지가 병렬로 이미지를 푸시하더라도 결과의 images.length는 캡을 넘지 않아야 한다.
 //

@@ -143,6 +143,18 @@ describe('SummaryViewer', () => {
     expect(M.reset).toHaveBeenCalledTimes(1);
   });
 
+  it('생성 중 닫기 + onAbort 미제공 → inline ai.abort(reqId) + 생성 종료(고아 요청 방지)', async () => {
+    // onAbort 가 없을 때의 fallback 경로: currentRequestId 를 직접 abort + flush + setIsGenerating(false).
+    setState({ generating: true, stream: '부분' });
+    useAppStore.setState({ currentRequestId: 'req-77' });
+    const user = userEvent.setup();
+    render(<SummaryViewer />);
+    await user.click(screen.getByRole('button', { name: '닫기' }));
+    expect(M.abort).toHaveBeenCalledWith('req-77');
+    expect(useAppStore.getState().isGenerating).toBe(false);
+    expect(M.reset).toHaveBeenCalledTimes(1);
+  });
+
   it('citationTarget 없으면 PdfViewer 패널·ResizeHandle 미마운트', () => {
     setState({ stream: '본문', citation: false });
     render(<SummaryViewer />);
