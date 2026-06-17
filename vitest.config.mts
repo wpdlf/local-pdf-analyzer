@@ -117,11 +117,16 @@ export default defineConfig({
       //   로 보강 → use-session.ts 43%→98%(라인 100%).
       //   측정: Stmts 78.37 / Branch 71.3 / Funcs 80.68 / Lines 81.3 (-5pp 마진 적용).
       //   잔여 미커버: pdf-parser(pdfjs 의존), ollama-manager install 오케스트레이션, src/preload, E2E.
+      // pdf-parser: handlePdfData 오케스트레이션(가드/성공/에러 매핑) + parsePdf pageCount 가드 +
+      //   OCR fallback(OCR_FAIL) + cancelPdfParse 를 pdfjs/worker/use-session 목으로 보강
+      //   → pdf-parser.ts 43%→70%(라인 74%). 잔여는 renderPageToImage/imageDataToBase64 의 실제
+      //   canvas 변환 경로(happy-dom 한계, E2E 영역).
+      //   측정: Stmts 80.33 / Branch 72.86 / Funcs 81.53 / Lines 83.54 (-5pp 마진 적용).
       thresholds: {
-        statements: 73,
-        branches: 66,
-        functions: 75,
-        lines: 76,
+        statements: 75,
+        branches: 67,
+        functions: 76,
+        lines: 78,
       },
     },
   },
