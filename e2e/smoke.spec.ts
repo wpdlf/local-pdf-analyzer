@@ -1,9 +1,9 @@
-import { test, expect, _electron as electron } from '@playwright/test';
-import type { ElectronApplication, Page } from '@playwright/test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { test, expect } from '@playwright/test';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { launchElectron, cleanupDir, type LaunchResult as BaseLaunch } from './helpers';
 
 /**
  * R45 E2E 스모크 — 빌드 산출물(out/)을 실제 Electron 으로 기동해 핵심 사용자 경로를 검증.
@@ -15,42 +15,21 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
  * 사용해 실사용자 설정/세션을 건드리지 않고, 테스트 간 상태도 공유하지 않는다.
  */
 
-interface LaunchResult {
-  app: ElectronApplication;
-  page: Page;
+interface LaunchResult extends BaseLaunch {
   userDataDir: string;
-  pageErrors: Error[];
 }
 
+// 격리 계약(env/sandbox)은 e2e/helpers 의 launchElectron 단일 출처를 사용. 본 래퍼는 스모크가
+// 매 테스트 임시 userData 를 직접 만들어 teardown 에서 지우는 기존 호출 규약만 유지한다.
 async function launchApp(seedSettings?: Record<string, unknown>): Promise<LaunchResult> {
   const userDataDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-e2e-'));
-  if (seedSettings) {
-    writeFileSync(join(userDataDir, 'settings.json'), JSON.stringify(seedSettings), 'utf-8');
-  }
-  const app = await electron.launch({
-    args: [
-      '.',
-      // GH ubuntu-24.04 러너는 unprivileged userns 제한(AppArmor)으로 Chromium setuid
-      // sandbox 가 실패할 수 있어 CI 한정 비활성화. 로컬 실행은 샌드박스 유지.
-      ...(process.env.CI ? ['--no-sandbox'] : []),
-    ],
-    env: {
-      ...process.env,
-      PDF_ANALYZER_USER_DATA: userDataDir,
-      // 호스트에 실제 Ollama 가 실행 중이어도(개발 머신) 죽은 포트로 격리 —
-      // 콜드 스타트 위자드 노출 등 Ollama 상태 의존 시나리오를 결정적으로 만든다.
-      PDF_ANALYZER_OLLAMA_URL: 'http://127.0.0.1:59999',
-    },
-  });
-  const page = await app.firstWindow();
-  const pageErrors: Error[] = [];
-  page.on('pageerror', (err) => pageErrors.push(err));
-  return { app, page, userDataDir, pageErrors };
+  const r = await launchElectron(userDataDir, seedSettings);
+  return { ...r, userDataDir };
 }
 
 async function teardown(r: LaunchResult): Promise<void> {
   await r.app.close().catch(() => { /* 이미 종료 */ });
-  rmSync(r.userDataDir, { recursive: true, force: true, maxRetries: 3 });
+  cleanupDir(r.userDataDir);
 }
 
 /**
