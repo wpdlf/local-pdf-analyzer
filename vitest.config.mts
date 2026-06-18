@@ -69,7 +69,6 @@ export default defineConfig({
         'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
         '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
         'src/main/index.ts',
-        'src/preload/**',
       ],
       // R37 P4-2 (v0.18.23): 후퇴 방지 게이트 도입.
       // 각 지표에서 -5pp 마진을 빼고 게이트 — 우발적 회귀(테스트 누락, 함수 추가 시 미커버)는
@@ -122,11 +121,21 @@ export default defineConfig({
       //   → pdf-parser.ts 43%→70%(라인 74%). 잔여는 renderPageToImage/imageDataToBase64 의 실제
       //   canvas 변환 경로(happy-dom 한계, E2E 영역).
       //   측정: Stmts 80.33 / Branch 72.86 / Funcs 81.53 / Lines 83.54 (-5pp 마진 적용).
+      // ollama-manager install 오케스트레이션: installWindows/installMac/_installInternal/computeFileHash
+      //   행위 테스트(execFile 콜백 시뮬레이션 + Start-Process RunAs 인자 단언 + macOS path traversal
+      //   보안 분기 가드) → ollama-manager.ts ~55%→88/69/88/90.
+      //   측정: Stmts 82.71 / Branch 74.46 / Funcs 83.99 / Lines 86.12 (-5pp 마진 적용).
+      // src/preload 분모 편입: preload/index.ts 의 contextBridge 노출 래퍼를 electron 모킹으로 실제
+      //   구동(invoke 채널/인자 전달, openExternal https 가드, getPathForFile webUtils/throw fallback,
+      //   on* 리스너 포워딩+구독해제) → preload/index.ts 100%(59/59·6/6·46/46·52/52). 정적 surface
+      //   drift 가드(preload-shape.test)는 상보적으로 유지. exclude 에서 src/preload/** 제거(절차대로).
+      //   100% 영역이라 분모 편입이 베이스라인을 끌어올림(드래그 아님).
+      //   측정: Stmts 82.92 / Branch 74.51 / Funcs 84.74 / Lines 86.29 (-5pp 마진 적용).
       thresholds: {
-        statements: 75,
-        branches: 67,
-        functions: 76,
-        lines: 78,
+        statements: 77,
+        branches: 69,
+        functions: 79,
+        lines: 81,
       },
     },
   },
