@@ -517,6 +517,53 @@ async function extractPageImages(
   return images;
 }
 
+/**
+ * pdfjs 이미지의 raw 픽셀 버퍼를 RGBA(length = width*height*4)로 정규화한다.
+ * 포맷은 데이터 길이로 추정: RGBA(>=px*4) / RGB(>=px*3) / grayscale(>=px). 1바이트/픽셀
+ * 미만(예: 손상/부분 버퍼)은 비지원으로 null. RGB→A=255, grayscale→RGB 동값+A=255.
+ * 순수 함수(캔버스 비의존)라 단위 테스트 대상 — imageDataToBase64 의 canvas 경로(happy-dom
+ * 한계로 E2E 영역)와 분리해 분류·확장 분기를 가드한다.
+ * 주의: CMYK 도 4채널(px*4)이라 RGBA 로 분류된다 — 길이 기반 추정의 알려진 한계.
+ */
+export function expandToRgba(
+  width: number,
+  height: number,
+  data: Uint8ClampedArray,
+): Uint8ClampedArray<ArrayBuffer> | null {
+  // 반환은 ArrayBuffer-backed 로 좁힘 — 호출부 imageDataToBase64 의 `new ImageData(rgbaData, …)`
+  // 가 ImageDataArray(Uint8ClampedArray<ArrayBuffer>)를 요구하기 때문.
+  const pixelCount = width * height;
+  const isRGBA = data.length >= pixelCount * 4;
+  const isRGB = !isRGBA && data.length >= pixelCount * 3;
+  const isGrayscale = !isRGBA && !isRGB && data.length >= pixelCount;
+
+  if (!isRGBA && !isRGB && !isGrayscale) return null; // 비지원 포맷 (1바이트/픽셀 미만)
+
+  const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+
+  if (isRGBA) {
+    rgbaData.set(data.subarray(0, pixelCount * 4));
+  } else if (isRGB) {
+    for (let p = 0; p < pixelCount; p++) {
+      rgbaData[p * 4] = data[p * 3]!;
+      rgbaData[p * 4 + 1] = data[p * 3 + 1]!;
+      rgbaData[p * 4 + 2] = data[p * 3 + 2]!;
+      rgbaData[p * 4 + 3] = 255;
+    }
+  } else {
+    // 그레이스케일
+    for (let p = 0; p < pixelCount; p++) {
+      const v = data[p] ?? 0;
+      rgbaData[p * 4] = v;
+      rgbaData[p * 4 + 1] = v;
+      rgbaData[p * 4 + 2] = v;
+      rgbaData[p * 4 + 3] = 255;
+    }
+  }
+
+  return rgbaData;
+}
+
 async function imageDataToBase64(
   width: number,
   height: number,
@@ -535,34 +582,8 @@ async function imageDataToBase64(
     const srcCtx = srcCanvas.getContext('2d');
     if (!srcCtx) return null;
 
-    const pixelCount = width * height;
-    const isRGBA = data.length >= pixelCount * 4;
-    const isRGB = !isRGBA && data.length >= pixelCount * 3;
-    const isGrayscale = !isRGBA && !isRGB && data.length >= pixelCount;
-
-    if (!isRGBA && !isRGB && !isGrayscale) return null; // 비지원 포맷 (CMYK 등)
-
-    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
-
-    if (isRGBA) {
-      rgbaData.set(data.subarray(0, pixelCount * 4));
-    } else if (isRGB) {
-      for (let p = 0; p < pixelCount; p++) {
-        rgbaData[p * 4] = data[p * 3]!;
-        rgbaData[p * 4 + 1] = data[p * 3 + 1]!;
-        rgbaData[p * 4 + 2] = data[p * 3 + 2]!;
-        rgbaData[p * 4 + 3] = 255;
-      }
-    } else {
-      // 그레이스케일
-      for (let p = 0; p < pixelCount; p++) {
-        const v = data[p] ?? 0;
-        rgbaData[p * 4] = v;
-        rgbaData[p * 4 + 1] = v;
-        rgbaData[p * 4 + 2] = v;
-        rgbaData[p * 4 + 3] = 255;
-      }
-    }
+    const rgbaData = expandToRgba(width, height, data);
+    if (!rgbaData) return null; // 비지원 포맷 (1바이트/픽셀 미만)
 
     srcCtx.putImageData(new ImageData(rgbaData, width, height), 0, 0);
 
