@@ -38,24 +38,11 @@ describe('preload contextBridge shape (R34 P2)', () => {
     }
   });
 
-  it('IPC channel 이름 — 모든 known channel 이 source 에 존재', () => {
-    const expectedChannels = [
-      'ollama:status', 'ollama:install', 'ollama:start', 'ollama:stop',
-      'ollama:pull-model', 'ollama:cancel-pull', 'ollama:list-models',
-      'ai:generate', 'ai:abort', 'ai:check-available',
-      'ai:analyze-image', 'ai:ocr-page', 'ai:embed', 'ai:check-embed-model',
-      'ai:token', 'ai:done',
-      'file:save', 'file:open-pdf',
-      'settings:get', 'settings:set',
-      'apikey:save', 'apikey:has', 'apikey:delete',
-      'session:save', 'session:saveSummary', 'session:load',
-      'shell:open-external',
-      'setup:progress', 'file:dropped',
-    ];
-    for (const ch of expectedChannels) {
-      expect(PRELOAD_SRC).toContain(`'${ch}'`);
-    }
-  });
+  // (은퇴, post-v0.24.4 QA) 기존 "모든 known channel 존재" 손유지 리스트는 stale 해져
+  // ~12채널(file:open-path, session:list/delete/clear/stats, collections:*)이 빠진 채 green
+  // 이었다. 채널 완전성 + preload↔main 일치는 이제 자가유지 cross-side 계약 테스트
+  // (src/main/__tests__/ipc-channel-contract.test.ts)가 소스 추출로 소유한다. 본 파일은
+  // surface-key / 함수 시그니처 / unsubscribe 같은 preload-국소 가드만 유지한다.
 
   it('ai.ocrPage 시그니처는 (imageBase64, requestId?) — R32 P2 OCR cloud abort 회귀 가드', () => {
     // R32 P2 가 ocrPage 에 requestId 인자를 추가했음. drift 되면 OCR abort 가 다시 무력화됨.
