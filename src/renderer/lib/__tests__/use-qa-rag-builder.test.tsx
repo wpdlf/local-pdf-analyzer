@@ -82,9 +82,12 @@ describe('useRagBuilder × 복원 마커 (R44 H-1)', () => {
     }));
 
     renderHook(() => useRagBuilder());
-    await new Promise((r) => setTimeout(r, 30));
 
-    // 채택 경로는 빌드를 시작하지 않는다 (재임베딩 0 — 복원 인덱스 유지)
+    // 채택 경로는 effect 본문에서 동기적으로 결정·return 한다(use-qa.ts L809-817). 빌드 경로였다면
+    // 같은 동기 실행 중 restoredSession 이 null 로 소비되고(L827-829), buildRagIndex 의 첫 await
+    // 표현식이 checkEmbedModel() 호출이라(L254) buildRagIndex(...) 호출 시점에 동기적으로 불린다.
+    // 따라서 renderHook(effect flush) 직후 두 단언이 결정적으로 성립 — 기존의 임의 setTimeout(30ms)
+    // 실시간 대기는 불필요했고, CI 부하 시 "빌드 미시작"을 "skip"으로 오판하는 위양성 위험이 있었다.
     expect(window.electronAPI.ai.checkEmbedModel).not.toHaveBeenCalled();
     expect(useAppStore.getState().restoredSession).not.toBeNull();
   });
