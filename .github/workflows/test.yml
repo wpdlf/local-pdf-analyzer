@@ -58,6 +58,11 @@ jobs:
       # R28: tsconfig strict 게이트(noUncheckedIndexedAccess 등)가 PR/push 단계에서 항상 검증되도록 함.
       - run: npx tsc --noEmit
 
+      # QA(post-v0.24.4): e2e/ 스펙은 루트 tsconfig include(src/**) 밖이라 위 tsc 가 못 잡는다.
+      # 별도 프로젝트(tsconfig.e2e.json)로 타입 게이트 — e2e 타입 에러가 Playwright 런타임에서야
+      # 드러나던 결함 차단.
+      - run: npx tsc -p tsconfig.e2e.json
+
       - run: npm test
 
       # R29 #1: supply-chain 가시성 — high 이상의 알려진 취약점을 PR/push 단계에서 빠르게 노출.

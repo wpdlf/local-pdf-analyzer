@@ -1,0 +1,10 @@
+{
+  // QA(post-v0.24.4): e2e/ 스펙은 루트 tsconfig 의 include(src/**) 밖이라 `tsc --noEmit` 가
+  // 타입체크하지 않았다(타입 에러가 Playwright 런타임에서야 드러남). 동일 strict 옵션을 상속하되
+  // 대상만 e2e/** + playwright.config.ts 로 좁혀 별도 프로젝트로 타입 게이트한다.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["e2e/**/*", "playwright.config.ts"]
+}

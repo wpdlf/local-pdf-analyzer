@@ -73,7 +73,21 @@ jobs:
       # R28: noUncheckedIndexedAccess 등 tsconfig strict 게이트가 CI에서 항상 검증되도록 함.
       - run: npx tsc --noEmit
 
-      - run: npm test
+      # QA(post-v0.24.4): e2e/ 스펙은 src/** 밖이라 위 tsc 미포함 — 별도 프로젝트로 타입 게이트.
+      - run: npx tsc -p tsconfig.e2e.json
+
+      # QA(post-v0.24.4): 릴리즈 경로가 커버리지 게이트를 건너뛰던 결함 수정.
+      #   태그는 임의 커밋에 push 될 수 있어, main 의 coverage 게이트(test.yml)를 통과 못 할
+      #   코드도 릴리즈될 수 있었다. ubuntu 에서 test:coverage 로 게이트 강제(커버리지 비율은
+      #   OS/Node 비의존이라 1회면 충분). windows-2025 는 경로/pwsh 회귀 검증용으로 plain
+      #   유닛 테스트 유지 — 동일 ubuntu 에서 이중 실행(test + coverage)을 피한다.
+      - name: Unit tests + coverage gate (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run test:coverage
+
+      - name: Unit tests (windows path regression)
+        if: matrix.os == 'windows-2025'
+        run: npm test
 
   build-windows:
     needs: test
@@ -128,9 +142,12 @@ jobs:
         with:
           subject-path: dist/*Setup*.exe
 
-      # softprops/action-gh-release@v2.6.2
+      # softprops/action-gh-release@v3.0.0 (Node24 런타임).
+      # QA(post-v0.24.4): 이전 v2.6.2 는 deprecated Node20 기반이라 GitHub 의 Node20 shim
+      # 제거 시 자산 업로드 스텝이 깨질 위험이 있었다. v3.0.0 은 node24 + files/append_body/body
+      # 입력 동일(검증 완료)이라 호환 범프.
       - name: Upload installer to release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         with:
           files: |
             dist/*Setup*.exe
