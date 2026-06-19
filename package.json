@@ -12,7 +12,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build && node scripts/postbuild.mjs",
     "preview": "electron-vite preview",
-    "package": "npm run build && electron-builder",
+    "package": "npm run build && electron-builder --publish never",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

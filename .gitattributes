@@ -1,4 +1,12 @@
-# R37 P5-1 (v0.18.23): index.html 은 반드시 LF 로 체크아웃.
+# 베이스라인(post-v0.24.4 QA): 모든 텍스트 파일을 LF 로 정규화 + LF 로 체크아웃.
+# 이전엔 index.html 만 명시 핀이라, 새로 추가되는 hash/바이트 비교 민감 파일(인라인 스크립트·
+# SHA256SUMS·고정 포맷 산출물 등)이 Windows 러너(autocrlf=true)의 CRLF 변환에 그대로 노출됐다
+# (아래 index.html 사례와 동일 class). text=auto 로 git 이 텍스트/바이너리를 판별하고 eol=lf 로
+# 텍스트는 LF 고정. 현재 추적 텍스트 파일은 전부 이미 LF 라 renormalize 변경 없음
+# (git ls-files --eol 확인). 바이너리(i/-text)는 text=auto 가 자동 제외.
+* text=auto eol=lf
+
+# R37 P5-1 (v0.18.23): index.html 은 반드시 LF 로 체크아웃 (위 베이스라인의 명시적·문서화 핀).
 # CSP 의 sha256 script-src 게이트는 인라인 스크립트 바이트의 해시에 의존한다.
 # Windows 러너(autocrlf=true)에서 CRLF 로 변환되면 (1) csp-inline-hash.test 가 실패하고,
 # (2) 패키지 빌드 산출물의 인라인 스크립트도 CRLF 가 되어 브라우저 런타임 해시가 CSP 와
