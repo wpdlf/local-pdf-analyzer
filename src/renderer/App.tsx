@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from './lib/store';
 import { KOREAN_RECOMMENDED_MODELS, INITIAL_INSTALL_MODELS, matchesModel } from './types';
 import { t, useT, translateMainError } from './lib/i18n';
@@ -38,6 +38,9 @@ export default function App() {
   const setNotice = useAppStore((s) => s.setNotice);
   const isParsing = useAppStore((s) => s.isParsing);
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
+  const ollamaStatus = useAppStore((s) => s.ollamaStatus);
+  const summaryCollapsed = useAppStore((s) => s.summaryCollapsed);
+  const setSummaryCollapsed = useAppStore((s) => s.setSummaryCollapsed);
   const [modelHint, setModelHint] = useState<string | null>(null);
   const [bgModelSync, setBgModelSync] = useState<string | null>(null);
   const [bgModelLoading, setBgModelLoading] = useState(false);
@@ -49,6 +52,30 @@ export default function App() {
   const tr = useT();
 
   const { handleSummarize, handleAbort } = useSummarize();
+
+  // H2(UX): 파일 열기 다이얼로그 단일 진입점 — Ctrl+O 와 헤더 "PDF 열기" 버튼이 공유.
+  // dialogOpenRef 재진입 가드 + async throw 의 setError 수렴은 기존 Ctrl+O 경로와 동일.
+  const openPdfDialog = useCallback(async () => {
+    if (dialogOpenRef.current) return;
+    dialogOpenRef.current = true;
+    try {
+      const result = await window.electronAPI.file.openPdf();
+      if (!result) return;
+      if ('error' in result) {
+        useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: result.error });
+        return;
+      }
+      await handlePdfData(result.data, result.name, result.path);
+    } catch (err) {
+      // async 핸들러 내 throw 는 unhandledrejection 이 되어 ErrorBoundary 도 못 잡으므로 setError 로 수렴.
+      useAppStore.getState().setError({
+        code: 'PDF_PARSE_FAIL',
+        message: (err as Error)?.message || t('uploader.cannotRead'),
+      });
+    } finally {
+      dialogOpenRef.current = false;
+    }
+  }, []);
 
   // 문서 로드 시 RAG 인덱스를 요약과 병렬로 빌드 (요약 완료까지 기다리지 않음).
   // 이전에는 QaChat이 마운트되는 시점(요약 완료 후)에야 빌드가 시작되어,
@@ -247,37 +274,17 @@ export default function App() {
     };
   }, []);
 
-  // Ctrl+O: 파일 열기 단축키
+  // Ctrl+O: 파일 열기 단축키 — 공유 openPdfDialog 호출(헤더 버튼과 동일 경로).
   useEffect(() => {
-    const handleKeyDown = async (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
         e.preventDefault();
-        // 재진입 가드 — 이미 다이얼로그가 열려 있으면 두 번째 Ctrl+O 무시.
-        if (dialogOpenRef.current) return;
-        dialogOpenRef.current = true;
-        try {
-          const result = await window.electronAPI.file.openPdf();
-          if (!result) return;
-          if ('error' in result) {
-            useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: result.error });
-            return;
-          }
-          await handlePdfData(result.data, result.name, result.path);
-        } catch (err) {
-          // async 이벤트 핸들러 내 throw 는 unhandledrejection 이 되어 ErrorBoundary 도
-          // 잡지 못한다. setError 로 전환해 사용자 표시 배너로 수렴.
-          useAppStore.getState().setError({
-            code: 'PDF_PARSE_FAIL',
-            message: (err as Error)?.message || t('uploader.cannotRead'),
-          });
-        } finally {
-          dialogOpenRef.current = false;
-        }
+        void openPdfDialog();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [openPdfDialog]);
 
   // 테마 적용
   useEffect(() => {
@@ -329,6 +336,12 @@ export default function App() {
     }
   }, [document, settings.provider, settings.model, settings.uiLanguage, tr, koreanRatio]);
 
+  // H3(UX): 요약 시작 전 백엔드 사전 체크 — ollama provider 인데 미실행이거나 설치된 모델이
+  // 없으면 요약 버튼을 비활성화하고 "설정 열기" 경로를 제시한다. 클릭→실패→재설정의 헛수고를 방지.
+  // (claude/openai/gemini 키 확인은 비동기라 여기선 제외 — 클릭 시점 에러가 backstop)
+  const ollamaNotReady = settings.provider === 'ollama'
+    && (!ollamaStatus.running || ollamaStatus.models.length === 0);
+
   if (view === 'setup') {
     return (
       <div className="h-screen bg-white dark:bg-gray-900">
@@ -354,6 +367,15 @@ export default function App() {
           {tr('app.title')}
         </h1>
         <div className="flex items-center gap-2">
+          {/* H2(UX): 헤더에 상시 노출되는 PDF 열기 버튼 — 기존엔 전역 열기 진입점이 Ctrl+O(비가시)뿐이었다. */}
+          <button
+            onClick={() => void openPdfDialog()}
+            className="px-2.5 py-1.5 text-sm rounded border dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-700 dark:text-gray-200"
+            title={tr('app.openPdfHint')}
+            aria-label={tr('app.openPdf')}
+          >
+            📂 {tr('app.openPdf')}
+          </button>
           <button
             onClick={() => setView('settings')}
             disabled={isGenerating || isParsing || isQaGenerating}
@@ -435,8 +457,9 @@ export default function App() {
           </div>
         )}
 
-        {/* 2) PDF 업로드 완료, 요약 대기: 파일 정보 + 요약 유형 + 시작 버튼 */}
-        {document && !isGenerating && !summaryStream && (
+        {/* 2) PDF 업로드 완료, 요약 대기(또는 요약 접힘): 파일 정보 + 재진입/요약 유형 + 시작 버튼.
+            H1: summaryCollapsed 시에도 이 화면을 보여 접힌 요약+Q&A 로 재진입하게 한다. */}
+        {document && !isGenerating && (!summaryStream || summaryCollapsed) && (
           <div className="flex flex-col items-center gap-6">
             <div className="w-full flex items-center justify-between px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-lg">
               <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
@@ -459,18 +482,46 @@ export default function App() {
                 {tr('app.otherFile')}
               </button>
             </div>
+
+            {/* H1: 접힌 요약(완료/부분)이 있으면 재진입을 1순위로. 뷰어 복귀는 백엔드 불필요. */}
+            {summaryStream && (
+              <button
+                onClick={() => setSummaryCollapsed(false)}
+                className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-lg font-medium transition-colors"
+              >
+                {tr('app.viewSummary')}
+              </button>
+            )}
+
             <SummaryTypeSelector />
+
+            {/* H3: ollama 미가용 사전 경고 + 설정 진입 링크 */}
+            {ollamaNotReady && (
+              <div className="w-full p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-amber-700 dark:text-amber-400 flex items-center justify-between gap-2">
+                <span>⚠️ {tr('app.ollamaNotReady')}</span>
+                <button
+                  onClick={() => setView('settings')}
+                  className="underline shrink-0 hover:text-amber-900 dark:hover:text-amber-200"
+                >
+                  {tr('app.openSettings')}
+                </button>
+              </div>
+            )}
+
             <button
-              onClick={handleSummarize}
-              className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-lg font-medium transition-colors"
+              onClick={() => { setSummaryCollapsed(false); handleSummarize(); }}
+              disabled={ollamaNotReady}
+              className={summaryStream
+                ? 'px-4 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
+                : 'px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed'}
             >
-              {tr('app.startSummary')}
+              {summaryStream ? tr('app.reSummarize') : tr('app.startSummary')}
             </button>
           </div>
         )}
 
-        {/* 3) 요약 진행 중 또는 완료: 결과 뷰어 */}
-        {(isGenerating || summaryStream) && (
+        {/* 3) 요약 진행 중 또는 완료: 결과 뷰어 (H1: 접힌 상태면 숨김) */}
+        {(isGenerating || summaryStream) && !summaryCollapsed && (
           <SummaryViewer onAbort={handleAbort} />
         )}
       </main>

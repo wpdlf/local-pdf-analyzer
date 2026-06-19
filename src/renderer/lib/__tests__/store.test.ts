@@ -544,6 +544,15 @@ describe('session-persistence store fields', () => {
     expect(useAppStore.getState().restoredSession).toBeNull();
     expect(useAppStore.getState().sessionRestorePending).toBe(false);
   });
+
+  it('H1: summaryCollapsed 는 setSummaryCollapsed 로 토글, resetSummaryState 가 false 로 초기화', () => {
+    // 접힌 채로 문서 전환/완전 닫기 시 collapsed 가 stale-true 로 남으면 새 문서의 뷰어가
+    // 숨겨지는 회귀 — resetSummaryState(=setDocument 경로) 가 반드시 false 로 리셋해야 한다.
+    useAppStore.getState().setSummaryCollapsed(true);
+    expect(useAppStore.getState().summaryCollapsed).toBe(true);
+    useAppStore.getState().resetSummaryState();
+    expect(useAppStore.getState().summaryCollapsed).toBe(false);
+  });
 });
 
 describe('컬렉션 Q&A 상태 (multi-doc Phase 2)', () => {

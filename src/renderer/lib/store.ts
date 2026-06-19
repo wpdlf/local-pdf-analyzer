@@ -118,6 +118,10 @@ interface AppState {
   currentRequestId: string | null;
   progress: number;
   progressInfo: ProgressInfo | null;
+  // H1(UX): 요약 뷰어 비파괴적 접기. ✕ 닫기가 문서·요약·Q&A 를 전부 버리던(resetSummaryState→
+  // document:null) 결함을 대체 — collapse 시 상태는 보존하고 뷰어만 숨겨 문서 화면에서 재진입한다.
+  summaryCollapsed: boolean;
+  setSummaryCollapsed: (v: boolean) => void;
   setSummary: (summary: Summary | null) => void;
   appendStream: (token: string) => void;
   flushStream: () => void;
@@ -284,6 +288,8 @@ export const useAppStore = create<AppState>((set) => ({
   // 요약
   summary: null,
   summaryStream: '',
+  summaryCollapsed: false,
+  setSummaryCollapsed: (summaryCollapsed) => set({ summaryCollapsed }),
   summaryType: 'full',
   isGenerating: false,
   currentRequestId: null,
@@ -366,6 +372,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({
       document: null,
       summaryStream: '',
+      summaryCollapsed: false,
       isGenerating: false,
       progress: 0,
       progressInfo: null,

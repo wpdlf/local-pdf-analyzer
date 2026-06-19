@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 // SummaryViewer 행위 — 헤더(문서명·페이지) / 생성 중 스피너 / 완료 후 내보내기·복사·QaChat /
-// 내보내기·복사 실패 배너 / 닫기(생성 중 onAbort 우선, 평시 resetSummaryState) /
+// 내보내기·복사 실패 배너 / 닫기(생성 중 onAbort 우선, H1 비파괴적 접기 setSummaryCollapsed) /
 // citationTarget 활성 시에만 우측 PdfViewer 패널 + ResizeHandle 마운트.
 // 자식 컴포넌트(QaChat/PdfViewer/ResizeHandle)와 react-markdown 은 목으로 격리.
 
@@ -15,6 +15,7 @@ const M = vi.hoisted(() => ({
   abort: vi.fn(() => Promise.resolve()),
   writeText: vi.fn(() => Promise.resolve()),
   reset: vi.fn(),
+  setCollapsed: vi.fn(),
 }));
 
 vi.mock('../QaChat', () => ({ QaChat: () => <div data-testid="qachat" /> }));
@@ -49,6 +50,7 @@ function setState(opts: Partial<{ generating: boolean; stream: string; citation:
     qaRequestId: null,
     error: null,
     resetSummaryState: M.reset,
+    setSummaryCollapsed: M.setCollapsed,
   });
 }
 
@@ -125,26 +127,30 @@ describe('SummaryViewer', () => {
     await vi.waitFor(() => expect(useAppStore.getState().error?.code).toBe('EXPORT_FAIL'));
   });
 
-  it('평시 닫기 → resetSummaryState 호출', async () => {
+  it('평시 닫기 → 비파괴적 접기(setSummaryCollapsed(true)), resetSummaryState 미호출(상태 보존)', async () => {
+    // H1: ✕ 닫기가 document·summary·Q&A 를 버리던(resetSummaryState→document:null) 동작을 대체.
     setState({ stream: '본문' });
     const user = userEvent.setup();
     render(<SummaryViewer />);
     await user.click(screen.getByRole('button', { name: '닫기' }));
-    expect(M.reset).toHaveBeenCalledTimes(1);
+    expect(M.setCollapsed).toHaveBeenCalledWith(true);
+    expect(M.reset).not.toHaveBeenCalled();
   });
 
-  it('생성 중 닫기 → onAbort 우선 호출 + resetSummaryState', async () => {
+  it('생성 중 닫기 → onAbort 우선 호출 + 접기(상태 보존)', async () => {
     setState({ generating: true, stream: '부분' });
     const onAbort = vi.fn();
     const user = userEvent.setup();
     render(<SummaryViewer onAbort={onAbort} />);
     await user.click(screen.getByRole('button', { name: '닫기' }));
     expect(onAbort).toHaveBeenCalledTimes(1);
-    expect(M.reset).toHaveBeenCalledTimes(1);
+    expect(M.setCollapsed).toHaveBeenCalledWith(true);
+    expect(M.reset).not.toHaveBeenCalled();
   });
 
-  it('생성 중 닫기 + onAbort 미제공 → inline ai.abort(reqId) + 생성 종료(고아 요청 방지)', async () => {
+  it('생성 중 닫기 + onAbort 미제공 → inline ai.abort(reqId) + 생성 종료 + 접기', async () => {
     // onAbort 가 없을 때의 fallback 경로: currentRequestId 를 직접 abort + flush + setIsGenerating(false).
+    // 그 다음 비파괴적 접기 — in-flight 는 끊되 부분 요약/Q&A 는 보존.
     setState({ generating: true, stream: '부분' });
     useAppStore.setState({ currentRequestId: 'req-77' });
     const user = userEvent.setup();
@@ -152,7 +158,8 @@ describe('SummaryViewer', () => {
     await user.click(screen.getByRole('button', { name: '닫기' }));
     expect(M.abort).toHaveBeenCalledWith('req-77');
     expect(useAppStore.getState().isGenerating).toBe(false);
-    expect(M.reset).toHaveBeenCalledTimes(1);
+    expect(M.setCollapsed).toHaveBeenCalledWith(true);
+    expect(M.reset).not.toHaveBeenCalled();
   });
 
   it('citationTarget 없으면 PdfViewer 패널·ResizeHandle 미마운트', () => {

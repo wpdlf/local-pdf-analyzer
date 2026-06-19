@@ -144,6 +144,8 @@ export function PdfUploader() {
           >
             {t('uploader.selectFile')}
           </button>
+          {/* H2(UX): Ctrl+O 단축키 발견성 — 기존엔 UI에 힌트가 전혀 없어 키보드 경로가 비가시였다. */}
+          <p className="mt-3 text-xs text-gray-400 dark:text-gray-500">{t('uploader.orShortcut')}</p>
         </>
       )}
     </div>

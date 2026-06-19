@@ -71,8 +71,10 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
 
   const handleClose = () => {
     const store = useAppStore.getState();
-    // 생성 중이면 parent 의 handleAbort 를 우선 사용(외부 라이프사이클과 정합),
-    // 없으면 inline abort 로 fallback. 어느 쪽이든 그 다음 resetSummaryState 로 수렴.
+    // H1(UX): 비파괴적 접기. 이전엔 resetSummaryState() 가 document·summary·qaMessages 를 전부
+    // 비워(document:null) 업로드 화면으로 튕기며 사용자의 요약+Q&A 스레드가 통째로 소실됐다.
+    // 이제 in-flight 생성/Q&A 는 그대로 중단(토큰 청구 방지)하되 상태는 보존하고 뷰어만 접는다.
+    // 문서 화면(block 2)의 "요약 보기 / Q&A 계속" 으로 재진입하며, 완전 닫기는 탭/“다른 파일” ✕ 가 담당.
     if (store.isGenerating) {
       if (onAbort) {
         onAbort();
@@ -87,7 +89,7 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
     if (store.qaRequestId) {
       window.electronAPI.ai.abort(store.qaRequestId);
     }
-    store.resetSummaryState();
+    store.setSummaryCollapsed(true);
   };
 
   const handleExport = async () => {

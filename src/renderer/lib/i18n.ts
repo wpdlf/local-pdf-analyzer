@@ -56,6 +56,12 @@ export const _translations = {
   'app.removeFile': { ko: '현재 파일 제거', en: 'Remove current file' },
   'app.otherFile': { ko: '✕ 다른 파일', en: '✕ Other file' },
   'app.startSummary': { ko: '📝 요약 시작', en: '📝 Summarize' },
+  'app.openPdf': { ko: 'PDF 열기', en: 'Open PDF' },
+  'app.openPdfHint': { ko: 'PDF 열기 (Ctrl+O)', en: 'Open PDF (Ctrl+O)' },
+  'app.viewSummary': { ko: '📄 요약 보기 / Q&A 계속', en: '📄 View summary / Continue Q&A' },
+  'app.reSummarize': { ko: '🔄 다시 요약', en: '🔄 Re-summarize' },
+  'app.ollamaNotReady': { ko: 'Ollama가 실행 중이 아니거나 설치된 모델이 없습니다.', en: 'Ollama is not running or has no installed models.' },
+  'app.openSettings': { ko: '설정 열기', en: 'Open settings' },
   'app.downloadingModel': { ko: '기본 모델 다운로드 중: {model}', en: 'Downloading model: {model}' },
   'app.modelDownloadFail': { ko: '모델 다운로드 실패: {model} — {error}', en: 'Model download failed: {model} — {error}' },
   'app.modelDownloadFailPartial': {
@@ -85,6 +91,7 @@ export const _translations = {
   'uploader.dragDrop': { ko: 'PDF 파일을 여기에 드래그하거나', en: 'Drag PDF file here or' },
   'uploader.clickSelect': { ko: '클릭하여 선택', en: 'click to select' },
   'uploader.selectFile': { ko: '파일 선택', en: 'Select file' },
+  'uploader.orShortcut': { ko: '또는 Ctrl+O', en: 'or press Ctrl+O' },
 
   // ─── SummaryTypeSelector ───
   'selector.full': { ko: '전체 요약', en: 'Full summary' },
