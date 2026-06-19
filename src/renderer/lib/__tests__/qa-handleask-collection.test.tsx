@@ -107,11 +107,12 @@ describe('handleAsk — 컬렉션 글루 (CI 통합)', () => {
     const msgs = useAppStore.getState().qaMessages;
     expect(msgs.at(-1)).toMatchObject({ role: 'assistant' });
     expect(msgs.at(-1)?.content).toContain('답변 본문');
-    // 2개 멤버 정상 교차 → 강등 안내 없음
+    // 2개 멤버 정상 교차 → 강등 표식 없음 (M3: 전역 notice 아닌 메시지 표식)
+    expect(msgs.at(-1)?.degraded).toBeFalsy();
     expect(useAppStore.getState().notice).toBeNull();
   });
 
-  it('컬렉션 모드인데 멤버가 1개뿐(모델 불일치)이면 강등 notice 표시', async () => {
+  it('컬렉션 모드인데 멤버가 1개뿐(모델 불일치)이면 강등 표식을 답변에 인라인으로 단다', async () => {
     seed(true);
     mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), 'other-model', 1536)]); // Beta 제외
     const { result } = renderHook(() => useQa());
@@ -119,7 +120,10 @@ describe('handleAsk — 컬렉션 글루 (CI 통합)', () => {
 
     expect(M.prompt).toContain('[Alpha.pdf p.2]'); // 활성으로 답변은 됨
     expect(M.prompt).not.toContain('Beta.pdf');
-    expect(useAppStore.getState().notice).not.toBeNull(); // 강등 통지
+    // M3(UX): 강등을 전역 단일 슬롯 notice 대신 해당 답변 메시지에 실어 인라인 표시.
+    const last = useAppStore.getState().qaMessages.at(-1);
+    expect(last).toMatchObject({ role: 'assistant', degraded: true });
+    expect(useAppStore.getState().notice).toBeNull(); // 더 이상 전역 notice 를 덮어쓰지 않음
   });
 
   it('컬렉션 비활성: 단일 문서 경로 — session.list 미호출, Beta 컨텍스트 없음', async () => {

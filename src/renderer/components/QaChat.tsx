@@ -132,6 +132,12 @@ export function QaChat() {
                     <MarkdownErrorBoundary fallbackText={msg.content}>
                       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{msg.content}</ReactMarkdown>
                     </MarkdownErrorBoundary>
+                    {/* M3: 컬렉션 강등 답변이면 바로 아래 인라인 안내 (이전엔 전역 단일 슬롯 notice 배너) */}
+                    {msg.degraded && (
+                      <p className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800/50 text-xs text-amber-600 dark:text-amber-400 not-prose">
+                        ⚠️ {t('collection.degradedNotice')}
+                      </p>
+                    )}
                     {/* M4: 어시스턴트 답변 hover 복사 버튼 */}
                     <button
                       onClick={() => void handleCopyMsg(msg.id, msg.content)}

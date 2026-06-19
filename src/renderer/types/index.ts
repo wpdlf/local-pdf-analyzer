@@ -21,6 +21,12 @@ export interface QaMessage {
    * 일반 LLM 응답이나 사용자 입력에는 설정되지 않는다.
    */
   meta?: 'cancelled';
+  /**
+   * M3(UX): 컬렉션 교차 검색이 제한되어 일부 문서로만 답한 강등 답변 표식.
+   * 이전엔 전역 단일 슬롯 notice 배너로 띄워 다른 알림에 덮이거나 어느 답변에 해당하는지
+   * 모호했다. 이제 해당 assistant 메시지에 실어 답변 바로 아래 인라인 표시한다.
+   */
+  degraded?: boolean;
 }
 
 // PDF 문서 정보

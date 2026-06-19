@@ -957,6 +957,8 @@ export function useQa() {
       let ragResult: string | null = null;
       // 답변 검증용 verifier — 컬렉션 모드면 멤버 인덱스 전체, 아니면 활성 단일(undefined → 기본).
       let answerVerifier: RagVerifier | undefined;
+      // M3(UX): 컬렉션 강등 여부를 이 답변에 실어 인라인 표시(전역 notice 배너 대체).
+      let collectionDegraded = false;
 
       // multi-doc Phase 2: 컬렉션 모드면 여러 문서에 걸쳐 검색. ready 멤버가 없으면(전원 제외/
       // 인덱스 없음) null 을 반환해 단일 문서 Q&A 로 자연 강등된다. (배선은 resolveCollectionSearch 로
@@ -965,14 +967,10 @@ export function useQa() {
         const collected = await resolveCollectionSearch(trimmed, ragSignal);
         ragResult = collected.ragResult;
         answerVerifier = collected.verifier;
-        // 컬렉션 강등 안내: 교차 검색이 제한되어 일부 문서로만 답한 경우 사용자에게 통지.
-        // 정상 교차 검색이면 직전에 띄운 우리 강등 안내만 정리(다른 notice 는 보존).
-        const notice = useAppStore.getState().notice;
-        if (collected.degraded) {
-          useAppStore.getState().setNotice({ message: t('collection.degradedNotice') });
-        } else if (notice?.message === t('collection.degradedNotice')) {
-          useAppStore.getState().setNotice(null);
-        }
+        // M3(UX): 강등 여부는 전역 notice 대신 해당 답변 메시지에 실어(아래 addQaMessage) 인라인 표시.
+        // 단일 슬롯 notice 는 멀티파일 드롭/컬렉션 저장 알림에 덮여 사라지거나 어느 답변에 해당하는지
+        // 모호했다. 답변별 표식이라 정확하고 영구적.
+        collectionDegraded = collected.degraded;
       }
 
       // 단일 문서 경로(컬렉션 비활성 또는 ready 멤버 0)
@@ -1101,7 +1099,8 @@ export function useQa() {
         if (answer) {
           // 인용 배치 정규화 — 괄호/독립 라인 후처리 (use-summarize 와 동일)
           const normalized = normalizeCitationPlacement(answer);
-          postState.addQaMessage({ role: 'assistant', content: normalized });
+          // M3: 강등 답변이면 메시지에 표식 — QaChat 이 답변 아래 인라인 안내를 렌더.
+          postState.addQaMessage({ role: 'assistant', content: normalized, ...(collectionDegraded ? { degraded: true } : {}) });
         }
         completed = true;
       }

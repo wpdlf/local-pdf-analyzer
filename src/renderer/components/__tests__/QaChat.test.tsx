@@ -10,7 +10,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 type RagState = { isIndexing: boolean; progress: { current: number; total: number } | null; isAvailable: boolean; model: string | null; chunkCount: number };
-type QaMsg = { id: string; role: 'user' | 'assistant'; content: string };
+type QaMsg = { id: string; role: 'user' | 'assistant'; content: string; degraded?: boolean };
 
 const Q = vi.hoisted(() => ({
   handleAsk: vi.fn(),
@@ -145,6 +145,17 @@ describe('QaChat', () => {
     render(<QaChat />);
     const send = screen.getByRole('button', { name: '질문 전송' }) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
+  });
+
+  it('M3: degraded 답변엔 강등 인라인 안내, 일반 답변엔 없음', () => {
+    Q.state.qaMessages = [
+      { id: 'm1', role: 'assistant', content: '일반 답변' },
+      { id: 'm2', role: 'assistant', content: '강등 답변', degraded: true },
+    ];
+    render(<QaChat />);
+    // 강등 안내는 1개만(degraded 메시지에만)
+    const notes = screen.getAllByText(/교차 검색이 제한되어/);
+    expect(notes).toHaveLength(1);
   });
 
   it('M4: 어시스턴트 답변에만 복사 버튼 → clipboard.writeText(답변 내용)', () => {
