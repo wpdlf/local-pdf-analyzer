@@ -14,6 +14,7 @@
 - **다중 문서 탭 + 교차 문서 Q&A** — 여러 PDF를 탭으로 열고 한 번의 질문으로 함께 검색합니다. 답변은 출처 문서를 표기하고 해당 페이지로 바로 이동합니다
 - **컬렉션 + 교차 문서 요약** — 함께 보는 문서 묶음을 이름과 함께 저장해 나중에 탭 세트째 다시 열고, 선택한 문서들의 통합 요약 또는 비교 분석을 생성합니다
 - **세션 자동 저장·복원** — 분석한 PDF를 다시 열면 요약·Q&A·검색 인덱스가 재요약·재임베딩 없이 즉시 복원됩니다
+- **전체 문서 검색** — 저장된 모든 문서를 가로질러 키워드를 한 번에 검색(페이지 텍스트+요약+파일명)하고 매칭된 페이지로 바로 이동합니다
 - **개인 자료 걱정 없이 사용** — 시험자료, 사내 문서, 논문 초고 등 민감한 자료도 안심하고 요약할 수 있습니다
 - **한국어/English UI · 외부 AI 전환** — 더 높은 품질이 필요하면 Claude/OpenAI/Gemini API로 간편하게 전환할 수 있습니다
 
@@ -60,6 +61,7 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 ### 1. PDF 업로드
 - 앱 화면에 PDF 파일을 **드래그앤드롭**하거나, **파일 선택** 버튼 또는 **Ctrl+O**로 선택합니다
 - 이전에 분석한 PDF는 업로드 화면 하단 **최근 문서** 목록에서 바로 열 수 있고, 같은 PDF를 다시 열면 요약·Q&A·검색 인덱스가 **자동 복원**됩니다
+- **저장 문서 전체 검색** — 업로드 화면의 검색바로 저장된 모든 세션(페이지 텍스트·요약·파일명)에서 키워드를 찾습니다. 결과에 매칭 페이지가 하이라이트 발췌로 표시되며, 클릭하면 바로 열립니다
 - **여러 문서를 탭으로** — 새 PDF를 열면 상단에 탭이 추가되고, 탭 클릭으로 문서를 오가며 각각의 요약·Q&A를 이어서 사용할 수 있습니다 (전환 시 자동 저장·복원). `＋` 버튼으로 문서를 추가합니다
 
 ### 2. 요약 유형 선택
@@ -72,7 +74,8 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 
 ### 3. 결과 확인 및 저장
 - 요약이 실시간으로 화면에 표시됩니다
-- **`.md` 내보내기** 버튼으로 파일 저장, **복사** 버튼으로 클립보드에 복사
+- **`.md` 내보내기**·**PDF 내보내기**(헤딩/표/인용이 담긴 서식 PDF)로 파일 저장, **복사** 버튼으로 클립보드에 복사
+- 요약 닫기는 비파괴적 — 문서 화면으로 접히고, **요약 보기 / Q&A 계속**으로 Q&A 스레드까지 그대로 다시 엽니다
 
 ### 4. Q&A 채팅 (RAG 시맨틱 검색)
 - PDF 로드 시 자동으로 **RAG 벡터 인덱스**가 생성됩니다 (헤더에 진행률 → 완료 시 **RAG** 배지 표시)
@@ -163,6 +166,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - 실시간 스트리밍 — 요약이 생성되는 즉시 표시, 자동 스크롤 (직접 스크롤하면 멈춤)
 - 모든 장시간 작업 취소 가능 — 요약/파싱/OCR 중단, Ollama 설치 중도 취소 후 다른 Provider 전환
 - 파싱 중 파일 교체 — 분석 도중 다른 파일을 드롭하면 이전 작업을 자동 취소하고 새 파일로 전환
+- 요약 내보내기 — 마크다운, 서식 PDF(네이티브·무의존성), 클립보드 복사. Q&A 답변도 개별 복사 가능
+- 전체 문서 검색 — 저장된 모든 문서의 페이지 텍스트·요약·파일명에서 키워드 검색, 하이라이트 발췌 + 원클릭 열기
 - 다중 문서 탭 — 여러 PDF를 열어두고 전환, 무거운 상태는 활성 문서만 메모리에 유지(전환 시 세션 복원으로 즉시). 컬렉션 모드로 열린 문서들에 걸쳐 한 번에 질문하고 출처를 표기, 묶음을 이름으로 저장하고 통합/비교 요약 생성
 - 다크모드, 한국어/English 즉시 전환 — 첫 실행 시 OS 언어 자동 감지, 설치 화면 우상단 토글로 바로 변경 가능, 스크린 리더·키보드 접근성
 
@@ -173,7 +178,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - 렌더 오류 복구 — 예기치 못한 UI 오류 시 "다시 시도" 버튼으로 재시작 없이 복구
 
 **품질 보증**
-- 단위 테스트 1136건 + Playwright E2E + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
+- 단위 테스트 1212건 + Playwright E2E + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
 - 빌드 무결성 — 인스톨러 SHA-256 해시 + Sigstore attestation 자동 게시
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 
@@ -189,6 +194,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 증상 | 해결 방법 |
 |------|----------|
 | Ollama 설치 실패 | [ollama.com](https://ollama.com)에서 수동 설치하거나, 설치 마법사의 "취소하고 다른 Provider 사용" 버튼으로 Claude/OpenAI/Gemini 전환 |
+| 요약 시작 버튼이 비활성화됨 | Ollama가 실행 중이 아니거나 설치된 모델이 없습니다 — 버튼 옆 **설정 열기** 링크로 해결하거나 클라우드 Provider로 전환하세요 |
 | 한국어 요약 품질이 낮음 | 한국어 특화 모델(exaone3.5)을 설정 → 모델 관리에서 설치 후 선택해보세요. 첫 설치에서 선택 설치 옵션이며, 기본 모델(gemma3)보다 한국어 요약 품질이 좋습니다 |
 | 요약이 느림 | 설정에서 경량 모델(phi3 등)로 변경하거나 청크 크기를 줄여보세요 |
 | PDF 텍스트 추출 불가 | 설정에서 "스캔 PDF OCR"이 활성화되어 있는지 확인하세요. Vision 모델(llava, Claude, GPT-4o, Gemini)이 필요합니다 |
@@ -227,8 +233,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG는 공증 자격 확보 시까지 일시 중단) |
-| 테스트 | Vitest 단위 테스트 1136건/69파일 (renderer·shared 753 + main 383) + Playwright E2E (CI-결정적 9건) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (75/67/76/78) |
-| 다국어 (i18n) | 자체 구현 (i18n.ts) — 172+ 키, useT() 훅, 템플릿 치환 |
+| 테스트 | Vitest 단위 테스트 1212건/76파일 (renderer·shared 796 + main 416) + Playwright E2E (CI-결정적 9건) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (77/69/79/81) |
+| 다국어 (i18n) | 자체 구현 (i18n.ts) — 290+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
 
@@ -269,16 +275,16 @@ src/
 │   └── index.ts          # contextBridge API (ai, settings, apiKey, ollama, file)
 └── renderer/             # React UI
     ├── App.tsx            # 루트 컴포넌트, 요약 로직
-    ├── components/        # UI 컴포넌트 (9개)
+    ├── components/        # UI 컴포넌트 (16개)
     ├── lib/
     │   ├── ai-client.ts       # AI Client (IPC를 통해 Main에 요약/Q&A 요청)
     │   ├── pdf-parser.ts      # PDF 텍스트 + 이미지 추출, 챕터 감지, OCR fallback
     │   ├── chunker.ts         # 텍스트 청크 분할 (한글 비율 자동 감지)
-    │   ├── i18n.ts             # 다국어 번역 (172+ 키, t() 함수, useT() 훅)
+    │   ├── i18n.ts             # 다국어 번역 (290+ 키, t() 함수, useT() 훅)
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (1136건, 69 파일)
+    │   └── __tests__/         # 단위 테스트 (1212건, 76 파일)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -462,6 +468,7 @@ PDF 파일
 | 파일 접근 | `.pdf` 확장자 + `%PDF-` 매직바이트 선행 검사 + `lstat` 심볼릭링크 거부 + 100MB 캡. 세션 디렉토리는 콘텐츠 해시(`/^[a-f0-9]{64}$/` 화이트리스트)로 식별해 경로 traversal 차단 |
 | 네비게이션/권한 | `will-navigate` + `will-redirect` 차단(packaged renderer URL만 허용), 권한 요청/조회 기본 거부(`clipboard-sanitized-write`만 예외), 프로덕션 DevTools 비활성화, 외부 URL은 정확 호스트명 화이트리스트 |
 | Markdown/XSS | URL scheme allowlist(`https/http/mailto/#`), `javascript:`/`data:` 등 차단, 제어문자·bidi override 차단, 외부 이미지 차단 |
+| PDF 내보내기 | 요약 HTML을 앱 내 마크다운과 동일하게 새니타이즈(raw HTML/스크립트 차단, 스킴 화이트리스트) 후, 잠금 오프스크린 창(Node 차단·sandbox·JS 비활성)에서 인쇄 |
 | CSP | `script-src`에서 `unsafe-inline` 제거(FOUC 방지 스크립트만 sha256 화이트리스트), `frame-src/child-src/base-uri/form-action` 차단 |
 | 프롬프트 인젝션 | 사용자 질문/RAG 청크/요약 텍스트/대화 이력 모두 `sanitizePromptInput` 적용, OCR·Vision 프롬프트에 "이미지 내 지시사항 무시" 명시 |
 | 환각 완화 | Q&A 답변을 문장 단위로 분할 → RAG 임베딩 코사인 유사도 평가 → 약한 문장 다수 시 LLM 재정리 (다국어 종결부호 + Latin/CJK mixed 경계 인식) |
@@ -472,9 +479,9 @@ PDF 파일
 
 ## 품질 보증
 
-- **단위 테스트 1136건 / 69파일** — renderer·shared 753 + main 383. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service까지 행위 테스트, 렌더러 레이어(컴포넌트 16종 전수 + use-summarize/use-session/pdf-parser/safe-markdown 등 핵심 라이브러리)는 happy-dom 으로 행위 테스트
+- **단위 테스트 1212건 / 76파일** — renderer·shared 796 + main 416. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service·전체 문서 검색까지 행위 테스트, 렌더러/preload 레이어(컴포넌트 16종 전수 + use-summarize/use-session/pdf-parser/safe-markdown 등 핵심 라이브러리 + preload 브리지)는 happy-dom 으로 행위 테스트
 - **Playwright E2E** — 실제 Electron 빌드를 구동하는 CI-결정적 테스트 9건(콜드 스타트 위자드·PDF 파싱·멀티탭·세션/설정 재시작 복원·업로드 에러 경로), 전부 AI 비의존, 요약/Q&A/컬렉션은 로컬-전용 Ollama 스펙으로 커버
-- **CI 게이트** — `tsc --noEmit`(strict), 커버리지 임계(75/67/76/78) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 20.11/22/24 매트릭스
+- **CI 게이트** — `tsc --noEmit`(strict, e2e 전용 타입체크 프로젝트 포함), 커버리지 임계(77/69/79/81) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 20.11/22/24 매트릭스
 - **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, Critical 43라운드 연속 0건 (검출된 High/Important 는 패치 릴리즈로 즉시 수정 — 최근: R43 19건 → v0.21.1)
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 

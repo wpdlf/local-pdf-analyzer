@@ -14,6 +14,7 @@ Most AI summarization services require uploading your PDF to an external server 
 - **Multi-document tabs + cross-document Q&A** — open several PDFs as tabs and ask a single question across them; answers cite the source document and jump to the right page
 - **Collections + cross-document summaries** — save a set of documents as a named collection and reopen the whole tab set later; generate a unified summary or a comparison across the selected documents
 - **Automatic session save & restore** — reopen an analyzed PDF and your summary, Q&A history, and search index are restored instantly, with no re-summarization or re-embedding
+- **Search across all saved documents** — find a keyword across every saved document at once (page text + summaries + filenames) and jump straight to the matching page
 - **Safe for sensitive material** — exam papers, internal documents, paper drafts and other private files can be summarized with confidence
 - **Korean/English UI · external AI option** — switch to Claude/OpenAI/Gemini API easily when you need higher quality
 
@@ -60,6 +61,7 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 ### 1. Upload a PDF
 - **Drag & drop** a PDF onto the app window, click **Select File**, or press **Ctrl+O**
 - Previously analyzed PDFs appear in the **Recent Documents** list at the bottom of the upload screen; reopening the same PDF **automatically restores** its summary, Q&A, and search index
+- **Search across saved documents** — the search bar on the upload screen finds a keyword across every saved session (page text, summaries, filenames); results show matching pages with highlighted snippets — click one to open
 - **Multiple documents as tabs** — opening another PDF adds a tab at the top; click tabs to move between documents and continue each one's summary and Q&A (auto-saved and restored on switch). Use the `＋` button to add a document
 
 ### 2. Choose a Summary Type
@@ -72,7 +74,8 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 
 ### 3. View & Save Results
 - The summary streams to the screen in real time
-- Save with the **Export `.md`** button, or copy to clipboard with **Copy**
+- Save with **Export `.md`** or **Export PDF** (a formatted PDF with headings/tables/citations), or copy to clipboard with **Copy**
+- Closing the summary is non-destructive — it collapses to the document screen, and **View summary / Continue Q&A** reopens it with the Q&A thread intact
 
 ### 4. Q&A Chat (RAG Semantic Search)
 - A **RAG vector index** is built automatically when a PDF loads (progress in the header → **RAG** badge when ready)
@@ -163,6 +166,8 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Real-time streaming — summaries appear as they are generated, with auto-scroll (pauses when you scroll manually)
 - Every long-running task is cancellable — stop summarization/parsing/OCR, cancel Ollama setup midway and switch providers
 - File swap during parsing — dropping another file cancels the previous job and switches immediately
+- Export summaries — Markdown, formatted PDF (native, dependency-free), or clipboard; individual Q&A answers can be copied too
+- Search across all saved documents — keyword search over page text, summaries, and filenames with highlighted snippets and one-click open
 - Multi-document tabs — keep several PDFs open and switch between them; only the active document's heavy state stays in memory (instant restore on switch). Collection mode searches across the open documents in a single question, with source-attributed citations; save a set as a named collection and generate unified/comparison summaries across it
 - Dark mode, instant Korean/English switching — the UI language is auto-detected from your OS locale on first run, with a toggle on the setup screen; screen-reader and keyboard accessibility
 
@@ -173,7 +178,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Render error recovery — unexpected UI errors offer a "Try again" button, no restart needed
 
 **Quality assurance**
-- 1136 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
+- 1212 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -189,6 +194,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Symptom | Solution |
 |---------|----------|
 | Ollama installation fails | Install manually from [ollama.com](https://ollama.com), or use the wizard's "Cancel and use another provider" button to switch to Claude/OpenAI/Gemini |
+| The Summarize button is greyed out | Ollama isn't running or has no installed model — use the **Open settings** link next to the button to fix it, or switch to a cloud provider |
 | Poor Korean summary quality | Install and select the Korean-specialized model (exaone3.5) under Settings → Model Management. It is an optional install during first-run setup and produces better Korean summaries than the base model (gemma3) |
 | Summarization is slow | Switch to a lighter model (e.g. phi3) or reduce the chunk size in Settings |
 | Text extraction fails | Make sure "Scanned PDF OCR" is enabled in Settings; a Vision model (llava, Claude, GPT-4o, Gemini) is required |
@@ -227,8 +233,8 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | State management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
-| Testing | Vitest, 1136 unit tests / 69 files (renderer·shared 753 + main 383) + Playwright E2E (9 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (75/67/76/78) |
-| i18n | In-house (i18n.ts) — 172+ keys, useT() hook, template substitution |
+| Testing | Vitest, 1212 unit tests / 76 files (renderer·shared 796 + main 416) + Playwright E2E (9 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (77/69/79/81) |
+| i18n | In-house (i18n.ts) — 290+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
 
@@ -269,16 +275,16 @@ src/
 │   └── index.ts          # contextBridge API (ai, settings, apiKey, ollama, file)
 └── renderer/             # React UI
     ├── App.tsx            # Root component, summarization logic
-    ├── components/        # UI components (9)
+    ├── components/        # UI components (16)
     ├── lib/
     │   ├── ai-client.ts       # AI client (requests summaries/Q&A from Main via IPC)
     │   ├── pdf-parser.ts      # PDF text + image extraction, chapter detection, OCR fallback
     │   ├── chunker.ts         # Text chunking (auto-detects Korean ratio)
-    │   ├── i18n.ts             # Translations (172+ keys, t() function, useT() hook)
+    │   ├── i18n.ts             # Translations (290+ keys, t() function, useT() hook)
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (1136, 69 files)
+    │   └── __tests__/         # Unit tests (1212, 76 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -462,6 +468,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 | File access | `.pdf` extension + `%PDF-` magic-byte preflight + `lstat` symlink rejection + 100MB cap. Session directories are keyed by content hash (`/^[a-f0-9]{64}$/` whitelist), blocking path traversal |
 | Navigation/permissions | `will-navigate` + `will-redirect` blocked (only the packaged renderer URL allowed), permission requests/checks denied by default (`clipboard-sanitized-write` excepted), DevTools disabled in production, external URLs matched against an exact-hostname whitelist |
 | Markdown/XSS | URL scheme allowlist (`https/http/mailto/#`), `javascript:`/`data:` etc. blocked, control characters and bidi overrides blocked, external images blocked |
+| PDF export | Summary HTML rendered through the same Markdown sanitization (no raw HTML/scripts, scheme allowlist) and printed in a locked offscreen window (Node disabled, sandbox, JavaScript disabled) |
 | CSP | `unsafe-inline` removed from `script-src` (only the FOUC-prevention script whitelisted by sha256), `frame-src/child-src/base-uri/form-action` locked down |
 | Prompt injection | `sanitizePromptInput` applied to user questions, RAG chunks, summary text, and conversation history; OCR/Vision prompts explicitly instruct ignoring in-image instructions |
 | Hallucination mitigation | Q&A answers split into sentences → cosine-scored against RAG embeddings → refined by the LLM when too many sentences are weak (multilingual sentence boundaries + Latin/CJK mixed-boundary handling) |
@@ -472,9 +479,9 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **1136 unit tests / 69 files** — renderer·shared 753 + main 383. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, and ai-service; the renderer layer (all 16 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown) is behavior-tested via happy-dom
+- **1212 unit tests / 76 files** — renderer·shared 796 + main 416. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 16 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
 - **Playwright E2E** — 9 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, multi-tab, session/settings persistence across restart, upload-error paths), all AI-independent; summarize/Q&A/collection flows are covered by local-only Ollama specs
-- **CI gates** — `tsc --noEmit` (strict), enforced coverage thresholds (75/67/76/78), lockfile version sync check, `npm audit` advisory, Node 20.11/22/24 matrix
+- **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (77/69/79/81), lockfile version sync check, `npm audit` advisory, Node 20.11/22/24 matrix
 - **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings for 43 consecutive rounds (detected High/Important issues are fixed immediately in patch releases — most recently: 19 findings in R43 → v0.21.1)
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
