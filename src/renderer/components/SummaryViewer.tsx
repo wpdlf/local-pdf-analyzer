@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
+import { summaryToHtml } from '../lib/export-html';
 import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
 import { PdfViewerPanel } from './PdfViewer';
@@ -114,6 +115,18 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
     }
   };
 
+  const handleExportPdf = async () => {
+    if (!summaryStream) return;
+    const baseName = document ? document.fileName.replace(/\.pdf$/i, '') : t('viewer.result');
+    const defaultName = `${baseName}_${t('viewer.defaultFilename').replace('.md', '')}.pdf`;
+    try {
+      const html = summaryToHtml(summaryStream, baseName);
+      await window.electronAPI.file.exportPdf(html, defaultName);
+    } catch {
+      setError({ code: 'EXPORT_FAIL', message: t('viewer.pdfFail') });
+    }
+  };
+
   const showCitationPanel = citationTarget !== null;
   // DR-01: 동적 flex-basis — 좌측은 (1 - panelRatio), 우측은 panelRatio
   const leftFlexBasis = showCitationPanel ? `${(1 - panelRatio) * 100}%` : '100%';
@@ -193,6 +206,13 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
             aria-label={t('viewer.exportAria')}
           >
             {t('viewer.export')}
+          </button>
+          <button
+            onClick={handleExportPdf}
+            className="px-3 py-1.5 text-sm bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+            aria-label={t('viewer.exportPdfAria')}
+          >
+            {t('viewer.exportPdf')}
           </button>
           <button
             onClick={handleCopy}

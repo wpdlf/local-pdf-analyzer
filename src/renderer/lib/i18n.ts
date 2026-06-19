@@ -117,6 +117,9 @@ export const _translations = {
   'viewer.exportAria': { ko: '마크다운 파일로 내보내기', en: 'Export as markdown file' },
   'viewer.copy': { ko: '📋 복사', en: '📋 Copy' },
   'viewer.copyAria': { ko: '클립보드에 복사', en: 'Copy to clipboard' },
+  'viewer.exportPdf': { ko: '📄 PDF', en: '📄 PDF' },
+  'viewer.exportPdfAria': { ko: 'PDF 파일로 내보내기', en: 'Export as PDF file' },
+  'viewer.pdfFail': { ko: 'PDF 내보내기에 실패했습니다. 다른 경로를 선택해주세요.', en: 'Failed to export PDF. Please choose a different path.' },
 
   // ─── QaChat ───
   'qa.header': { ko: '문서에 대해 질문하세요', en: 'Ask about the document' },

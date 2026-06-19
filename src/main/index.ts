@@ -909,6 +909,44 @@ export function registerIpcHandlers(): void {
     return null;
   });
 
+  // 요약 PDF 내보내기 — 렌더러가 새니타이즈된 HTML(safe-markdown 경유)을 보내면 잠금 오프스크린
+  // BrowserWindow 에 로드 후 Electron 네이티브 printToPDF 로 변환한다(추가 의존성 없음). file:save 와
+  // 동일 계약(성공 string / 취소·에러 null) + 크기 캡 + 확장자 화이트리스트.
+  ipcMain.handle('file:export-pdf', async (_event, html: unknown, defaultName: unknown) => {
+    if (typeof html !== 'string' || typeof defaultName !== 'string') return null;
+    if (html.length > MAX_EXPORT_SIZE) return null;
+    const safeName = path.basename(defaultName).slice(0, 255);
+    const { filePath } = await dialog.showSaveDialog({
+      defaultPath: safeName,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (!filePath) return null;
+    if (path.extname(filePath).toLowerCase() !== '.pdf') return null;
+
+    // 임시 HTML 을 파일로 써서 loadFile — data: URL 길이 한계/인코딩 부담 회피.
+    const tmpHtml = path.join(app.getPath('temp'), `pdf-export-${Date.now()}.html`);
+    let win: BrowserWindow | null = null;
+    try {
+      await fsp.writeFile(tmpHtml, html, 'utf-8');
+      // 잠금 렌더 컨텍스트: node 차단 + sandbox + JS 비활성(새니타이즈된 정적 HTML 이라 스크립트
+      // 불필요) + 격리. 인쇄 외 어떤 능력도 노출하지 않는다.
+      win = new BrowserWindow({
+        show: false,
+        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, javascript: false },
+      });
+      await win.loadFile(tmpHtml);
+      const pdf = await win.webContents.printToPDF({ printBackground: true });
+      await fsp.writeFile(filePath, pdf);
+      return filePath;
+    } catch (err) {
+      console.error('file:export-pdf failed:', err);
+      return null;
+    } finally {
+      if (win && !win.isDestroyed()) win.destroy();
+      fsp.unlink(tmpHtml).catch(() => { /* 임시 파일 정리 실패 무시 */ });
+    }
+  });
+
   // v0.17.7 (Hardening 2): 정확 호스트명 매칭으로 변경 — suffix 매칭은
   // gist.github.com 등 사용자 콘텐츠 도메인까지 허용하는 문제가 있었음
   const ALLOWED_EXTERNAL_HOSTS = new Set([
