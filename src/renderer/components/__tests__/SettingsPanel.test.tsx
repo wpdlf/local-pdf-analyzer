@@ -186,3 +186,27 @@ describe('SettingsPanel — 세션 데이터 / Ollama', () => {
     await waitFor(() => expect(useAppStore.getState().error?.code).toBe('OLLAMA_NOT_RUNNING'));
   });
 });
+
+describe('SettingsPanel — M2 생성 중 게이트', () => {
+  it('평시 → 안내 배너 없음', () => {
+    render(<SettingsPanel />);
+    expect(screen.queryByText(/AI 생성 중입니다/)).toBeNull();
+  });
+
+  it('생성 중 → 안내 배너 + provider/모델/청크는 disabled fieldset 안, 테마/언어는 게이트 밖', () => {
+    // fieldset[disabled] 는 자식 input.disabled IDL 에 반영되지 않으므로(브라우저 동일)
+    // closest('fieldset').disabled 로 "실제 비활성" 을 검증한다.
+    useAppStore.setState({ isGenerating: true });
+    const { container } = render(<SettingsPanel />);
+    expect(screen.getByText(/AI 생성 중입니다/)).toBeTruthy();
+
+    const providerFs = container.querySelector('input[name="provider"]')?.closest('fieldset') as HTMLFieldSetElement | null;
+    const chunkFs = container.querySelector('input[type="number"]')?.closest('fieldset') as HTMLFieldSetElement | null;
+    expect(providerFs?.disabled).toBe(true);
+    expect(chunkFs?.disabled).toBe(true);
+
+    // 테마/언어는 어떤 disabled fieldset 에도 속하지 않음 → 생성 중에도 변경 가능
+    expect(container.querySelector('input[name="theme"]')?.closest('fieldset')).toBeNull();
+    expect(container.querySelector('input[name="uiLanguage"]')?.closest('fieldset')).toBeNull();
+  });
+});

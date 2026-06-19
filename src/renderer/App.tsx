@@ -42,6 +42,8 @@ export default function App() {
   const summaryCollapsed = useAppStore((s) => s.summaryCollapsed);
   const setSummaryCollapsed = useAppStore((s) => s.setSummaryCollapsed);
   const [modelHint, setModelHint] = useState<string | null>(null);
+  // M1(UX): 닫은 모델 힌트의 (document.id:model) 키 집합 — 영속 dismiss.
+  const dismissedModelHintRef = useRef<Set<string>>(new Set());
   const [bgModelSync, setBgModelSync] = useState<string | null>(null);
   const [bgModelLoading, setBgModelLoading] = useState(false);
   // Ctrl+O / 파일 다이얼로그 재진입 가드. 진행 중이면 연타 Ctrl+O 를 무시한다.
@@ -324,7 +326,11 @@ export default function App() {
       const isKoreanModel = KOREAN_RECOMMENDED_MODELS.some(
         (m) => currentModel === (m.split(':')[0] ?? m),
       );
-      if (!isKoreanModel) {
+      // M1(UX): dismiss 영속화 — 이전엔 deps 변경으로 effect 가 재실행되면 닫은 배너가 다시
+      // 떠서 의도적으로 비한글 모델을 고른 사용자에게 반복 노출됐다. (document, model) 조합별로
+      // 닫음을 기록해 같은 조합에선 재출현하지 않도록 한다(모델/문서 변경 시엔 다시 평가).
+      const hintKey = `${document.id}:${settings.model}`;
+      if (!isKoreanModel && !dismissedModelHintRef.current.has(hintKey)) {
         setModelHint(
           tr('app.modelHint', { model: settings.model, recommended: KOREAN_RECOMMENDED_MODELS.join(', ') }),
         );
@@ -376,11 +382,14 @@ export default function App() {
           >
             📂 {tr('app.openPdf')}
           </button>
+          {/* M2(UX): 생성 중에도 설정을 열 수 있다 — 테마/언어 등 렌더러 전용 변경은 즉시 안전.
+              AI 백엔드 정의 항목(provider/model/URL/청크)은 SettingsPanel 이 생성 중 게이트한다.
+              파싱 중에는 문서 전환 전이라 잠시 차단. */}
           <button
             onClick={() => setView('settings')}
-            disabled={isGenerating || isParsing || isQaGenerating}
+            disabled={isParsing}
             className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title={(isGenerating || isQaGenerating) ? tr('app.settingsBlocked') : tr('app.settings')}
+            title={tr('app.settings')}
             aria-label={tr('app.settings')}
           >
             ⚙️
@@ -448,7 +457,11 @@ export default function App() {
           <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start justify-between">
             <p className="text-amber-700 dark:text-amber-400 text-sm">{modelHint}</p>
             <button
-              onClick={() => setModelHint(null)}
+              onClick={() => {
+                // M1: 닫음을 (document, model) 조합으로 기록해 같은 조합 재출현 차단.
+                if (document) dismissedModelHintRef.current.add(`${document.id}:${settings.model}`);
+                setModelHint(null);
+              }}
               className="text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 ml-2 shrink-0"
               aria-label={tr('common.close')}
             >

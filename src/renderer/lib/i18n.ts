@@ -133,6 +133,8 @@ export const _translations = {
   'qa.stopAria': { ko: '답변 중지', en: 'Stop answer' },
   'qa.answerCancelled': { ko: '(답변이 취소되었습니다)', en: '(Answer cancelled)' },
   'qa.sendAria': { ko: '질문 전송', en: 'Send question' },
+  'qa.copyAnswer': { ko: '답변 복사', en: 'Copy answer' },
+  'qa.copied': { ko: '복사됨', en: 'Copied' },
   // ─── 다중 문서 컬렉션 Q&A (multi-doc Phase 2) ───
   'collection.toggle': { ko: '여러 문서에 걸쳐 질문', en: 'Ask across documents' },
   'collection.toggleHint': { ko: '열어둔 문서들을 묶어 함께 검색합니다', en: 'Search the open documents together' },
@@ -256,6 +258,10 @@ export const _translations = {
   },
   'settings.savedBtn': { ko: '✅ 저장되었습니다', en: '✅ Saved' },
   'settings.saveBtn': { ko: '설정 저장', en: 'Save settings' },
+  'settings.aiBusyNotice': {
+    ko: '⚙️ AI 생성 중입니다. 테마·언어 등은 바로 바꿀 수 있지만, AI Provider·모델·Ollama URL·청크 크기는 진행이 끝난 뒤 변경할 수 있습니다.',
+    en: '⚙️ AI is generating. Theme/language can be changed now, but AI provider, model, Ollama URL, and chunk size are locked until it finishes.',
+  },
   'settings.noChanges': { ko: '변경 사항 없음', en: 'No changes' },
   'settings.notInstalled': { ko: '미설치', en: 'Not installed' },
 

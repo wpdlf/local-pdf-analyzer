@@ -20,6 +20,12 @@ export function SettingsPanel() {
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
   const setView = useAppStore((s) => s.setView);
   const setError = useAppStore((s) => s.setError);
+  // M2(UX): 생성 중에도 설정 진입을 허용하되(테마/언어 즉시 변경), AI 백엔드 정의 항목
+  // (provider/model/URL/청크)은 진행 중 변경을 막는다 — in-flight 요청은 config 를 이미 캡처해
+  // 영향이 없지만, 진행 중 백엔드 스왑은 다음 요청에서 RAG 재빌드/임베딩 모델 불일치 혼란을 부른다.
+  const isGenerating = useAppStore((s) => s.isGenerating);
+  const isQaGenerating = useAppStore((s) => s.isQaGenerating);
+  const aiBusy = isGenerating || isQaGenerating;
   const t = useT();
 
   const [draft, setDraft] = useState<AppSettings>({ ...settings });
@@ -363,6 +369,13 @@ export function SettingsPanel() {
         )}
       </div>
 
+      {/* M2(UX): 생성 중 안내 — 백엔드 정의 항목이 잠겨 있음을 알린다. */}
+      {aiBusy && (
+        <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-amber-700 dark:text-amber-400">
+          {t('settings.aiBusyNotice')}
+        </div>
+      )}
+
       {/* v0.18.5 M1 fix: pullError 배너는 provider-무관 위치로 리프트.
           이전에는 Ollama 섹션 내부에 있어, 사용자가 실패 후 provider 를 Claude/OpenAI 로
           전환하면 섹션 언마운트 + pullError state 소실로 원인을 영구 확인 불가했다. */}
@@ -389,6 +402,8 @@ export function SettingsPanel() {
         </div>
       )}
 
+      {/* M2: AI Provider + 모델은 생성 중 변경 게이트 — fieldset disabled 가 내부 폼 컨트롤을 일괄 비활성화 */}
+      <fieldset disabled={aiBusy} className={`min-w-0 border-0 p-0 m-0 ${aiBusy ? 'opacity-60' : ''}`}>
       {/* AI Provider */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.provider')}</h3>
@@ -433,6 +448,7 @@ export function SettingsPanel() {
         {draft.provider === 'ollama' && ollamaModels.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">{t('settings.noModels')}</p>}
         {draft.provider === 'ollama' && ollamaModels.length > 0 && <p className="text-xs text-gray-500 mt-2">{t('settings.modelRecommend')}</p>}
       </section>
+      </fieldset>
 
       {/* API 키 관리 */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
@@ -482,8 +498,9 @@ export function SettingsPanel() {
         </div>
       </section>
 
-      {/* Ollama 관리 */}
+      {/* Ollama 관리 (M2: 생성 중 게이트) */}
       {draft.provider === 'ollama' && (
+        <fieldset disabled={aiBusy} className={`min-w-0 border-0 p-0 m-0 ${aiBusy ? 'opacity-60' : ''}`}>
         <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
           <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.ollamaMgmt')}</h3>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
@@ -553,6 +570,7 @@ export function SettingsPanel() {
             <input type="text" value={draft.ollamaBaseUrl} onChange={(e) => updateDraft({ ollamaBaseUrl: e.target.value })} className="w-full px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
           </div>
         </section>
+        </fieldset>
       )}
 
       {/* 테마 */}
@@ -583,7 +601,8 @@ export function SettingsPanel() {
         </div>
       </section>
 
-      {/* 청크 크기 */}
+      {/* 청크 크기 (M2: 생성 중 게이트 — RAG 청킹에 영향) */}
+      <fieldset disabled={aiBusy} className={`min-w-0 border-0 p-0 m-0 ${aiBusy ? 'opacity-60' : ''}`}>
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.chunkSize')}</h3>
         <div className="flex items-center gap-2">
@@ -622,6 +641,7 @@ export function SettingsPanel() {
           )}
         </div>
       </section>
+      </fieldset>
 
       {/* 이미지 분석 */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">

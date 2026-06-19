@@ -9,6 +9,16 @@ export function QaChat() {
   const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, qaVerifying, ragState } = useQa();
   const t = useT();
   const [input, setInput] = useState('');
+  // M4(UX): 답변별 복사 — 복사 직후 짧게 ✓ 피드백. (요약엔 복사가 있었지만 Q&A 답변엔 없어
+  // 스트리밍 컨테이너에서 수동 선택해야 했다.) React 18+ 는 unmounted setState 경고가 없어 안전.
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const handleCopyMsg = async (id: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500);
+    } catch { /* 클립보드 거부 시 무시 — 답변 자체는 화면에 남아 있음 */ }
+  };
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRafRef = useRef<number | null>(null);
@@ -109,8 +119,8 @@ export function QaChat() {
           className="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-3"
         >
           {qaMessages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+            <div key={msg.id} className={`group flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`relative max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                 msg.role === 'user'
                   ? 'bg-blue-500 text-white'
                   : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none'
@@ -118,9 +128,20 @@ export function QaChat() {
                 {msg.role === 'user' ? (
                   msg.content
                 ) : (
-                  <MarkdownErrorBoundary fallbackText={msg.content}>
-                    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{msg.content}</ReactMarkdown>
-                  </MarkdownErrorBoundary>
+                  <>
+                    <MarkdownErrorBoundary fallbackText={msg.content}>
+                      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{msg.content}</ReactMarkdown>
+                    </MarkdownErrorBoundary>
+                    {/* M4: 어시스턴트 답변 hover 복사 버튼 */}
+                    <button
+                      onClick={() => void handleCopyMsg(msg.id, msg.content)}
+                      className="absolute -top-2 -right-2 px-1.5 py-0.5 text-xs rounded bg-white dark:bg-gray-700 border dark:border-gray-600 shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity not-prose"
+                      aria-label={copiedId === msg.id ? t('qa.copied') : t('qa.copyAnswer')}
+                      title={copiedId === msg.id ? t('qa.copied') : t('qa.copyAnswer')}
+                    >
+                      {copiedId === msg.id ? '✓' : '📋'}
+                    </button>
+                  </>
                 )}
               </div>
             </div>

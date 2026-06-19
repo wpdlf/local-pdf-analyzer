@@ -146,4 +146,19 @@ describe('QaChat', () => {
     const send = screen.getByRole('button', { name: '질문 전송' }) as HTMLButtonElement;
     expect(send.disabled).toBe(true);
   });
+
+  it('M4: 어시스턴트 답변에만 복사 버튼 → clipboard.writeText(답변 내용)', () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    Q.state.qaMessages = [
+      { id: 'm1', role: 'user', content: '질문' },
+      { id: 'm2', role: 'assistant', content: '답변 본문' },
+    ];
+    render(<QaChat />);
+    // user 메시지엔 복사 버튼 없음 — assistant 1개만
+    const copyBtns = screen.getAllByRole('button', { name: '답변 복사' });
+    expect(copyBtns).toHaveLength(1);
+    fireEvent.click(copyBtns[0]!);
+    expect(writeText).toHaveBeenCalledWith('답변 본문');
+  });
 });
