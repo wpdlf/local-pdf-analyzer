@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { SessionManifestEntry, SessionStats, SessionSaveMeta } from '../shared/session-types';
+import type { SessionManifestEntry, SessionStats, SessionSaveMeta, GlobalSearchResult } from '../shared/session-types';
 import type { SavedCollection } from '../shared/collection-types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     delete: (docHash: string) => ipcRenderer.invoke('session:delete', docHash),
     clear: () => ipcRenderer.invoke('session:clear'),
     stats: () => ipcRenderer.invoke('session:stats'),
+    search: (query: string) => ipcRenderer.invoke('session:search', query),
   },
   // multi-doc Phase 3 (module-1): 컬렉션 영속화
   collections: {
@@ -160,6 +161,7 @@ export type ElectronAPI = {
     delete: (docHash: string) => Promise<{ ok: boolean }>;
     clear: () => Promise<{ ok: boolean }>;
     stats: () => Promise<SessionStats>;
+    search: (query: string) => Promise<GlobalSearchResult[]>;
   };
   collections: {
     list: () => Promise<SavedCollection[]>;

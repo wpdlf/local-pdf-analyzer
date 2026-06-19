@@ -41,7 +41,9 @@ import {
   sessionStats,
   isValidDocHash,
 } from './session-store';
-import type { SessionSaveMeta } from '../shared/session-types';
+// 전체 문서 키워드 검색(순수). session:search 핸들러가 각 세션 본문을 읽어 위임한다.
+import { searchPersistedSession, rankSearchResults, MIN_QUERY_LENGTH } from './session-search';
+import type { SessionSaveMeta, GlobalSearchResult } from '../shared/session-types';
 // multi-doc Phase 3 (module-1): 컬렉션 영속화. collectionsFile 주입으로 electron-free.
 import { listCollections, saveCollection, deleteCollection } from './collections-store';
 
@@ -523,6 +525,25 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('session:stats', async () => {
     return sessionStats(sessionsDir);
+  });
+
+  // 전체 문서 검색 — 저장된 모든 세션을 가로질러 키워드 매칭(pageTexts/summaries/파일명).
+  // 제출 시점 1회 호출(라이브 아님): 세션 본문(≤30)을 읽어 순수 검색 후 점수순 상한.
+  ipcMain.handle('session:search', async (_event, query: unknown): Promise<GlobalSearchResult[]> => {
+    if (typeof query !== 'string' || query.trim().length < MIN_QUERY_LENGTH) return [];
+    const entries = await listSessions(sessionsDir);
+    const results: GlobalSearchResult[] = [];
+    for (const e of entries) {
+      const loaded = await readSession(sessionsDir, e.docHash);
+      if (!loaded) continue;
+      const r = searchPersistedSession(
+        { docHash: e.docHash, fileName: e.fileName, filePath: e.filePath, pageCount: e.pageCount },
+        loaded.session,
+        query,
+      );
+      if (r) results.push(r);
+    }
+    return rankSearchResults(results, 50);
   });
 
   // ─── multi-doc Phase 3: 컬렉션 영속화 (module-1) ───

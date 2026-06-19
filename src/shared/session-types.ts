@@ -45,6 +45,23 @@ export interface SessionStats {
   dir: string;
 }
 
+/** 전체 문서 검색(session:search) — 매칭 페이지 스니펫. Main 의 순수 검색과 Renderer UI 공유. */
+export interface SearchSnippet {
+  page: number;   // 1-base 페이지 번호
+  text: string;   // 매칭 주변 발췌(plain text — 렌더러가 하이라이트)
+}
+
+/** 전체 문서 검색 결과 1건 — 점수 내림차순 정렬. */
+export interface GlobalSearchResult {
+  docHash: string;
+  fileName: string;
+  filePath: string;
+  pageCount: number;
+  score: number;        // 매칭 가중 합(파일명 5 / 페이지 발생수 / 요약 2)
+  inSummary: boolean;   // 요약 본문에도 매칭됐는지
+  snippets: SearchSnippet[];
+}
+
 /**
  * Renderer 가 저장 시 제공하는 manifest 메타(byteSize/createdAt/lastAccessed 는 Main 이 계산).
  * Main 은 세션 본문을 파싱하지 않고 이 메타만으로 manifest 항목을 구성한다.
