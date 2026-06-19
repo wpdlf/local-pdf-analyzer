@@ -12,9 +12,11 @@ const M = vi.hoisted(() => ({
   search: vi.fn(),
   openPath: vi.fn(),
   handlePdfData: vi.fn(() => Promise.resolve()),
+  semantic: vi.fn(),
 }));
 
 vi.mock('../../lib/pdf-parser', () => ({ handlePdfData: M.handlePdfData }));
+vi.mock('../../lib/semantic-search', () => ({ searchSessionsSemantic: M.semantic }));
 
 vi.stubGlobal('window', Object.assign(window, {
   electronAPI: { session: { search: M.search }, file: { openPath: M.openPath } },
@@ -32,6 +34,7 @@ const result = (over: Partial<GlobalSearchResult>): GlobalSearchResult => ({
 beforeEach(() => {
   vi.clearAllMocks();
   M.search.mockResolvedValue([]);
+  M.semantic.mockResolvedValue({ status: 'ok', results: [], excludedCount: 0 });
   M.openPath.mockResolvedValue({ path: '/x/lecture.pdf', name: 'lecture.pdf', data: new ArrayBuffer(8) });
   useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, persistSessions: true }, error: null });
 });
@@ -98,6 +101,39 @@ describe('GlobalSearch', () => {
     await user.click(screen.getByText(/lecture\.pdf/));
     await waitFor(() => expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL'));
     expect(M.handlePdfData).not.toHaveBeenCalled();
+  });
+
+  it('의미 모드 전환 → searchSessionsSemantic 호출(키워드 search 미호출) + 결과 렌더', async () => {
+    M.semantic.mockResolvedValue({ status: 'ok', results: [result({ snippets: [{ page: 7, text: '유사 의미 청크' }] })], excludedCount: 0 });
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.click(screen.getByRole('button', { name: '의미' }));
+    await user.type(screen.getByLabelText('문서 검색'), '동의어개념');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    expect(M.semantic).toHaveBeenCalledWith('동의어개념');
+    expect(M.search).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText(/lecture\.pdf/)).toBeTruthy());
+    expect(screen.getByText('p.7')).toBeTruthy();
+  });
+
+  it('의미 모드 + 임베딩 모델 없음 → 안내 노출, 결과 없음', async () => {
+    M.semantic.mockResolvedValue({ status: 'no-embed-model', results: [], excludedCount: 0 });
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.click(screen.getByRole('button', { name: '의미' }));
+    await user.type(screen.getByLabelText('문서 검색'), '질의어');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(screen.getByText(/임베딩 모델이 필요/)).toBeTruthy());
+  });
+
+  it('의미 모드 + 모델 불일치 제외 → 제외 안내', async () => {
+    M.semantic.mockResolvedValue({ status: 'ok', results: [result({ snippets: [{ page: 1, text: '청크' }] })], excludedCount: 2 });
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.click(screen.getByRole('button', { name: '의미' }));
+    await user.type(screen.getByLabelText('문서 검색'), '질의어');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(screen.getByText(/2개 문서는 제외/)).toBeTruthy());
   });
 
   it('session.search 가 reject → 결과 없음으로 graceful (배너 없이 빈 결과)', async () => {

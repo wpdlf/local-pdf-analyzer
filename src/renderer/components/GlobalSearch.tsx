@@ -2,16 +2,19 @@ import { useState, useCallback, type ReactNode } from 'react';
 import { useT } from '../lib/i18n';
 import { useAppStore } from '../lib/store';
 import { handlePdfData } from '../lib/pdf-parser';
+import { searchSessionsSemantic } from '../lib/semantic-search';
 import type { GlobalSearchResult } from '../../shared/session-types';
 
 /**
- * 전체 문서 검색 (cross-session search) — 저장된 모든 세션을 가로질러 키워드 검색.
- * 현재 열린 문서 한 개의 RAG Q&A 와 달리, "어느 PDF 에서 X 를 다뤘는지" 를 찾는다.
+ * 전체 문서 검색 (cross-session search) — 저장된 모든 세션을 가로질러 검색.
+ * 두 모드: 키워드(정확한 문자열, main 의 session:search)와 의미(임베딩 코사인, searchSessionsSemantic).
  * 결과 클릭 시 RecentDocuments 와 동일하게 openPath → handlePdfData(세션 복원)로 연다.
  * persistSessions OFF 면 검색 대상이 없으므로 숨김.
  */
 
-/** 스니펫 내 query 를 대소문자 무관 하이라이트 (<mark>). */
+type SearchMode = 'keyword' | 'semantic';
+
+/** 스니펫 내 query 를 대소문자 무관 하이라이트 (<mark>). 의미 검색은 질의어가 없을 수 있어 그대로 통과. */
 function highlight(text: string, query: string): ReactNode {
   const q = query.trim();
   if (!q) return text;
@@ -39,25 +42,38 @@ export function GlobalSearch() {
   const tr = useT();
   const persistEnabled = useAppStore((s) => s.settings.persistSessions);
   const [query, setQuery] = useState('');
+  const [mode, setMode] = useState<SearchMode>('keyword');
   const [results, setResults] = useState<GlobalSearchResult[] | null>(null); // null = 아직 검색 전
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [lastQuery, setLastQuery] = useState('');
+  const [lastMode, setLastMode] = useState<SearchMode>('keyword');
+  const [note, setNote] = useState<string | null>(null); // no-embed-model / embed-failed / 제외 안내
 
   const handleSearch = useCallback(async () => {
     const q = query.trim();
     if (q.length < 2 || searching) return;
     setSearching(true);
     setLastQuery(q);
+    setLastMode(mode);
+    setNote(null);
     try {
-      const r = await window.electronAPI.session.search(q);
-      setResults(Array.isArray(r) ? r : []);
+      if (mode === 'semantic') {
+        const out = await searchSessionsSemantic(q);
+        if (out.status === 'no-embed-model') { setResults([]); setNote(tr('search.noEmbedModel')); return; }
+        if (out.status === 'embed-failed') { setResults([]); setNote(tr('search.embedFailed')); return; }
+        setResults(out.results);
+        if (out.excludedCount > 0) setNote(tr('search.excluded', { count: out.excludedCount }));
+      } else {
+        const r = await window.electronAPI.session.search(q);
+        setResults(Array.isArray(r) ? r : []);
+      }
     } catch {
       setResults([]);
     } finally {
       setSearching(false);
     }
-  }, [query, searching]);
+  }, [query, searching, mode, tr]);
 
   const handleOpen = useCallback(async (r: GlobalSearchResult) => {
     setBusy(r.docHash);
@@ -77,8 +93,29 @@ export function GlobalSearch() {
 
   if (!persistEnabled) return null;
 
+  const modeBtn = (m: SearchMode, label: string) => (
+    <button
+      onClick={() => setMode(m)}
+      aria-pressed={mode === m}
+      className={`px-2.5 py-1 text-xs rounded transition-colors ${
+        mode === m
+          ? 'bg-blue-500 text-white'
+          : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
   return (
     <div className="w-full max-w-2xl mx-auto mt-6">
+      <div className="flex items-center gap-1 mb-1.5">
+        <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800" role="group" aria-label={tr('search.modeLabel')}>
+          {modeBtn('keyword', tr('search.modeKeyword'))}
+          {modeBtn('semantic', tr('search.modeSemantic'))}
+        </div>
+        <span className="text-[11px] text-gray-400 dark:text-gray-500 ml-1 hidden sm:inline">{tr('search.modeHint')}</span>
+      </div>
       <div className="flex gap-2">
         <input
           type="text"
@@ -98,11 +135,17 @@ export function GlobalSearch() {
         </button>
       </div>
 
+      {note && (
+        <p className="mt-2 px-1 text-xs text-amber-600 dark:text-amber-400">{note}</p>
+      )}
+
       {results !== null && (
         results.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-500 px-1 py-3">
-            {tr('search.noResults', { query: lastQuery })}
-          </p>
+          !note && (
+            <p className="text-xs text-gray-400 dark:text-gray-500 px-1 py-3">
+              {tr('search.noResults', { query: lastQuery })}
+            </p>
+          )
         ) : (
           <ul className="flex flex-col gap-2 mt-3">
             {results.map((r) => (
@@ -122,14 +165,18 @@ export function GlobalSearch() {
                     )}
                     {busy === r.docHash && <span className="shrink-0 text-gray-400">…</span>}
                   </div>
-                  {r.snippets.map((s, i) => (
-                    <div key={i} className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      <span className="text-gray-400 dark:text-gray-500 mr-1">
-                        {s.page > 0 ? tr('search.page', { page: s.page }) : tr('search.summaryLabel')}
-                      </span>
-                      {highlight(s.text, lastQuery)}
-                    </div>
-                  ))}
+                  {r.snippets.map((s, i) => {
+                    // 키워드: page=0 = 요약 발췌 fallback. 의미: page=0 = 페이지 메타 없는 청크(라벨 생략).
+                    const label = s.page > 0
+                      ? tr('search.page', { page: s.page })
+                      : (lastMode === 'keyword' ? tr('search.summaryLabel') : null);
+                    return (
+                      <div key={i} className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        {label && <span className="text-gray-400 dark:text-gray-500 mr-1">{label}</span>}
+                        {highlight(s.text, lastQuery)}
+                      </div>
+                    );
+                  })}
                 </button>
               </li>
             ))}
