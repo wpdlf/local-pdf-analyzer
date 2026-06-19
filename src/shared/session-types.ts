@@ -47,7 +47,7 @@ export interface SessionStats {
 
 /** 전체 문서 검색(session:search) — 매칭 페이지 스니펫. Main 의 순수 검색과 Renderer UI 공유. */
 export interface SearchSnippet {
-  page: number;   // 1-base 페이지 번호
+  page: number;   // 1-base 페이지 번호 (0 = 페이지 아닌 요약 발췌)
   text: string;   // 매칭 주변 발췌(plain text — 렌더러가 하이라이트)
 }
 

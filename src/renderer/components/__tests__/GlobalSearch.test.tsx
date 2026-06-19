@@ -99,4 +99,26 @@ describe('GlobalSearch', () => {
     await waitFor(() => expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL'));
     expect(M.handlePdfData).not.toHaveBeenCalled();
   });
+
+  it('session.search 가 reject → 결과 없음으로 graceful (배너 없이 빈 결과)', async () => {
+    M.search.mockRejectedValue(new Error('io fail'));
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.type(screen.getByLabelText('문서 검색'), '질의어');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(screen.getByText(/결과가 없습니다/)).toBeTruthy());
+  });
+
+  it('결과 클릭 시 openPath 가 throw → recent.openFail 배너(catch 경로)', async () => {
+    M.search.mockResolvedValue([result({})]);
+    M.openPath.mockRejectedValue(new Error('boom'));
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.type(screen.getByLabelText('문서 검색'), '프로세스');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(screen.getByText(/lecture\.pdf/)).toBeTruthy());
+    await user.click(screen.getByText(/lecture\.pdf/));
+    await waitFor(() => expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL'));
+    expect(M.handlePdfData).not.toHaveBeenCalled();
+  });
 });

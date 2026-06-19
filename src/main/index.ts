@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 // R38 P1-2: sync `fs` 는 API 키 저장 로직과 함께 api-keys-store.ts 로 이동. 본 파일은 fsp 만 사용.
 import fsp from 'fs/promises';
+import { randomUUID } from 'crypto';
 import { OllamaManager } from './ollama-manager';
 import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
 import { MAX_PDF_SIZE_BYTES, isLocalhostHost } from '../shared/constants';
@@ -944,8 +945,10 @@ export function registerIpcHandlers(): void {
     if (!filePath) return null;
     if (path.extname(filePath).toLowerCase() !== '.pdf') return null;
 
-    // 임시 HTML 을 파일로 써서 loadFile — data: URL 길이 한계/인코딩 부담 회피.
-    const tmpHtml = path.join(app.getPath('temp'), `pdf-export-${Date.now()}.html`);
+    // 임시 HTML 을 파일로 써서 loadFile — data: URL 길이 한계/인코딩 부담 회피. 파일명은
+    // randomUUID — 동시 export(빠른 더블클릭) 시 Date.now() 동일 ms 충돌로 한쪽 finally 가
+    // 다른 쪽 파일을 unlink 하던 race 차단.
+    const tmpHtml = path.join(app.getPath('temp'), `pdf-export-${randomUUID()}.html`);
     let win: BrowserWindow | null = null;
     try {
       await fsp.writeFile(tmpHtml, html, 'utf-8');
@@ -955,8 +958,13 @@ export function registerIpcHandlers(): void {
         show: false,
         webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, javascript: false },
       });
-      await win.loadFile(tmpHtml);
-      const pdf = await win.webContents.printToPDF({ printBackground: true });
+      const w = win;
+      // 병리적 콘텐츠로 loadFile/printToPDF 가 무한 hang 시 오프스크린 창 누수 + 렌더러 영구
+      // 대기(버튼 비활성 고착)를 막는 타임아웃 — reject 시 finally 가 창을 파괴하고 계약은 null 반환.
+      const pdf = await Promise.race([
+        (async () => { await w.loadFile(tmpHtml); return w.webContents.printToPDF({ printBackground: true }); })(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('printToPDF timeout')), 60000)),
+      ]);
       await fsp.writeFile(filePath, pdf);
       return filePath;
     } catch (err) {

@@ -33,6 +33,26 @@ describe('searchPersistedSession — 키워드 매칭', () => {
     expect(r.score).toBe(2);
   });
 
+  it('요약에서만 매칭되면 요약 발췌를 page=0 스니펫으로 제공(빈 스니펫 방지)', () => {
+    const session = { pageTexts: ['무관한 내용'], summaries: { full: { content: '핵심은 캐싱 전략이다', model: 'm', provider: 'p' } } };
+    const r = searchPersistedSession(META, session, '캐싱')!;
+    expect(r.inSummary).toBe(true);
+    expect(r.snippets).toHaveLength(1);
+    expect(r.snippets[0]!.page).toBe(0); // 0 = 요약 발췌(페이지 아님)
+    expect(r.snippets[0]!.text).toContain('캐싱');
+  });
+
+  it('페이지 스니펫이 있으면 요약 fallback 은 추가하지 않음', () => {
+    const session = { pageTexts: ['캐싱 설명 페이지'], summaries: { full: { content: '핵심은 캐싱', model: 'm', provider: 'p' } } };
+    const r = searchPersistedSession(META, session, '캐싱')!;
+    expect(r.snippets.every((sn) => sn.page > 0)).toBe(true); // 페이지 스니펫만, page=0 없음
+  });
+
+  it('요약 entry content 가 비문자열이면 방어(크래시 없음, inSummary 미설정)', () => {
+    const session = { pageTexts: ['x'], summaries: { full: { model: 'm' } } }; // content 없음
+    expect(searchPersistedSession(META, session, '키워드')).toBeNull(); // 페이지/요약/파일명 매칭 0
+  });
+
   it('매칭 없음 → null', () => {
     expect(searchPersistedSession(META, { pageTexts: ['전혀 다른 내용'] }, '존재하지않는단어')).toBeNull();
   });

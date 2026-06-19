@@ -104,12 +104,13 @@ describe('SummaryViewer', () => {
     expect(call[1]).toMatch(/^lecture_.*\.md$/);
   });
 
-  it('PDF 내보내기 → file.exportPdf(html, *.pdf) 호출', async () => {
+  it('PDF 내보내기 → file.exportPdf(html, *.pdf) 호출 (지연 import)', async () => {
     setState({ stream: '# 요약', docName: 'lecture.pdf' });
     const user = userEvent.setup();
     render(<SummaryViewer />);
     await user.click(screen.getByRole('button', { name: 'PDF 파일로 내보내기' }));
-    expect(M.exportPdf).toHaveBeenCalledTimes(1);
+    // summaryToHtml 을 동적 import 하므로 호출은 마이크로태스크 뒤 — waitFor 로 대기.
+    await vi.waitFor(() => expect(M.exportPdf).toHaveBeenCalledTimes(1));
     const call = M.exportPdf.mock.calls[0] as unknown as [string, string];
     expect(call[0]).toContain('<!DOCTYPE html>'); // 변환된 HTML
     expect(call[1]).toMatch(/^lecture_.*\.pdf$/);

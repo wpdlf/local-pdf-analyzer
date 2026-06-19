@@ -344,6 +344,7 @@ export const _translations = {
   'search.noResults': { ko: '"{query}"에 대한 결과가 없습니다.', en: 'No results for "{query}".' },
   'search.inSummary': { ko: '요약 포함', en: 'in summary' },
   'search.page': { ko: 'p.{page}', en: 'p.{page}' },
+  'search.summaryLabel': { ko: '요약', en: 'Summary' },
   'settings.dataSection': { ko: '세션 데이터', en: 'Session Data' },
   'settings.persistToggle': { ko: '세션·캐시 저장', en: 'Save sessions & cache' },
   'settings.persistDesc': { ko: '문서별 요약·Q&A·검색 인덱스를 저장해 다시 열 때 복원합니다 (재요약·재임베딩 없음).', en: 'Save summaries, Q&A, and the search index per document to restore them on reopen (no re-summarize/re-embed).' },

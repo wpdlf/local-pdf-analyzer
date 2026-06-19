@@ -76,16 +76,27 @@ export function searchPersistedSession(
     }
   }
 
-  // 요약 본문 — 매칭 시 부스트(스니펫은 페이지 우선이라 별도 미수집).
+  // 요약 본문 — 매칭 시 부스트. 페이지 스니펫이 하나도 없을 때를 대비해 첫 매칭 요약 발췌도 보관.
   let inSummary = false;
+  let summarySnippet: string | null = null;
   const summaries = (s.summaries && typeof s.summaries === 'object') ? s.summaries as Record<string, unknown> : {};
   for (const key of Object.keys(summaries)) {
     const entry = summaries[key];
     const content = (entry && typeof entry === 'object') ? (entry as Record<string, unknown>).content : undefined;
-    if (typeof content === 'string' && content.toLowerCase().includes(q)) {
-      inSummary = true;
-      score += SUMMARY_BOOST;
+    if (typeof content === 'string') {
+      const idx = content.toLowerCase().indexOf(q);
+      if (idx !== -1) {
+        inSummary = true;
+        score += SUMMARY_BOOST;
+        if (summarySnippet === null) summarySnippet = makeSnippet(content, idx, q.length);
+      }
     }
+  }
+
+  // 페이지 매칭 스니펫이 없고 요약에서만 매칭됐으면 요약 발췌를 보여준다(page=0 = 요약 표식).
+  // 파일명만 매칭한 경우는 결과 제목에 파일명이 이미 보이므로 스니펫 없이 둔다.
+  if (snippets.length === 0 && summarySnippet !== null) {
+    snippets.push({ page: 0, text: summarySnippet });
   }
 
   if (score === 0) return null;

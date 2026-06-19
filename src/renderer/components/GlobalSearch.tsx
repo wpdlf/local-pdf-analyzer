@@ -124,7 +124,9 @@ export function GlobalSearch() {
                   </div>
                   {r.snippets.map((s, i) => (
                     <div key={i} className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      <span className="text-gray-400 dark:text-gray-500 mr-1">{tr('search.page', { page: s.page })}</span>
+                      <span className="text-gray-400 dark:text-gray-500 mr-1">
+                        {s.page > 0 ? tr('search.page', { page: s.page }) : tr('search.summaryLabel')}
+                      </span>
                       {highlight(s.text, lastQuery)}
                     </div>
                   ))}

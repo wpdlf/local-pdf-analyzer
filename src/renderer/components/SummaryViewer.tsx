@@ -3,7 +3,6 @@ import ReactMarkdown from 'react-markdown';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
-import { summaryToHtml } from '../lib/export-html';
 import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
 import { PdfViewerPanel } from './PdfViewer';
@@ -28,6 +27,7 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const t = useT();
 
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -116,14 +116,21 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   };
 
   const handleExportPdf = async () => {
-    if (!summaryStream) return;
+    // 동시 export 가드(빠른 더블클릭) — main 의 temp/창 race 와 별개로 렌더러 측 재진입도 차단.
+    if (!summaryStream || isExportingPdf) return;
+    setIsExportingPdf(true);
     const baseName = document ? document.fileName.replace(/\.pdf$/i, '') : t('viewer.result');
     const defaultName = `${baseName}_${t('viewer.defaultFilename').replace('.md', '')}.pdf`;
     try {
+      // 지연 로드: react-dom/server(renderToStaticMarkup) 를 시작 청크에서 분리 — PDF 내보내기는
+      // 드문 on-demand 동작이라 앱 기동 시 ~130KB 서버 렌더러를 끌고 올 이유가 없다.
+      const { summaryToHtml } = await import('../lib/export-html');
       const html = summaryToHtml(summaryStream, baseName);
       await window.electronAPI.file.exportPdf(html, defaultName);
     } catch {
       setError({ code: 'EXPORT_FAIL', message: t('viewer.pdfFail') });
+    } finally {
+      setIsExportingPdf(false);
     }
   };
 
@@ -209,7 +216,8 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
           </button>
           <button
             onClick={handleExportPdf}
-            className="px-3 py-1.5 text-sm bg-green-500 text-white rounded hover:bg-green-600 transition-colors"
+            disabled={isExportingPdf}
+            className="px-3 py-1.5 text-sm bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             aria-label={t('viewer.exportPdfAria')}
           >
             {t('viewer.exportPdf')}
