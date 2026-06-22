@@ -91,11 +91,23 @@ export function GlobalSearch() {
     }
   }, [tr]);
 
+  // 모드 전환 시 이전 모드의 결과/노트가 그대로 남아 라벨·하이라이트가 어긋나 보이는 문제 방지 →
+  // 모드가 실제로 바뀌면 검색-전 상태로 리셋한다.
+  const handleModeChange = useCallback((m: SearchMode) => {
+    setMode((prev) => {
+      if (prev !== m) {
+        setResults(null);
+        setNote(null);
+      }
+      return m;
+    });
+  }, []);
+
   if (!persistEnabled) return null;
 
   const modeBtn = (m: SearchMode, label: string) => (
     <button
-      onClick={() => setMode(m)}
+      onClick={() => handleModeChange(m)}
       aria-pressed={mode === m}
       className={`px-2.5 py-1 text-xs rounded transition-colors ${
         mode === m

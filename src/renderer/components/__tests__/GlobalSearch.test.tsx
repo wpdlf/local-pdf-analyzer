@@ -136,6 +136,32 @@ describe('GlobalSearch', () => {
     await waitFor(() => expect(screen.getByText(/2개 문서는 제외/)).toBeTruthy());
   });
 
+  it('모드 전환 시 이전 모드의 결과/안내가 검색-전 상태로 리셋', async () => {
+    M.search.mockResolvedValue([result({})]);
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    // 키워드 검색 → 결과 렌더
+    await user.type(screen.getByLabelText('문서 검색'), '프로세스');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(screen.getByText(/lecture\.pdf/)).toBeTruthy());
+    // 의미 모드로 전환 → 이전 결과가 즉시 사라짐(재검색 전, noResults 안내도 없음)
+    await user.click(screen.getByRole('button', { name: '의미' }));
+    expect(screen.queryByText(/lecture\.pdf/)).toBeNull();
+    expect(screen.queryByText(/결과가 없습니다/)).toBeNull();
+  });
+
+  it('같은 모드 버튼 재클릭은 결과를 유지(불필요한 리셋 없음)', async () => {
+    M.search.mockResolvedValue([result({})]);
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.type(screen.getByLabelText('문서 검색'), '프로세스');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(screen.getByText(/lecture\.pdf/)).toBeTruthy());
+    // 이미 키워드 모드에서 키워드 버튼 재클릭 → 결과 유지
+    await user.click(screen.getByRole('button', { name: '키워드' }));
+    expect(screen.getByText(/lecture\.pdf/)).toBeTruthy();
+  });
+
   it('session.search 가 reject → 결과 없음으로 graceful (배너 없이 빈 결과)', async () => {
     M.search.mockRejectedValue(new Error('io fail'));
     const user = userEvent.setup();
