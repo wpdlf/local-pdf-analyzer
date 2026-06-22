@@ -36,6 +36,7 @@ export const _translations = {
   'pdfviewer.pageOf': { ko: '{current} / {total} 페이지', en: 'Page {current} of {total}' },
   'pdfviewer.pageRenderFail': { ko: '페이지 렌더링 실패', en: 'Failed to render page' },
   'pdfviewer.resize': { ko: '패널 크기 조정 (화살표 키 또는 드래그)', en: 'Resize panel (arrow keys or drag)' },
+  'pdfviewer.jumpTimeout': { ko: '페이지 렌더링이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.', en: 'Page rendering is taking longer than expected. Please try again in a moment.' },
   'ai.generateFail': { ko: '요약 생성에 실패했습니다.', en: 'Failed to generate summary.' },
   'ai.requestFail': { ko: '요약 요청에 실패했습니다.', en: 'Failed to send summary request.' },
   'ai.streamInterrupted': { ko: 'AI 응답 수신이 중단되었습니다. 네트워크 연결과 AI 서비스 상태를 확인해주세요.', en: 'AI response stream interrupted. Please check your network connection and AI service status.' },

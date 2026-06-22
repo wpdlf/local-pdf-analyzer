@@ -114,6 +114,23 @@ describe('RecentDocuments', () => {
     await waitFor(() => expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL'));
   });
 
+  it('한 항목 여는 중에도 다른 항목은 비활성되지 않는다 (L2 인플라이트 행만 잠금)', async () => {
+    M.list.mockResolvedValue([entry('h1', '강의1.pdf', 12, 40), entry('h2', '강의2.pdf', 5, 0)]);
+    let release: (v: unknown) => void = () => {};
+    M.openPath.mockReturnValue(new Promise((r) => { release = r; })); // 열기 in-flight 고정
+    const user = userEvent.setup();
+    render(<RecentDocuments />);
+    await waitFor(() => expect(screen.getByText(/강의2\.pdf/)).toBeTruthy());
+    // 첫 항목(h1) 열기 → openPath pending → busy='h1'
+    const openButtons = screen.getAllByRole('button', { name: '열기' });
+    await user.click(openButtons[0]!);
+    await waitFor(() => expect(screen.getByText('…')).toBeTruthy()); // h1 행은 '…'
+    // 다른 행(h2)의 열기 버튼은 여전히 활성 (전 행 잠금 아님)
+    const h2Open = screen.getByRole('button', { name: '열기' }); // h1은 '…'이라 '열기'는 h2뿐
+    expect((h2Open as HTMLButtonElement).disabled).toBe(false);
+    release({ data: new Uint8Array(), name: '강의1.pdf', path: '/docs/강의1.pdf' });
+  });
+
   it('StrictMode 더블 마운트에서도 목록이 표시된다 (mountedRef 리셋 가드)', async () => {
     render(<StrictMode><RecentDocuments /></StrictMode>);
     await waitFor(() => expect(screen.getByText(/강의1\.pdf/)).toBeTruthy());

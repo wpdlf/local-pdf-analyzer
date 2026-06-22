@@ -84,7 +84,7 @@ export function CollectionsList() {
           >
             <button
               onClick={() => handleOpen(c)}
-              disabled={busy !== null}
+              disabled={busy === c.id}
               className="flex-1 min-w-0 text-left disabled:opacity-50"
             >
               <div className="truncate text-sm font-medium text-gray-800 dark:text-gray-100">
@@ -97,14 +97,14 @@ export function CollectionsList() {
             <div className="flex items-center gap-1 shrink-0">
               <button
                 onClick={() => handleOpen(c)}
-                disabled={busy !== null}
+                disabled={busy === c.id}
                 className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 transition-colors"
               >
                 {busy === c.id ? '…' : tr('collection.open')}
               </button>
               <button
                 onClick={() => handleDelete(c.id)}
-                disabled={busy !== null}
+                disabled={busy === c.id}
                 className="p-1.5 text-gray-400 hover:text-red-500 disabled:opacity-50 transition-colors"
                 aria-label={tr('collection.delete')}
                 title={tr('collection.delete')}

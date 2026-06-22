@@ -393,10 +393,12 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
       } else if (attempts >= maxAttempts) {
         clearInterval(interval);
         scrollToPage();
+        // L1: 폴링 소진(렌더 지연/실패) — 빈 placeholder 로 스크롤되므로 무성 실패 대신 안내.
+        useAppStore.getState().setNotice({ message: t('pdfviewer.jumpTimeout') });
       }
     }, 100);
     return () => clearInterval(interval);
-  }, [targetPage, loadState, totalPages]);
+  }, [targetPage, loadState, totalPages, t]);
 
   // 4. ESC 키로 닫기
   //    v0.18.4 H3 fix: editable 포커스(textarea/input/contenteditable) 에서 ESC 는

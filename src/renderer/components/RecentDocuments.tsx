@@ -91,7 +91,7 @@ export function RecentDocuments() {
           >
             <button
               onClick={() => handleOpen(e)}
-              disabled={busy !== null}
+              disabled={busy === e.docHash}
               className="flex-1 min-w-0 text-left disabled:opacity-50"
               title={e.filePath}
             >
@@ -106,14 +106,14 @@ export function RecentDocuments() {
             <div className="flex items-center gap-1 shrink-0">
               <button
                 onClick={() => handleOpen(e)}
-                disabled={busy !== null}
+                disabled={busy === e.docHash}
                 className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 transition-colors"
               >
                 {busy === e.docHash ? '…' : tr('recent.open')}
               </button>
               <button
                 onClick={() => handleDelete(e.docHash)}
-                disabled={busy !== null}
+                disabled={busy === e.docHash}
                 className="p-1.5 text-gray-400 hover:text-red-500 disabled:opacity-50 transition-colors"
                 aria-label={tr('recent.delete')}
                 title={tr('recent.delete')}

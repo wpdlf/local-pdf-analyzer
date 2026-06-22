@@ -102,6 +102,21 @@ describe('CollectionsList', () => {
     await waitFor(() => expect(useAppStore.getState().notice).not.toBeNull());
   });
 
+  it('한 컬렉션 여는 중에도 다른 컬렉션은 비활성되지 않는다 (L2 인플라이트 행만 잠금)', async () => {
+    M.list.mockResolvedValue([coll('c1', '묶음A', 2), coll('c2', '묶음B', 2)]);
+    let release: (v: { opened: number; total: number }) => void = () => {};
+    M.openCollection.mockReturnValue(new Promise((r) => { release = r; })); // 열기 in-flight 고정
+    const user = userEvent.setup();
+    render(<CollectionsList />);
+    await waitFor(() => expect(screen.getByText(/묶음B/)).toBeTruthy());
+    const openButtons = screen.getAllByRole('button', { name: '열기' });
+    await user.click(openButtons[0]!); // c1 열기 → busy='c1'
+    await waitFor(() => expect(screen.getByText('…')).toBeTruthy()); // c1 행은 '…'
+    const c2Open = screen.getByRole('button', { name: '열기' }); // c2만 '열기'
+    expect((c2Open as HTMLButtonElement).disabled).toBe(false);
+    release({ opened: 2, total: 2 });
+  });
+
   it('삭제 → deleteCollection(id) 호출 + 목록 갱신', async () => {
     const user = userEvent.setup();
     render(<CollectionsList />);
