@@ -4,7 +4,7 @@
 // 한국어 특화 모델(exaone) + 비한국어 출력 시 경고 표시. 실제 store 액션 사용.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { SummaryTypeSelector } from '../SummaryTypeSelector';
@@ -15,9 +15,18 @@ beforeEach(() => {
   useAppStore.setState({
     summaryType: 'full',
     settings: { ...DEFAULT_SETTINGS },
+    document: null,
+    summaryPageRange: null,
   });
 });
 afterEach(() => cleanup());
+
+function docStub(pageCount: number) {
+  return {
+    id: 'd', fileName: 'a.pdf', filePath: '/a.pdf', pageCount,
+    extractedText: '', pageTexts: [], chapters: [], images: [], createdAt: new Date(0),
+  };
+}
 
 describe('SummaryTypeSelector', () => {
   it('3개 요약 유형 라디오를 표시하고 현재 유형이 체크된다', () => {
@@ -77,5 +86,51 @@ describe('SummaryTypeSelector', () => {
     });
     render(<SummaryTypeSelector />);
     expect(screen.queryByText(/한국어 특화 모델/)).toBeNull();
+  });
+
+  // ─── 페이지 범위 요약 ───
+  it('pageCount>1 이면 페이지 범위 UI 표시 + 기본 "전체" 체크, 입력 숨김', () => {
+    useAppStore.setState({ document: docStub(10), summaryPageRange: null });
+    render(<SummaryTypeSelector />);
+    expect(screen.getByText('페이지 범위')).toBeTruthy();
+    expect((screen.getByRole('radio', { name: '전체' }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByLabelText('시작 페이지')).toBeNull();
+  });
+
+  it('pageCount<=1 이면 페이지 범위 UI 숨김', () => {
+    useAppStore.setState({ document: docStub(1), summaryPageRange: null });
+    render(<SummaryTypeSelector />);
+    expect(screen.queryByText('페이지 범위')).toBeNull();
+  });
+
+  it('"범위 지정" 선택 → summaryPageRange={1,pageCount} + 입력 표시', async () => {
+    useAppStore.setState({ document: docStub(10), summaryPageRange: null });
+    const user = userEvent.setup();
+    render(<SummaryTypeSelector />);
+    await user.click(screen.getByRole('radio', { name: '범위 지정' }));
+    expect(useAppStore.getState().summaryPageRange).toEqual({ start: 1, end: 10 });
+    expect(screen.getByLabelText('시작 페이지')).toBeTruthy();
+  });
+
+  it('끝 페이지 입력 변경 → 범위 갱신', () => {
+    useAppStore.setState({ document: docStub(10), summaryPageRange: { start: 1, end: 10 } });
+    render(<SummaryTypeSelector />);
+    fireEvent.change(screen.getByLabelText('끝 페이지'), { target: { value: '5' } });
+    expect(useAppStore.getState().summaryPageRange).toEqual({ start: 1, end: 5 });
+  });
+
+  it('범위 초과 입력은 pageCount 로 클램프', () => {
+    useAppStore.setState({ document: docStub(10), summaryPageRange: { start: 1, end: 10 } });
+    render(<SummaryTypeSelector />);
+    fireEvent.change(screen.getByLabelText('끝 페이지'), { target: { value: '99' } });
+    expect(useAppStore.getState().summaryPageRange?.end).toBe(10);
+  });
+
+  it('"전체"로 되돌리면 summaryPageRange=null', async () => {
+    useAppStore.setState({ document: docStub(10), summaryPageRange: { start: 2, end: 5 } });
+    const user = userEvent.setup();
+    render(<SummaryTypeSelector />);
+    await user.click(screen.getByRole('radio', { name: '전체' }));
+    expect(useAppStore.getState().summaryPageRange).toBeNull();
   });
 });

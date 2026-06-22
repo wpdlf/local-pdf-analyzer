@@ -11,7 +11,18 @@ export function SummaryTypeSelector() {
   const setSummaryType = useAppStore((s) => s.setSummaryType);
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const pageCount = useAppStore((s) => s.document?.pageCount ?? 0);
+  const pageRange = useAppStore((s) => s.summaryPageRange);
+  const setPageRange = useAppStore((s) => s.setSummaryPageRange);
   const t = useT();
+
+  // 페이지 범위 입력 — 1~pageCount 로 클램프. start>end 는 요약 시 슬라이스가 스왑 처리하지만
+  // UI 에서도 즉시 클램프해 직관성 유지.
+  const clampPage = (n: number) => Math.max(1, Math.min(Math.floor(n) || 1, pageCount));
+  const updateRange = (patch: Partial<{ start: number; end: number }>) => {
+    const base = pageRange ?? { start: 1, end: pageCount };
+    setPageRange({ start: clampPage(patch.start ?? base.start), end: clampPage(patch.end ?? base.end) });
+  };
 
   const options: { value: DefaultSummaryType; label: string }[] = [
     { value: 'full', label: t('selector.full') },
@@ -45,6 +56,57 @@ export function SummaryTypeSelector() {
           ))}
         </div>
       </div>
+      {pageCount > 1 && (
+        <div className="flex items-center gap-4">
+          <span className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.pageRange')}</span>
+          <div className="flex items-center gap-3 flex-wrap">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="pageRangeMode"
+                checked={pageRange === null}
+                onChange={() => setPageRange(null)}
+                className="accent-blue-500"
+              />
+              <span className="text-sm text-gray-700 dark:text-gray-200">{t('selector.pageRangeAll')}</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="pageRangeMode"
+                checked={pageRange !== null}
+                onChange={() => setPageRange({ start: 1, end: pageCount })}
+                className="accent-blue-500"
+              />
+              <span className="text-sm text-gray-700 dark:text-gray-200">{t('selector.pageRangeCustom')}</span>
+            </label>
+            {pageRange !== null && (
+              <span className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={1}
+                  max={pageCount}
+                  value={pageRange.start}
+                  aria-label={t('selector.pageRangeAria')}
+                  onChange={(e) => updateRange({ start: e.target.valueAsNumber })}
+                  className="w-16 px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                />
+                <span className="text-sm text-gray-500 dark:text-gray-400">~</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={pageCount}
+                  value={pageRange.end}
+                  aria-label={t('selector.pageRangeAriaEnd')}
+                  onChange={(e) => updateRange({ end: e.target.valueAsNumber })}
+                  className="w-16 px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                />
+                <span className="text-xs text-gray-400 dark:text-gray-500">{t('selector.pageRangeTotal', { count: pageCount })}</span>
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       <div className="flex items-center gap-4">
         <span className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.summaryLang')}</span>
         <select

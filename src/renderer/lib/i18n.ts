@@ -100,6 +100,12 @@ export const _translations = {
   'selector.keywords': { ko: '키워드 추출', en: 'Keywords' },
   'selector.summaryType': { ko: '요약 유형', en: 'Summary type' },
   'selector.summaryLang': { ko: '요약 언어', en: 'Output language' },
+  'selector.pageRange': { ko: '페이지 범위', en: 'Page range' },
+  'selector.pageRangeAll': { ko: '전체', en: 'All' },
+  'selector.pageRangeCustom': { ko: '범위 지정', en: 'Custom' },
+  'selector.pageRangeTotal': { ko: '/ 총 {count}쪽', en: '/ {count} pages' },
+  'selector.pageRangeAria': { ko: '시작 페이지', en: 'Start page' },
+  'selector.pageRangeAriaEnd': { ko: '끝 페이지', en: 'End page' },
   'selector.modelWarning': {
     ko: '{model}은 한국어 특화 모델이라 다른 언어 출력이 제한적입니다. 설정에서 gemma3 또는 qwen3.5로 변경하면 더 나은 결과를 얻을 수 있습니다.',
     en: '{model} is a Korean-specialized model with limited multilingual output. Switch to gemma3 or qwen3.5 in settings for better results.',

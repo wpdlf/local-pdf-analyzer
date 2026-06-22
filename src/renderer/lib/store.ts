@@ -114,6 +114,8 @@ interface AppState {
   summary: Summary | null;
   summaryStream: string;
   summaryType: DefaultSummaryType;
+  // 페이지 범위 요약 — null 이면 전체. {start,end} 는 1-based inclusive. 문서 전환 시 리셋.
+  summaryPageRange: { start: number; end: number } | null;
   isGenerating: boolean;
   currentRequestId: string | null;
   progress: number;
@@ -129,6 +131,7 @@ interface AppState {
   /** 후처리된 전체 내용으로 summaryStream을 교체. 호출 전에 반드시 flushStream() 수행. */
   replaceSummaryStream: (content: string) => void;
   setSummaryType: (type: DefaultSummaryType) => void;
+  setSummaryPageRange: (range: { start: number; end: number } | null) => void;
   setIsGenerating: (v: boolean) => void;
   setCurrentRequestId: (id: string | null) => void;
   setProgress: (p: number) => void;
@@ -291,6 +294,7 @@ export const useAppStore = create<AppState>((set) => ({
   summaryCollapsed: false,
   setSummaryCollapsed: (summaryCollapsed) => set({ summaryCollapsed }),
   summaryType: 'full',
+  summaryPageRange: null,
   isGenerating: false,
   currentRequestId: null,
   progress: 0,
@@ -346,6 +350,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({ summaryStream: content });
   },
   setSummaryType: (summaryType) => set({ summaryType }),
+  setSummaryPageRange: (summaryPageRange) => set({ summaryPageRange }),
   setIsGenerating: (isGenerating) => set({ isGenerating }),
   setCurrentRequestId: (currentRequestId) => set({ currentRequestId }),
   setProgress: (progress) => set({ progress }),
@@ -373,6 +378,7 @@ export const useAppStore = create<AppState>((set) => ({
       document: null,
       summaryStream: '',
       summaryCollapsed: false,
+      summaryPageRange: null, // 페이지 범위는 문서별이므로 전환 시 전체로 리셋
       isGenerating: false,
       progress: 0,
       progressInfo: null,

@@ -4,6 +4,7 @@ import { AiClient } from './ai-client';
 import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
 import { normalizeCitationPlacement } from './citation';
 import { enrichDocumentWithImages } from './enrich-doc';
+import { slicePdfDocumentByPageRange, isFullRange } from './page-range';
 
 /**
  * 페이지별 텍스트 배열을 받아, 각 단락 앞에 `[p.N] ` inline 마커를 붙여 단일 문자열로 반환.
@@ -419,7 +420,15 @@ export function useSummarize() {
     if (!currentState.document || currentState.isGenerating || currentState.isQaGenerating) return;
     const currentSettings = currentState.settings;
     const currentSummaryType = currentState.summaryType;
-    const doc = currentState.document;
+    // 페이지 범위 요약: 범위가 일부면 문서를 마스킹된 사본으로 좁힌다(인용 [p.N] 절대번호 보존).
+    // 범위 요약 시에는 Vision enriched 를 RAG store 에 공유하지 않아 Q&A 는 전체 문서 컨텍스트를
+    // 유지한다(아래 setEnrichedPageTexts 가드). 슬라이스는 ...doc 라 id/fileName 등은 그대로.
+    const rawDoc = currentState.document;
+    const pageRange = currentState.summaryPageRange;
+    const isPartialRange = pageRange != null && !isFullRange(pageRange, rawDoc.pageCount);
+    const doc = isPartialRange
+      ? slicePdfDocumentByPageRange(rawDoc, pageRange.start, pageRange.end)
+      : rawDoc;
 
     // Vision 토글 일관성: 이미지 분석이 꺼진 채로 재요약할 때 이전 run 의 enrichedPageTexts 가
     // RAG 에 남아 있으면 "Vision 은 꺼졌는데 Q&A 검색 결과에는 이미지 설명이 섞여 나오는"
@@ -523,9 +532,11 @@ export function useSummarize() {
           enrichedPagesRef = enriched.enrichedPages;
           // Q&A RAG 가 이미지 분석 결과를 함께 인덱싱하도록 store 에 공유.
           // useRagBuilder 는 이 값이 세팅되면 key 에 enrichment 플래그가 바뀌어 재빌드.
-          if (enrichedPagesRef) {
+          if (enrichedPagesRef && !isPartialRange) {
+            // 범위 요약일 때는 마스킹된(부분) enriched 를 RAG 에 공유하지 않는다 — Q&A 는 전체
+            // 문서 컨텍스트(useRagBuilder 의 raw pageTexts)를 유지해야 직관적이기 때문.
             useAppStore.getState().setEnrichedPageTexts(enrichedPagesRef);
-          } else if (useAppStore.getState().enrichedPageTexts !== null) {
+          } else if (!isPartialRange && useAppStore.getState().enrichedPageTexts !== null) {
             // v0.18.19 patch R32 P2: 이미지 분석은 켜져 돌았으나 모든 이미지가 실패하여 결과가
             // null 인 경우, 이전 run 에서 세팅된 enrichedPageTexts 가 그대로 남아 RAG 가 stale
             // enriched 데이터로 검색을 수행하던 결함. raw pageTexts 재빌드를 강제하기 위해 명시적
