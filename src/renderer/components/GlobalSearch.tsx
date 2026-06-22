@@ -38,9 +38,13 @@ function highlight(text: string, query: string): ReactNode {
   return parts;
 }
 
+/** 임베딩이 클라우드 서버로 나가는 provider — ollama/claude(→ollama fallback)는 localhost 전용. */
+const CLOUD_EMBED_PROVIDERS: Record<string, string> = { openai: 'OpenAI', gemini: 'Gemini' };
+
 export function GlobalSearch() {
   const tr = useT();
   const persistEnabled = useAppStore((s) => s.settings.persistSessions);
+  const provider = useAppStore((s) => s.settings.provider);
   const [query, setQuery] = useState('');
   const [mode, setMode] = useState<SearchMode>('keyword');
   const [results, setResults] = useState<GlobalSearchResult[] | null>(null); // null = 아직 검색 전
@@ -105,6 +109,10 @@ export function GlobalSearch() {
 
   if (!persistEnabled) return null;
 
+  // #5 신뢰/프라이버시 고지: 의미 검색은 검색어+문서 내용을 임베딩하는데, provider 가 클라우드면
+  // "local-first" 앱임에도 원격으로 전송된다. 의미 모드에서 클라우드 provider 일 때만 배지 노출.
+  const cloudEmbedName = mode === 'semantic' ? CLOUD_EMBED_PROVIDERS[provider] : undefined;
+
   const modeBtn = (m: SearchMode, label: string) => (
     <button
       onClick={() => handleModeChange(m)}
@@ -127,6 +135,14 @@ export function GlobalSearch() {
           {modeBtn('semantic', tr('search.modeSemantic'))}
         </div>
         <span className="text-[11px] text-gray-400 dark:text-gray-500 ml-1 hidden sm:inline">{tr('search.modeHint')}</span>
+        {cloudEmbedName && (
+          <span
+            title={tr('search.cloudEmbedTooltip', { provider: cloudEmbedName })}
+            className="ml-auto shrink-0 px-1.5 py-0.5 text-[10px] rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 cursor-help"
+          >
+            {tr('search.cloudEmbedBadge', { provider: cloudEmbedName })}
+          </span>
+        )}
       </div>
       <div className="flex gap-2">
         <input

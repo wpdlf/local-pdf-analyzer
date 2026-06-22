@@ -150,6 +150,25 @@ describe('GlobalSearch', () => {
     expect(screen.queryByText(/결과가 없습니다/)).toBeNull();
   });
 
+  it('의미 모드 + 클라우드 provider(openai) → 임베딩 전송 고지 배지 노출(#5)', async () => {
+    useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, persistSessions: true, provider: 'openai' } });
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    // 키워드 모드(기본)에서는 배지 없음
+    expect(screen.queryByText(/OpenAI로 전송/)).toBeNull();
+    // 의미 모드로 전환 → 배지 노출
+    await user.click(screen.getByRole('button', { name: '의미' }));
+    expect(screen.getByText(/OpenAI로 전송/)).toBeTruthy();
+  });
+
+  it('의미 모드 + 로컬 provider(ollama) → 고지 배지 없음(#5)', async () => {
+    useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, persistSessions: true, provider: 'ollama' } });
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.click(screen.getByRole('button', { name: '의미' }));
+    expect(screen.queryByText(/전송/)).toBeNull();
+  });
+
   it('같은 모드 버튼 재클릭은 결과를 유지(불필요한 리셋 없음)', async () => {
     M.search.mockResolvedValue([result({})]);
     const user = userEvent.setup();

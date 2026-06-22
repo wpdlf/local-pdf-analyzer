@@ -20,6 +20,7 @@ export function SettingsPanel() {
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
   const setView = useAppStore((s) => s.setView);
   const setError = useAppStore((s) => s.setError);
+  const setNotice = useAppStore((s) => s.setNotice);
   // M2(UX): 생성 중에도 설정 진입을 허용하되(테마/언어 즉시 변경), AI 백엔드 정의 항목
   // (provider/model/URL/청크)은 진행 중 변경을 막는다 — in-flight 요청은 config 를 이미 캡처해
   // 영향이 없지만, 진행 중 백엔드 스왑은 다음 요청에서 RAG 재빌드/임베딩 모델 불일치 혼란을 부른다.
@@ -34,6 +35,7 @@ export function SettingsPanel() {
   const [ollamaModels, setOllamaModels] = useState<string[]>(ollamaStatus.models);
   const [pullModelName, setPullModelName] = useState('');
   const [isPulling, setIsPulling] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false); // L3: 재시작 진행 표시 + 연타 가드
   // R45(R44 후속): 진행 메시지를 이벤트로 보관하고 렌더 시점에 번역 — pull 중 언어 토글이
   // 다음 진행 이벤트를 기다리지 않고 즉시 반영 (위자드 F8 패턴과 통일)
   const [pullProgress, setPullProgress] = useState<
@@ -300,6 +302,8 @@ export function SettingsPanel() {
   };
 
   const handleRestartOllama = async () => {
+    if (isRestarting) return; // 연타 가드 — stop/start 진행 중 재진입 차단
+    setIsRestarting(true);
     try {
       await window.electronAPI.ollama.stop();
       if (!mountedRef.current) return;
@@ -308,9 +312,13 @@ export function SettingsPanel() {
       const status = await window.electronAPI.ollama.getStatus();
       if (!mountedRef.current) return;
       setOllamaStatus(status);
+      // L3: 성공 피드백 — 기존엔 무반응이라 눌렸는지 알 수 없었음. 전역 notice 로 1회 안내.
+      setNotice({ message: t('settings.restartOk') });
     } catch {
       if (!mountedRef.current) return;
       setError({ code: 'OLLAMA_NOT_RUNNING', message: t('settings.restartFail') });
+    } finally {
+      if (mountedRef.current) setIsRestarting(false);
     }
   };
 
@@ -561,8 +569,8 @@ export function SettingsPanel() {
             );
           })()}
           <div className="flex gap-2">
-            <button onClick={handleRestartOllama} className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
-              {t('settings.restartOllama')}
+            <button onClick={handleRestartOllama} disabled={isRestarting} className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              {isRestarting ? t('settings.restarting') : t('settings.restartOllama')}
             </button>
           </div>
           <div className="mt-3">

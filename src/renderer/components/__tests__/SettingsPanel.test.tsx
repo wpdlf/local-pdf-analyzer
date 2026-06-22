@@ -167,7 +167,7 @@ describe('SettingsPanel — 세션 데이터 / Ollama', () => {
     expect(sessionMock.clear).not.toHaveBeenCalled();
   });
 
-  it('Ollama 재시작 성공 → stop/start/getStatus → ollamaStatus 갱신', async () => {
+  it('Ollama 재시작 성공 → stop/start/getStatus → ollamaStatus 갱신 + 성공 notice(L3)', async () => {
     const user = userEvent.setup();
     render(<SettingsPanel />);
     await user.click(screen.getByText(t('settings.restartOllama')));
@@ -176,6 +176,8 @@ describe('SettingsPanel — 세션 데이터 / Ollama', () => {
       expect(ollamaMock.start).toHaveBeenCalled();
       expect(useAppStore.getState().ollamaStatus.version).toBe('0.6.0');
     });
+    // L3: 성공 후 전역 notice 로 피드백
+    await waitFor(() => expect(useAppStore.getState().notice?.message).toBe(t('settings.restartOk')));
   });
 
   it('Ollama 재시작 실패 → OLLAMA_NOT_RUNNING 에러', async () => {
