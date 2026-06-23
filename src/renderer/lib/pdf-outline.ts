@@ -16,6 +16,7 @@ export interface OutlineNode {
   children: OutlineNode[];
 }
 
+// 처리할 최대 중첩 레벨(루트=레벨1). 루트는 walk(_, 0) 으로 시작하므로 depth 0..3 = 4 레벨.
 const MAX_OUTLINE_DEPTH = 4;
 const MAX_OUTLINE_ITEMS = 500;
 
@@ -49,7 +50,8 @@ export async function extractOutline(doc: OutlineDoc): Promise<OutlineNode[]> {
   let count = 0;
 
   const walk = async (items: RawOutlineItem[], depth: number): Promise<OutlineNode[]> => {
-    if (depth > MAX_OUTLINE_DEPTH) return [];
+    // depth 0..MAX_OUTLINE_DEPTH-1 만 처리 → 정확히 MAX_OUTLINE_DEPTH 레벨 (L1 off-by-one 수정).
+    if (depth >= MAX_OUTLINE_DEPTH) return [];
     const out: OutlineNode[] = [];
     for (const item of items) {
       if (count >= MAX_OUTLINE_ITEMS) break;

@@ -176,6 +176,11 @@ interface AppState {
   // null 이면 PdfViewer 패널 비활성, { page: N } 이면 해당 페이지로 스크롤
   citationTarget: { page: number } | null;
   setCitationTarget: (target: { page: number } | null) => void;
+  // v0.28.1 M1: 동일 페이지 재점프도 스크롤을 발화시키는 단조 증가 카운터.
+  // citationTarget.page 가 원시 숫자라 같은 페이지를 다시 지정하면 PdfViewer scroll effect
+  // 의 deps 가 안 바뀌어 재스크롤이 안 됐다(목차에서 현재 대상 페이지 항목 클릭 시 no-op).
+  // setCitationTarget(non-null) 마다 증가시켜 effect deps 로 사용한다.
+  citationJumpNonce: number;
   // DR-01: 우측 PdfViewer 패널 너비 비율 (0.0 ~ 1.0). SummaryViewer 전체 폭 중
   // 우측 패널이 차지하는 비율. 좌측(요약+Q&A)은 자동으로 1 - 비율.
   // 기본 0.5 (50/50), min 0.2 / max 0.8.
@@ -484,7 +489,13 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Page citation — Design Ref §4.2
   citationTarget: null,
-  setCitationTarget: (target) => set({ citationTarget: target }),
+  citationJumpNonce: 0,
+  setCitationTarget: (target) =>
+    set((s) => ({
+      citationTarget: target,
+      // 점프 지정(non-null)마다 nonce 증가 → 동일 페이지여도 effect 재발화. 닫기(null)는 유지.
+      citationJumpNonce: target ? s.citationJumpNonce + 1 : s.citationJumpNonce,
+    })),
   pdfBytes: null,
   setPdfBytes: (bytes) => set({ pdfBytes: bytes }),
 

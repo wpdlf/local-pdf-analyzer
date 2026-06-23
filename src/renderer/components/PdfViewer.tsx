@@ -50,6 +50,11 @@ interface PdfViewerProps {
   pdfBytes: Uint8Array;
   /** 스크롤할 대상 페이지 (1-based) */
   targetPage: number;
+  /**
+   * v0.28.1 M1: 점프 nonce. 동일 targetPage 를 다시 지정해도 이 값이 바뀌면 scroll effect
+   * 가 재발화해 재스크롤된다. (목차에서 현재 대상 페이지 항목 클릭 no-op 방지)
+   */
+  jumpNonce?: number;
   /** 패널 닫기 */
   onClose: () => void;
 }
@@ -62,7 +67,7 @@ const MIN_RENDER_SCALE = 0.6; // 너무 작은 패널에서도 가독성 유지
  * 패널 너비 기반 동적 scale 계산으로 자동 fit.
  * targetPage 변경 시 해당 페이지로 scrollIntoView.
  */
-export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
+export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfViewerProps) {
   const t = useT();
   // t 는 UI 언어 변경 시 새 참조가 되어 effect 의존성에 두면 고비용 pdfjs 재렌더를 유발한다.
   // 렌더 효과에서는 ref 로만 참조해 언어 변경이 재렌더를 트리거하지 않도록 한다.
@@ -414,7 +419,8 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
       }
     }, 100);
     return () => clearInterval(interval);
-  }, [targetPage, loadState, totalPages, t]);
+    // jumpNonce: 동일 targetPage 재지정 시에도 effect 재실행해 재스크롤 (M1).
+  }, [targetPage, jumpNonce, loadState, totalPages, t]);
 
   // 4. ESC 키로 닫기
   //    v0.18.4 H3 fix: editable 포커스(textarea/input/contenteditable) 에서 ESC 는
@@ -554,13 +560,15 @@ function OutlineTree({
             <button
               type="button"
               onClick={() => onJump(node.page!)}
-              title={t('outline.jumpToPage', { page: node.page })}
+              // L4: 잘린 제목 전체를 hover 로 확인 가능하게 title 은 제목, 점프 안내는 aria-label.
+              title={node.title}
+              aria-label={t('outline.jumpToPage', { page: node.page })}
               className="block text-left w-full truncate text-xs text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:underline py-0.5"
             >
               {node.title}
             </button>
           ) : (
-            <span className="block truncate text-xs text-gray-500 dark:text-gray-400 py-0.5">{node.title}</span>
+            <span title={node.title} className="block truncate text-xs text-gray-500 dark:text-gray-400 py-0.5">{node.title}</span>
           )}
           {node.children.length > 0 && <OutlineTree nodes={node.children} onJump={onJump} depth={depth + 1} />}
         </li>
@@ -575,6 +583,7 @@ function OutlineTree({
  */
 export function PdfViewerPanel() {
   const citationTarget = useAppStore((s) => s.citationTarget);
+  const citationJumpNonce = useAppStore((s) => s.citationJumpNonce);
   const pdfBytes = useAppStore((s) => s.pdfBytes);
   const setCitationTarget = useAppStore((s) => s.setCitationTarget);
 
@@ -584,6 +593,7 @@ export function PdfViewerPanel() {
     <PdfViewer
       pdfBytes={pdfBytes}
       targetPage={citationTarget.page}
+      jumpNonce={citationJumpNonce}
       onClose={() => setCitationTarget(null)}
     />
   );

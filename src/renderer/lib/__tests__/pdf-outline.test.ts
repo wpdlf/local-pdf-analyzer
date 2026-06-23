@@ -93,6 +93,23 @@ describe('extractOutline', () => {
     expect(out[0]).toEqual({ title: '깨진 dest', page: null, children: [] });
   });
 
+  it('중첩 깊이 캡(MAX_OUTLINE_DEPTH=4) — 정확히 4 레벨, 5번째는 잘림', async () => {
+    const refs = [{ num: 1 }, { num: 2 }, { num: 3 }, { num: 4 }, { num: 5 }];
+    const l5 = { title: 'L5', dest: [refs[4]] };
+    const l4 = { title: 'L4', dest: [refs[3]], items: [l5] };
+    const l3 = { title: 'L3', dest: [refs[2]], items: [l4] };
+    const l2 = { title: 'L2', dest: [refs[1]], items: [l3] };
+    const l1 = { title: 'L1', dest: [refs[0]], items: [l2] };
+    const doc = makeDoc({ outline: [l1], pageByRef: new Map(refs.map((r, i) => [r, i])) });
+    const out = await extractOutline(doc as never);
+    expect(out[0]?.title).toBe('L1'); // depth 0
+    expect(out[0]?.children[0]?.title).toBe('L2'); // depth 1
+    expect(out[0]?.children[0]?.children[0]?.title).toBe('L3'); // depth 2
+    const l4node = out[0]?.children[0]?.children[0]?.children[0];
+    expect(l4node?.title).toBe('L4'); // depth 3
+    expect(l4node?.children).toEqual([]); // depth 4 (L5) 는 잘림
+  });
+
   it('제목·자식 모두 없는 항목은 스킵, 빈 제목은 — 로 대체', async () => {
     const ref = { num: 5 };
     const doc = makeDoc({

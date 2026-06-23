@@ -33,7 +33,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   Element.prototype.scrollIntoView = vi.fn();
   P.getDocument.mockReturnValue({ promise: Promise.resolve(P.makeDoc(3)), destroy: vi.fn(() => Promise.resolve()) });
-  useAppStore.setState({ pdfBytes: null, citationTarget: null });
+  useAppStore.setState({ pdfBytes: null, citationTarget: null, citationJumpNonce: 0 });
 });
 afterEach(() => cleanup());
 
@@ -122,6 +122,23 @@ describe('PdfViewer 목차(outline)', () => {
 
     await user.click(item);
     // ref2 → 0-based 2 → page 3
+    expect(useAppStore.getState().citationTarget).toEqual({ page: 3 });
+  });
+
+  it('M1: 동일 페이지 항목 재클릭에도 jumpNonce 증가 → 재스크롤 발화', async () => {
+    P.getDocument.mockReturnValue({ promise: Promise.resolve(makeOutlineDoc()), destroy: vi.fn(() => Promise.resolve()) });
+    const user = userEvent.setup();
+    render(<PdfViewer pdfBytes={new Uint8Array([1, 2, 3])} targetPage={1} onClose={vi.fn()} />);
+    const toggle = await screen.findByRole('button', { name: t('outline.toggle') });
+    await user.click(toggle);
+    const item = screen.getByText('2장 본론');
+
+    await user.click(item);
+    const n1 = useAppStore.getState().citationJumpNonce;
+    expect(n1).toBeGreaterThan(0);
+    // 같은 페이지(3) 항목을 다시 클릭 — page 는 동일하지만 nonce 는 증가해야 함
+    await user.click(item);
+    expect(useAppStore.getState().citationJumpNonce).toBe(n1 + 1);
     expect(useAppStore.getState().citationTarget).toEqual({ page: 3 });
   });
 
