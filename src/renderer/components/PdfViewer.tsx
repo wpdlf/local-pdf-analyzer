@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
+import { extractOutline, type OutlineNode } from '../lib/pdf-outline';
 
 // pdfjs-dist worker 는 이미 pdf-parser.ts 에서 전역 설정됨 (재설정 불필요).
 // 이 모듈이 먼저 import 되면 worker 가 설정 안 된 상태일 수 있어 safeguard.
@@ -79,6 +80,15 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
   const enqueueRenderRef = useRef<((pageNum: number) => void) | null>(null);
   // DR-01 리사이즈 재렌더: container 너비가 실제로 변할 때마다 증가 → 렌더 effect 재실행
   const [renderVersion, setRenderVersion] = useState(0);
+  // 목차(아웃라인) — 로드된 doc 에서 pdfjs getOutline 으로 마운트 시 1회 추출. 영속화 안 함.
+  const [outline, setOutline] = useState<OutlineNode[]>([]);
+  const [showOutline, setShowOutline] = useState(false);
+
+  // 목차 항목 클릭 → citationTarget 갱신(인용 점프와 동일 경로). PdfViewerPanel 이
+  // targetPage 를 다시 내려 effect 3 의 폴링 스크롤이 발화한다.
+  const handleOutlineJump = (page: number) => {
+    useAppStore.getState().setCitationTarget({ page });
+  };
   // 마지막으로 렌더된 width — 미세한 변동(스크롤바 등)에 반복 재렌더 방지
   const lastRenderedWidthRef = useRef<number>(0);
 
@@ -97,14 +107,19 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     // 명시 초기화하면 캐시 히트(same bytes) 경로에서 ref 가 비어버린다. 따라서 ref 는 건드리지 않음.
     renderedPagesRef.current.clear();
     lastRenderedWidthRef.current = 0;
+    // 문서 전환 시 이전 목차 잔존 방지. 새 doc 추출 완료 후 다시 채워진다.
+    setOutline([]);
+    setShowOutline(false);
 
     // 캐시 히트 — 동일 pdfBytes 참조면 재파싱 없이 즉시 재사용
     if (cachedDoc && cachedDoc.bytes === pdfBytes) {
       pdfDocRef.current = cachedDoc.doc;
       setTotalPages(cachedDoc.doc.numPages);
       setLoadState('loaded');
+      void extractOutline(cachedDoc.doc).then((o) => { if (!cancelled) setOutline(o); });
       return () => {
         // 언마운트 시에도 캐시된 doc 는 파기하지 않음 — 재마운트에서 재사용
+        cancelled = true;
         pdfDocRef.current = null;
       };
     }
@@ -133,6 +148,7 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
         pdfDocRef.current = doc;
         setTotalPages(doc.numPages);
         setLoadState('loaded');
+        void extractOutline(doc).then((o) => { if (!cancelled) setOutline(o); });
       } catch (err) {
         if (cancelled) return;
         console.error('[PdfViewer] getDocument failed:', err);
@@ -434,25 +450,49 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
     <div className="flex flex-col h-full bg-white border-l dark:border-gray-700" role="region" aria-label={t('pdfviewer.title')}>
       {/* 상단 바 */}
       <div className="flex items-center justify-between px-3 py-2 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800 shrink-0">
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
-          {t('pdfviewer.title')}
-          {totalPages !== null && (
-            <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
-              {t('pdfviewer.pageOf', { current: targetPage, total: totalPages })}
-            </span>
+        <div className="flex items-center gap-2 min-w-0">
+          {/* 목차 토글 — 추출된 아웃라인이 있을 때만 노출 */}
+          {outline.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowOutline((v) => !v)}
+              aria-label={t('outline.toggle')}
+              aria-pressed={showOutline}
+              title={t('outline.title')}
+              className={`shrink-0 text-sm px-1 rounded ${showOutline ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'}`}
+            >
+              ☰
+            </button>
           )}
-        </span>
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-200 truncate">
+            {t('pdfviewer.title')}
+            {totalPages !== null && (
+              <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                {t('pdfviewer.pageOf', { current: targetPage, total: totalPages })}
+              </span>
+            )}
+          </span>
+        </div>
         <button
           type="button"
           onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm px-2 py-1"
+          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm px-2 py-1 shrink-0"
           aria-label={t('pdfviewer.close')}
         >
           ✕
         </button>
       </div>
 
-      {/* 본문 */}
+      {/* 본문 — 목차 사이드바(옵션) + 페이지 스크롤 영역 */}
+      <div className="flex-1 min-h-0 flex">
+      {showOutline && outline.length > 0 && (
+        <nav
+          aria-label={t('outline.title')}
+          className="w-56 shrink-0 overflow-y-auto border-r dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-2"
+        >
+          <OutlineTree nodes={outline} onJump={handleOutlineJump} />
+        </nav>
+      )}
       <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-2">
         {loadState === 'loading' && (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-500 dark:text-gray-400">
@@ -488,7 +528,44 @@ export function PdfViewer({ pdfBytes, targetPage, onClose }: PdfViewerProps) {
           </div>
         )}
       </div>
+      </div>
     </div>
+  );
+}
+
+/**
+ * 목차 트리 — 재귀 렌더. 페이지가 해석된 항목은 클릭 점프, 미해석 항목은 비클릭 라벨.
+ */
+function OutlineTree({
+  nodes,
+  onJump,
+  depth = 0,
+}: {
+  nodes: OutlineNode[];
+  onJump: (page: number) => void;
+  depth?: number;
+}) {
+  const t = useT();
+  return (
+    <ul className={depth === 0 ? 'space-y-0.5' : 'ml-3 space-y-0.5'}>
+      {nodes.map((node, i) => (
+        <li key={i}>
+          {node.page != null ? (
+            <button
+              type="button"
+              onClick={() => onJump(node.page!)}
+              title={t('outline.jumpToPage', { page: node.page })}
+              className="block text-left w-full truncate text-xs text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:underline py-0.5"
+            >
+              {node.title}
+            </button>
+          ) : (
+            <span className="block truncate text-xs text-gray-500 dark:text-gray-400 py-0.5">{node.title}</span>
+          )}
+          {node.children.length > 0 && <OutlineTree nodes={node.children} onJump={onJump} depth={depth + 1} />}
+        </li>
+      ))}
+    </ul>
   );
 }
 

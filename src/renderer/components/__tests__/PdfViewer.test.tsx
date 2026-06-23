@@ -90,6 +90,49 @@ describe('PdfViewer', () => {
   });
 });
 
+describe('PdfViewer 목차(outline)', () => {
+  const ref1 = { num: 1 };
+  const ref2 = { num: 2 };
+  const makeOutlineDoc = () => ({
+    numPages: 3,
+    getPage: vi.fn(() => Promise.resolve(P.page)),
+    destroy: vi.fn(() => Promise.resolve()),
+    getOutline: vi.fn(async () => [
+      { title: '1장 서론', dest: [ref1] },
+      { title: '2장 본론', dest: [ref2], items: [] },
+    ]),
+    getDestination: vi.fn(async () => null),
+    getPageIndex: vi.fn(async (r: unknown) => (r === ref1 ? 0 : 2)),
+  });
+
+  it('목차 있으면 토글 노출 → 클릭 시 항목 표시 → 항목 클릭 시 citationTarget 갱신', async () => {
+    P.getDocument.mockReturnValue({ promise: Promise.resolve(makeOutlineDoc()), destroy: vi.fn(() => Promise.resolve()) });
+    const user = userEvent.setup();
+    render(<PdfViewer pdfBytes={new Uint8Array([1, 2, 3])} targetPage={1} onClose={vi.fn()} />);
+
+    // 추출 완료 후 토글 버튼 노출
+    const toggle = await screen.findByRole('button', { name: t('outline.toggle') });
+    // 처음엔 목차 트리 미표시
+    expect(screen.queryByText('2장 본론')).toBeNull();
+
+    await user.click(toggle);
+    // 항목 표시
+    expect(screen.getByText('1장 서론')).toBeTruthy();
+    const item = screen.getByText('2장 본론');
+
+    await user.click(item);
+    // ref2 → 0-based 2 → page 3
+    expect(useAppStore.getState().citationTarget).toEqual({ page: 3 });
+  });
+
+  it('목차 없으면 토글 미노출', async () => {
+    // 기본 makeDoc 는 getOutline 미구현 → 추출 [] → 토글 없음
+    render(<PdfViewer pdfBytes={new Uint8Array([7])} targetPage={1} onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getAllByText(t('pdfviewer.title')).length).toBeGreaterThan(0));
+    expect(screen.queryByRole('button', { name: t('outline.toggle') })).toBeNull();
+  });
+});
+
 describe('PdfViewerPanel', () => {
   it('citationTarget 없으면 null', () => {
     useAppStore.setState({ pdfBytes: new Uint8Array([1]), citationTarget: null });
