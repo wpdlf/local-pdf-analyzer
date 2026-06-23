@@ -5,7 +5,7 @@
   "license": "MIT",
   "main": "./out/main/index.js",
   "engines": {
-    "node": ">=20.11 <25",
+    "node": ">=22.12 <25",
     "npm": ">=10"
   },
   "scripts": {

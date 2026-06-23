@@ -481,7 +481,7 @@ PDF 파일
 
 - **단위 테스트 1212건 / 76파일** — renderer·shared 796 + main 416. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service·전체 문서 검색까지 행위 테스트, 렌더러/preload 레이어(컴포넌트 16종 전수 + use-summarize/use-session/pdf-parser/safe-markdown 등 핵심 라이브러리 + preload 브리지)는 happy-dom 으로 행위 테스트
 - **Playwright E2E** — 실제 Electron 빌드를 구동하는 CI-결정적 테스트 9건(콜드 스타트 위자드·PDF 파싱·멀티탭·세션/설정 재시작 복원·업로드 에러 경로), 전부 AI 비의존, 요약/Q&A/컬렉션은 로컬-전용 Ollama 스펙으로 커버
-- **CI 게이트** — `tsc --noEmit`(strict, e2e 전용 타입체크 프로젝트 포함), 커버리지 임계(77/69/79/81) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 20.11/22/24 매트릭스
+- **CI 게이트** — `tsc --noEmit`(strict, e2e 전용 타입체크 프로젝트 포함), 커버리지 임계(77/69/79/81) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 22/24 매트릭스
 - **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, Critical 43라운드 연속 0건 (검출된 High/Important 는 패치 릴리즈로 즉시 수정 — 최근: R43 19건 → v0.21.1)
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 
