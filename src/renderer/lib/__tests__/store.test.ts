@@ -644,4 +644,19 @@ describe('updateSettings — 디바운스 저장 실패 처리', () => {
     expect(setMock).toHaveBeenCalledTimes(1);
     expect((setMock.mock.calls[0]![0] as { maxChunkSize: number }).maxChunkSize).toBe(4000);
   });
+
+  it('디바운스 발화 전 렌더러 컨텍스트 소실(electronAPI 부재) → 안전 no-op(unhandled 방지)', async () => {
+    // 회귀 가드: 300ms 타이머가 앱 종료/테스트 teardown 후 발화하면 window.electronAPI 접근이
+    // ReferenceError(unhandled)를 던져 CI 가 false-fail 했다(Node22 타이밍). 가드로 no-op 보장.
+    const setMock = vi.mocked(window.electronAPI.settings.set);
+    setMock.mockClear();
+    useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, theme: 'dark' });
+    const savedApi = window.electronAPI;
+    (window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+    // throw 없이 통과해야 함(가드가 동기 ReferenceError 를 막음)
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setMock).not.toHaveBeenCalled();
+    expect(useAppStore.getState().error).toBeNull();
+    (window as unknown as { electronAPI?: unknown }).electronAPI = savedApi;
+  });
 });

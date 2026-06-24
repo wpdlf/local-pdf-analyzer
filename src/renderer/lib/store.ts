@@ -542,6 +542,9 @@ export const useAppStore = create<AppState>((set) => ({
     if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
     settingsSaveTimer = setTimeout(() => {
       settingsSaveTimer = null;
+      // 300ms 후 발화 시점에 렌더러 컨텍스트(window/electronAPI)가 이미 사라졌을 수 있다
+      // (앱 종료 직전, 테스트 환경 teardown). 동기 ReferenceError(unhandled)를 막기 위해 가드.
+      if (typeof window === 'undefined' || !window.electronAPI?.settings?.set) return;
       window.electronAPI.settings.set(newSettings as unknown as Record<string, unknown>).catch(() => {
         // store 에서 i18n 모듈을 직접 import 하면 circular dependency 발생 (i18n → store).
         // 대신 store 자체에서 현재 uiLanguage 를 읽어 최소 번역을 inline 으로 수행.
