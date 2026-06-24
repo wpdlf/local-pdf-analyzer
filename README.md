@@ -484,7 +484,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 - **1268 unit tests / 79 files** — renderer·shared 849 + main 419. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 16 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
 - **Playwright E2E** — 8 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, session/settings persistence across restart, upload-error paths), all AI-independent; multi-tab restore and summarize/Q&A/collection flows are covered by local-only Ollama specs
 - **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (77/69/79/81), lockfile version sync check, `npm audit` advisory, Node 22/24 matrix
-- **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings for 43 consecutive rounds (detected High/Important issues are fixed immediately in patch releases — most recently: 19 findings in R43 → v0.21.1)
+- **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings across 48+ consecutive rounds (detected High/Important issues are fixed before release — e.g. R41 caught a High session-corruption path in v0.19.0; recent rounds, most recently the v0.31.0 build-toolchain round, surface only Low/cosmetic items)
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
 ## License
