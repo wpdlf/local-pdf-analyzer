@@ -180,7 +180,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Render error recovery — unexpected UI errors offer a "Try again" button, no restart needed
 
 **Quality assurance**
-- 1267 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
+- 1268 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -227,7 +227,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 
 | Area | Technology |
 |------|------------|
-| Framework | Electron 41 + React 19 |
+| Framework | Electron 42 + React 19 |
 | Language | TypeScript (strict mode, incl. `noUncheckedIndexedAccess`) |
 | AI generation | Ollama (local) / Claude API / OpenAI API / Gemini API — via Main-process IPC |
 | AI embeddings (RAG) | Ollama /api/embed / OpenAI /v1/embeddings / Gemini batchEmbedContents — in-memory vector store |
@@ -235,7 +235,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | State management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
-| Testing | Vitest, 1267 unit tests / 79 files (renderer·shared 848 + main 419) + Playwright E2E (9 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (77/69/79/81) |
+| Testing | Vitest, 1268 unit tests / 79 files (renderer·shared 849 + main 419) + Playwright E2E (8 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (77/69/79/81) |
 | i18n | In-house (i18n.ts) — 290+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -286,7 +286,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (1267, 79 files)
+    │   └── __tests__/         # Unit tests (1268, 79 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -481,8 +481,8 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **1267 unit tests / 79 files** — renderer·shared 848 + main 419. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 16 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
-- **Playwright E2E** — 9 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, multi-tab, session/settings persistence across restart, upload-error paths), all AI-independent; summarize/Q&A/collection flows are covered by local-only Ollama specs
+- **1268 unit tests / 79 files** — renderer·shared 849 + main 419. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 16 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
+- **Playwright E2E** — 8 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, session/settings persistence across restart, upload-error paths), all AI-independent; multi-tab restore and summarize/Q&A/collection flows are covered by local-only Ollama specs
 - **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (77/69/79/81), lockfile version sync check, `npm audit` advisory, Node 22/24 matrix
 - **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings for 43 consecutive rounds (detected High/Important issues are fixed immediately in patch releases — most recently: 19 findings in R43 → v0.21.1)
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
