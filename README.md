@@ -10,7 +10,7 @@ Most AI summarization services require uploading your PDF to an external server 
 - **Unified text + image analysis** — analyzes not only text but also embedded charts, diagrams, and tables with Vision AI
 - **Scanned PDF OCR** — image-based scanned PDFs are recognized page by page with Vision AI
 - **RAG-based Q&A chat** — embedding-based semantic search finds the most relevant parts of your PDF, and answers are automatically verified against the source
-- **Page citations + PDF viewer** — summaries and answers carry `[p.12]` source citations; click one to open the original page instantly
+- **Page citations + PDF viewer with outline navigation** — summaries and answers carry `[p.12]` source citations; click one to open the original page instantly, or jump through the document's built-in table of contents from the viewer's outline sidebar
 - **Multi-document tabs + cross-document Q&A** — open several PDFs as tabs and ask a single question across them; answers cite the source document and jump to the right page
 - **Collections + cross-document summaries** — save a set of documents as a named collection and reopen the whole tab set later; generate a unified summary or a comparison across the selected documents
 - **Automatic session save & restore** — reopen an analyzed PDF and your summary, Q&A history, and search index are restored instantly, with no re-summarization or re-embedding
@@ -90,6 +90,7 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 ### 5. Page Citations + PDF Viewer
 - Every key fact in summaries and Q&A answers gets an automatic **`[p.12]`-style page citation**
 - **Click** a citation to open the **PDF viewer panel** on the right at that exact page — verify potential AI hallucinations with one click
+- **Outline navigation** — when the PDF carries a built-in table of contents (bookmarks), a ☰ button in the viewer opens an outline sidebar; click any heading to jump to its page (re-clicking the current section re-scrolls to it)
 - Drag the center divider (or use the keyboard: Tab focus then `←`/`→`, `Home`/`End`) to adjust the split between 20–80%; the ratio is saved across restarts
 - Close the panel with `ESC` or the ✕ button
 
@@ -169,6 +170,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Export summaries — Markdown, formatted PDF (native, dependency-free), or clipboard; individual Q&A answers can be copied too
 - Search across all saved documents — keyword search over page text, summaries, and filenames with highlighted snippets and one-click open
 - Multi-document tabs — keep several PDFs open and switch between them; only the active document's heavy state stays in memory (instant restore on switch). Collection mode searches across the open documents in a single question, with source-attributed citations; save a set as a named collection and generate unified/comparison summaries across it
+- PDF outline navigation — documents with a built-in table of contents get a collapsible outline sidebar in the viewer for one-click jump to any section
 - Dark mode, instant Korean/English switching — the UI language is auto-detected from your OS locale on first run, with a toggle on the setup screen; screen-reader and keyboard accessibility
 
 **Reliability · Security**
@@ -178,7 +180,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Render error recovery — unexpected UI errors offer a "Try again" button, no restart needed
 
 **Quality assurance**
-- 1212 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
+- 1267 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -233,7 +235,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | State management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
-| Testing | Vitest, 1212 unit tests / 76 files (renderer·shared 796 + main 416) + Playwright E2E (9 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (77/69/79/81) |
+| Testing | Vitest, 1267 unit tests / 79 files (renderer·shared 848 + main 419) + Playwright E2E (9 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (77/69/79/81) |
 | i18n | In-house (i18n.ts) — 290+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -284,7 +286,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (1212, 76 files)
+    │   └── __tests__/         # Unit tests (1267, 79 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -479,7 +481,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **1212 unit tests / 76 files** — renderer·shared 796 + main 416. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 16 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
+- **1267 unit tests / 79 files** — renderer·shared 848 + main 419. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 16 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
 - **Playwright E2E** — 9 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, multi-tab, session/settings persistence across restart, upload-error paths), all AI-independent; summarize/Q&A/collection flows are covered by local-only Ollama specs
 - **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (77/69/79/81), lockfile version sync check, `npm audit` advisory, Node 22/24 matrix
 - **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings for 43 consecutive rounds (detected High/Important issues are fixed immediately in patch releases — most recently: 19 findings in R43 → v0.21.1)
