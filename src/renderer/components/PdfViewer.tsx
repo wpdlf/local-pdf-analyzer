@@ -18,7 +18,13 @@ if (!(pdfjsLib.GlobalWorkerOptions.workerSrc as any)) {
 // 동일 문서에 대한 재클릭마다 getDocument 가 재실행되어 전체 페이지 재파싱이 일어난다.
 // pdfBytes 참조로 키잉하여 같은 문서면 캐시 재사용, 다른 Uint8Array 가 들어오면 stale 파기.
 // v0.17.6: 문서 close(store.pdfBytes=null) 시 캐시 즉시 해제 — 50MB PDF 기준 2× 크기 잔류 제거.
-let cachedDoc: { bytes: Uint8Array; doc: pdfjsLib.PDFDocumentProxy } | null = null;
+// pdfjs 6.x: PDFDocumentProxy.destroy() 제거 → 파기는 loadingTask.destroy() 로. 캐시 해제 시
+// 워커/문서를 함께 끊으려면 loadingTask 참조도 함께 보관해야 한다.
+let cachedDoc: {
+  bytes: Uint8Array;
+  doc: pdfjsLib.PDFDocumentProxy;
+  loadingTask: pdfjsLib.PDFDocumentLoadingTask;
+} | null = null;
 
 // store.pdfBytes 가 null 로 전환되면(resetSummaryState / 문서 close) 캐시된 doc 즉시 해제.
 // 모듈 스코프 단일 구독 — 앱 수명과 동일. HMR 리로드 시 dispose 로 리스너 + 캐시 정리.
@@ -29,7 +35,7 @@ const unsubscribeCacheCleanup = useAppStore.subscribe((state, prev) => {
   if (prev.pdfBytes && !state.pdfBytes && cachedDoc) {
     const stale = cachedDoc;
     cachedDoc = null;
-    stale.doc.destroy().catch(() => { /* ignore */ });
+    stale.loadingTask.destroy().catch(() => { /* ignore */ });
   }
 });
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -40,7 +46,7 @@ if (_pdfViewerHot) {
     if (cachedDoc) {
       const stale = cachedDoc;
       cachedDoc = null;
-      stale.doc.destroy().catch(() => { /* ignore */ });
+      stale.loadingTask.destroy().catch(() => { /* ignore */ });
     }
   });
 }
@@ -137,7 +143,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
     if (cachedDoc) {
       const stale = cachedDoc;
       cachedDoc = null;
-      stale.doc.destroy().catch(() => { /* ignore */ });
+      stale.loadingTask.destroy().catch(() => { /* ignore */ });
     }
 
     (async () => {
@@ -149,11 +155,11 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
         loadingTask = pdfjsLib.getDocument({ data: copy });
         const doc = await loadingTask.promise;
         if (cancelled) {
-          // 파싱 중 언마운트 — 캐시하지 않고 파기
-          try { await doc.destroy(); } catch { /* ignore */ }
+          // 파싱 중 언마운트 — 캐시하지 않고 파기 (pdfjs 6.x: loadingTask 로 파기)
+          try { await loadingTask.destroy(); } catch { /* ignore */ }
           return;
         }
-        cachedDoc = { bytes: pdfBytes, doc };
+        cachedDoc = { bytes: pdfBytes, doc, loadingTask };
         pdfDocRef.current = doc;
         setTotalPages(doc.numPages);
         setLoadState('loaded');
@@ -287,7 +293,8 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
             canvas.className = 'block shadow';
             const ctx = canvas.getContext('2d');
             if (!ctx) continue;
-            const task = page.render({ canvasContext: ctx, viewport });
+            // pdfjs 6.x: render 에 canvas 필수(canvasContext deprecated)
+            const task = page.render({ canvas, canvasContext: ctx, viewport });
             currentTask = task as unknown as { promise: Promise<void>; cancel: () => void };
             await task.promise;
             currentTask = null;

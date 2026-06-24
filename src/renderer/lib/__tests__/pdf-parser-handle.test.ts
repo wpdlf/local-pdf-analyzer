@@ -28,7 +28,18 @@ const P = vi.hoisted(() => {
 });
 
 vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: 'mock-worker.js' }));
-vi.mock('pdfjs-dist', () => ({ GlobalWorkerOptions: {}, getDocument: P.getDocument, OPS: { paintImageXObject: 85 } }));
+// pdfjs 6.x: 프로덕션 코드가 PDFDocumentProxy.destroy() 대신 loadingTask.destroy() 를 호출한다.
+// mock 의 loadingTask({ promise }) 에 destroy 가 없으면 에러 분기(page 0 / too-many-pages)에서
+// TypeError 가 나 기대 에러코드가 안 잡힌다. P.getDocument 에 위임하면서(호출수 검증 보존) destroy 부착.
+vi.mock('pdfjs-dist', () => ({
+  GlobalWorkerOptions: {},
+  getDocument: (...args: unknown[]) => {
+    const task = P.getDocument(...args) as { promise: Promise<unknown>; destroy?: unknown };
+    if (task && typeof task.destroy !== 'function') task.destroy = vi.fn(() => Promise.resolve());
+    return task;
+  },
+  OPS: { paintImageXObject: 85 },
+}));
 vi.mock('../use-session', () => ({ restoreSessionForDocument: P.restore, persistCurrentSession: P.persist }));
 
 vi.stubGlobal('window', Object.assign(window, {

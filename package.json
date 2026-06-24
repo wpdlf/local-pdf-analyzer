@@ -5,7 +5,7 @@
   "license": "MIT",
   "main": "./out/main/index.js",
   "engines": {
-    "node": ">=22.12 <25",
+    "node": ">=22.13 <25",
     "npm": ">=10"
   },
   "scripts": {
@@ -19,7 +19,7 @@
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
-    "pdfjs-dist": "^4.10.38",
+    "pdfjs-dist": "^6.0.227",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.3",

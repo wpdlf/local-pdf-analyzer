@@ -55,22 +55,25 @@ export async function parsePdf(
   const signal = options?.signal;
   throwIfAborted(signal);
 
-  const pdf = await pdfjsLib.getDocument({
+  // pdfjs 6.x: PDFDocumentProxy.destroy() 가 제거되어 문서 파기는 loadingTask 를 통해야 한다.
+  // (loadingTask.destroy() 가 워커 연결 + 문서를 함께 해제) → loadingTask 참조를 보관.
+  const loadingTask = pdfjsLib.getDocument({
     data,
     cMapUrl: './cmaps/',
     cMapPacked: true,
-  }).promise;
+  });
+  const pdf = await loadingTask.promise;
   throwIfAborted(signal);
   const pageCount = pdf.numPages;
 
   // QA(low): 아래 검증 throw 는 try/finally 진입 전이라 pdf.destroy() 가 호출되지 않았다.
   // 워커측 PDFDocumentProxy 누수를 막기 위해 throw 전에 명시적으로 파기한다.
   if (pageCount === 0) {
-    await pdf.destroy().catch(() => { /* ignore */ });
+    await loadingTask.destroy().catch(() => { /* ignore */ });
     throw Object.assign(new Error('PDF에 페이지가 없습니다.'), { code: 'PDF_NO_TEXT' });
   }
   if (pageCount > MAX_PAGE_COUNT) {
-    await pdf.destroy().catch(() => { /* ignore */ });
+    await loadingTask.destroy().catch(() => { /* ignore */ });
     // R43: 한국어 하드코딩 → i18n 키 사용 (영어 UI 사용자도 현재 언어로 에러를 보도록).
     // t() 는 store 의 uiLanguage 를 읽는 순수 함수라 hook 컨텍스트 불필요.
     throw Object.assign(
@@ -217,7 +220,7 @@ export async function parsePdf(
     };
   } finally {
     // 파싱 종료 시 PDF 문서 내부 리소스 해제 — 정상/취소/에러 모두 동일
-    try { await pdf.destroy(); } catch { /* destroy 실패 무시 */ }
+    try { await loadingTask.destroy(); } catch { /* destroy 실패 무시 */ }
   }
 }
 
@@ -241,7 +244,13 @@ async function renderPageToImage(
   const canvas = new OffscreenCanvas(Math.round(finalViewport.width), Math.round(finalViewport.height));
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas context 생성 실패');
-  await page.render({ canvasContext: ctx as unknown as CanvasRenderingContext2D, viewport: finalViewport }).promise;
+  // pdfjs 6.x: RenderParameters 에 canvas 가 필수(canvasContext 는 deprecated). OffscreenCanvas
+  // 를 canvas 로 전달 — 타입은 HTMLCanvasElement 를 요구하나 런타임은 OffscreenCanvas 를 수용.
+  await page.render({
+    canvas: canvas as unknown as HTMLCanvasElement,
+    canvasContext: ctx as unknown as CanvasRenderingContext2D,
+    viewport: finalViewport,
+  }).promise;
   const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
   // GPU 메모리 즉시 해제 (대용량 PDF에서 OOM 방지)
   canvas.width = 0;
