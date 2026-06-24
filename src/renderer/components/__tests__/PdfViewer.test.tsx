@@ -142,6 +142,20 @@ describe('PdfViewer 목차(outline)', () => {
     expect(useAppStore.getState().citationTarget).toEqual({ page: 3 });
   });
 
+  it('L-a11y1: 목차 트리에 role=tree/treeitem + aria-level 부여', async () => {
+    P.getDocument.mockReturnValue({ promise: Promise.resolve(makeOutlineDoc()), destroy: vi.fn(() => Promise.resolve()) });
+    const user = userEvent.setup();
+    render(<PdfViewer pdfBytes={new Uint8Array([1, 2, 3])} targetPage={1} onClose={vi.fn()} />);
+    const toggle = await screen.findByRole('button', { name: t('outline.toggle') });
+    await user.click(toggle);
+
+    // 최상위 ul 은 tree, 항목은 treeitem(aria-level=1)
+    expect(screen.getByRole('tree')).toBeTruthy();
+    const items = screen.getAllByRole('treeitem');
+    expect(items.length).toBe(2);
+    expect(items[0]?.getAttribute('aria-level')).toBe('1');
+  });
+
   it('목차 없으면 토글 미노출', async () => {
     // 기본 makeDoc 는 getOutline 미구현 → 추출 [] → 토글 없음
     render(<PdfViewer pdfBytes={new Uint8Array([7])} targetPage={1} onClose={vi.fn()} />);

@@ -112,12 +112,16 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
     // 명시 초기화하면 캐시 히트(same bytes) 경로에서 ref 가 비어버린다. 따라서 ref 는 건드리지 않음.
     renderedPagesRef.current.clear();
     lastRenderedWidthRef.current = 0;
-    // 문서 전환 시 이전 목차 잔존 방지. 새 doc 추출 완료 후 다시 채워진다.
-    setOutline([]);
-    setShowOutline(false);
-
     // 캐시 히트 — 동일 pdfBytes 참조면 재파싱 없이 즉시 재사용
-    if (cachedDoc && cachedDoc.bytes === pdfBytes) {
+    const isCacheHit = cachedDoc != null && cachedDoc.bytes === pdfBytes;
+    // 문서 전환 시에만 목차/사이드바 상태 초기화. 동일 bytes 캐시 히트(같은 문서 재진입)에서는
+    // 사용자가 열어둔 목차 사이드바를 보존한다. (L-ux: 매 재마운트마다 강제 닫힘 방지)
+    if (!isCacheHit) {
+      setOutline([]);
+      setShowOutline(false);
+    }
+
+    if (isCacheHit && cachedDoc) {
       pdfDocRef.current = cachedDoc.doc;
       setTotalPages(cachedDoc.doc.numPages);
       setLoadState('loaded');
@@ -465,7 +469,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
               aria-label={t('outline.toggle')}
               aria-pressed={showOutline}
               title={t('outline.title')}
-              className={`shrink-0 text-sm px-1 rounded ${showOutline ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'}`}
+              className={`shrink-0 inline-flex items-center justify-center min-w-[24px] min-h-[24px] text-sm rounded ${showOutline ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'}`}
             >
               ☰
             </button>
@@ -494,7 +498,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
       {showOutline && outline.length > 0 && (
         <nav
           aria-label={t('outline.title')}
-          className="w-56 shrink-0 overflow-y-auto border-r dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-2"
+          className="w-56 max-w-[40%] shrink-0 overflow-y-auto border-r dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-2"
         >
           <OutlineTree nodes={outline} onJump={handleOutlineJump} />
         </nav>
@@ -553,9 +557,12 @@ function OutlineTree({
 }) {
   const t = useT();
   return (
-    <ul className={depth === 0 ? 'space-y-0.5' : 'ml-3 space-y-0.5'}>
+    // L-a11y1: 스크린리더가 계층/현재 위치를 안내하도록 트리 ARIA 시맨틱 부여.
+    // 최상위만 role="tree", 중첩은 role="group", 각 항목은 treeitem + aria-level.
+    <ul role={depth === 0 ? 'tree' : 'group'} className={depth === 0 ? 'space-y-0.5' : 'ml-3 space-y-0.5'}>
       {nodes.map((node, i) => (
-        <li key={i}>
+        // L-key: 인덱스 단독 대신 page+title 합성 — 동일 제목/페이지 형제도 안정적으로 구분.
+        <li key={`${i}-${node.page ?? 'x'}-${node.title}`} role="treeitem" aria-level={depth + 1}>
           {node.page != null ? (
             <button
               type="button"
