@@ -63,6 +63,16 @@ export interface GlobalSearchResult {
 }
 
 /**
+ * session:searchSemantic 반환 — Main 이 index.bin + chunkMeta 만 읽어 코사인 검색 후 결과만 반환한다.
+ * 이전엔 매칭 세션마다 session:load 로 전체 본문(pageTexts/요약)+벡터 blob 을 렌더러로 IPC 횡단시켜
+ * 코사인을 렌더러에서 돌렸으나(라이브러리 규모 시 수십 MB), 무거운 페이로드가 경계를 넘지 않도록 main 이전.
+ */
+export interface SemanticSearchResponse {
+  results: GlobalSearchResult[];
+  excludedCount: number; // 임베딩 모델/차원 불일치로 제외된 문서 수
+}
+
+/**
  * Renderer 가 저장 시 제공하는 manifest 메타(byteSize/createdAt/lastAccessed 는 Main 이 계산).
  * Main 은 세션 본문을 파싱하지 않고 이 메타만으로 manifest 항목을 구성한다.
  */

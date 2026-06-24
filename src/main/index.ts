@@ -44,7 +44,8 @@ import {
 } from './session-store';
 // 전체 문서 키워드 검색(순수). session:search 핸들러가 각 세션 본문을 읽어 위임한다.
 import { searchPersistedSession, rankSearchResults, MIN_QUERY_LENGTH } from './session-search';
-import type { SessionSaveMeta, GlobalSearchResult } from '../shared/session-types';
+import type { SessionSaveMeta, GlobalSearchResult, SemanticSearchResponse } from '../shared/session-types';
+import { runSemanticSearch } from './semantic-search';
 // multi-doc Phase 3 (module-1): 컬렉션 영속화. collectionsFile 주입으로 electron-free.
 import { listCollections, saveCollection, deleteCollection } from './collections-store';
 
@@ -549,6 +550,26 @@ export function registerIpcHandlers(): void {
     );
     const results = perSession.filter((r): r is GlobalSearchResult => r !== null);
     return rankSearchResults(results, 50);
+  });
+
+  // 전체 문서 의미(임베딩) 검색 — 코사인 계산을 main 에서 수행해 무거운 페이로드(세션 본문+벡터 blob)가
+  // IPC 를 횡단하지 않게 한다. 렌더러는 질의 임베딩(checkEmbedModel 출처 model + dim)만 전달하고
+  // 작은 결과(docHash/score/snippets)만 수신. 상세: semantic-search.ts.
+  ipcMain.handle('session:searchSemantic', async (
+    _event,
+    queryEmbedding: unknown,
+    model: unknown,
+    dim: unknown,
+  ): Promise<SemanticSearchResponse> => {
+    const empty: SemanticSearchResponse = { results: [], excludedCount: 0 };
+    // 입력 검증 — 손상/폭주 renderer 방어. 무효 입력은 빈 결과(렌더러가 키워드 모드로 안내).
+    if (typeof model !== 'string' || model.length === 0) return empty;
+    if (typeof dim !== 'number' || !Number.isInteger(dim) || dim <= 0 || dim > 8192) return empty;
+    if (!Array.isArray(queryEmbedding) || queryEmbedding.length !== dim) return empty;
+    for (const n of queryEmbedding) {
+      if (typeof n !== 'number' || !Number.isFinite(n)) return empty;
+    }
+    return runSemanticSearch(sessionsDir, queryEmbedding as number[], model, dim);
   });
 
   // ─── multi-doc Phase 3: 컬렉션 영속화 (module-1) ───

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { SessionManifestEntry, SessionStats, SessionSaveMeta, GlobalSearchResult } from '../shared/session-types';
+import type { SessionManifestEntry, SessionStats, SessionSaveMeta, GlobalSearchResult, SemanticSearchResponse } from '../shared/session-types';
 import type { SavedCollection } from '../shared/collection-types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     clear: () => ipcRenderer.invoke('session:clear'),
     stats: () => ipcRenderer.invoke('session:stats'),
     search: (query: string) => ipcRenderer.invoke('session:search', query),
+    searchSemantic: (queryEmbedding: number[], model: string, dim: number) =>
+      ipcRenderer.invoke('session:searchSemantic', queryEmbedding, model, dim),
   },
   // multi-doc Phase 3 (module-1): 컬렉션 영속화
   collections: {
@@ -162,6 +164,7 @@ export type ElectronAPI = {
     clear: () => Promise<{ ok: boolean }>;
     stats: () => Promise<SessionStats>;
     search: (query: string) => Promise<GlobalSearchResult[]>;
+    searchSemantic: (queryEmbedding: number[], model: string, dim: number) => Promise<SemanticSearchResponse>;
   };
   collections: {
     list: () => Promise<SavedCollection[]>;

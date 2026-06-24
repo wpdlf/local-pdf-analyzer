@@ -8,6 +8,8 @@
  */
 
 import type { SerializedIndex, PersistedChunkMeta } from '../types';
+// 정규화/내적은 src/shared/vector-math 단일 출처 — main 의 session:searchSemantic 과 동일 로직 공유.
+import { normalizeToFloat32 as toNormalizedFloat32, dotClamped as dotFloat32 } from '../../shared/vector-math';
 
 export interface VectorChunk {
   text: string;
@@ -36,40 +38,6 @@ export interface SearchResult {
 export interface ChunkMetadata {
   pageStart?: number;
   pageEnd?: number;
-}
-
-/** 벡터를 unit-length로 정규화한 Float32Array 반환. 영벡터는 0으로 채움 */
-function toNormalizedFloat32(v: number[]): Float32Array {
-  const out = new Float32Array(v.length);
-  let sumSq = 0;
-  // noUncheckedIndexedAccess: 루프 내 인덱스가 length 내부임이 보장되어 non-null 단언.
-  for (let i = 0; i < v.length; i++) sumSq += v[i]! * v[i]!;
-  const mag = Math.sqrt(sumSq);
-  if (!Number.isFinite(mag) || mag === 0) {
-    return out; // 영벡터/무효 값 → dot product가 항상 0이 되어 minScore로 필터됨
-  }
-  const inv = 1 / mag;
-  for (let i = 0; i < v.length; i++) out[i] = v[i]! * inv;
-  return out;
-}
-
-/**
- * 두 unit 벡터의 dot product = 코사인 유사도.
- *
- * v0.18.5 B4 fix: Float32 정규화는 round-off 로 magnitude 가 정확히 1.0 이 아니라
- * 1.0000001 처럼 미세하게 빗나가, 동일 벡터끼리의 dot product 가 1.0 을 초과할 수 있다.
- * 이 경우 호출자가 `minScore = 1.0` 으로 "완전 일치만" 필터링하려 하면 round-off 노이즈가
- * 통과하고, search 결과 정렬 비교에서도 값 비교가 미묘하게 어긋난다.
- * 수학적으로 코사인 유사도는 [-1, 1] 범위가 보장되어야 하므로 명시적 clamp.
- */
-function dotFloat32(a: Float32Array, b: Float32Array): number {
-  let sum = 0;
-  const len = a.length;
-  // noUncheckedIndexedAccess: 호출 측에서 동일 차원 보장. 핫패스라 non-null 단언으로 좁힘 비용 0.
-  for (let i = 0; i < len; i++) sum += a[i]! * b[i]!;
-  if (sum > 1) return 1;
-  if (sum < -1) return -1;
-  return sum;
 }
 
 export class VectorStore {
