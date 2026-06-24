@@ -1,9 +1,47 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useQa } from '../lib/use-qa';
 import { useT } from '../lib/i18n';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
 import { CollectionBar } from './CollectionBar';
+
+// 어시스턴트 답변 본문 — React.memo 로 완료 메시지의 markdown 재파싱을 차단.
+// QaChat 은 qaStream 을 구독하므로 스트리밍 중 store 의 50ms flush 마다 전체 리렌더되는데,
+// content 가 불변인 완료 메시지까지 매 틱 markdown(remark/react-markdown)을 재파싱하던 비용을
+// 메모로 제거한다. props(id/content/degraded/copied/onCopy)가 스트리밍 중 모두 안정적이라
+// 완료 메시지는 skip 된다(live qaStream 메시지만 재파싱 — 본질적으로 동적이라 불가피).
+interface AssistantMessageProps {
+  id: string;
+  content: string;
+  degraded?: boolean;
+  copied: boolean;
+  onCopy: (id: string, content: string) => void;
+}
+const AssistantMessage = memo(function AssistantMessage({ id, content, degraded, copied, onCopy }: AssistantMessageProps) {
+  const t = useT();
+  return (
+    <>
+      <MarkdownErrorBoundary fallbackText={content}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{content}</ReactMarkdown>
+      </MarkdownErrorBoundary>
+      {/* M3: 컬렉션 강등 답변이면 바로 아래 인라인 안내 (이전엔 전역 단일 슬롯 notice 배너) */}
+      {degraded && (
+        <p className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800/50 text-xs text-amber-600 dark:text-amber-400 not-prose">
+          ⚠️ {t('collection.degradedNotice')}
+        </p>
+      )}
+      {/* M4: 어시스턴트 답변 hover 복사 버튼 */}
+      <button
+        onClick={() => void onCopy(id, content)}
+        className="absolute -top-2 -right-2 px-1.5 py-0.5 text-xs rounded bg-white dark:bg-gray-700 border dark:border-gray-600 shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity not-prose"
+        aria-label={copied ? t('qa.copied') : t('qa.copyAnswer')}
+        title={copied ? t('qa.copied') : t('qa.copyAnswer')}
+      >
+        {copied ? '✓' : '📋'}
+      </button>
+    </>
+  );
+});
 
 export function QaChat() {
   const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, qaVerifying, ragState } = useQa();
@@ -12,13 +50,14 @@ export function QaChat() {
   // M4(UX): 답변별 복사 — 복사 직후 짧게 ✓ 피드백. (요약엔 복사가 있었지만 Q&A 답변엔 없어
   // 스트리밍 컨테이너에서 수동 선택해야 했다.) React 18+ 는 unmounted setState 경고가 없어 안전.
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const handleCopyMsg = async (id: string, content: string) => {
+  // useCallback 으로 안정 참조 유지 — AssistantMessage memo 가 스트리밍 중 깨지지 않도록.
+  const handleCopyMsg = useCallback(async (id: string, content: string) => {
     try {
       await navigator.clipboard.writeText(content);
       setCopiedId(id);
       setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500);
     } catch { /* 클립보드 거부 시 무시 — 답변 자체는 화면에 남아 있음 */ }
-  };
+  }, []);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRafRef = useRef<number | null>(null);
@@ -128,26 +167,13 @@ export function QaChat() {
                 {msg.role === 'user' ? (
                   msg.content
                 ) : (
-                  <>
-                    <MarkdownErrorBoundary fallbackText={msg.content}>
-                      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{msg.content}</ReactMarkdown>
-                    </MarkdownErrorBoundary>
-                    {/* M3: 컬렉션 강등 답변이면 바로 아래 인라인 안내 (이전엔 전역 단일 슬롯 notice 배너) */}
-                    {msg.degraded && (
-                      <p className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800/50 text-xs text-amber-600 dark:text-amber-400 not-prose">
-                        ⚠️ {t('collection.degradedNotice')}
-                      </p>
-                    )}
-                    {/* M4: 어시스턴트 답변 hover 복사 버튼 */}
-                    <button
-                      onClick={() => void handleCopyMsg(msg.id, msg.content)}
-                      className="absolute -top-2 -right-2 px-1.5 py-0.5 text-xs rounded bg-white dark:bg-gray-700 border dark:border-gray-600 shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity not-prose"
-                      aria-label={copiedId === msg.id ? t('qa.copied') : t('qa.copyAnswer')}
-                      title={copiedId === msg.id ? t('qa.copied') : t('qa.copyAnswer')}
-                    >
-                      {copiedId === msg.id ? '✓' : '📋'}
-                    </button>
-                  </>
+                  <AssistantMessage
+                    id={msg.id}
+                    content={msg.content}
+                    degraded={msg.degraded}
+                    copied={copiedId === msg.id}
+                    onCopy={handleCopyMsg}
+                  />
                 )}
               </div>
             </div>
