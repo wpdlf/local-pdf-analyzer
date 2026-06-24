@@ -10,10 +10,12 @@ const buildOpts = {
 };
 
 // R37 P4-4 (v0.18.23): envPrefix 빈 화이트리스트 핀.
-// 본 앱은 `import.meta.env` 사용처 0건 (전 코드베이스 grep 확인). Vite 기본 envPrefix 가
-// `'VITE_'` 라 향후 누군가가 빌드 머신/dev 환경의 VITE_* 변수를 정의해도 renderer 번들에
-// inline 되지 않도록 빈 배열로 명시 차단. 보안적으로는 sourcemap 비노출(buildOpts.sourcemap=false)
-// 과 함께 "renderer 가 ambient env 를 의도치 않게 흡수하는 표면" 을 0 으로 만든다.
+// 본 앱은 `VITE_*` prefix 변수를 번들에 노출하는 사용처 0건. (i18n.ts 가 dev 전용 경고용으로
+// Vite 빌트인 `import.meta.env.DEV` 를 캐스트 우회 접근하나, 이는 envPrefix 와 무관한 빌트인이라
+// prod 빌드에서 정적 치환·트리셰이킹으로 제거됨 — VITE_* 사용자 변수 인라인과 다른 표면.)
+// Vite 기본 envPrefix 가 `'VITE_'` 라 향후 누군가가 빌드 머신/dev 환경의 VITE_* 변수를 정의해도
+// renderer 번들에 inline 되지 않도록 빈 배열로 명시 차단. 보안적으로는 sourcemap 비노출
+// (buildOpts.sourcemap=false) 과 함께 "renderer 가 ambient env 를 의도치 않게 흡수하는 표면" 을 0 으로 만든다.
 // 향후 의도적으로 env 가 필요해지면 명시 prefix(예: `LPA_PUBLIC_`)를 추가하고 README 에 노출 정책 기록.
 const envPrefix: string[] = [];
 
