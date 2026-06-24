@@ -533,17 +533,21 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('session:search', async (_event, query: unknown): Promise<GlobalSearchResult[]> => {
     if (typeof query !== 'string' || query.trim().length < MIN_QUERY_LENGTH) return [];
     const entries = await listSessions(sessionsDir);
-    const results: GlobalSearchResult[] = [];
-    for (const e of entries) {
-      const loaded = await readSession(sessionsDir, e.docHash);
-      if (!loaded) continue;
-      const r = searchPersistedSession(
-        { docHash: e.docHash, fileName: e.fileName, filePath: e.filePath, pageCount: e.pageCount },
-        loaded.session,
-        query,
-      );
-      if (r) results.push(r);
-    }
+    // perf: 세션 본문 read 를 병렬화 — 이전엔 순차 await 로 디스크 I/O 레이턴시가 누적됐다.
+    // 결과는 끝에서 rankSearchResults 로 점수 정렬하므로 수집 순서 무관(병렬 안전). read 동시성은
+    // libuv fs 스레드풀(기본 4)이 자연 바운드하고, 본 핸들러는 제출 1회 호출(라이브 아님)·세션 ≤30.
+    const perSession = await Promise.all(
+      entries.map(async (e) => {
+        const loaded = await readSession(sessionsDir, e.docHash);
+        if (!loaded) return null;
+        return searchPersistedSession(
+          { docHash: e.docHash, fileName: e.fileName, filePath: e.filePath, pageCount: e.pageCount },
+          loaded.session,
+          query,
+        );
+      }),
+    );
+    const results = perSession.filter((r): r is GlobalSearchResult => r !== null);
     return rankSearchResults(results, 50);
   });
 
