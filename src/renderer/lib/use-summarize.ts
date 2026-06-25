@@ -30,6 +30,58 @@ export function labelParagraphsWithPages(pageTexts: string[]): string {
   });
   return labeled.join('\n\n');
 }
+
+/**
+ * 멀티청크 통합요약 직전, 청크별 요약 모음을 maxChars 예산에 맞춰 줄인다.
+ *
+ * 기존 위치기반 절단(`combined.slice(0, maxChars)`)은 앞 청크 요약만 남기고 후반 청크 요약을
+ * **통째로 버려** 긴 문서의 뒷부분이 통합요약에서 누락됐다. 대신 각 청크 요약을 길이 비례로
+ * 트렁케이트해 모든 청크(=문서 전 구간)가 통합 단계에 대표되도록 한다.
+ *
+ * - 예산 내면 원본 그대로(join). 초과 시에만 절단.
+ * - 배분은 water-filling: 균등 몫(remaining/미확정수)보다 짧은 청크는 온전히 보존하고 남는
+ *   예산을 더 긴 청크들에 재분배한다. 따라서 짧은/후반 청크가 통째로 사라지지 않고, 긴 청크만
+ *   자기 몫으로 잘리며 말줄임표(…)가 붙는다.
+ * - 반환 문자열에는 절단이 일어났음을 알리는 truncatedLabel 을 말미에 덧붙인다(예산 초과 시만).
+ */
+export function truncateChunkSummariesForIntegration(
+  chunkSummaries: string[],
+  maxChars: number,
+  truncatedLabel: string,
+  sep = '\n\n',
+): string {
+  const combined = chunkSummaries.join(sep);
+  if (combined.length <= maxChars) return combined;
+  const sepBudget = sep.length * Math.max(0, chunkSummaries.length - 1);
+  let remaining = Math.max(0, maxChars - sepBudget);
+
+  // water-filling: 균등 몫에 들어가는 짧은 청크를 확정(온전 보존)하고 남는 예산을 재분배.
+  const allot = new Array<number>(chunkSummaries.length).fill(-1); // -1 = 미확정
+  let unsettled = chunkSummaries.length;
+  let changed = true;
+  while (changed && unsettled > 0) {
+    changed = false;
+    const share = Math.floor(remaining / unsettled);
+    for (let i = 0; i < chunkSummaries.length; i++) {
+      if (allot[i] !== -1) continue;
+      if (chunkSummaries[i]!.length <= share) {
+        allot[i] = chunkSummaries[i]!.length;
+        remaining -= allot[i]!;
+        unsettled -= 1;
+        changed = true;
+      }
+    }
+  }
+  if (unsettled > 0) {
+    const share = Math.floor(remaining / unsettled); // 남은(긴) 청크들에 균등 분배
+    for (let i = 0; i < chunkSummaries.length; i++) if (allot[i] === -1) allot[i] = share;
+  }
+
+  const parts = chunkSummaries.map((s, i) =>
+    s.length > allot[i]! ? s.slice(0, allot[i]!).trimEnd() + '…' : s,
+  );
+  return parts.join(sep) + `\n\n${truncatedLabel}`;
+}
 import type { PdfDocument, DefaultSummaryType, AppSettings, ProgressInfo, AppError } from '../types';
 
 // TrackFn은 요약 파이프라인 내부에서만 사용되며 'qa' 타입은 호출되지 않음.
@@ -344,13 +396,15 @@ async function summarizeFull(
       return;
     }
     append(`\n\n---\n\n## ${labels.heading}\n\n`);
-    const combined = chunkSummaries.join('\n\n');
     // chunker.ts 와 동일한 추정식을 재사용 — 중복 구현 제거 (유지보수 일관성)
-    const charsPerToken = estimateCharsPerToken(combined);
+    const charsPerToken = estimateCharsPerToken(chunkSummaries.join('\n\n'));
     const maxCombinedChars = Math.floor(settings.maxChunkSize * charsPerToken);
-    const safeCombined = combined.length > maxCombinedChars
-      ? combined.slice(0, maxCombinedChars) + `\n\n${labels.truncated}`
-      : combined;
+    // 위치기반 절단(앞 청크만 남고 후반 누락) 대신 청크별 비례 절단으로 전 구간 대표.
+    const safeCombined = truncateChunkSummariesForIntegration(
+      chunkSummaries,
+      maxCombinedChars,
+      labels.truncated,
+    );
     for await (const token of track(
       `${labels.instruction}\n\n${safeCombined}`,
       'full',

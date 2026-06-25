@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { labelParagraphsWithPages } from '../use-summarize';
+import { labelParagraphsWithPages, truncateChunkSummariesForIntegration } from '../use-summarize';
 import { parseCitations, CITATION_REGEX } from '../citation';
 
 /**
@@ -64,5 +64,36 @@ describe('labelParagraphsWithPages — 요약 경로 페이지 라벨링', () =>
     const citations = parseCitations(out).filter((s) => s.type === 'citation');
     expect(citations).toHaveLength(3);
     expect(citations.map((c) => c.page)).toEqual([1, 1, 2]);
+  });
+});
+
+/**
+ * #10: 멀티청크 통합요약 truncation — 위치기반 절단(slice(0,max))이 후반 청크를 통째로
+ * 버려 문서 뒷부분이 통합요약에서 누락되던 문제. 비례 절단으로 전 청크가 대표되는지 가드.
+ */
+describe('truncateChunkSummariesForIntegration — 통합요약 비례 절단', () => {
+  const LABEL = '[...생략]';
+
+  it('예산 내면 원본 그대로 join (절단 라벨 없음)', () => {
+    const out = truncateChunkSummariesForIntegration(['A', 'B', 'C'], 1000, LABEL);
+    expect(out).toBe('A\n\nB\n\nC');
+    expect(out).not.toContain(LABEL);
+  });
+
+  it('예산 초과 시 후반 청크가 통째로 누락되지 않고 모든 청크가 대표된다', () => {
+    // 각 청크를 식별 가능한 마커로 시작시켜, 절단 후에도 전 청크의 머리글자가 남는지 확인.
+    const chunks = Array.from({ length: 6 }, (_, i) => `C${i}:` + 'x'.repeat(100));
+    const out = truncateChunkSummariesForIntegration(chunks, 120, LABEL);
+    // 위치 절단이었다면 C0~C1 만 남고 C4/C5 는 사라졌을 것 — 비례 절단은 전 청크 머리를 보존
+    for (let i = 0; i < 6; i++) expect(out).toContain(`C${i}:`);
+    expect(out).toContain(LABEL);
+    // 예산 근처로 수렴(라벨/말줄임표 오버헤드 소량 허용)
+    expect(out.length).toBeLessThan(120 + LABEL.length + 6 * 3 + 20);
+  });
+
+  it('자기 몫보다 짧은 청크는 온전히 보존, 긴 청크만 …로 잘린다', () => {
+    const out = truncateChunkSummariesForIntegration(['짧음', 'L'.repeat(500)], 60, LABEL);
+    expect(out).toContain('짧음'); // 짧은 청크는 무손실
+    expect(out).toContain('…');    // 긴 청크는 말줄임
   });
 });
