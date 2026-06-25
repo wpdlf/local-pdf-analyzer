@@ -14,10 +14,17 @@ const FILENAME_BOOST = 5;
 const SUMMARY_BOOST = 2;
 export const MIN_QUERY_LENGTH = 2;
 
+function isHighSurrogate(code: number): boolean { return code >= 0xd800 && code <= 0xdbff; }
+function isLowSurrogate(code: number): boolean { return code >= 0xdc00 && code <= 0xdfff; }
+
 /** 매칭 주변을 잘라 한 줄 발췌로. 공백 정규화 + 양끝 … 표시. */
 function makeSnippet(text: string, matchIdx: number, qLen: number): string {
-  const start = Math.max(0, matchIdx - SNIPPET_RADIUS);
-  const end = Math.min(text.length, matchIdx + qLen + SNIPPET_RADIUS);
+  let start = Math.max(0, matchIdx - SNIPPET_RADIUS);
+  let end = Math.min(text.length, matchIdx + qLen + SNIPPET_RADIUS);
+  // 서로게이트 페어(supplementary-plane: 이모지·희귀 한자 등) 경계에서 slice 가 페어를 쪼개
+  // lone surrogate(`�`)를 만들지 않도록 컷 지점을 페어 밖으로 민다. BMP(한글 등)는 무영향.
+  if (start > 0 && isLowSurrogate(text.charCodeAt(start))) start += 1; // 앞이 잘린 low → 조각 제거
+  if (end < text.length && isHighSurrogate(text.charCodeAt(end - 1))) end -= 1; // 뒤가 잘린 high → 조각 제거
   let snip = text.slice(start, end).replace(/\s+/g, ' ').trim();
   if (start > 0) snip = '…' + snip;
   if (end < text.length) snip = snip + '…';

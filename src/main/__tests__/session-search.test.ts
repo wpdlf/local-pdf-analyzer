@@ -82,6 +82,22 @@ describe('searchPersistedSession — 키워드 매칭', () => {
     expect(r.snippets[0]!.text.endsWith('…')).toBe(true);
     expect(r.snippets[0]!.text.length).toBeLessThan(150);
   });
+
+  // SNIPPET_RADIUS=50 기준, supplementary-plane 글자(😀=서로게이트 페어)가 발췌 컷 경계에
+  // 정확히 걸리도록 배치해 lone surrogate(`�`)가 남지 않는지 검증.
+  it('서로게이트 페어가 발췌 끝 경계에서 쪼개지지 않음(lone surrogate 방지)', () => {
+    // 키워드(idx 0~2) + a×49(idx 3~51) + 😀(idx 52 high|53 low) → end 컷=53 이 페어 중앙에 닿음
+    const text = '키워드' + 'a'.repeat(49) + '😀';
+    const snip = searchPersistedSession(META, { pageTexts: [text] }, '키워드')!.snippets[0]!.text;
+    expect(/[\uD800-\uDFFF]/.test(snip)).toBe(false); // 고립 서로게이트 없음
+  });
+
+  it('서로게이트 페어가 발췌 시작 경계에서 쪼개지지 않음', () => {
+    // 😀(idx 0 high|1 low) + b×49(idx 2~50) + 키워드(idx 51~) → start 컷=matchIdx(51)-50=1 이 페어 중앙에 닿음
+    const text = '😀' + 'b'.repeat(49) + '키워드';
+    const snip = searchPersistedSession(META, { pageTexts: [text] }, '키워드')!.snippets[0]!.text;
+    expect(/[\uD800-\uDFFF]/.test(snip)).toBe(false);
+  });
 });
 
 describe('rankSearchResults', () => {

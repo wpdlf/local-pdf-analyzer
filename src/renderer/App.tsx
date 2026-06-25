@@ -175,6 +175,24 @@ export default function App() {
     return () => { aborted = true; };
   }, [setOllamaStatus, setView]);
 
+  // H3(UX) follow-up: 초기화 시 1회 받은 ollamaStatus 가 갱신되지 않아, 앱 기동 뒤 외부에서
+  // Ollama 를 시작/모델 설치하면 요약 버튼이 비활성으로 고착됐다(설정 재진입이 유일 복구).
+  // 창이 포커스를 되찾을 때, provider 가 ollama 이고 아직 미준비면 status 를 재조회해 자동 복구한다.
+  // 이미 준비됐거나 다른 provider 면 불필요한 IPC 를 피하려 skip. (read-only getStatus)
+  useEffect(() => {
+    const handleFocus = async () => {
+      const { settings: s, ollamaStatus: st } = useAppStore.getState();
+      if (s.provider !== 'ollama') return;
+      if (st.running && st.models.length > 0) return; // 이미 준비됨 — 재조회 불요
+      try {
+        const status = await window.electronAPI.ollama.getStatus();
+        setOllamaStatus(status);
+      } catch { /* 무시 — 다음 focus 에서 재시도 */ }
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [setOllamaStatus]);
+
   // Main process에서 파일 드롭 수신 (IPC)
   useEffect(() => {
     const unsubscribe = window.electronAPI.onFileDropped(async (file) => {
