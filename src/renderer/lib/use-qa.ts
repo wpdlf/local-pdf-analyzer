@@ -559,15 +559,16 @@ export async function resolveCollectionSearch(
     manifest,
     st.openTabs,
   );
-  const readyCount = members.filter((m) => m.status === 'ready').length;
   // 검색·검증이 같은 cache 공유 → 멤버 인덱스 1회만 로드(설계 §12-5)
   const cache = new Map<string, VectorStore>();
   const ragResult = await collectionRagSearch(question, members, activeDocHash, signal, cache);
-  // 강등 판정: 컬렉션을 켰는데 (교차 결과 없음 → 단일 폴백) 또는 (검색 가능 멤버가 1개뿐)인 경우.
-  // 호출자가 사용자에게 "현재 문서로만 답변" 안내를 띄우도록 신호.
-  const degraded = !ragResult || readyCount < 2;
-  if (!ragResult) return { ragResult: null, degraded };
+  // 강등 판정: 컬렉션을 켰는데 교차 결과가 없으면(단일 폴백) 강등.
+  if (!ragResult) return { ragResult: null, degraded: true };
   const stores = await loadReadyMemberStores(members, activeDocHash, cache);
+  // #9: 강등 기준을 manifest 'ready' 수가 아니라 **실제 index.bin 로드 성공 store 수**로 한다.
+  // manifest 는 ready 지만 index.bin 이 손상/IO 실패로 로드 안 된 멤버를 과대계상하면, 실제로는
+  // 활성 1개로만 답변하는데도 강등 통지가 누락된다. stores 는 실로드된 인덱스만 담는다(부분 성공 반영).
+  const degraded = stores.length < 2;
   return { ragResult, verifier: stores.length > 0 ? collectionVerifier(stores) : undefined, degraded };
 }
 

@@ -100,6 +100,18 @@ describe('resolveCollectionSearch', () => {
     expect(out.degraded).toBe(true); // 단 검색 가능 문서가 1개뿐 → 강등 통지
   });
 
+  it('#9: manifest 는 ready 지만 index.bin 로드 실패 멤버는 강등 판정에서 제외(과대계상 방지)', async () => {
+    // Beta 는 manifest 상 모델 일치(ready)지만 session.load 가 실패(손상/IO) → 실제 인덱스 미로드.
+    seedActiveIndex();
+    mockSessionLoad.mockResolvedValue(null); // index.bin 로드 실패 시뮬레이션
+    setActive(['a'.repeat(64), 'b'.repeat(64)]);
+    const out = await resolveCollectionSearch('질문');
+    expect(out.ragResult).toContain('[Alpha.pdf p.2]'); // 활성으로 답변은 됨
+    // 구 코드(readyCount 기준)는 Beta 를 ready 로 세어 degraded=false 로 누락했음.
+    // 실로드 store 1개(활성)뿐 → 교차 미발생 → degraded=true 가 정확.
+    expect(out.degraded).toBe(true);
+  });
+
   it('교차 결과 없음(임베딩 실패)이면 ragResult null + degraded=true', async () => {
     seedActiveIndex();
     mockEmbed.mockResolvedValue({ success: false, error: 'fail' });
