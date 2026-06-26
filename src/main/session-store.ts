@@ -150,6 +150,23 @@ export async function readSession(
   return { session, blob };
 }
 
+/**
+ * 세션 본문만 로드(인덱스 blob 읽기 생략). 자동저장의 summaries 머지처럼 index.bin(수 MB)이
+ * 불필요한 경로에서 turn 당 수~9MB 재읽기·구조화복제를 제거하기 위한 경량 변형(성능).
+ */
+export async function readSessionMeta(
+  sessionsDir: string,
+  docHash: string,
+): Promise<{ session: unknown } | null> {
+  if (!isValidDocHash(docHash)) return null;
+  try {
+    const raw = await fsp.readFile(path.join(sessionDir(sessionsDir, docHash), SESSION_JSON), 'utf-8');
+    return { session: JSON.parse(raw) };
+  } catch {
+    return null;
+  }
+}
+
 /** 세션 저장 + manifest upsert + LRU 정리. best-effort — 실패 시 { ok:false }. */
 export async function writeSession(
   sessionsDir: string,

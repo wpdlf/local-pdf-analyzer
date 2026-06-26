@@ -50,15 +50,13 @@ export class OllamaManager {
   }
 
   async getStatus(): Promise<OllamaStatusResult> {
-    const installed = await this.isInstalled();
+    // 성능: version 프로브 1회로 설치 여부까지 판정. 이전엔 isInstalled() 와 getVersion() 이
+    // 동일한 `ollama --version` 프로세스를 2번 spawn 했다(version 은 장식용 표시에만 사용).
+    // 부팅 + focus 재조회마다 발생하던 중복 spawn 제거. (미설치 시 healthCheck/listModels 생략 유지)
+    const version = await this.getVersion();
+    const installed = version !== undefined;
     const running = installed ? await this.healthCheck() : false;
     const models = running ? await this.listModels() : [];
-    let version: string | undefined;
-
-    if (installed) {
-      version = await this.getVersion();
-    }
-
     return { installed, running, version, models };
   }
 

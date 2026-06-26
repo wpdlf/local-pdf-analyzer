@@ -33,6 +33,7 @@ import { ApiKeyStore } from './api-keys-store';
 // session-persistence (module-2): 세션·인덱스 캐싱 영속화. sessionsDir 주입으로 electron-free.
 import {
   readSession,
+  readSessionMeta,
   writeSession,
   mergeSessionSummary,
   touchSession,
@@ -487,6 +488,12 @@ export function registerIpcHandlers(): void {
     // 최근 사용 표시(lastAccessed) — load 를 블록하지 않도록 fire-and-forget + mutex 직렬화
     if (result) void serializeSessionWrite(() => touchSession(sessionsDir, docHash, Date.now()));
     return result;
+  });
+
+  // 본문만 로드(index.bin 생략) — 자동저장 summaries 머지 전용 경량 경로(성능). lastAccessed 미갱신.
+  ipcMain.handle('session:loadMeta', async (_event, docHash: unknown) => {
+    if (!isValidDocHash(docHash)) return null;
+    return readSessionMeta(sessionsDir, docHash);
   });
 
   ipcMain.handle('session:save', async (_event, payload: unknown) => {

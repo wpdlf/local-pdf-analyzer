@@ -174,9 +174,12 @@ describe('getStatus (합성)', () => {
     });
   });
 
-  it('미설치 → running false, models 빈 배열, healthCheck/listModels 미호출', async () => {
+  it('미설치(version 프로브 실패) → running false, models 빈 배열, healthCheck/listModels 미호출', async () => {
     const mgr = new OllamaManager();
-    vi.spyOn(mgr, 'isInstalled').mockResolvedValue(false);
+    // getStatus 는 이제 getVersion(execFile) 1회로 설치 판정 — error 면 미설치.
+    M.execFile.mockImplementation((...args: unknown[]) => {
+      (args.find((a) => typeof a === 'function') as (e: unknown, out: string) => void)(new Error('not found'), '');
+    });
     const hc = vi.spyOn(mgr, 'healthCheck');
     const lm = vi.spyOn(mgr, 'listModels');
     expect(await mgr.getStatus()).toEqual({ installed: false, running: false, models: [] });

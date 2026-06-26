@@ -9,7 +9,7 @@ vi.stubGlobal('localStorage', {
   removeItem: (k: string) => { delete lsStore[k]; },
 });
 const api = {
-  session: { load: vi.fn(), save: vi.fn((_payload: unknown) => Promise.resolve({ ok: true })) },
+  session: { load: vi.fn(), loadMeta: vi.fn(), save: vi.fn((_payload: unknown) => Promise.resolve({ ok: true })) },
   ai: { checkEmbedModel: vi.fn(() => Promise.resolve({ available: true, model: 'nomic-embed-text' })), abort: vi.fn(() => Promise.resolve()) },
   settings: { set: vi.fn(() => Promise.resolve()), get: vi.fn(() => Promise.resolve({})) },
 };
@@ -65,6 +65,7 @@ function persistedSession(doc: PdfDocument, withIndex: boolean): { session: Pers
 beforeEach(() => {
   vi.clearAllMocks();
   api.session.save.mockResolvedValue({ ok: true });
+  api.session.loadMeta.mockResolvedValue(null); // 비-인덱싱 머지 경로 기본값(본문만 로드)
   api.ai.checkEmbedModel.mockResolvedValue({ available: true, model: 'nomic-embed-text' });
   // store 초기화
   useAppStore.setState({
@@ -210,6 +211,14 @@ describe('persistCurrentSession (module-3)', () => {
     expect(calls[0]![0].meta.docHash).toBe(calls[1]![0].meta.docHash); // 동일 해시
     expect(calls[0]![0].meta.docHash).toMatch(HEX);
     digestSpy.mockRestore();
+  });
+
+  it('성능: 일반 자동저장은 loadMeta(본문만) 로 머지 — load(blob 포함) 미사용', async () => {
+    const doc = makeDoc('loadmeta-doc');
+    useAppStore.setState({ document: doc, summary: null, summaryStream: '', qaMessages: [], ragIndex: new VectorStore() });
+    await persistCurrentSession(); // ragState.isIndexing=false → 비-인덱싱 경로
+    expect(api.session.loadMeta).toHaveBeenCalledWith(expect.stringMatching(HEX));
+    expect(api.session.load).not.toHaveBeenCalled();
   });
 
   it('E3: 연속 저장 실패가 임계치(3회) 넘으면 1회 notice, 성공 시 리셋', async () => {

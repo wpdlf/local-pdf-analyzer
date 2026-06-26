@@ -26,7 +26,10 @@ export default function App() {
   const setView = useAppStore((s) => s.setView);
   const document = useAppStore((s) => s.document);
   const setDocument = useAppStore((s) => s.setDocument);
-  const summaryStream = useAppStore((s) => s.summaryStream);
+  // 성능: 내용 전체가 아니라 존재 여부만 구독 — 요약 스트리밍 중 50ms flush 마다 App 전체
+  // (header·TabBar·StatusBar 포함)가 재조정되던 것을 empty↔non-empty 전이 1회로 제한.
+  // (실제 스트림 문자열은 SummaryViewer 가 자체 구독)
+  const hasSummary = useAppStore((s) => s.summaryStream.length > 0);
   const isGenerating = useAppStore((s) => s.isGenerating);
   const setProgress = useAppStore((s) => s.setProgress);
   const clearStream = useAppStore((s) => s.clearStream);
@@ -152,10 +155,12 @@ export default function App() {
     };
 
     const init = async () => {
-      await useAppStore.getState().loadSettings();
-
       try {
-        const status = await window.electronAPI.ollama.getStatus();
+        // 성능(콜드스타트): 설정 로드와 ollama 상태 조회는 독립적이므로 병렬 — 직렬 워터폴 1왕복 단축.
+        const [, status] = await Promise.all([
+          useAppStore.getState().loadSettings(),
+          window.electronAPI.ollama.getStatus(),
+        ]);
         if (aborted) return;
         setOllamaStatus(status);
         const currentSettings = useAppStore.getState().settings;
@@ -481,7 +486,7 @@ export default function App() {
         )}
 
         {/* 1) PDF 미업로드: 업로드 영역 + 최근 문서 목록 */}
-        {!document && !summaryStream && (
+        {!document && !hasSummary && (
           <>
             <PdfUploader />
             <GlobalSearch />
@@ -510,7 +515,7 @@ export default function App() {
 
         {/* 2) PDF 업로드 완료, 요약 대기(또는 요약 접힘): 파일 정보 + 재진입/요약 유형 + 시작 버튼.
             H1: summaryCollapsed 시에도 이 화면을 보여 접힌 요약+Q&A 로 재진입하게 한다. */}
-        {document && !isGenerating && (!summaryStream || summaryCollapsed) && (
+        {document && !isGenerating && (!hasSummary || summaryCollapsed) && (
           <div className="flex flex-col items-center gap-6">
             <div className="w-full flex items-center justify-between px-4 py-3 bg-gray-100 dark:bg-gray-800 rounded-lg">
               <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
@@ -535,7 +540,7 @@ export default function App() {
             </div>
 
             {/* H1: 접힌 요약(완료/부분)이 있으면 재진입을 1순위로. 뷰어 복귀는 백엔드 불필요. */}
-            {summaryStream && (
+            {hasSummary && (
               <button
                 onClick={() => setSummaryCollapsed(false)}
                 className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-lg font-medium transition-colors"
@@ -562,17 +567,17 @@ export default function App() {
             <button
               onClick={() => { setSummaryCollapsed(false); handleSummarize(); }}
               disabled={ollamaNotReady}
-              className={summaryStream
+              className={hasSummary
                 ? 'px-4 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
                 : 'px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed'}
             >
-              {summaryStream ? tr('app.reSummarize') : tr('app.startSummary')}
+              {hasSummary ? tr('app.reSummarize') : tr('app.startSummary')}
             </button>
           </div>
         )}
 
         {/* 3) 요약 진행 중 또는 완료: 결과 뷰어 (H1: 접힌 상태면 숨김) */}
-        {(isGenerating || summaryStream) && !summaryCollapsed && (
+        {(isGenerating || hasSummary) && !summaryCollapsed && (
           <SummaryViewer onAbort={handleAbort} />
         )}
       </main>

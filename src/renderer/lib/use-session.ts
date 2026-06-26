@@ -191,16 +191,24 @@ async function doPersistCurrentSession(): Promise<void> {
     let summaries: PersistedSession['summaries'] = {};
     let prevIndex: { embedModel: string; embedDim: number; chunkMeta: PersistedSession['chunkMeta']; blob: ArrayBuffer } | null = null;
     try {
-      const existing = await api.load(docHash);
-      const existSession = existing?.session as PersistedSession | undefined;
-      if (existSession?.summaries) summaries = { ...existSession.summaries };
-      if (indexing && existing?.blob && existSession?.embedModel && existSession.embedDim) {
-        prevIndex = {
-          embedModel: existSession.embedModel,
-          embedDim: existSession.embedDim,
-          chunkMeta: existSession.chunkMeta ?? [],
-          blob: existing.blob,
-        };
+      if (indexing) {
+        // 인덱싱 중 flush: 기존 인덱스(blob) 보존이 필요하므로 full load.
+        const existing = await api.load(docHash);
+        const existSession = existing?.session as PersistedSession | undefined;
+        if (existSession?.summaries) summaries = { ...existSession.summaries };
+        if (existing?.blob && existSession?.embedModel && existSession.embedDim) {
+          prevIndex = {
+            embedModel: existSession.embedModel,
+            embedDim: existSession.embedDim,
+            chunkMeta: existSession.chunkMeta ?? [],
+            blob: existing.blob,
+          };
+        }
+      } else {
+        // 일반 경로: 머지에 summaries 만 필요 → index.bin(수 MB) 재읽기·구조화복제 생략(성능 P).
+        const existing = await (api.loadMeta?.(docHash) ?? api.load(docHash));
+        const existSession = existing?.session as PersistedSession | undefined;
+        if (existSession?.summaries) summaries = { ...existSession.summaries };
       }
     } catch { /* 무시 */ }
     if (s.summaryStream && s.summary) {

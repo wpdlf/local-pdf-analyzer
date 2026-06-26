@@ -50,7 +50,10 @@ export default defineConfig({
           // 본 manualChunks 와 무관하게 lazy-loaded. 'pdfjs' 청크는 메인 thread 측 pdfjs API
           // 만 담는다. 이 비대칭은 의도된 것 — worker 파일은 Worker constructor 가 URL 로 받음.
           manualChunks: {
-            'react-vendor': ['react', 'react-dom'],
+            // react/jsx-runtime·scheduler 를 명시하지 않으면 첫 importer(react-markdown)로
+            // React 코어가 호이스팅돼 markdown 청크에 갇히고 react-vendor 분리가 무력화된다.
+            // 명시 지정으로 React 를 vendor 로 고정(앱 코드 변경 시 vendor 캐시 유지).
+            'react-vendor': ['react', 'react-dom', 'react/jsx-runtime', 'scheduler'],
             'pdfjs': ['pdfjs-dist'],
             'markdown': ['react-markdown', 'remark-gfm'],
           },
