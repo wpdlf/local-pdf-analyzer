@@ -110,6 +110,14 @@ describe('OllamaSetupWizard 선택 설치', () => {
     expect(screen.queryByText(koreanItemLabel())).toBeNull();
   });
 
+  it('a11y M3: welcome 항목이 sr-only 상태 텍스트 노출 + 아이콘 aria-hidden', () => {
+    const { container } = render(<OllamaSetupWizard />);
+    // 단계 상태(대기 중)가 emoji 가 아니라 접근 가능한 텍스트로 노출된다
+    expect(screen.getAllByText(`— ${t('setup.statusPending')}`).length).toBeGreaterThan(0);
+    // 장식 emoji 아이콘은 SR 에서 숨김
+    expect(container.querySelector('span[aria-hidden="true"]')).toBeTruthy();
+  });
+
   it('체크 해제 상태로 시작하면 필수 모델만 pull 한다', async () => {
     const user = userEvent.setup();
     render(<OllamaSetupWizard />);

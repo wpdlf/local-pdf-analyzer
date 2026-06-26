@@ -45,6 +45,10 @@ export default function App() {
   const [modelHint, setModelHint] = useState<string | null>(null);
   // M1(UX): 닫은 모델 힌트의 (document.id:model) 키 집합 — 영속 dismiss.
   const dismissedModelHintRef = useRef<Set<string>>(new Set());
+  // a11y M5: 뷰 전환 포커스 관리용 refs.
+  const settingsBtnRef = useRef<HTMLButtonElement>(null);
+  const altViewRef = useRef<HTMLElement>(null);
+  const prevViewRef = useRef(useAppStore.getState().view);
   const [bgModelSync, setBgModelSync] = useState<string | null>(null);
   const [bgModelLoading, setBgModelLoading] = useState(false);
   // Ctrl+O / 파일 다이얼로그 재진입 가드. 진행 중이면 연타 Ctrl+O 를 무시한다.
@@ -361,6 +365,18 @@ export default function App() {
     }
   }, [document, settings.provider, settings.model, settings.uiLanguage, tr, koreanRatio]);
 
+  // a11y M5: 설정/설치 뷰로 전환 시 포커스를 새 뷰 컨테이너로 이동(키보드/SR 사용자가 body 에
+  // 표류하지 않도록), 메인으로 복귀 시 트리거(⚙️)로 포커스 반환.
+  useEffect(() => {
+    const prev = prevViewRef.current;
+    if (view === 'settings' || view === 'setup') {
+      altViewRef.current?.focus();
+    } else if (prev === 'settings' || prev === 'setup') {
+      settingsBtnRef.current?.focus();
+    }
+    prevViewRef.current = view;
+  }, [view]);
+
   // H3(UX): 요약 시작 전 백엔드 사전 체크 — ollama provider 인데 미실행이거나 설치된 모델이
   // 없으면 요약 버튼을 비활성화하고 "설정 열기" 경로를 제시한다. 클릭→실패→재설정의 헛수고를 방지.
   // (claude/openai/gemini 키 확인은 비동기라 여기선 제외 — 클릭 시점 에러가 backstop)
@@ -369,17 +385,18 @@ export default function App() {
 
   if (view === 'setup') {
     return (
-      <div className="h-screen bg-white dark:bg-gray-900">
+      // a11y L4/M5: 랜드마크 + 전환 시 포커스 수신(tabIndex={-1}).
+      <main ref={altViewRef} tabIndex={-1} className="h-screen bg-white dark:bg-gray-900 outline-none">
         <OllamaSetupWizard />
-      </div>
+      </main>
     );
   }
 
   if (view === 'settings') {
     return (
-      <div className="h-screen bg-white dark:bg-gray-900 overflow-y-auto">
+      <main ref={altViewRef} tabIndex={-1} className="h-screen bg-white dark:bg-gray-900 overflow-y-auto outline-none">
         <SettingsPanel />
-      </div>
+      </main>
     );
   }
 
@@ -405,6 +422,7 @@ export default function App() {
               AI 백엔드 정의 항목(provider/model/URL/청크)은 SettingsPanel 이 생성 중 게이트한다.
               파싱 중에는 문서 전환 전이라 잠시 차단. */}
           <button
+            ref={settingsBtnRef}
             onClick={() => setView('settings')}
             disabled={isParsing}
             className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -419,9 +437,9 @@ export default function App() {
       {/* multi-doc Phase 1: 열린 문서 탭바 (열린 문서 없으면 자체적으로 숨김) */}
       <TabBar />
 
-      {/* 백그라운드 모델 다운로드 알림 */}
+      {/* 백그라운드 모델 다운로드 알림 — role="status": 진행/완료를 SR 에 polite 통지(a11y M1) */}
       {bgModelSync && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-400">
+        <div role="status" className="flex items-center gap-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-400">
           {bgModelLoading && (
             <svg aria-hidden="true" className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -434,9 +452,9 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-4">
-        {/* 에러 표시 */}
+        {/* 에러 표시 — role="alert"(assertive): 모든 작업 실패의 단일 채널이므로 SR 즉시 통지(a11y H1) */}
         {error && (
-          <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start justify-between">
+          <div role="alert" className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start justify-between">
             <p className="text-red-700 dark:text-red-400 text-sm">{error.message}</p>
             <button
               onClick={() => setError(null)}
@@ -450,7 +468,7 @@ export default function App() {
 
         {/* v0.18.6 D1: 정보성 notice (에러와 분리). 다중 파일 드롭 등 silent-drop 알림용. */}
         {notice && (
-          <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start justify-between">
+          <div role="status" className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start justify-between">
             <p className="text-amber-700 dark:text-amber-400 text-sm">{notice.message}</p>
             <button
               onClick={() => setNotice(null)}
@@ -474,7 +492,7 @@ export default function App() {
 
         {/* 모델 추천 알림 */}
         {modelHint && !isGenerating && (
-          <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start justify-between">
+          <div role="status" className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg flex items-start justify-between">
             <p className="text-amber-700 dark:text-amber-400 text-sm">{modelHint}</p>
             <button
               onClick={() => {

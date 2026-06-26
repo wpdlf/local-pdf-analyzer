@@ -212,3 +212,33 @@ describe('SettingsPanel — M2 생성 중 게이트', () => {
     expect(container.querySelector('input[name="uiLanguage"]')?.closest('fieldset')).toBeNull();
   });
 });
+
+describe('SettingsPanel — a11y', () => {
+  it('M2: API 키/Ollama URL 입력이 label htmlFor/id 로 연결됨', () => {
+    const { container } = render(<SettingsPanel />);
+    // 각 입력이 존재하고 대응 label[for] 이 연결돼 SR 접근명이 부여된다(마스킹된 password 용도 식별).
+    for (const id of ['settings-claude-key', 'settings-openai-key', 'settings-gemini-key', 'settings-ollama-url']) {
+      expect(container.querySelector(`#${id}`)).toBeTruthy();
+      expect(container.querySelector(`label[for="${id}"]`)).toBeTruthy();
+    }
+    // 모델 select 은 aria-label 로 접근명 노출
+    expect(screen.getByLabelText(t('settings.model'))).toBeTruthy();
+  });
+
+  it('M1: 키 저장 검증 안내가 role="status" 로 통지', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.type(claudeKeyInput(), '   '); // 공백 → keyEmpty 안내
+    await user.click(screen.getByText(t('common.save')));
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain(t('settings.keyEmpty'));
+  });
+
+  it('L2: Escape 로 패널 닫힘(setView main)', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    expect(useAppStore.getState().view).toBe('settings');
+    await user.keyboard('{Escape}');
+    expect(useAppStore.getState().view).toBe('main');
+  });
+});

@@ -259,6 +259,16 @@ export function SettingsPanel() {
     setView('main');
   };
 
+  // a11y L2: Escape 로 설정 패널 닫기(✕ 버튼 외 키보드 경로). 최신 handleCancel 을 ref 로 참조해
+  // 재구독 없이 stale 클로저 방지.
+  const handleCancelRef = useRef(handleCancel);
+  handleCancelRef.current = handleCancel;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleCancelRef.current(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const handlePullModel = async () => {
     const targetModel = pullModelName.trim();
     if (!targetModel) return;
@@ -371,7 +381,7 @@ export function SettingsPanel() {
             검증에 실패하면("API 키를 먼저 저장하세요") 배너가 뷰포트 밖에서 2초 만에
             소멸해 저장이 무반응으로 보이던 문제. 헤더 안이면 어느 스크롤 위치에서나 보임. */}
         {keyMessage && (
-          <div className="mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-sm text-blue-700 dark:text-blue-400 text-center">
+          <div role="status" className="mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-sm text-blue-700 dark:text-blue-400 text-center">
             {keyMessage}
           </div>
         )}
@@ -449,7 +459,7 @@ export function SettingsPanel() {
       {/* 모델 */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.model')}</h3>
-        <select value={draft.model} onChange={(e) => updateDraft({ model: e.target.value })} className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+        <select value={draft.model} onChange={(e) => updateDraft({ model: e.target.value })} aria-label={t('settings.model')} className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
           {modelOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
         {draft.provider !== 'ollama' && <p className="text-xs text-gray-500 mt-2">{t('settings.apiBilling')}</p>}
@@ -464,11 +474,11 @@ export function SettingsPanel() {
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">{t('settings.apiKeyEncrypted')}</p>
 
         <div className="mb-4">
-          <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
+          <label htmlFor="settings-claude-key" className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
             Claude API {claudeKeyStored && <span className="text-green-500 ml-1">{t('common.saved')}</span>}
           </label>
           <div className="flex gap-2">
-            <input type="password" autoComplete="off" spellCheck={false} maxLength={200} placeholder={claudeKeyStored ? t('settings.apiKeyMasked') : t('settings.apiKeyPlaceholder')} value={claudeKey} onChange={(e) => setClaudeKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+            <input id="settings-claude-key" type="password" autoComplete="off" spellCheck={false} maxLength={200} placeholder={claudeKeyStored ? t('settings.apiKeyMasked') : t('settings.apiKeyPlaceholder')} value={claudeKey} onChange={(e) => setClaudeKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
             {claudeKey ? (
               <button onClick={() => handleSaveApiKey('claude')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">{t('common.save')}</button>
             ) : claudeKeyStored ? (
@@ -478,11 +488,11 @@ export function SettingsPanel() {
         </div>
 
         <div className="mb-4">
-          <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
+          <label htmlFor="settings-openai-key" className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
             OpenAI API {openaiKeyStored && <span className="text-green-500 ml-1">{t('common.saved')}</span>}
           </label>
           <div className="flex gap-2">
-            <input type="password" autoComplete="off" spellCheck={false} maxLength={200} placeholder={openaiKeyStored ? t('settings.apiKeyMasked') : t('settings.apiKeyPlaceholder')} value={openaiKey} onChange={(e) => setOpenaiKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+            <input id="settings-openai-key" type="password" autoComplete="off" spellCheck={false} maxLength={200} placeholder={openaiKeyStored ? t('settings.apiKeyMasked') : t('settings.apiKeyPlaceholder')} value={openaiKey} onChange={(e) => setOpenaiKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
             {openaiKey ? (
               <button onClick={() => handleSaveApiKey('openai')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">{t('common.save')}</button>
             ) : openaiKeyStored ? (
@@ -492,11 +502,11 @@ export function SettingsPanel() {
         </div>
 
         <div>
-          <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
+          <label htmlFor="settings-gemini-key" className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
             Gemini API {geminiKeyStored && <span className="text-green-500 ml-1">{t('common.saved')}</span>}
           </label>
           <div className="flex gap-2">
-            <input type="password" autoComplete="off" spellCheck={false} maxLength={200} placeholder={geminiKeyStored ? t('settings.apiKeyMasked') : t('settings.apiKeyPlaceholder')} value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+            <input id="settings-gemini-key" type="password" autoComplete="off" spellCheck={false} maxLength={200} placeholder={geminiKeyStored ? t('settings.apiKeyMasked') : t('settings.apiKeyPlaceholder')} value={geminiKey} onChange={(e) => setGeminiKey(e.target.value)} className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
             {geminiKey ? (
               <button onClick={() => handleSaveApiKey('gemini')} className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">{t('common.save')}</button>
             ) : geminiKeyStored ? (
@@ -574,8 +584,8 @@ export function SettingsPanel() {
             </button>
           </div>
           <div className="mt-3">
-            <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Ollama URL</label>
-            <input type="text" value={draft.ollamaBaseUrl} onChange={(e) => updateDraft({ ollamaBaseUrl: e.target.value })} className="w-full px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+            <label htmlFor="settings-ollama-url" className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Ollama URL</label>
+            <input id="settings-ollama-url" type="text" value={draft.ollamaBaseUrl} onChange={(e) => updateDraft({ ollamaBaseUrl: e.target.value })} className="w-full px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
           </div>
         </section>
         </fieldset>
@@ -641,11 +651,13 @@ export function SettingsPanel() {
             max={16000}
             step={500}
             className={`w-24 px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white ${chunkSizeError ? 'border-red-500' : ''}`}
+            aria-label={t('settings.chunkSize')}
             aria-invalid={chunkSizeError}
+            aria-describedby={chunkSizeError ? 'settings-chunk-error' : undefined}
           />
           <span className="text-sm text-gray-500">tokens</span>
           {chunkSizeError && (
-            <span className="text-xs text-red-500">1000–16000</span>
+            <span id="settings-chunk-error" className="text-xs text-red-500">1000–16000</span>
           )}
         </div>
       </section>

@@ -164,18 +164,20 @@ export function GlobalSearch() {
       </div>
 
       {note && (
-        <p className="mt-2 px-1 text-xs text-amber-600 dark:text-amber-400">{note}</p>
+        <p role="status" className="mt-2 px-1 text-xs text-amber-600 dark:text-amber-400">{note}</p>
       )}
 
       {results !== null && (
         results.length === 0 ? (
           !note && (
-            <p className="text-xs text-gray-400 dark:text-gray-500 px-1 py-3">
+            <p role="status" className="text-xs text-gray-400 dark:text-gray-500 px-1 py-3">
               {tr('search.noResults', { query: lastQuery })}
             </p>
           )
         ) : (
           <ul className="flex flex-col gap-2 mt-3">
+            {/* a11y M1: 결과 도착을 SR 에 polite 통지(목록 자체는 비-live 라 항목 나열 소음 없음) */}
+            <li className="sr-only" role="status">{tr('search.resultsCount', { count: results.length })}</li>
             {results.map((r) => (
               <li key={r.docHash}>
                 <button

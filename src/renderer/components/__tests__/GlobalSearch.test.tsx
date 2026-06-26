@@ -78,6 +78,16 @@ describe('GlobalSearch', () => {
     await waitFor(() => expect(screen.getByText(/결과가 없습니다/)).toBeTruthy());
   });
 
+  it('a11y M1: 결과 도착이 role="status" 로 건수 통지', async () => {
+    M.search.mockResolvedValue([result({}), result({ docHash: 'b'.repeat(64), fileName: 'b.pdf', filePath: '/x/b.pdf' })]);
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.type(screen.getByLabelText('문서 검색'), '프로세스');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain('2'); // "검색 결과 2건"
+  });
+
   it('결과 클릭 → file.openPath(filePath) + handlePdfData', async () => {
     M.search.mockResolvedValue([result({})]);
     const user = userEvent.setup();

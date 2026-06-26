@@ -233,6 +233,17 @@ export function OllamaSetupWizard() {
     }
   };
 
+  // a11y M3: emoji \uC544\uC774\uCF58\uC740 SR \uC5D0\uC11C "white large square" \uB4F1\uC73C\uB85C \uC77D\uD600 \uB2E8\uACC4 \uC0C1\uD0DC\uB97C \uC804\uB2EC\uD558\uC9C0 \uBABB\uD55C\uB2E4.
+  // \uC544\uC774\uCF58\uC740 aria-hidden \uCC98\uB9AC\uD558\uACE0 \uAC01 \uD56D\uBAA9\uC5D0 visually-hidden \uC0C1\uD0DC \uD14D\uC2A4\uD2B8\uB97C \uBD80\uC5EC\uD55C\uB2E4.
+  const statusText = (status: SetupItemStatus): string => {
+    switch (status) {
+      case 'pending': return t('setup.statusPending');
+      case 'running': return t('setup.statusRunning');
+      case 'done': return t('setup.statusDone');
+      case 'error': return t('setup.statusError');
+    }
+  };
+
   return (
     <div className="relative flex flex-col items-center justify-center h-full p-8">
       <div className="absolute top-4 right-4 flex items-center gap-1 text-sm" role="group" aria-label="Language">
@@ -264,8 +275,9 @@ export function OllamaSetupWizard() {
           <div className="text-left mb-4 space-y-2">
             {items.map((item, i) => (
               <div key={i} className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
-                <span>{statusIcon(item.status)}</span>
+                <span aria-hidden="true">{statusIcon(item.status)}</span>
                 <span>{item.label}</span>
+                <span className="sr-only">— {statusText(item.status)}</span>
               </div>
             ))}
           </div>
@@ -293,19 +305,21 @@ export function OllamaSetupWizard() {
 
       {step === 'progress' && (
         <div className="w-full max-w-md">
-          <div className="space-y-3 mb-6">
+          {/* a11y M3: 수 분짜리 설치 진행/단계 상태를 SR 에 polite 통지 */}
+          <div className="space-y-3 mb-6" role="status" aria-live="polite">
             {items.map((item, i) => (
               <div key={i} className="flex items-center gap-3">
-                <span className={item.status === 'running' ? 'animate-spin' : ''}>{statusIcon(item.status)}</span>
+                <span aria-hidden="true" className={item.status === 'running' ? 'animate-spin' : ''}>{statusIcon(item.status)}</span>
                 <span className={`text-sm ${
                   item.status === 'running' ? 'text-blue-600 dark:text-blue-400 font-medium' :
                   item.status === 'done' ? 'text-green-600 dark:text-green-400' :
                   'text-gray-500 dark:text-gray-400'
                 }`}>{item.label}</span>
+                <span className="sr-only">— {statusText(item.status)}</span>
               </div>
             ))}
           </div>
-          <p className="text-gray-500 dark:text-gray-400 text-sm text-center mb-4">{progressMessage}</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm text-center mb-4" role="status">{progressMessage}</p>
           <div className="flex justify-center">
             <button
               onClick={handleCancel}
@@ -319,12 +333,12 @@ export function OllamaSetupWizard() {
 
       {step === 'done' && (
         <div className="text-center">
-          <div className="text-4xl mb-4">{'\u2705'}</div>
-          <p className="text-green-600 dark:text-green-400 text-lg">{t('setup.done')}</p>
+          <div className="text-4xl mb-4" aria-hidden="true">{'\u2705'}</div>
+          <p className="text-green-600 dark:text-green-400 text-lg" role="status">{t('setup.done')}</p>
           <div className="mt-4 space-y-1">
             {items.map((item, i) => (
               <div key={i} className="flex items-center gap-2 text-green-600 dark:text-green-400 text-sm">
-                <span>{'\u2705'}</span><span>{item.label}</span>
+                <span aria-hidden="true">{'\u2705'}</span><span>{item.label}</span>
               </div>
             ))}
           </div>
@@ -336,17 +350,19 @@ export function OllamaSetupWizard() {
           <div className="space-y-2 mb-4">
             {items.map((item, i) => (
               <div key={i} className="flex items-center gap-2 text-sm">
-                <span>{statusIcon(item.status)}</span>
+                <span aria-hidden="true">{statusIcon(item.status)}</span>
                 <span className={
                   item.status === 'error' ? 'text-red-600 dark:text-red-400' :
                   item.status === 'done' ? 'text-green-600 dark:text-green-400' :
                   'text-gray-400'
                 }>{item.label}</span>
+                <span className="sr-only">— {statusText(item.status)}</span>
               </div>
             ))}
           </div>
           <div className="text-center">
-            <p className="text-red-600 dark:text-red-400 mb-2">{errorMsg}</p>
+            {/* a11y M3: 설치 실패를 SR 에 즉시 통지 */}
+            <p className="text-red-600 dark:text-red-400 mb-2" role="alert">{errorMsg}</p>
             {errorCode && errorHints[errorCode] && (
               <p className="text-gray-500 text-sm mb-4">{errorHints[errorCode]}</p>
             )}
