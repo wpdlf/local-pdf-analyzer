@@ -537,7 +537,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
                 ref={(el) => { pageRefs.current[i] = el; }}
                 className="bg-white flex items-center justify-center min-h-[200px]"
               >
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-gray-500">
                   {t('pdfviewer.pageOf', { current: i + 1, total: totalPages })}
                 </span>
               </div>

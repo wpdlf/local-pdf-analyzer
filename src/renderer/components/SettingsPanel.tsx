@@ -543,7 +543,7 @@ export function SettingsPanel() {
                 disabled={isPulling}
                 className="px-2 py-1 text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50 transition-colors"
               >
-                {m.name} <span className="text-gray-400">({m.desc})</span>
+                {m.name} <span className="text-gray-600 dark:text-gray-400">({m.desc})</span>
               </button>
             ))}
           </div>
@@ -670,7 +670,7 @@ export function SettingsPanel() {
           <input type="checkbox" checked={draft.enableImageAnalysis} onChange={(e) => updateDraft({ enableImageAnalysis: e.target.checked })} className="w-4 h-4 rounded" />
           <div>
             <span className="text-sm text-gray-700 dark:text-gray-200">{t('settings.imageAnalysisLabel')}</span>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('settings.imageAnalysisDesc')}</p>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">{t('settings.imageAnalysisDesc')}</p>
           </div>
         </label>
       </section>
@@ -682,7 +682,7 @@ export function SettingsPanel() {
           <input type="checkbox" checked={draft.enableOcrFallback} onChange={(e) => updateDraft({ enableOcrFallback: e.target.checked })} className="w-4 h-4 rounded" />
           <div>
             <span className="text-sm text-gray-700 dark:text-gray-200">{t('settings.ocrLabel')}</span>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('settings.ocrDesc')}</p>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">{t('settings.ocrDesc')}</p>
           </div>
         </label>
       </section>
@@ -694,7 +694,7 @@ export function SettingsPanel() {
           <input type="checkbox" checked={draft.enableAnswerVerification} onChange={(e) => updateDraft({ enableAnswerVerification: e.target.checked })} className="w-4 h-4 rounded" />
           <div>
             <span className="text-sm text-gray-700 dark:text-gray-200">{t('settings.answerVerificationLabel')}</span>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('settings.answerVerificationDesc')}</p>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">{t('settings.answerVerificationDesc')}</p>
           </div>
         </label>
       </section>
@@ -706,7 +706,7 @@ export function SettingsPanel() {
           <input type="checkbox" checked={draft.persistSessions} onChange={(e) => updateDraft({ persistSessions: e.target.checked })} className="w-4 h-4 rounded" />
           <div>
             <span className="text-sm text-gray-700 dark:text-gray-200">{t('settings.persistToggle')}</span>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('settings.persistDesc')}</p>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">{t('settings.persistDesc')}</p>
           </div>
         </label>
         {sessionStats && (
@@ -714,7 +714,7 @@ export function SettingsPanel() {
             <p className="text-xs text-gray-500 dark:text-gray-400">
               {t('settings.storageUsage', { count: sessionStats.count, size: formatBytes(sessionStats.totalBytes) })}
             </p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 truncate" title={sessionStats.dir}>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5 truncate" title={sessionStats.dir}>
               {t('settings.storageLocation', { dir: sessionStats.dir })}
             </p>
             <button

@@ -81,7 +81,7 @@ export function RecentDocuments() {
         {tr('recent.title')}
       </h2>
       {entries.length === 0 ? (
-        <p className="text-xs text-gray-400 dark:text-gray-500 px-1 py-2">{tr('recent.empty')}</p>
+        <p className="text-xs text-gray-600 dark:text-gray-400 px-1 py-2">{tr('recent.empty')}</p>
       ) : (
       <ul className="flex flex-col gap-2">
         {entries.map((e) => (

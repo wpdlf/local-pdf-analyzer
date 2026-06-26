@@ -177,7 +177,7 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
             <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
               {t('viewer.analyzing')}
             </p>
-            <p className="text-sm text-gray-400 dark:text-gray-500">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
               {t('viewer.pleaseWait')}
             </p>
           </div>

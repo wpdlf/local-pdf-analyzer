@@ -30,9 +30,9 @@ export function StatusBar() {
       </div>
       <div className="flex items-center gap-3">
         {settings.provider === 'ollama' && ollamaStatus.version && (
-          <span className="text-gray-400 text-xs">{ollamaStatus.version}</span>
+          <span className="text-gray-600 dark:text-gray-400 text-xs">{ollamaStatus.version}</span>
         )}
-        <span className="text-gray-400 text-xs">copyright 2026. JJW.</span>
+        <span className="text-gray-600 dark:text-gray-400 text-xs">copyright 2026. JJW.</span>
       </div>
     </div>
   );

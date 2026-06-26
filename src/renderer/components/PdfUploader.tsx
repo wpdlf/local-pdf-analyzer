@@ -93,7 +93,7 @@ export function PdfUploader() {
                 {t('uploader.ocrProgress')}
               </p>
               <div className="w-full max-w-xs">
-                <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500 mb-1">
+                <div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
                   <span>{t('uploader.ocrLabel')}</span>
                   <span>{ocrProgress.current} / {ocrProgress.total}</span>
                 </div>
@@ -104,7 +104,7 @@ export function PdfUploader() {
                   />
                 </div>
               </div>
-              <p className="text-xs text-gray-400 dark:text-gray-500">
+              <p className="text-xs text-gray-600 dark:text-gray-400">
                 {t('uploader.ocrDesc')}
               </p>
             </>
@@ -113,7 +113,7 @@ export function PdfUploader() {
               <p className="text-lg font-medium text-gray-600 dark:text-gray-300">
                 {t('uploader.reading')}
               </p>
-              <p className="text-sm text-gray-400 dark:text-gray-500">
+              <p className="text-sm text-gray-600 dark:text-gray-400">
                 {t('uploader.wait')}
               </p>
             </>
@@ -145,7 +145,7 @@ export function PdfUploader() {
             {t('uploader.selectFile')}
           </button>
           {/* H2(UX): Ctrl+O 단축키 발견성 — 기존엔 UI에 힌트가 전혀 없어 키보드 경로가 비가시였다. */}
-          <p className="mt-3 text-xs text-gray-400 dark:text-gray-500">{t('uploader.orShortcut')}</p>
+          <p className="mt-3 text-xs text-gray-600 dark:text-gray-400">{t('uploader.orShortcut')}</p>
         </>
       )}
     </div>

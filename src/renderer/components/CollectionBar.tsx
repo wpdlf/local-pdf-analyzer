@@ -119,7 +119,7 @@ export function CollectionBar() {
         />
         <span className="font-medium text-gray-700 dark:text-gray-200">{t('collection.toggle')}</span>
         {collection.enabled && (
-          <span className="text-gray-400">· {t('collection.searchingCount', { count: readyCount })}</span>
+          <span className="text-gray-600 dark:text-gray-400">· {t('collection.searchingCount', { count: readyCount })}</span>
         )}
       </label>
 

@@ -256,7 +256,7 @@ export function OllamaSetupWizard() {
               className={`px-1.5 py-0.5 rounded transition-colors ${
                 settings.uiLanguage === lang
                   ? 'font-semibold text-blue-600 dark:text-blue-400'
-                  : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
               }`}
             >
               {lang === 'ko' ? '한국어' : 'English'}
@@ -354,7 +354,7 @@ export function OllamaSetupWizard() {
                 <span className={
                   item.status === 'error' ? 'text-red-600 dark:text-red-400' :
                   item.status === 'done' ? 'text-green-600 dark:text-green-400' :
-                  'text-gray-400'
+                  'text-gray-600 dark:text-gray-400'
                 }>{item.label}</span>
                 <span className="sr-only">— {statusText(item.status)}</span>
               </div>

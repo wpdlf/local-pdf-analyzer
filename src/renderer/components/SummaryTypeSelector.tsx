@@ -101,7 +101,7 @@ export function SummaryTypeSelector() {
                   onChange={(e) => updateRange({ end: e.target.valueAsNumber })}
                   className="w-16 px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                 />
-                <span className="text-xs text-gray-400 dark:text-gray-500">{t('selector.pageRangeTotal', { count: pageCount })}</span>
+                <span className="text-xs text-gray-600 dark:text-gray-400">{t('selector.pageRangeTotal', { count: pageCount })}</span>
               </span>
             )}
           </div>

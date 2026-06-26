@@ -70,7 +70,7 @@ export function ProgressBar({ progress, progressInfo, label }: ProgressBarProps)
           {displayLabel}
         </p>
         {timeLabel && (
-          <p className="text-xs text-gray-400 dark:text-gray-500">
+          <p className="text-xs text-gray-600 dark:text-gray-400">
             {timeLabel}
           </p>
         )}

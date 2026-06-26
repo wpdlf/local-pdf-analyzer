@@ -146,7 +146,7 @@ export function QaChat() {
 
       {/* 빈 상태 안내 */}
       {qaMessages.length === 0 && !qaStream && (
-        <div className="px-4 py-3 text-center text-sm text-gray-400 dark:text-gray-500">
+        <div className="px-4 py-3 text-center text-sm text-gray-600 dark:text-gray-400">
           {ragState.chunkCount > 0 ? t('qa.ragActive') : t('qa.emptyHint')}
         </div>
       )}
@@ -194,7 +194,7 @@ export function QaChat() {
 
           {isQaGenerating && !qaStream && (
             <div className="flex justify-start">
-              <div className="rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-400 flex items-center gap-2">
+              <div className="rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 flex items-center gap-2">
                 {qaVerifying && (
                   <svg aria-hidden="true" className="animate-spin h-3 w-3" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>

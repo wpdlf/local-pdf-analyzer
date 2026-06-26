@@ -66,7 +66,7 @@ export function CollectionsList() {
         <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2 px-1">
           {tr('collection.savedTitle')}
         </h2>
-        <p className="text-xs text-gray-400 dark:text-gray-500 px-1 py-2">{tr('collection.savedEmptyHint')}</p>
+        <p className="text-xs text-gray-600 dark:text-gray-400 px-1 py-2">{tr('collection.savedEmptyHint')}</p>
       </div>
     );
   }

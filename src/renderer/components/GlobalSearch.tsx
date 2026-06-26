@@ -134,7 +134,7 @@ export function GlobalSearch() {
           {modeBtn('keyword', tr('search.modeKeyword'))}
           {modeBtn('semantic', tr('search.modeSemantic'))}
         </div>
-        <span className="text-[11px] text-gray-400 dark:text-gray-500 ml-1 hidden sm:inline">{tr('search.modeHint')}</span>
+        <span className="text-[11px] text-gray-600 dark:text-gray-400 ml-1 hidden sm:inline">{tr('search.modeHint')}</span>
         {cloudEmbedName && (
           <span
             title={tr('search.cloudEmbedTooltip', { provider: cloudEmbedName })}
@@ -170,7 +170,7 @@ export function GlobalSearch() {
       {results !== null && (
         results.length === 0 ? (
           !note && (
-            <p role="status" className="text-xs text-gray-400 dark:text-gray-500 px-1 py-3">
+            <p role="status" className="text-xs text-gray-600 dark:text-gray-400 px-1 py-3">
               {tr('search.noResults', { query: lastQuery })}
             </p>
           )
@@ -202,7 +202,7 @@ export function GlobalSearch() {
                       : (lastMode === 'keyword' ? tr('search.summaryLabel') : null);
                     return (
                       <div key={i} className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        {label && <span className="text-gray-400 dark:text-gray-500 mr-1">{label}</span>}
+                        {label && <span className="text-gray-600 dark:text-gray-400 mr-1">{label}</span>}
                         {highlight(s.text, lastQuery)}
                       </div>
                     );

@@ -49,15 +49,16 @@ describe('TabBar', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('열린 탭을 모두 표시하고 활성 탭에 aria-selected=true', () => {
+  it('열린 탭을 listitem 으로 표시하고 활성 탭 버튼에 aria-current="page" (a11y M4)', () => {
     setState({ tabs: [tab('/d/a.pdf'), tab('/d/b.pdf')], active: '/d/b.pdf' });
     render(<TabBar />);
-    const tabs = screen.getAllByRole('tab');
-    expect(tabs).toHaveLength(2);
+    // role="tab"/aria-selected 안티패턴 제거 → nav>ul>li 목록 + 활성 표시 aria-current
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
     expect(screen.getByText(/a\.pdf/)).toBeTruthy();
-    expect(screen.getByText(/b\.pdf/)).toBeTruthy();
-    const selected = tabs.find((el) => el.getAttribute('aria-selected') === 'true');
-    expect(selected?.textContent).toContain('b.pdf');
+    const bBtn = screen.getByText(/b\.pdf/).closest('button')!;
+    expect(bBtn.getAttribute('aria-current')).toBe('page');
+    const aBtn = screen.getByText(/a\.pdf/).closest('button')!;
+    expect(aBtn.getAttribute('aria-current')).toBeNull();
   });
 
   it('비활성 탭 클릭 → switchToTab(filePath)', async () => {
