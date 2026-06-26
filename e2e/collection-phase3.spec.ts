@@ -104,7 +104,9 @@ test('컬렉션 Phase 3 — 통합 요약 + 저장→재오픈 (로컬 전용)',
 
     // 6) 저장된 컬렉션 목록에서 재오픈 → 탭 2개 복원
     await expect(page.getByText('MSA 강의 묶음')).toBeVisible({ timeout: 10000 });
-    await page.getByRole('button', { name: '열기' }).first().click();
+    // 컬렉션 카드(MSA 강의 묶음) 안의 '열기' 를 스코프해 클릭 — getByRole(name:'열기') 는 부분문자열
+    // 매칭이라 헤더 "📂 PDF 열기" 버튼·RecentDocuments '열기' 와 충돌한다(.first() 가 헤더 버튼을 집음).
+    await page.getByRole('listitem').filter({ hasText: 'MSA 강의 묶음' }).getByRole('button', { name: '열기' }).click();
     await expect(tablist.getByRole('listitem')).toHaveCount(2, { timeout: 30000 });
 
     expect(pageErrors, `렌더러 페이지 에러: ${pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
