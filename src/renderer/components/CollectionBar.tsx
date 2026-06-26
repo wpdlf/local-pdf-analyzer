@@ -27,7 +27,9 @@ export function CollectionBar() {
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
   const isGenerating = useAppStore((s) => s.isGenerating);
   const ragIsIndexing = useAppStore((s) => s.ragState.isIndexing);
-  const isBusy = isQaGenerating || isGenerating || ragIsIndexing;
+  // isCollectionBusy: 교차 요약 준비(gather) 단계도 버튼 비활성 — 연타/끼어듦 방지(QA R).
+  const isCollectionBusy = useAppStore((s) => s.isCollectionBusy);
+  const isBusy = isQaGenerating || isGenerating || ragIsIndexing || isCollectionBusy;
 
   const [manifest, setManifest] = useState<SessionManifestEntry[]>([]);
   const [saving, setSaving] = useState(false);     // 이름 입력 표시 여부
@@ -70,6 +72,9 @@ export function CollectionBar() {
     : [];
   const statusByHash = new Map(resolved.map((r) => [r.docHash, r]));
   const readyCount = resolved.filter((r) => r.status === 'ready').length;
+  // 요약 자격(QA M2): 교차 요약은 텍스트 합성이라 임베딩 동질성 불요 — 'missing'(저장 세션 없음)만
+  // 제외하고 no-index/model-mismatch 도 포함한다(검색은 readyCount, 요약은 이 카운트로 게이트).
+  const summaryEligibleCount = resolved.filter((r) => r.status !== 'missing').length;
 
   const statusLabel = (status: ResolvedMember['status']): string => {
     switch (status) {
@@ -123,20 +128,23 @@ export function CollectionBar() {
           {candidates.map((tab) => {
             const docHash = tab.docHash as string;
             const status = statusByHash.get(docHash)?.status ?? 'ready';
-            const selectable = status === 'ready';
+            // 선택 가능(QA M2): 'missing'(저장 세션 없음)만 불가. no-index/model-mismatch 는
+            // 선택 가능 — 검색엔 안 쓰이지만 교차 요약에는 포함된다(collectionRagSearch 가 자체적으로
+            // 'ready'만 사용하므로 멤버에 포함돼도 검색 정확도엔 무영향).
+            const selectable = status !== 'missing';
             const isActive = docHash === activeDocHash;
-            // 활성 문서는 항상 검색에 포함(해제 불가) — resolveCollectionSearch 의 강제 union 과 일치.
+            // 활성 문서는 항상 컬렉션에 포함(해제 불가) — resolveCollectionSearch 의 강제 union 과 일치.
             const forced = isActive && selectable;
             const checked = forced || (collection.memberHashes.includes(docHash) && selectable);
             const disabled = !selectable || forced;
-            // a11y: 비활성 사유/활성 표시를 체크박스 접근명에 묶어 스크린리더가 함께 읽도록.
+            // a11y: 검색 제외/세션 없음 사유·활성 표시를 체크박스 접근명에 묶어 스크린리더가 함께 읽도록.
             const ariaLabel = [tab.fileName,
               isActive ? t('collection.activeBadge') : null,
-              !selectable ? statusLabel(status) : null].filter(Boolean).join(', ');
+              status !== 'ready' ? statusLabel(status) : null].filter(Boolean).join(', ');
             return (
               <label
                 key={tab.filePath}
-                className={`flex items-center gap-2 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'} ${selectable ? '' : 'opacity-60'}`}
+                className={`flex items-center gap-2 ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'} ${status === 'ready' ? '' : 'opacity-60'}`}
               >
                 <input
                   type="checkbox"
@@ -152,7 +160,7 @@ export function CollectionBar() {
                     {t('collection.activeBadge')}
                   </span>
                 )}
-                {!selectable && (
+                {status !== 'ready' && (
                   <span className="shrink-0 text-amber-600 dark:text-amber-400">{statusLabel(status)}</span>
                 )}
               </label>
@@ -162,8 +170,8 @@ export function CollectionBar() {
             <p className="text-amber-600 dark:text-amber-400">{t('collection.noneSearchable')}</p>
           )}
 
-          {/* 교차 문서 요약/비교 — 검색 가능 멤버 2개 이상일 때 */}
-          {readyCount >= 2 && (
+          {/* 교차 문서 요약/비교 — 텍스트 보유 멤버 2개 이상일 때(QA M2: 임베딩 동질성 불요) */}
+          {summaryEligibleCount >= 2 && (
             <div className="mt-2 flex items-center gap-1">
               <button
                 onClick={() => void generateCollectionSummary('unified')}

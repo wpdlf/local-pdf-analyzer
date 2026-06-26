@@ -109,6 +109,11 @@ interface AppState {
   setCollectionMembers: (memberHashes: string[]) => void;
   /** 단일 멤버 포함/제외 토글 (체크박스) */
   toggleCollectionMember: (docHash: string) => void;
+  // 교차 요약 "준비(gather) 단계" 표식 — generateCollectionSummary 가 setIsQaGenerating(true) 를
+  // gather 뒤에야 세팅하던 사이, 입력창·버튼이 활성으로 남아 handleAsk/handleSummarize 가 끼어들어
+  // qaStream/qaRequestId 를 클로버링하던 race 차단(QA R: 컬렉션 요약 동시성). 진입 즉시 동기 세팅.
+  isCollectionBusy: boolean;
+  setCollectionBusy: (v: boolean) => void;
 
   // 요약
   summary: Summary | null;
@@ -273,6 +278,8 @@ export const useAppStore = create<AppState>((set) => ({
       : [...s.collection.memberHashes, docHash];
     return { collection: { ...s.collection, memberHashes } };
   }),
+  isCollectionBusy: false,
+  setCollectionBusy: (isCollectionBusy) => set({ isCollectionBusy }),
   setDocument: (document) => {
     if (!document) {
       // 문서 닫기 시 RAG 인덱스 + 요약/Q&A 상태 전부 해제. resetSummaryState 와 수렴.

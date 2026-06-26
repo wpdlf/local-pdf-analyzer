@@ -471,7 +471,8 @@ export function useSummarize() {
   const handleSummarize = async () => {
     // stale closure 방지: store에서 최신 상태 직접 읽기
     const currentState = useAppStore.getState();
-    if (!currentState.document || currentState.isGenerating || currentState.isQaGenerating) return;
+    // isCollectionBusy: 교차 요약 준비(gather) 중에는 단일 요약도 차단 — race 클로버링 방지(QA R).
+    if (!currentState.document || currentState.isGenerating || currentState.isQaGenerating || currentState.isCollectionBusy) return;
     const currentSettings = currentState.settings;
     const currentSummaryType = currentState.summaryType;
     // 페이지 범위 요약: 범위가 일부면 문서를 마스킹된 사본으로 좁힌다(인용 [p.N] 절대번호 보존).

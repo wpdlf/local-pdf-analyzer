@@ -87,6 +87,8 @@ beforeEach(() => {
   M.midStream = null;
   mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), MODEL, 3)]);
   useAppStore.getState().ragIndex.clear();
+  // 활성 문서 메모리 표현·busy 플래그 리셋 — 테스트 간 누수 차단(QA M1 메모리 폴백 경로가 이 값을 읽음)
+  useAppStore.setState({ summaryStream: '', summary: null, isCollectionBusy: false });
 });
 
 describe('buildCollectionSummaryPrompt (L1)', () => {
@@ -190,19 +192,22 @@ describe('generateCollectionSummary (L2)', () => {
     expect(M.prompt).toContain('## Beta.pdf');
   });
 
-  it('ready 멤버 1개뿐이면 안내 후 중단(AiClient 미호출)', async () => {
+  it('요약 자격 멤버가 1개뿐이면(나머지 missing) 안내 후 중단(AiClient 미호출)', async () => {
+    // QA M2 이후: 'missing'(저장 세션 없음)만 요약에서 제외된다. Beta 를 매니페스트에서 빼 missing 으로.
     seedActive();
-    mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), 'other-model', 1536)]); // Beta 제외
+    mockSessionList.mockResolvedValue([]); // Beta 매니페스트 없음 → 'missing'
     setStore(['a'.repeat(64), 'b'.repeat(64)]);
     await generateCollectionSummary('unified');
-    expect(M.prompt).toBe(''); // summarize 미호출
+    expect(M.prompt).toBe(''); // eligible<2 → gather/summarize 미진입
     expect(useAppStore.getState().notice).not.toBeNull();
     expect(useAppStore.getState().qaMessages).toHaveLength(0);
   });
 
-  it('ready 2멤버지만 본문/요약이 비어 블록 부족이면 안내 후 중단', async () => {
+  it('자격 2멤버지만 본문/요약이 비어 블록 부족이면 안내 후 중단', async () => {
     seedActive();
     setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    // 활성 메모리 본문도 비워 메모리 폴백으로도 블록을 못 만들게 함(QA M1 폴백까지 비활성)
+    useAppStore.setState({ document: { ...useAppStore.getState().document!, extractedText: '' }, summaryStream: '' });
     // 요약 없음 + 빈 본문 → gatherMemberBlocks 가 블록을 못 모음
     mockSessionLoad.mockImplementation((h: string) =>
       Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf', null, '')));
@@ -210,6 +215,46 @@ describe('generateCollectionSummary (L2)', () => {
     expect(M.prompt).toBe('');
     expect(useAppStore.getState().notice).not.toBeNull();
     expect(useAppStore.getState().qaMessages).toHaveLength(0);
+  });
+
+  it('QA M1: 활성 문서 디스크 세션이 없어도 메모리 요약으로 합성에 포함', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    // persist 디바운스 전 상태 모사: 활성 요약은 메모리에만 존재
+    useAppStore.setState({ summaryStream: '알파 메모리 요약' });
+    // 디스크: 활성('a')은 없음(null) → 메모리 폴백, 비활성('b')만 존재
+    mockSessionLoad.mockImplementation((h: string) =>
+      h === 'b'.repeat(64) ? Promise.resolve(memberSession('Beta.pdf', '베타 요약', 't')) : Promise.resolve(null));
+    await generateCollectionSummary('unified');
+    expect(M.prompt).toContain('## Alpha.pdf');
+    expect(M.prompt).toContain('알파 메모리 요약'); // 디스크 부재 → 메모리 폴백
+    expect(M.prompt).toContain('## Beta.pdf');
+    expect(M.prompt).toContain('베타 요약');
+  });
+
+  it('QA M2: model-mismatch 멤버도 텍스트가 있으면 요약에 포함(검색만 제외)', async () => {
+    seedActive(); // active model 'm' dim 3
+    mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), 'other-model', 1536)]); // Beta 임베딩 불일치
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf',
+        h === 'a'.repeat(64) ? '알파 요약' : '베타 요약', 't')));
+    await generateCollectionSummary('unified');
+    // 임베딩 동질성과 무관하게 텍스트 합성 대상에 포함
+    expect(M.prompt).toContain('## Beta.pdf');
+    expect(M.prompt).toContain('베타 요약');
+  });
+
+  it('QA R: gather/스트리밍 동안 isCollectionBusy=true, 종료 후 false 복구', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf', '요약', 't')));
+    let busyDuringStream = false;
+    M.midStream = () => { busyDuringStream = useAppStore.getState().isCollectionBusy; };
+    await generateCollectionSummary('unified');
+    expect(busyDuringStream).toBe(true);                          // 진행 중 입력 차단 신호 ON
+    expect(useAppStore.getState().isCollectionBusy).toBe(false);  // finally 복구
   });
 
   it('스트리밍 중 에러 → setError + isQaGenerating 복구', async () => {

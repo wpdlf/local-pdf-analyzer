@@ -47,6 +47,14 @@ const INLINE_SUMMARY_INPUT_CHARS = 6000;
 interface MemberBlock { fileName: string; content: string; }
 
 /**
+ * 활성 문서의 in-memory 표현(디스크 폴백용). gatherMemberBlocks 는 활성 문서를 디스크-우선으로
+ * 읽되, persist 디바운스(1.5s) 전이거나 persistSessions=OFF 라 디스크 세션이 비어 있을 때
+ * 메모리 값으로 폴백해 "화면에 보이는 활성 문서가 컬렉션 요약에서 통째 누락" 되던 결함을 막는다
+ * (QA M1). docId 는 gather 도중 탭 전환(문서 교체)을 감지해 이후 멤버 준비를 중단하는 취소 신호.
+ */
+interface ActiveDocContext { docHash: string; summary: string | null; text: string | null; docId: string | null; }
+
+/**
  * 멤버 본문에서 단일-문서 요약을 인라인 생성(헤드리스 — 활성 문서 store 미오염). 토큰을 문자열로
  * 수집해 반환. reduce 단계와 동일한 AiClient.summarize 경로(임베딩/RAG 비의존)를 재사용한다.
  */
@@ -104,21 +112,37 @@ async function gatherMemberBlocks(
   summaryType: SummaryType,
   client: AiClient,
   settings: AppSettings,
+  active: ActiveDocContext,
 ): Promise<MemberBlock[]> {
   const blocks: MemberBlock[] = [];
   let budget = COLLECTION_REDUCE_TOTAL_CHARS;
   for (const m of members.slice(0, COLLECTION_SUMMARY_MAX_MEMBERS)) {
     if (budget < MIN_BLOCK_CHARS) break; // 총량 예산 소진 — 이후 멤버는 제외(컨텍스트 초과 방지)
+    // 취소 신호(QA L1): gather 도중 탭 전환으로 활성 문서가 바뀌면 이후 멤버의 인라인 요약 생성을
+    // 중단해 낭비(클라우드 호출 과금)를 막는다. 이미 만든 블록은 어차피 결과 커밋 단계의 소유권
+    // 가드(document.id 절)에서 버려진다.
+    if (active.docId !== null && useAppStore.getState().document?.id !== active.docId) break;
+
+    const isActive = m.docHash === active.docHash;
     const loaded = await window.electronAPI.session.load(m.docHash).catch(() => null);
     const session = loaded?.session as PersistedSession | undefined;
-    if (!session) continue;
-    let summary = pickSummary(session, summaryType);
+
+    // 본문/요약 출처. 활성 문서는 디스크-우선 + 메모리 폴백(QA M1: persist 디바운스 전/persistSessions
+    // OFF 로 디스크가 비어 활성 문서가 통째 누락되던 문제). 비활성 멤버는 세션이 없으면 제외.
+    let summary = session ? pickSummary(session, summaryType) : null;
+    let text = session && typeof session.extractedText === 'string' ? session.extractedText : null;
+    if (isActive) {
+      if (summary == null) summary = active.summary;
+      if (text == null || !text.trim()) text = active.text;
+    } else if (!session) {
+      continue;
+    }
 
     // 요약 부재 멤버: 본문에서 인라인 생성 → 그 멤버 세션에 영속화(Q-A2 refinement). 생성 실패 시
     // 아래 발췌 fallback 으로 자연 강등. 진행 표시는 첫 생성 시 notice 한 번(map 단계는 스트리밍 X).
-    if (summary == null && typeof session.extractedText === 'string' && session.extractedText.trim().length > 0) {
+    if (summary == null && typeof text === 'string' && text.trim().length > 0) {
       useAppStore.getState().setNotice({ message: t('collection.preparingMember', { name: m.fileName }) });
-      const gen = await generateMemberSummary(client, session.extractedText, summaryType).catch(() => '');
+      const gen = await generateMemberSummary(client, text, summaryType).catch(() => '');
       if (gen.trim().length > 0) {
         summary = gen;
         // 영속화는 best-effort — 실패해도 이번 합성에는 생성분을 그대로 사용. saveSummary 부재(구
@@ -135,7 +159,7 @@ async function gatherMemberBlocks(
     // 무제한 연결로 인한 컨텍스트 초과(R48 MED-1)는 블록당 캡 + 총량 예산으로 이중 차단.
     const raw = summary != null
       ? summary.slice(0, MEMBER_SUMMARY_CHARS)
-      : (typeof session.extractedText === 'string' ? session.extractedText.slice(0, MEMBER_EXCERPT_CHARS) : null);
+      : (typeof text === 'string' ? text.slice(0, MEMBER_EXCERPT_CHARS) : null);
     if (!raw || !raw.trim()) continue;
     const content = raw.length > budget ? raw.slice(0, budget) : raw;
     if (!content.trim()) continue; // 예산 절단으로 공백만 남은 블록은 제외(빈 헤더 방지)
@@ -156,7 +180,7 @@ let collectionSummaryInFlight = false;
  */
 export async function generateCollectionSummary(kind: CollectionSummaryKind): Promise<void> {
   const st = useAppStore.getState();
-  if (collectionSummaryInFlight || st.isGenerating || st.isQaGenerating || st.ragState.isIndexing) return;
+  if (collectionSummaryInFlight || st.isGenerating || st.isQaGenerating || st.isCollectionBusy || st.ragState.isIndexing) return;
   const activeTab = st.openTabs.find((tb) => tb.filePath === st.document?.filePath);
   const activeDocHash = activeTab?.docHash;
   if (!activeDocHash) return;
@@ -164,6 +188,22 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
   // stale 스트림이 (전환이 풀린 뒤) 다른 문서의 Q&A 스레드에 결과를 쓰는 것을 방어한다.
   const activeDocId = st.document?.id;
   collectionSummaryInFlight = true;
+  // race 차단(QA R): gather(session.list/load + 인라인 멤버 요약) 동안 isQaGenerating 은 아직
+  // false 라 입력창·버튼이 활성으로 남는다. 진입 즉시 동기 세팅해 handleAsk/handleSummarize 가
+  // 그 사이 끼어들어 qaStream/qaRequestId 를 클로버링하는 것을 막고, UI 도 즉시 비활성화한다.
+  useAppStore.getState().setCollectionBusy(true);
+
+  // 활성 문서 in-memory 표현(디스크 폴백용 — QA M1). summaryStream(후처리 전체 요약) 우선, 없으면
+  // store.summary.content. 본문은 document.extractedText.
+  const activeSummary = st.summaryStream && st.summaryStream.trim()
+    ? st.summaryStream
+    : (st.summary?.content ?? null);
+  const activeCtx: ActiveDocContext = {
+    docHash: activeDocHash,
+    summary: activeSummary,
+    text: st.document?.extractedText ?? null,
+    docId: activeDocId ?? null,
+  };
 
   let requestId: string | null = null;
   let started = false; // setIsQaGenerating(true) 까지 진행했는지 — finally 정리 게이트
@@ -172,20 +212,24 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
       ? st.collection.memberHashes
       : [activeDocHash, ...st.collection.memberHashes];
     const manifest = await window.electronAPI.session.list().catch(() => []);
-    const ready = resolveMembers(
+    // 요약 자격(QA M2): 교차 요약은 순수 텍스트 합성이라 임베딩 동질성(status==='ready')이 아니라
+    // "본문/요약 텍스트가 있는가"가 기준이다. 'missing'(저장 세션 없음)만 제외하고 'no-index'·
+    // 'model-mismatch' 도 포함한다(검색 경로 collectionRagSearch 는 자체적으로 'ready'만 쓰므로 무영향).
+    // 활성 문서는 메모리 본문이 항상 있으므로 인덱스 유무와 무관하게 포함된다('missing' 불가).
+    const eligible = resolveMembers(
       memberHashes,
       { docHash: activeDocHash, model: st.ragIndex.model, dim: st.ragIndex.dimension },
       manifest,
       st.openTabs,
-    ).filter((m) => m.status === 'ready');
-    if (ready.length < 2) {
+    ).filter((m) => m.status !== 'missing');
+    if (eligible.length < 2) {
       useAppStore.getState().setNotice({ message: t('collection.summaryNeedsMembers') });
       return;
     }
 
     // client 를 gather 전에 생성 — 요약 부재 멤버의 인라인 생성에도 동일 인스턴스를 재사용.
     const client = new AiClient(st.settings);
-    const blocks = await gatherMemberBlocks(ready, st.summaryType, client, st.settings);
+    const blocks = await gatherMemberBlocks(eligible, st.summaryType, client, st.settings, activeCtx);
     if (blocks.length < 2) {
       useAppStore.getState().setNotice({ message: t('collection.summaryNeedsMembers') });
       return;
@@ -235,6 +279,7 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
     }
   } finally {
     collectionSummaryInFlight = false;
+    useAppStore.getState().setCollectionBusy(false); // gather/스트리밍 종료 — 입력창·버튼 복구
     // 우리 소유일 때만 전역 생성 상태 해제 — stale 핸들러가 새 세션을 끄지 않도록.
     if (started && useAppStore.getState().qaRequestId === requestId) {
       useAppStore.getState().setIsQaGenerating(false);

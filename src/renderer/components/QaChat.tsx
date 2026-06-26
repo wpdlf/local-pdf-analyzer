@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useQa } from '../lib/use-qa';
+import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
 import { CollectionBar } from './CollectionBar';
@@ -45,6 +46,8 @@ const AssistantMessage = memo(function AssistantMessage({ id, content, degraded,
 
 export function QaChat() {
   const { handleAsk, handleQaAbort, qaMessages, qaStream, isQaGenerating, qaVerifying, ragState } = useQa();
+  // 교차 요약 준비(gather) 중에는 입력 차단 — isQaGenerating 세팅 전 창의 race 방지(QA R).
+  const isCollectionBusy = useAppStore((s) => s.isCollectionBusy);
   const t = useT();
   const [input, setInput] = useState('');
   // M4(UX): 답변별 복사 — 복사 직후 짧게 ✓ 피드백. (요약엔 복사가 있었지만 Q&A 답변엔 없어
@@ -219,6 +222,12 @@ export function QaChat() {
         </div>
       )}
 
+      {isCollectionBusy && (
+        <div className="px-4 py-1 text-xs text-blue-600 dark:text-blue-400">
+          {t('collection.preparing')}
+        </div>
+      )}
+
       {/* 입력 영역 */}
       <div className="flex items-end gap-2 px-4 py-3">
         <textarea
@@ -227,7 +236,7 @@ export function QaChat() {
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           placeholder={t('qa.placeholder')}
-          disabled={isQaGenerating || ragState.isIndexing}
+          disabled={isQaGenerating || ragState.isIndexing || isCollectionBusy}
           rows={1}
           className="flex-1 resize-none rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 placeholder:text-gray-400"
           aria-label={t('qa.inputAria')}
@@ -243,7 +252,7 @@ export function QaChat() {
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!input.trim() || isOverLimit || ragState.isIndexing}
+            disabled={!input.trim() || isOverLimit || ragState.isIndexing || isCollectionBusy}
             className="px-3 py-2 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
             aria-label={t('qa.sendAria')}
           >

@@ -108,15 +108,16 @@ describe('CollectionBar 동작', () => {
     expect(alpha.disabled).toBe(true);
   });
 
-  it('모델 불일치 멤버는 비활성 + 배지 표시', async () => {
+  it('모델 불일치 멤버는 검색 제외 배지 표시 + 요약용 선택 가능(QA M2)', async () => {
     mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), 'other-model', 1536)]);
     useAppStore.setState({ collection: { enabled: true, memberHashes: ['a'.repeat(64), 'b'.repeat(64)] } });
     render(<CollectionBar />);
+    // 배지는 "검색 제외(요약은 가능)" 로 표기 — 검색에선 빠지지만 교차 요약엔 포함된다
     await waitFor(() => expect(screen.getByText(/임베딩 모델 불일치/)).toBeTruthy());
-    // Beta 의 체크박스는 disabled
+    // Beta 체크박스는 더 이상 비활성이 아님 — 요약 멤버로 선택 가능(검색은 자체적으로 ready 만 사용)
     const betaLabel = screen.getByText(/Beta\.pdf/).closest('label')!;
     const betaBox = betaLabel.querySelector('input[type=checkbox]') as HTMLInputElement;
-    expect(betaBox.disabled).toBe(true);
+    expect(betaBox.disabled).toBe(false);
   });
 
   it('컬렉션 저장: 멤버 2개+ 일 때 버튼 노출, 클릭→이름 입력→saveCollection 호출', async () => {

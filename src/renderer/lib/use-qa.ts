@@ -924,7 +924,9 @@ export function useQa() {
     if (!trimmed || trimmed.length > MAX_QUESTION_LENGTH) return;
 
     const state = useAppStore.getState();
-    if (state.isGenerating || state.isQaGenerating || !state.document) return;
+    if (state.isGenerating || state.isQaGenerating || state.isCollectionBusy || !state.document) return;
+    // 교차 요약 준비(gather) 중에는 질문 차단 — isQaGenerating 세팅 전 창에서 끼어들어 qaStream/
+    // qaRequestId 를 클로버링하던 race 방지(QA R: 컬렉션 요약 동시성).
     // RAG 인덱싱 중에는 질문 차단 — 부분 인덱스로 답변해 정확도가 떨어지는 문제 방지
     // (RAG가 unavailable인 경우에는 isIndexing=false이므로 keyword fallback은 허용됨)
     if (state.ragState.isIndexing) return;
