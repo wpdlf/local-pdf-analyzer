@@ -64,6 +64,10 @@ function searchIndexBlob(
   blob: ArrayBuffer,
 ): { text: string; score: number; pageStart?: number }[] {
   if (dim <= 0 || chunkMeta.length === 0) return [];
+  // byteLength 가 4의 배수가 아니면(외부 손상/트렁케이션) new Float32Array 가 RangeError 를
+  // 던진다. 이 함수는 try/catch 밖에서 호출되므로 가드 없이는 손상 문서 하나가 Promise.all
+  // 전체를 reject 시켜 의미검색이 통째로 빈 결과가 된다 → per-doc fail-safe skip 계약 위반.
+  if (blob.byteLength % 4 !== 0) return []; // 비-4배수 손상 → skip
   const floats = new Float32Array(blob);
   if (floats.length !== chunkMeta.length * dim) return []; // 손상/차원 불일치 → skip
   const scored: { text: string; score: number; pageStart?: number }[] = [];

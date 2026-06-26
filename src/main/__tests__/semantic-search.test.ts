@@ -86,6 +86,26 @@ describe('runSemanticSearch (main 코사인)', () => {
     expect(out.results).toHaveLength(0);
   });
 
+  it('손상 블롭(byteLength 비-4배수) → 해당 문서만 skip, 정상 문서는 검색됨(전체 reject 아님)', async () => {
+    // 회귀: new Float32Array(blob) 는 byteLength%4!==0 이면 RangeError 를 던진다.
+    // 가드가 없으면 손상 문서 하나가 Promise.all 전체를 reject 시켜 정상 문서 매칭까지 사라진다.
+    const odd = new ArrayBuffer(6); // 6바이트 = 비-4배수(트렁케이션 손상)
+    store.listSessions.mockResolvedValue([
+      entry({ docHash: 'a'.repeat(64) }),
+      entry({ docHash: 'b'.repeat(64), fileName: 'ok.pdf' }),
+    ]);
+    store.readSession.mockImplementation((_dir: string, hash: string) =>
+      Promise.resolve(
+        hash === 'a'.repeat(64)
+          ? { session: { chunkMeta: [{ text: '손상', index: 0 }] }, blob: odd }
+          : loaded({ vecs: [[1, 0]] }),
+      ),
+    );
+    const out = await runSemanticSearch(DIR, [1, 0], 'nomic', 2);
+    expect(out.results).toHaveLength(1); // 손상 문서 skip, 정상 문서 b 는 살아남음
+    expect(out.results[0]!.fileName).toBe('ok.pdf');
+  });
+
   it('chunkMeta 비배열/손상 → 해당 문서 skip(부분 성공)', async () => {
     store.listSessions.mockResolvedValue([entry({})]);
     store.readSession.mockResolvedValue({ session: { chunkMeta: 'corrupt' }, blob: blob([[1, 0]]) });
