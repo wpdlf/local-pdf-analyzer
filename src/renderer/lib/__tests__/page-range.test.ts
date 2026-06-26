@@ -13,7 +13,8 @@ function doc(over: Partial<PdfDocument> = {}): PdfDocument {
     id: 'd1', fileName: 'a.pdf', filePath: '/a.pdf', pageCount: 5,
     extractedText: 'p1\n\np2\n\np3\n\np4\n\np5',
     pageTexts: ['p1', 'p2', 'p3', 'p4', 'p5'],
-    chapters: [chapter(0, 1, 3), chapter(1, 3, 6)], // C0: 1-2, C1: 3-5 (endPage exclusive)
+    // detectChapters 규약: endPage = 마지막 1-based 페이지(inclusive). C0: 1-2, C1: 3-5
+    chapters: [chapter(0, 1, 2), chapter(1, 3, 5)],
     images: [img(0), img(2), img(4)], // pages 1,3,5
     createdAt: new Date(0),
     ...over,
@@ -39,10 +40,10 @@ describe('slicePdfDocumentByPageRange', () => {
 
   it('chapters 는 겹치는 것만 남기고 경계를 클램프한다', () => {
     const out = slicePdfDocumentByPageRange(doc(), 2, 4);
-    // C0(1-2)·C1(3-5) 둘 다 겹침 → startPage/endPage 클램프
+    // C0(1-2)·C1(3-5) 둘 다 겹침 → startPage/endPage(inclusive) 클램프
     expect(out.chapters).toEqual([
-      { index: 0, title: 'C0', startPage: 2, endPage: 3, text: 'ch0' }, // 1→2, 3→3
-      { index: 1, title: 'C1', startPage: 3, endPage: 5, text: 'ch1' }, // 3, 6→5
+      { index: 0, title: 'C0', startPage: 2, endPage: 2, text: 'ch0' }, // 1→2, 2 유지
+      { index: 1, title: 'C1', startPage: 3, endPage: 4, text: 'ch1' }, // 3 유지, 5→4
     ]);
   });
 
@@ -50,6 +51,17 @@ describe('slicePdfDocumentByPageRange', () => {
     const out = slicePdfDocumentByPageRange(doc(), 4, 5);
     // C0(1-2)는 범위(4-5)와 안 겹침 → 제외, C1(3-5)만
     expect(out.chapters.map((c) => c.index)).toEqual([1]);
+  });
+
+  it('범위 시작 페이지가 챕터의 마지막 페이지와 같으면 그 챕터를 유지한다(경계 겹침)', () => {
+    // 회귀: 이전 `endPage > s` 필터는 endPage 를 exclusive 로 오해해
+    // C0(1-2)의 마지막 페이지 2 가 범위 시작과 같을 때 C0 를 통째로 누락시켰다.
+    const out = slicePdfDocumentByPageRange(doc(), 2, 5);
+    // C0 는 페이지 2(범위 안)를 포함하므로 살아남아야 하고, 단일 페이지 2 로 클램프된다.
+    expect(out.chapters).toEqual([
+      { index: 0, title: 'C0', startPage: 2, endPage: 2, text: 'ch0' },
+      { index: 1, title: 'C1', startPage: 3, endPage: 5, text: 'ch1' },
+    ]);
   });
 
   it('start>end 역입력은 스왑한다', () => {

@@ -10,6 +10,7 @@ import type { PdfDocument } from '../types';
  *
  * chapters 는 범위와 겹치는 것만 남기고 경계를 클램프 — summarizeByChapter 가
  * pageTexts.slice(startPage-1, endPage) 로 재구성하므로 마스킹된 pageTexts 와 정합한다.
+ * (endPage 는 detectChapters 규약상 "마지막 1-based 페이지(inclusive)" 이다.)
  *
  * 순수 함수(부수효과 없음) — page-range.test.ts 가 마스킹/클램프/경계 정규화를 가드한다.
  */
@@ -39,13 +40,19 @@ export function slicePdfDocumentByPageRange(
   // images: pageIndex(0-based) 가 범위 안인 것만
   const images = doc.images.filter((img) => img.pageIndex + 1 >= s && img.pageIndex + 1 <= e);
 
-  // chapters: 겹치는 챕터만(endPage 는 exclusive 경계) 경계 클램프
+  // chapters: 겹치는 챕터만 경계 클램프.
+  // detectChapters 는 endPage 를 "마지막 1-based 페이지(inclusive)" 로 생성하고
+  // summarizeByChapter 도 pageTexts.slice(startPage-1, endPage) 로 그렇게 소비한다.
+  // 따라서 겹침 판정은 inclusive 양끝 비교(startPage<=e && endPage>=s)여야 하고,
+  // 클램프 상한도 e(마지막 inclusive 페이지)여야 한다. (이전 `>s`/`e+1` 은 endPage 를
+  // exclusive 로 오해해, 범위 시작 페이지가 챕터의 마지막 페이지와 같을 때 그 챕터를
+  // 통째로 누락시켰다.)
   const chapters = doc.chapters
-    .filter((ch) => ch.startPage <= e && ch.endPage > s)
+    .filter((ch) => ch.startPage <= e && ch.endPage >= s)
     .map((ch) => ({
       ...ch,
       startPage: Math.max(ch.startPage, s),
-      endPage: Math.min(ch.endPage, e + 1),
+      endPage: Math.min(ch.endPage, e),
     }));
 
   return { ...doc, pageTexts: maskedPageTexts, extractedText, images, chapters };
