@@ -212,6 +212,33 @@ describe('persistCurrentSession (module-3)', () => {
     digestSpy.mockRestore();
   });
 
+  it('E3: 연속 저장 실패가 임계치(3회) 넘으면 1회 notice, 성공 시 리셋', async () => {
+    const doc = makeDoc('e3-doc');
+    useAppStore.setState({ document: doc, summary: null, summaryStream: '', qaMessages: [], ragIndex: new VectorStore(), notice: null });
+    api.session.load.mockResolvedValue(null);
+    // 성공 1회로 카운터/통지 플래그 리셋(이전 테스트 잔여 차단)
+    api.session.save.mockResolvedValue({ ok: true });
+    await persistCurrentSession();
+    expect(useAppStore.getState().notice).toBeNull();
+    // 연속 실패 — 3회째에만 통지
+    api.session.save.mockResolvedValue({ ok: false });
+    await persistCurrentSession();
+    await persistCurrentSession();
+    expect(useAppStore.getState().notice).toBeNull(); // 2회까진 무통지
+    await persistCurrentSession();
+    expect(useAppStore.getState().notice?.message).toBeTruthy(); // 3회째 통지
+    // 성공하면 리셋 — 이후 다시 3회 실패해야 재통지
+    useAppStore.setState({ notice: null });
+    api.session.save.mockResolvedValue({ ok: true });
+    await persistCurrentSession();
+    api.session.save.mockResolvedValue({ ok: false });
+    await persistCurrentSession();
+    await persistCurrentSession();
+    expect(useAppStore.getState().notice).toBeNull(); // 리셋 후 2회 — 아직
+    await persistCurrentSession();
+    expect(useAppStore.getState().notice?.message).toBeTruthy(); // 3회째 재통지
+  });
+
   it('생성 중이면 저장 skip', async () => {
     useAppStore.setState({ document: makeDoc(), isGenerating: true });
     await persistCurrentSession();

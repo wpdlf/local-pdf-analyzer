@@ -379,6 +379,7 @@ export const _translations = {
   'settings.storageLocation': { ko: '위치: {dir}', en: 'Location: {dir}' },
   'settings.clearSessions': { ko: '전체 비우기', en: 'Clear all' },
   'settings.clearConfirm': { ko: '저장된 모든 세션을 삭제할까요? 되돌릴 수 없습니다.', en: 'Delete all saved sessions? This cannot be undone.' },
+  'session.saveFailedNotice': { ko: '세션 저장에 반복 실패했습니다. 저장 공간·권한을 확인해주세요 — 요약·Q&A·검색 인덱스가 디스크에 보존되지 않아 다시 열면 사라집니다.', en: 'Session saving keeps failing. Check disk space/permissions — summaries, Q&A, and the search index are not being persisted and will be lost on reopen.' },
 } as const;
 
 type TranslationKey = keyof typeof _translations;

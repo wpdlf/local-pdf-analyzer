@@ -60,6 +60,16 @@ describe('QaChat', () => {
     expect(screen.getByText('RAG')).toBeTruthy();
   });
 
+  it('a11y L5: 인덱싱 인디케이터가 role="status" + 진행숫자는 aria-hidden(과통지 방지)', () => {
+    Q.state.ragState = { isIndexing: true, progress: { current: 2, total: 5 }, isAvailable: false, model: null, chunkCount: 0 };
+    render(<QaChat />);
+    const status = screen.getByRole('status');
+    expect(status).toBeTruthy();
+    // N/M 진행 숫자는 라이브 영역에서 제외(aria-hidden)되어 라벨만 통지
+    const hidden = status.querySelector('[aria-hidden="true"]:not(svg)');
+    expect(hidden?.textContent).toContain('2/5');
+  });
+
   it('메시지 렌더 — user 평문 / assistant 마크다운', () => {
     Q.state.qaMessages = [
       { id: 'm1', role: 'user', content: '질문입니다' },

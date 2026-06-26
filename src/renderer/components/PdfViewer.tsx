@@ -510,7 +510,13 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
           <OutlineTree nodes={outline} onJump={handleOutlineJump} />
         </nav>
       )}
-      <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-2">
+      <div
+        ref={containerRef}
+        role="region"
+        aria-label={t('pdfviewer.title')}
+        aria-busy={loadState === 'loading'}
+        className="flex-1 min-h-0 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-2"
+      >
         {loadState === 'loading' && (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-500 dark:text-gray-400">
             <svg aria-hidden="true" className="animate-spin h-8 w-8 text-blue-500" viewBox="0 0 24 24" fill="none">

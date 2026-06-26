@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useAppStore } from './store';
+import { t } from './i18n';
 import { hashDocumentText } from './session-hash';
 import { VectorStore } from './vector-store';
 import type { PdfDocument, PersistedSession, Summary, DefaultSummaryType } from '../types';
@@ -152,6 +153,22 @@ export function persistCurrentSession(): Promise<void> {
   return persistChain;
 }
 
+// E3: 세션 자동저장은 best-effort 라 디스크 포화·권한 거부 등으로 영구 실패해도 무음이었다 →
+// 사용자는 정상으로 믿다가 재오픈 시 요약·Q&A·인덱스가 전부 소실(재계산 비용 재발생). 연속 실패가
+// 임계치를 넘으면 1회만 notice 로 통지하고, 한 번이라도 성공하면 카운터·통지 플래그를 리셋한다.
+// (정상 시 무소음 유지 — 디바운스 저장마다 알림이 뜨는 과알림 방지)
+let consecutiveSaveFailures = 0;
+let saveFailureNotified = false;
+const SAVE_FAILURE_NOTICE_THRESHOLD = 3;
+function recordSaveResult(ok: boolean): void {
+  if (ok) { consecutiveSaveFailures = 0; saveFailureNotified = false; return; }
+  consecutiveSaveFailures++;
+  if (consecutiveSaveFailures >= SAVE_FAILURE_NOTICE_THRESHOLD && !saveFailureNotified) {
+    saveFailureNotified = true;
+    useAppStore.getState().setNotice({ message: t('session.saveFailedNotice') });
+  }
+}
+
 async function doPersistCurrentSession(): Promise<void> {
   const s = useAppStore.getState();
   const doc = s.document;
@@ -220,8 +237,12 @@ async function doPersistCurrentSession(): Promise<void> {
       embedDim: session.embedDim,
       chunkCount: session.chunkMeta.length,
     };
-    await api.save({ meta, session, blob: hasIndex ? serialized.buffer : prevIndex?.blob ?? null });
-  } catch { /* best-effort — 저장 실패는 작업을 막지 않음 */ }
+    const result = await api.save({ meta, session, blob: hasIndex ? serialized.buffer : prevIndex?.blob ?? null });
+    recordSaveResult(result?.ok !== false); // {ok:false}=실패, 그 외(true/구형 undefined)=성공 취급
+  } catch {
+    // 저장 실패는 작업을 막지 않음(best-effort) — 단 연속 실패는 집계해 임계 초과 시 1회 통지(E3)
+    recordSaveResult(false);
+  }
 }
 
 /** 요약·Q&A·인덱스 변경이 settle 되면 디바운스로 자동 저장. App 에 1회 마운트. */

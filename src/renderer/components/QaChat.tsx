@@ -130,9 +130,11 @@ export function QaChat() {
           {t('qa.header')}
         </span>
         {ragState.isIndexing ? (
-          <span className="text-xs text-amber-500 flex items-center gap-1">
+          // a11y L5: 인덱싱 상태를 SR 에 polite 통지. 진행 숫자(N/M)는 빠르게 바뀌어 과통지되므로
+          // aria-hidden 으로 라이브 영역에서 제외하고, 안정적인 라벨만 읽히게 한다.
+          <span role="status" className="text-xs text-amber-500 flex items-center gap-1">
             <svg aria-hidden="true" className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-            {t('qa.indexing')}{ragState.progress ? ` ${ragState.progress.current}/${ragState.progress.total}` : '...'}
+            {t('qa.indexing')}<span aria-hidden="true">{ragState.progress ? ` ${ragState.progress.current}/${ragState.progress.total}` : '...'}</span>
           </span>
         ) : ragState.chunkCount > 0 ? (
           <span className="text-xs text-green-500" title={t('qa.chunkTooltip', { model: ragState.model || '?', count: ragState.chunkCount })}>
