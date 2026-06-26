@@ -313,6 +313,25 @@ async function generateOllama(
 
 // ─── Claude ───
 
+/**
+ * Claude/OpenAI 스트리밍 4xx/5xx 바디 기반 공통 에러 매핑 (E1: 이전엔 429/529 등이 generic
+ * "API 요청 실패: HTTP n" 으로 뭉개져 사용자가 "잠시 후 재시도"인지 "쿼터/키 문제"인지 구분
+ * 불가했다). 401 은 checkAuthError 가 선처리하므로 여기선 429(rate limit / 쿼터)·과부하(529/503)만.
+ * 미매칭은 null → 기존 generic 에러 유지(행위 보존).
+ */
+export function mapCloudHttpError(provider: string, status: number, detail: string): Error | null {
+  if (status === 429) {
+    if (/insufficient_quota|exceeded your current quota|billing|quota/i.test(detail)) {
+      return new Error(`${provider} 사용 한도(쿼터)를 초과했습니다. 결제·플랜을 확인한 뒤 다시 시도해주세요.`);
+    }
+    return new Error(`${provider} 요청 한도를 초과했습니다 (rate limit). 잠시 후 다시 시도해주세요.`);
+  }
+  if (status === 529 || status === 503) {
+    return new Error(`${provider} 서버가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요.`);
+  }
+  return null;
+}
+
 async function generateClaude(
   requestId: string,
   prompt: string,
@@ -347,6 +366,7 @@ async function generateClaude(
       return null;
     },
     checkAuthError: (statusCode) => statusCode === 401,
+    mapHttpError: (status, detail) => mapCloudHttpError('Claude', status, detail),
   }, win);
 }
 
@@ -381,6 +401,7 @@ async function generateOpenAi(
     isSSE: true,
     extractToken: (parsed) => parsed.choices?.[0]?.delta?.content || null,
     checkAuthError: (statusCode) => statusCode === 401,
+    mapHttpError: (status, detail) => mapCloudHttpError('OpenAI', status, detail),
   }, win);
 }
 

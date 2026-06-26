@@ -195,6 +195,23 @@ describe('persistCurrentSession (module-3)', () => {
     expect(payload.blob).not.toBeNull();
   });
 
+  it('P1: 같은 문서 반복 저장 시 docHash 를 1회만 계산(캐시)하고 결과는 동일', async () => {
+    // 고유 doc.id — 모듈 캐시가 다른 테스트로 오염되지 않도록.
+    const doc = makeDoc('p1-cache-doc');
+    useAppStore.setState({ document: doc, summary: null, summaryStream: '', qaMessages: [], ragIndex: new VectorStore() });
+    api.session.load.mockResolvedValue(null);
+    const digestSpy = vi.spyOn(crypto.subtle, 'digest');
+    await persistCurrentSession();
+    await persistCurrentSession();
+    // 두 번째 저장은 캐시 히트 → SHA-256 재계산(digest) 없음
+    expect(digestSpy).toHaveBeenCalledTimes(1);
+    const calls = api.session.save.mock.calls as unknown as Array<[{ meta: { docHash: string } }]>;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]![0].meta.docHash).toBe(calls[1]![0].meta.docHash); // 동일 해시
+    expect(calls[0]![0].meta.docHash).toMatch(HEX);
+    digestSpy.mockRestore();
+  });
+
   it('생성 중이면 저장 skip', async () => {
     useAppStore.setState({ document: makeDoc(), isGenerating: true });
     await persistCurrentSession();

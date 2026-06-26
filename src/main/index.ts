@@ -947,10 +947,11 @@ export function registerIpcHandlers(): void {
         await fsp.writeFile(filePath, content, 'utf-8');
         return filePath;
       } catch (err) {
-        // EACCES/ENOSPC/EPERM 등의 fs 에러가 Promise rejection 으로 렌더러에 전파되는 것을
-        // 방지. 기존 계약(성공 시 string, 취소/에러 시 null)을 유지하되 main 로그에 기록.
+        // E2: 계약 = 취소 시 null, 쓰기 실패(EACCES/ENOSPC/EPERM 등) 시 reject. 이전엔 실패도
+        // null 로 삼켜 렌더러가 "취소"와 구분 못 해 무음 실패였다 → throw 로 표면화(렌더러 catch
+        // → "저장 실패" 안내). 원본 fs 에러는 경로를 포함할 수 있어 generic 메시지로 재throw.
         console.error('file:save writeFile failed:', err);
-        return null;
+        throw new Error('file:save failed');
       }
     }
     return null;
@@ -993,8 +994,10 @@ export function registerIpcHandlers(): void {
       await fsp.writeFile(filePath, pdf);
       return filePath;
     } catch (err) {
+      // E2: 취소는 위에서 null 반환(try 진입 전), 여기 도달은 실제 실패(쓰기/printToPDF/타임아웃)
+      // 이므로 throw 로 표면화 — 렌더러 catch 가 "PDF 내보내기 실패" 안내. (이전엔 null 무음)
       console.error('file:export-pdf failed:', err);
-      return null;
+      throw new Error('file:export-pdf failed');
     } finally {
       if (win && !win.isDestroyed()) win.destroy();
       fsp.unlink(tmpHtml).catch(() => { /* 임시 파일 정리 실패 무시 */ });

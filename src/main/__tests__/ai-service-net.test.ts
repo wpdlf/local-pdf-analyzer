@@ -26,6 +26,7 @@ import {
   __activeRequestCount,
   retryOn429,
   parseRetryAfterMs,
+  mapCloudHttpError,
 } from '../ai-service';
 
 function makeReq() {
@@ -372,6 +373,31 @@ describe('parseRetryAfterMs (R45)', () => {
     ['음수', '-5'],
   ])('파싱 불가: %s → undefined', (_l, h) => {
     expect(parseRetryAfterMs(h as never)).toBeUndefined();
+  });
+});
+
+// E1: Claude/OpenAI 4xx/5xx 바디 기반 에러 매핑 (429 rate limit / 쿼터, 529·503 과부하)
+describe('mapCloudHttpError (E1)', () => {
+  it('429 일반 → rate limit 안내(provider 명 포함)', () => {
+    const e = mapCloudHttpError('Claude', 429, 'Rate limited');
+    expect(e?.message).toContain('Claude');
+    expect(e?.message).toContain('rate limit');
+  });
+
+  it('429 + insufficient_quota → 쿼터 안내', () => {
+    const e = mapCloudHttpError('OpenAI', 429, 'You exceeded your current quota (insufficient_quota)');
+    expect(e?.message).toContain('OpenAI');
+    expect(e?.message).toContain('쿼터');
+  });
+
+  it('529/503 → 과부하 안내', () => {
+    expect(mapCloudHttpError('Claude', 529, 'overloaded_error')?.message).toContain('과부하');
+    expect(mapCloudHttpError('OpenAI', 503, 'Service Unavailable')?.message).toContain('과부하');
+  });
+
+  it('그 외 상태(400/500 등)는 null → 기존 generic 에러 유지', () => {
+    expect(mapCloudHttpError('Claude', 400, 'bad request')).toBeNull();
+    expect(mapCloudHttpError('OpenAI', 500, 'server error')).toBeNull();
   });
 });
 

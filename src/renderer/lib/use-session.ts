@@ -129,6 +129,23 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
 // getState() 를 읽어 last-write-wins 가 보장된다.
 let persistChain: Promise<void> = Promise.resolve();
 
+// 성능(P1): docHash 는 로드된 문서(doc.id)에 대해 불변(extractedText 의 SHA-256)인데, 자동저장이
+// Q&A 턴마다 호출돼 멀티MB 본문을 매번 재해시했다. doc.id 기준 메모로 재계산을 제거한다.
+// 탭 전환 왕복도 캐시되도록 작은 Map(상한 32, FIFO evict — 열린 탭 수보다 넉넉)을 둔다.
+const docHashCache = new Map<string, string>();
+const DOC_HASH_CACHE_MAX = 32;
+async function getCachedDocHash(docId: string, extractedText: string): Promise<string> {
+  const cached = docHashCache.get(docId);
+  if (cached !== undefined) return cached;
+  const hash = await hashDocumentText(extractedText);
+  docHashCache.set(docId, hash);
+  if (docHashCache.size > DOC_HASH_CACHE_MAX) {
+    const oldest = docHashCache.keys().next().value;
+    if (oldest !== undefined) docHashCache.delete(oldest);
+  }
+  return hash;
+}
+
 /** 현재 store 상태를 세션으로 저장 (best-effort, 직렬화). 생성 중/복원 대기 중에는 skip. */
 export function persistCurrentSession(): Promise<void> {
   persistChain = persistChain.then(doPersistCurrentSession, doPersistCurrentSession);
@@ -148,7 +165,7 @@ async function doPersistCurrentSession(): Promise<void> {
   // 저장하고 인덱스 필드/블롭은 기존 디스크 세션의 것을 보존한다.
   const indexing = s.ragState.isIndexing;
   try {
-    const docHash = await hashDocumentText(doc.extractedText);
+    const docHash = await getCachedDocHash(doc.id, doc.extractedText);
     if (useAppStore.getState().document?.id !== doc.id) return; // 레이스
     const serialized = s.ragIndex.serialize();
     const hasIndex = !indexing && serialized.chunkMeta.length > 0;

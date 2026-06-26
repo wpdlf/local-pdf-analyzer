@@ -279,10 +279,15 @@ describe('file:save (확장자 allowlist + 크기 캡)', () => {
     expect(H.fsp.writeFile).toHaveBeenCalledWith('/tmp/out.md', 'hello', 'utf-8');
   });
 
-  it('writeFile 실패 → null (rejection 전파 안 함)', async () => {
+  it('writeFile 실패 → reject (E2: 취소 null 과 구분해 렌더러가 에러 표면화)', async () => {
     H.dialog.showSaveDialog.mockResolvedValue({ filePath: '/tmp/out.txt' });
     H.fsp.writeFile.mockRejectedValue(new Error('EACCES'));
-    expect(await invoke('file:save', 'hello', 'out.txt')).toBeNull();
+    await expect(invoke('file:save', 'hello', 'out.txt')).rejects.toThrow('file:save failed');
+  });
+
+  it('취소(다이얼로그 경로 없음) → null (에러 아님)', async () => {
+    H.dialog.showSaveDialog.mockResolvedValue({ filePath: undefined });
+    expect(await invoke('file:save', 'hello', 'out.md')).toBeNull();
   });
 });
 
