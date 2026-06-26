@@ -1,5 +1,4 @@
-import * as pdfjsLib from 'pdfjs-dist';
-import { OPS } from 'pdfjs-dist';
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { PdfDocument, Chapter, PageImage, AppError } from '../types';
 import { useAppStore } from './store';
 import { t } from './i18n';
@@ -10,8 +9,21 @@ import { MAX_PDF_SIZE_BYTES } from '../../shared/constants';
 // 패키지된 Electron(ASAR)에서 worker 로드 실패 위험이 있음. ?url은 명시적 에셋 처리.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-// PDF.js worker 설정
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+// pdfjs-dist 지연 로딩(성능): 콜드스타트 eager 번들에서 pdfjs(메인스레드 API ~425KB raw)를
+// 제거 — 실제로 PDF 를 파싱/렌더할 때만 동적 로드한다. 워커 경로는 최초 로드 시 1회 설정
+// (idempotent). PdfViewer 도 이 로더를 재사용해 워커 설정 단일 출처를 유지한다.
+// (worker 파일 자체는 ?url 정적 자산이라 별도 emit — 본 분할과 무관.)
+type PdfjsModule = typeof import('pdfjs-dist');
+let pdfjsPromise: Promise<PdfjsModule> | null = null;
+export function loadPdfjs(): Promise<PdfjsModule> {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import('pdfjs-dist').then((mod) => {
+      mod.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+      return mod;
+    });
+  }
+  return pdfjsPromise;
+}
 
 export interface ParsePdfOptions {
   enableOcrFallback?: boolean;
@@ -55,9 +67,10 @@ export async function parsePdf(
   const signal = options?.signal;
   throwIfAborted(signal);
 
+  const pdfjs = await loadPdfjs();
   // pdfjs 6.x: PDFDocumentProxy.destroy() 가 제거되어 문서 파기는 loadingTask 를 통해야 한다.
   // (loadingTask.destroy() 가 워커 연결 + 문서를 함께 해제) → loadingTask 참조를 보관.
-  const loadingTask = pdfjsLib.getDocument({
+  const loadingTask = pdfjs.getDocument({
     data,
     cMapUrl: './cmaps/',
     cMapPacked: true,
@@ -229,7 +242,7 @@ export async function parsePdf(
 const MAX_OCR_PAGE_EDGE = 3000;
 
 async function renderPageToImage(
-  pdf: pdfjsLib.PDFDocumentProxy,
+  pdf: PDFDocumentProxy,
   pageNum: number,
   scale = 2.0,
 ): Promise<string> {
@@ -269,7 +282,7 @@ async function renderPageToImage(
 }
 
 async function ocrFallback(
-  pdf: pdfjsLib.PDFDocumentProxy,
+  pdf: PDFDocumentProxy,
   pageCount: number,
   onProgress: (current: number, total: number) => void,
   signal?: AbortSignal,
@@ -430,9 +443,10 @@ const MAX_IMAGE_PIXELS = 4_000_000; // 4M 픽셀 초과 시 스킵 (OOM 방지)
 const MAX_IMAGES_PER_PAGE = 10;
 
 async function extractPageImages(
-  page: pdfjsLib.PDFPageProxy,
+  page: PDFPageProxy,
   pageIndex: number,
 ): Promise<PageImage[]> {
+  const { OPS } = await loadPdfjs(); // 메모이즈됨 — parsePdf 가 이미 로드해 즉시 반환
   // getOperatorList 는 pdfjs 내부 content stream 파싱을 수행 — 손상된 PDF 에서 hang 가능.
   // 5초 타임아웃을 Promise.race 로 걸어 뒤의 이미지 페치 경로에서 페이지를 빈 배열로 스킵.
   // R30 (v0.18.17): timeoutId 를 finally 에서 명시적으로 clear — 이전엔 race 가 빠르게

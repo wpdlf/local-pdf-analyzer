@@ -72,12 +72,12 @@ test('실경로 두 문서 → 탭 전환 (file:dropped IPC)', async () => {
     await sendDrop(pathB, bufB.toString('base64'));
     await expect(page.getByText('섹션 2. 게이트웨이 beta.pdf (1p)')).toBeVisible({ timeout: 20000 });
 
-    const tablist = page.getByRole('tablist');
-    await expect(tablist.getByRole('tab')).toHaveCount(2);
+    const tablist = page.getByRole('navigation', { name: '열린 문서' });
+    await expect(tablist.getByRole('listitem')).toHaveCount(2);
     // alpha 탭 클릭 → 전환 (완전 복원 — 뷰어 포함)
-    await tablist.getByRole('tab').filter({ hasText: 'alpha.pdf' }).getByTitle(/alpha\.pdf/).click();
+    await tablist.getByRole('listitem').filter({ hasText: 'alpha.pdf' }).getByTitle(/alpha\.pdf/).click();
     await expect(page.getByText('섹션 0. 소개 alpha.pdf (1p)')).toBeVisible({ timeout: 20000 });
-    await expect(tablist.getByRole('tab', { selected: true })).toContainText('alpha.pdf');
+    await expect(tablist.locator('[aria-current="page"]')).toContainText('alpha.pdf');
 
     expect(pageErrors, `렌더러 페이지 에러: ${pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
 
@@ -90,11 +90,11 @@ test('실경로 두 문서 → 탭 전환 (file:dropped IPC)', async () => {
     writeFileSync(pathC, bufC);
     await sendDrop(pathC, bufC.toString('base64'));
     await expect(page.getByText('감마 자료 gamma.pdf (1p)')).toBeVisible({ timeout: 20000 });
-    await expect(tablist.getByRole('tab')).toHaveCount(3);
+    await expect(tablist.getByRole('listitem')).toHaveCount(3);
     // beta 탭으로 전환
-    await tablist.getByRole('tab').filter({ hasText: 'beta.pdf' }).getByTitle(/beta\.pdf/).click();
+    await tablist.getByRole('listitem').filter({ hasText: 'beta.pdf' }).getByTitle(/beta\.pdf/).click();
     await expect(page.getByText('섹션 2. 게이트웨이 beta.pdf (1p)')).toBeVisible({ timeout: 20000 });
-    await expect(tablist.getByRole('tab', { selected: true })).toContainText('beta.pdf');
+    await expect(tablist.locator('[aria-current="page"]')).toContainText('beta.pdf');
 
     expect(pageErrors, `렌더러 페이지 에러: ${pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
   } finally {
@@ -152,20 +152,20 @@ test('실제 Ollama 인덱싱 중 — 문서 → + → 문서 → 탭 전환 (�
     // 문서 1 업로드 → 파싱 완료 직후(인덱싱 진행 중) 곧바로 + 클릭 — 사용자 타이밍
     await sendDrop(pathA, bufA.toString('base64'));
     await expect(page.getByText('first.pdf (40p)')).toBeVisible({ timeout: 30000 });
-    const tablist = page.getByRole('tablist');
+    const tablist = page.getByRole('navigation', { name: '열린 문서' });
     await page.getByRole('button', { name: '새 문서 열기' }).click();
     await expect(page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible();
 
     // 문서 2 업로드 → 파싱 완료 직후(인덱싱 진행 중) 첫 탭으로 전환 — 사용자 타이밍
     await sendDrop(pathB, bufB.toString('base64'));
     await expect(page.getByText('second.pdf (40p)')).toBeVisible({ timeout: 30000 });
-    await expect(tablist.getByRole('tab')).toHaveCount(2);
-    await tablist.getByRole('tab').filter({ hasText: 'first.pdf' }).getByTitle(/first\.pdf/).click();
+    await expect(tablist.getByRole('listitem')).toHaveCount(2);
+    await tablist.getByRole('listitem').filter({ hasText: 'first.pdf' }).getByTitle(/first\.pdf/).click();
     await expect(page.getByText('first.pdf (40p)')).toBeVisible({ timeout: 20000 });
-    await expect(tablist.getByRole('tab', { selected: true })).toContainText('first.pdf');
+    await expect(tablist.locator('[aria-current="page"]')).toContainText('first.pdf');
 
     // 역방향 전환도 검증 (인덱싱·복원 흐름이 교차하는 구간)
-    await tablist.getByRole('tab').filter({ hasText: 'second.pdf' }).getByTitle(/second\.pdf/).click();
+    await tablist.getByRole('listitem').filter({ hasText: 'second.pdf' }).getByTitle(/second\.pdf/).click();
     await expect(page.getByText('second.pdf (40p)')).toBeVisible({ timeout: 20000 });
 
     expect(pageErrors, `렌더러 페이지 에러: ${pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);

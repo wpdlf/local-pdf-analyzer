@@ -102,20 +102,20 @@ test('PDF 드롭 → 파싱 → 문서 화면 전환 (pdfjs worker/cmaps 번들 
       window.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
     }, secondBase64);
     await expect(r.page.getByText('second.pdf (1p)')).toBeVisible({ timeout: 30000 });
-    const tablist = r.page.getByRole('tablist');
-    await expect(tablist.getByRole('tab')).toHaveCount(2);
-    await expect(tablist.getByRole('tab', { selected: true })).toContainText('second.pdf');
+    const tablist = r.page.getByRole('navigation', { name: '열린 문서' });
+    await expect(tablist.getByRole('listitem')).toHaveCount(2);
+    await expect(tablist.locator('[aria-current="page"]')).toContainText('second.pdf');
 
     // 탭 전환 — 합성 드롭은 실경로가 없어 파일 재읽기가 불가능한 최악 케이스:
     // 영속 세션 fallback 으로 분석 상태가 복원되어 전환이 성공해야 한다 (사용자 버그 재현 가드)
-    await tablist.getByRole('tab').filter({ hasText: 'sample.pdf' }).getByTitle(/sample\.pdf/).click();
+    await tablist.getByRole('listitem').filter({ hasText: 'sample.pdf' }).getByTitle(/sample\.pdf/).click();
     await expect(r.page.getByText('sample.pdf (1p)')).toBeVisible({ timeout: 20000 });
-    await expect(tablist.getByRole('tab', { selected: true })).toContainText('sample.pdf');
+    await expect(tablist.locator('[aria-current="page"]')).toContainText('sample.pdf');
 
     // 새 탭(+) → 업로드 화면 복귀하되 탭 2개 유지
     await r.page.getByRole('button', { name: '새 문서 열기' }).click();
     await expect(r.page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible();
-    await expect(tablist.getByRole('tab')).toHaveCount(2);
+    await expect(tablist.getByRole('listitem')).toHaveCount(2);
 
     expect(r.pageErrors, `렌더러 페이지 에러: ${r.pageErrors.map((e) => e.message).join('; ')}`)
       .toHaveLength(0);

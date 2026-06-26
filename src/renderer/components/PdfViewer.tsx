@@ -1,17 +1,15 @@
 // Design Ref: §4.3 PdfViewerProps, §5.1 Screen Layout, §6.2 Degraded Modes
 // Plan SC: SC-03 인용 클릭 → 정확한 페이지 스크롤
 import { useEffect, useRef, useState } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
+import type { PDFDocumentProxy, PDFDocumentLoadingTask } from 'pdfjs-dist';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
+import { loadPdfjs } from '../lib/pdf-parser';
 import { extractOutline, type OutlineNode } from '../lib/pdf-outline';
 
-// pdfjs-dist worker 는 이미 pdf-parser.ts 에서 전역 설정됨 (재설정 불필요).
-// 이 모듈이 먼저 import 되면 worker 가 설정 안 된 상태일 수 있어 safeguard.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-if (!(pdfjsLib.GlobalWorkerOptions.workerSrc as any)) {
-  console.warn('[PdfViewer] pdfjs worker not set before mount — pdf-parser 가 먼저 import 되어야 함');
-}
+// pdfjs-dist 는 지연 로딩(성능): 정적 import 를 제거해 콜드스타트 eager 번들에서 제외하고,
+// 문서 로드 시 pdf-parser 의 loadPdfjs() 로 동적 로드한다(워커 설정 단일 출처). 로더가 워커를
+// idempotent 하게 설정하므로 이전의 "worker 미설정" safeguard 경고는 불필요해 제거.
 
 // 모듈 레벨 PDF 문서 캐시 (DR-04).
 // PdfViewer 언마운트 시(citationTarget=null) 파싱된 PDFDocumentProxy 를 버리면
@@ -22,8 +20,8 @@ if (!(pdfjsLib.GlobalWorkerOptions.workerSrc as any)) {
 // 워커/문서를 함께 끊으려면 loadingTask 참조도 함께 보관해야 한다.
 let cachedDoc: {
   bytes: Uint8Array;
-  doc: pdfjsLib.PDFDocumentProxy;
-  loadingTask: pdfjsLib.PDFDocumentLoadingTask;
+  doc: PDFDocumentProxy;
+  loadingTask: PDFDocumentLoadingTask;
 } | null = null;
 
 // store.pdfBytes 가 null 로 전환되면(resetSummaryState / 문서 close) 캐시된 doc 즉시 해제.
@@ -81,7 +79,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
   useEffect(() => { tRef.current = t; }, [t]);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
+  const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
   const [totalPages, setTotalPages] = useState<number | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'loaded' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -108,7 +106,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
     let cancelled = false;
     // QA M1: in-flight getDocument 를 언마운트 시 즉시 취소할 수 있도록 effect 스코프로 hoist.
     // IIFE 내부 const 였을 때는 cleanup 에서 닿지 못해 워커 작업이 promise resolve 까지 잔존했다.
-    let loadingTask: ReturnType<typeof pdfjsLib.getDocument> | null = null;
+    let loadingTask: PDFDocumentLoadingTask | null = null;
 
     // v0.18.5 H1 fix: pdfBytes 가 바뀌면(문서 전환) 이전 문서가 렌더했던 페이지 번호가
     // renderedPagesRef 에 잔존한다. 새 doc 의 targetPage 가 같은 번호로 들어오면
@@ -152,7 +150,9 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
         // store.pdfBytes (원본) 가 detach 되면 이후 재마운트가 실패한다.
         // 매 마운트마다 store 바이트를 보존할 fresh copy 를 1회만 할당한다.
         const copy = pdfBytes.slice();
-        loadingTask = pdfjsLib.getDocument({ data: copy });
+        const pdfjs = await loadPdfjs();
+        if (cancelled) return; // 동적 로드 중 언마운트 — getDocument 진입 전 조기 종료
+        loadingTask = pdfjs.getDocument({ data: copy });
         const doc = await loadingTask.promise;
         if (cancelled) {
           // 파싱 중 언마운트 — 캐시하지 않고 파기 (pdfjs 6.x: loadingTask 로 파기)

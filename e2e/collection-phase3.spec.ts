@@ -74,8 +74,8 @@ test('컬렉션 Phase 3 — 통합 요약 + 저장→재오픈 (로컬 전용)',
     await loadAndSummarize(pathB, bufB.toString('base64'), /discovery\.pdf \(3p\)/);
 
     // 2) 문서 A 로 전환 + 컬렉션 모드 ON → 2개 ready
-    const tablist = page.getByRole('tablist');
-    await tablist.getByRole('tab').filter({ hasText: 'gateway.pdf' }).getByTitle(/gateway\.pdf/).click();
+    const tablist = page.getByRole('navigation', { name: '열린 문서' });
+    await tablist.getByRole('listitem').filter({ hasText: 'gateway.pdf' }).getByTitle(/gateway\.pdf/).click();
     await expect(page.getByPlaceholder(/질문을 입력하세요/)).toBeVisible({ timeout: 60000 });
     await page.getByText('여러 문서에 걸쳐 질문').click();
     await expect(page.getByText('2개 문서에서 검색')).toBeVisible({ timeout: 20000 });
@@ -95,17 +95,17 @@ test('컬렉션 Phase 3 — 통합 요약 + 저장→재오픈 (로컬 전용)',
 
     // 5) 전체 탭 닫기 → 업로드 화면. 활성 탭 닫기는 이웃 복원(세션-우선)이 비동기라,
     //    매 클릭 후 탭 수 감소를 기다린 뒤 다음 탭을 닫는다(경쟁 방지).
-    while ((await tablist.getByRole('tab').count()) > 0) {
-      const before = await tablist.getByRole('tab').count();
+    while ((await tablist.getByRole('listitem').count()) > 0) {
+      const before = await tablist.getByRole('listitem').count();
       await tablist.getByRole('button', { name: /탭 닫기/ }).first().click();
-      await expect.poll(() => tablist.getByRole('tab').count(), { timeout: 30000 }).toBeLessThan(before);
+      await expect.poll(() => tablist.getByRole('listitem').count(), { timeout: 30000 }).toBeLessThan(before);
     }
     await expect(page.getByText('PDF 파일을 여기에 드래그하거나')).toBeVisible({ timeout: 30000 });
 
     // 6) 저장된 컬렉션 목록에서 재오픈 → 탭 2개 복원
     await expect(page.getByText('MSA 강의 묶음')).toBeVisible({ timeout: 10000 });
     await page.getByRole('button', { name: '열기' }).first().click();
-    await expect(tablist.getByRole('tab')).toHaveCount(2, { timeout: 30000 });
+    await expect(tablist.getByRole('listitem')).toHaveCount(2, { timeout: 30000 });
 
     expect(pageErrors, `렌더러 페이지 에러: ${pageErrors.map((e) => e.message).join('; ')}`).toHaveLength(0);
   } finally {
