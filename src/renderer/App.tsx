@@ -34,7 +34,12 @@ export default function App() {
   const setProgress = useAppStore((s) => s.setProgress);
   const clearStream = useAppStore((s) => s.clearStream);
   const setSummary = useAppStore((s) => s.setSummary);
-  const settings = useAppStore((s) => s.settings);
+  // 필드별 구독 — settings 전체를 구독하면 무관한 설정 변경(OCR/요약옵션/임베딩 등)에도 새
+  // settings 객체 참조로 App(루트) 전체가 리렌더된다. App 이 실제 쓰는 4개만 개별 구독한다.
+  const theme = useAppStore((s) => s.settings.theme);
+  const uiLanguage = useAppStore((s) => s.settings.uiLanguage);
+  const provider = useAppStore((s) => s.settings.provider);
+  const model = useAppStore((s) => s.settings.model);
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
   const error = useAppStore((s) => s.error);
   const setError = useAppStore((s) => s.setError);
@@ -318,16 +323,16 @@ export default function App() {
 
   // 테마 적용
   useEffect(() => {
-    return applyTheme(settings.theme);
-  }, [settings.theme]);
+    return applyTheme(theme);
+  }, [theme]);
 
   // <html lang>과 document.title을 UI 언어에 동기화.
   // 접근성(스크린 리더), 브라우저 번역/맞춤법 검사, 창 제목/Alt-Tab 일관성 확보.
   // App.tsx 내에서 store의 `document`가 전역 document를 섀도잉하므로 window.document 사용.
   useEffect(() => {
-    window.document.documentElement.lang = settings.uiLanguage;
+    window.document.documentElement.lang = uiLanguage;
     window.document.title = tr('app.title');
-  }, [settings.uiLanguage, tr]);
+  }, [uiLanguage, tr]);
 
   // 한국어 비율은 문서별로 1회만 계산 — 모델 스왑 시 재계산 방지 (3000자 샘플은 저렴하지만
   // 이 값이 effect deps 에 포함되면 불필요한 재실행이 발생)
@@ -340,7 +345,7 @@ export default function App() {
 
   // PDF 업로드 후 한국어 감지 → 모델 추천
   useEffect(() => {
-    if (!document || settings.provider !== 'ollama') {
+    if (!document || provider !== 'ollama') {
       setModelHint(null);
       return;
     }
@@ -348,7 +353,7 @@ export default function App() {
     if (koreanRatio > 0.15) {
       // split(':')[0] 은 input 이 빈 문자열이어도 빈 문자열 한 개 원소를 가진 배열을 반환하지만,
       // noUncheckedIndexedAccess 는 인덱싱 후 string|undefined 로 본다. fallback ''.
-      const currentModel = settings.model.split(':')[0] ?? '';
+      const currentModel = model.split(':')[0] ?? '';
       // R43 F1 동류: startsWith 는 'gemma3n' 이 'gemma3' 추천에 오매칭 — 베이스명 정확 일치로 판정.
       // R45: 추천 목록이 태그 포함 항목('qwen3.5:4b')을 가지므로 양쪽 모두 베이스명으로 비교.
       const isKoreanModel = KOREAN_RECOMMENDED_MODELS.some(
@@ -357,10 +362,10 @@ export default function App() {
       // M1(UX): dismiss 영속화 — 이전엔 deps 변경으로 effect 가 재실행되면 닫은 배너가 다시
       // 떠서 의도적으로 비한글 모델을 고른 사용자에게 반복 노출됐다. (document, model) 조합별로
       // 닫음을 기록해 같은 조합에선 재출현하지 않도록 한다(모델/문서 변경 시엔 다시 평가).
-      const hintKey = `${document.id}:${settings.model}`;
+      const hintKey = `${document.id}:${model}`;
       if (!isKoreanModel && !dismissedModelHintRef.current.has(hintKey)) {
         setModelHint(
-          tr('app.modelHint', { model: settings.model, recommended: KOREAN_RECOMMENDED_MODELS.join(', ') }),
+          tr('app.modelHint', { model, recommended: KOREAN_RECOMMENDED_MODELS.join(', ') }),
         );
       } else {
         setModelHint(null);
@@ -368,7 +373,7 @@ export default function App() {
     } else {
       setModelHint(null);
     }
-  }, [document, settings.provider, settings.model, settings.uiLanguage, tr, koreanRatio]);
+  }, [document, provider, model, uiLanguage, tr, koreanRatio]);
 
   // a11y M5: 설정/설치 뷰로 전환 시 포커스를 새 뷰 컨테이너로 이동(키보드/SR 사용자가 body 에
   // 표류하지 않도록), 메인으로 복귀 시 트리거(⚙️)로 포커스 반환.
@@ -385,7 +390,7 @@ export default function App() {
   // H3(UX): 요약 시작 전 백엔드 사전 체크 — ollama provider 인데 미실행이거나 설치된 모델이
   // 없으면 요약 버튼을 비활성화하고 "설정 열기" 경로를 제시한다. 클릭→실패→재설정의 헛수고를 방지.
   // (claude/openai/gemini 키 확인은 비동기라 여기선 제외 — 클릭 시점 에러가 backstop)
-  const ollamaNotReady = settings.provider === 'ollama'
+  const ollamaNotReady = provider === 'ollama'
     && (!ollamaStatus.running || ollamaStatus.models.length === 0);
 
   if (view === 'setup') {
@@ -502,7 +507,7 @@ export default function App() {
             <button
               onClick={() => {
                 // M1: 닫음을 (document, model) 조합으로 기록해 같은 조합 재출현 차단.
-                if (document) dismissedModelHintRef.current.add(`${document.id}:${settings.model}`);
+                if (document) dismissedModelHintRef.current.add(`${document.id}:${model}`);
                 setModelHint(null);
               }}
               className="text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 ml-2 shrink-0"
