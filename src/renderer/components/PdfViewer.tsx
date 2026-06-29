@@ -65,6 +65,11 @@ interface PdfViewerProps {
 
 const MAX_RENDER_SCALE = 2.0; // 고해상도 디스플레이 대응 상한
 const MIN_RENDER_SCALE = 0.6; // 너무 작은 패널에서도 가독성 유지
+// 렌더 lookahead 윈도우: 뷰포트 위/아래 1배 분 미리 렌더.
+const RENDER_ROOT_MARGIN = '100% 0px';
+// canvas 유지(LRU) 윈도우: 뷰포트 위/아래 2배 분까지 canvas 보존, 그 밖은 placeholder 로 해제.
+// 렌더 윈도우(±1)보다 1뷰포트 넓어 경계 근처 스크롤 지터에서 렌더↔해제 thrash 를 막는 히스테리시스.
+const EVICT_ROOT_MARGIN = '200% 0px';
 
 /**
  * PdfViewer — pdfjs canvas 기반 페이지 렌더링.
@@ -77,6 +82,11 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
   // 렌더 효과에서는 ref 로만 참조해 언어 변경이 재렌더를 트리거하지 않도록 한다.
   const tRef = useRef(t);
   useEffect(() => { tRef.current = t; }, [t]);
+  // 활성 인용 대상 페이지 — LRU 해제에서 제외하기 위한 ref(렌더 effect 가 targetPage 를 의존성에
+  // 두지 않으므로 closure stale 회피). 먼 페이지로 점프할 때 smooth 스크롤 도중 막 렌더한
+  // 대상 canvas 가 (아직 윈도우 밖이라) 해제되어 도착 시 빈 화면이 되는 레이스를 막는다.
+  const targetPageRef = useRef(targetPage);
+  useEffect(() => { targetPageRef.current = targetPage; }, [targetPage]);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
@@ -205,13 +215,15 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
     };
   }, []);
 
-  // 2. 페이지 canvas — on-demand 렌더 (v0.18.16 가상화).
+  // 2. 페이지 canvas — on-demand 렌더 + LRU 윈도잉 (v0.18.16 가상화 → 메모리 H1 윈도잉).
   //    이전 구현은 마운트 즉시 모든 페이지를 순차 렌더해 500p 문서에서 메모리 피크가
   //    수백 MB 까지 치솟았다. 이제 IntersectionObserver 로 뷰포트(+ 위/아래 1배 분) 안에
-  //    들어오는 페이지만 렌더 큐에 등록하고 worker 가 한 번에 한 페이지씩 처리.
-  //    이미 렌더된 페이지는 (스크롤백 시 깜빡임 방지를 위해) 유지하므로 "lazy render"
-  //    수준이며, 메모리는 방문 페이지 수에 비례. 사용자는 보통 인용 페이지 ±수 페이지만
-  //    보므로 평균 메모리/렌더 시간 모두 큰 폭으로 감소.
+  //    들어오는 페이지만 렌더 큐에 등록하고 worker 가 한 번에 한 페이지씩 처리한다.
+  //    추가로(메모리 H1): 한 번 렌더된 canvas 를 영구 보존하면 500p 정독 시 방문 페이지가
+  //    전부 쌓여 ~1GB(2MB/page)까지 누적됐다. 이제 별도 eviction IO(±2 뷰포트)로 윈도우를
+  //    벗어난 페이지의 canvas 를 placeholder 로 되돌려, 상주 메모리를 방문 페이지 전체가
+  //    아닌 "현재 윈도우 크기"(페이지 수와 무관, 뷰포트 면적 × 상수)로 제한한다. 스크롤백
+  //    시엔 렌더 IO 가 재진입을 감지해 다시 그리며, 높이 보존으로 스크롤 위치 점프는 없다.
   useEffect(() => {
     if (loadState !== 'loaded' || !pdfDocRef.current || !totalPages) return;
     const container = containerRef.current;
@@ -338,11 +350,33 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
       pumping = false;
     };
 
+    // ─── LRU 해제: 윈도우 밖 페이지 canvas → placeholder 복귀 (메모리 H1) ───
+    // 높이를 minHeight 로 보존해 (특히 뷰포트 위쪽 페이지 해제 시) 스크롤 위치가 튀지 않게 한다.
+    // renderedPagesRef 에서 제거하므로, 스크롤백으로 다시 윈도우에 들어오면 렌더 IO 가
+    // 미렌더 페이지로 보고 재 enqueue → 재렌더한다.
+    const evictPage = (pageNum: number): void => {
+      if (pageNum === targetPageRef.current) return; // 활성 인용 대상은 점프 레이스 보호로 유지
+      const wrapper = pageRefs.current[pageNum - 1];
+      if (!wrapper) return;
+      const canvas = wrapper.querySelector('canvas');
+      if (!canvas) return; // 이미 placeholder — 해제할 것 없음
+      const keepHeight = wrapper.style.height || `${canvas.height}px`;
+      const placeholder = document.createElement('span');
+      placeholder.className = 'text-xs text-gray-500';
+      placeholder.textContent = tRef.current('pdfviewer.pageOf', { current: pageNum, total: totalPages });
+      wrapper.replaceChildren(placeholder);
+      wrapper.style.width = '';
+      wrapper.style.height = '';
+      wrapper.style.minHeight = keepHeight; // 슬롯 높이 유지 → 레이아웃/스크롤 점프 방지
+      renderedPagesRef.current.delete(pageNum);
+    };
+
     // ─── IntersectionObserver 기반 가시성 트리거 ───
     // rootMargin '100% 0px' = 위/아래로 컨테이너 높이 1배 분 미리 감지 → 스크롤 도중에도
     // 다음 페이지가 부드럽게 준비되도록 lookahead. typeof 가드 = jsdom 미설치 노드 환경
     // (또는 일부 vitest 셋업) 대비 안전망 — 환경에 IO 가 없으면 fallback 으로 전체 렌더.
     let observer: IntersectionObserver | null = null;
+    let evictObserver: IntersectionObserver | null = null;
     if (typeof IntersectionObserver !== 'undefined') {
       observer = new IntersectionObserver(
         (entries) => {
@@ -354,13 +388,27 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
             enqueue(idx + 1);
           }
         },
-        { root: container, rootMargin: '100% 0px', threshold: 0 },
+        { root: container, rootMargin: RENDER_ROOT_MARGIN, threshold: 0 },
+      );
+      // 해제 전용 옵저버 — 렌더보다 넓은 ±2 뷰포트. 페이지가 이 윈도우를 벗어나면(교차 해제)
+      // canvas 를 placeholder 로 되돌린다. 렌더(±1)와 1뷰포트 간격이 히스테리시스로 작동.
+      evictObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) continue; // 윈도우 안 — 유지
+            const idx = Number((entry.target as HTMLElement).dataset.pageIndex);
+            if (!Number.isFinite(idx)) continue;
+            evictPage(idx + 1);
+          }
+        },
+        { root: container, rootMargin: EVICT_ROOT_MARGIN, threshold: 0 },
       );
       for (let i = 0; i < totalPages; i++) {
         const wrapper = pageRefs.current[i];
         if (!wrapper) continue;
         wrapper.dataset.pageIndex = String(i);
         observer.observe(wrapper);
+        evictObserver.observe(wrapper);
       }
       // R30 (v0.18.17): renderVersion 증가(리사이즈 등) 후 IO 가 첫 콜백을 비동기로 fire
       // 하기까지 viewport 안 페이지가 잠깐 빈 placeholder 로 남는 race 를 방지하기 위해
@@ -387,6 +435,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
       cancelled = true;
       enqueueRenderRef.current = null;
       if (observer) observer.disconnect();
+      if (evictObserver) evictObserver.disconnect();
       if (currentTask) {
         try { currentTask.cancel(); } catch { /* ignore */ }
         currentTask = null;
