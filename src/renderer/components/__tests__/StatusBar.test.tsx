@@ -19,10 +19,10 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('StatusBar', () => {
-  it('Ollama 실행 중 → Running + 모델명', () => {
+  it('Ollama 실행 중 → 실행 중 + 모델명', () => {
     useAppStore.setState({ ollamaStatus: { installed: true, running: true, models: [] } });
     render(<StatusBar />);
-    expect(screen.getByText(/Running \(gemma3\)/)).toBeTruthy();
+    expect(screen.getByText(/실행 중 \(gemma3\)/)).toBeTruthy(); // t('status.running') ko (다른 상태와 일관)
     expect(screen.getByText(/Ollama:/)).toBeTruthy();
   });
 

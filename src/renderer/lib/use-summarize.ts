@@ -1,5 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
+import { t } from './i18n';
+import { PROVIDER_LABELS } from '../types';
 import { AiClient } from './ai-client';
 import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
 import { normalizeCitationPlacement } from './citation';
@@ -176,7 +178,7 @@ async function analyzeDocumentImages(
     unregisterInFlight?.(preflightRequestId);
   }
   if (preflightResult === null) {
-    throw new Error('이미지 분석에 실패했습니다. Vision 모델을 확인해주세요.');
+    throw new Error(t('ai.imageAnalysisFail'));
   }
   imageDescriptions.set(firstImg.pageIndex, [preflightResult]);
 
@@ -262,7 +264,7 @@ async function summarizeByChapter(
   // 사용자에게 무음 실패 대신 명시적 에러 surface
   if (total === 0) {
     throw Object.assign(
-      new Error('요약할 내용이 없습니다. PDF에서 유의미한 텍스트를 추출하지 못했습니다.'),
+      new Error(t('ai.noText')),
       { code: 'PDF_NO_TEXT' },
     );
   }
@@ -341,7 +343,7 @@ async function summarizeFull(
   // 사용자는 스피너가 사라지지만 content/에러가 없는 무음 실패를 겪음.
   if (chunks.length === 0) {
     throw Object.assign(
-      new Error('요약할 내용이 없습니다. PDF에서 유의미한 텍스트를 추출하지 못했습니다.'),
+      new Error(t('ai.noText')),
       { code: 'PDF_NO_TEXT' },
     );
   }
@@ -509,7 +511,7 @@ export function useSummarize() {
       handleAbort();
       setError({
         code: 'GENERATE_TIMEOUT',
-        message: '요약 시간이 초과되었습니다. 생성된 부분까지 표시됩니다. 청크 크기를 줄이거나 경량 모델을 사용해보세요.',
+        message: t('ai.summaryTimeout'),
       });
     }, TIMEOUT_MS);
 
@@ -529,15 +531,11 @@ export function useSummarize() {
 
       const available = await client.isAvailable();
       if (!available) {
-        const providerMessages: Record<string, string> = {
-          ollama: 'Ollama가 실행 중이 아닙니다. 설정을 확인해주세요.',
-          claude: 'Claude API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
-          openai: 'OpenAI API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
-          gemini: 'Gemini API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.',
-        };
         setError({
           code: currentSettings.provider === 'ollama' ? 'OLLAMA_NOT_RUNNING' : 'API_KEY_MISSING',
-          message: providerMessages[currentSettings.provider] ?? 'AI 서비스를 사용할 수 없습니다.',
+          message: currentSettings.provider === 'ollama'
+            ? t('ai.ollamaNotRunning')
+            : t('ai.apiKeyMissing', { provider: PROVIDER_LABELS[currentSettings.provider] ?? 'AI' }),
         });
         // 중복 cleanup 제거 — outer finally에서 setIsGenerating, flushStream 일괄 처리
         return;
@@ -688,7 +686,7 @@ export function useSummarize() {
         const message = err instanceof Error ? err.message : String(err);
         setError({
           code,
-          message: message || '요약 생성에 실패했습니다.',
+          message: message || t('ai.generateFail'),
         });
       }
     } finally {

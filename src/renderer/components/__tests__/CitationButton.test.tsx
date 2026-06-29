@@ -21,7 +21,7 @@ vi.stubGlobal('window', Object.assign(window, {
 }));
 
 // 교차 문서 인용 클릭 시 탭 전환 — lib/tabs.switchToTab 호출만 검증(부수효과는 tabs 테스트 담당)
-const mockSwitchToTab = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+const mockSwitchToTab = vi.hoisted(() => vi.fn((_filePath: string) => Promise.resolve()));
 vi.mock('../../lib/tabs', () => ({ switchToTab: mockSwitchToTab }));
 
 import { CitationButton } from '../CitationButton';
@@ -180,7 +180,8 @@ describe('CitationButton — 교차 문서 인용 (multi-doc Phase 2)', () => {
   }
 
   beforeEach(() => {
-    mockSwitchToTab.mockClear();
+    mockSwitchToTab.mockReset();
+    mockSwitchToTab.mockResolvedValue(undefined); // 기본: 전환 부수효과 없음(개별 테스트가 재정의)
     setActiveAndTabs();
   });
 
@@ -204,10 +205,24 @@ describe('CitationButton — 교차 문서 인용 (multi-doc Phase 2)', () => {
 
   it('교차 문서 인용 클릭 → 해당 탭으로 전환 후 페이지 점프', async () => {
     const user = userEvent.setup();
+    // 성공 전환 시뮬레이션 — switchToTab 이 활성 문서를 대상으로 바꾼다(가드 통과 조건).
+    mockSwitchToTab.mockImplementation(async (fp: string) => {
+      useAppStore.setState((s) => ({ document: { ...s.document!, filePath: fp, fileName: 'Beta.pdf', pageCount: 9 } }));
+    });
     render(<CitationButton page={8} docName="Beta.pdf" />);
     await user.click(screen.getByRole('button'));
     expect(mockSwitchToTab).toHaveBeenCalledWith('/d/Beta.pdf');
     expect(useAppStore.getState().citationTarget).toEqual({ page: 8 });
+  });
+
+  it('QA: 교차 전환이 실패(활성 문서 미변경)하면 점프하지 않음 — 잘못된 문서에 대상 페이지 적용 방지', async () => {
+    const user = userEvent.setup();
+    // switchToTab 이 차단/실패해 활성 문서가 그대로(Alpha)인 상황 — 기본 목(store 미변경)
+    mockSwitchToTab.mockImplementation(async () => { /* no-op: 전환 실패/차단 */ });
+    render(<CitationButton page={8} docName="Beta.pdf" />);
+    await user.click(screen.getByRole('button'));
+    expect(mockSwitchToTab).toHaveBeenCalledWith('/d/Beta.pdf');
+    expect(useAppStore.getState().citationTarget).toBeNull(); // Alpha(5p)에 page=8 적용 안 함
   });
 
   it('대상 문서가 열려 있지 않으면 비활성 (이동 불가)', () => {

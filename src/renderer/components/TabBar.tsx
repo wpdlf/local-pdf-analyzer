@@ -13,10 +13,12 @@ export function TabBar() {
   const isGenerating = useAppStore((s) => s.isGenerating);
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
   const isParsing = useAppStore((s) => s.isParsing);
+  const isCollectionBusy = useAppStore((s) => s.isCollectionBusy);
   const t = useT();
 
   if (openTabs.length === 0) return null;
-  const blocked = isGenerating || isQaGenerating || isParsing;
+  // isCollectionBusy 포함 — isTabSwitchBlocked 와 동일 기준(gather 중 전환 차단).
+  const blocked = isGenerating || isQaGenerating || isParsing || isCollectionBusy;
 
   // a11y M4: 이전엔 <div role="tab"> 안에 전환·닫기 버튼 2개를 중첩해 ARIA nested-interactive 를
   // 위반했고, role="tab" 자체는 비포커스이며 roving tabindex/화살표키·tabpanel 연결도 없어 불완전한

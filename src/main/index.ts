@@ -575,13 +575,20 @@ export function registerIpcHandlers(): void {
     // libuv fs 스레드풀(기본 4)이 자연 바운드하고, 본 핸들러는 제출 1회 호출(라이브 아님)·세션 ≤30.
     const perSession = await Promise.all(
       entries.map(async (e) => {
-        const loaded = await readSession(sessionsDir, e.docHash);
-        if (!loaded) return null;
-        return searchPersistedSession(
-          { docHash: e.docHash, fileName: e.fileName, filePath: e.filePath, pageCount: e.pageCount },
-          loaded.session,
-          query,
-        );
+        // QA: per-session fail-safe — readSession 은 실제 I/O 오류(EBUSY 등) 시 throw 한다.
+        // 격리하지 않으면 세션 1개의 일시 잠금이 Promise.all 전체를 reject 시켜 검색이 통째로
+        // 빈 결과가 된다(의미검색 runSemanticSearch 와 동일하게 해당 문서만 skip).
+        try {
+          const loaded = await readSession(sessionsDir, e.docHash);
+          if (!loaded) return null;
+          return searchPersistedSession(
+            { docHash: e.docHash, fileName: e.fileName, filePath: e.filePath, pageCount: e.pageCount },
+            loaded.session,
+            query,
+          );
+        } catch {
+          return null;
+        }
       }),
     );
     const results = perSession.filter((r): r is GlobalSearchResult => r !== null);

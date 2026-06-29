@@ -61,6 +61,10 @@ export function CitationButton({ page, docName }: CitationButtonProps) {
     // 교차 문서면 먼저 해당 탭으로 전환(세션 우선 복원, 즉시) 후 페이지 점프
     if (isCrossDoc && targetTab && targetTab.filePath !== activeFilePath) {
       await switchToTab(targetTab.filePath);
+      // QA: 전환이 차단(생성 중)되거나 파일 못 찾아 실패하면 활성 문서가 대상이 아니다 —
+      // 이때 대상 탭 기준으로 산출한 validPage 를 엉뚱한 현재 문서에 적용하지 않는다(범위 초과
+      // 점프 방지). switchToTab 이 실패 시 자체적으로 에러 배너를 띄운다.
+      if (useAppStore.getState().document?.filePath !== targetTab.filePath) return;
     }
     setCitationTarget({ page: validPage });
   };

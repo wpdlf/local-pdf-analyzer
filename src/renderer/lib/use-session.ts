@@ -184,7 +184,9 @@ async function doPersistCurrentSession(): Promise<void> {
   const doc = s.document;
   const api = window.electronAPI?.session;
   if (!doc || !s.settings.persistSessions || !api) return;
-  if (s.isGenerating || s.isQaGenerating || s.sessionRestorePending) return;
+  // isCollectionBusy(컬렉션 gather) 중에는 활성 문서 자동저장을 보류 — 머지 read(mutex 밖)와
+  // 컬렉션 인라인 요약 cross-write 의 TOCTOU lost-update 방지. 명시적 flush(탭전환 등)도 가드.
+  if (s.isGenerating || s.isQaGenerating || s.sessionRestorePending || s.isCollectionBusy) return;
   // R43 I-2: ragState.isIndexing 중 부분 인덱스(빌드 중간 청크) 영속화 금지는 유지하되,
   // 전체 skip 은 하지 않는다 — 탭 전환/새 탭(+)의 명시적 flush 가 인덱싱 타이밍에 조용히
   // skip 되면 방금 연 문서의 세션이 디스크에 없어, 경로가 없는 탭(드롭)의 세션 fallback
@@ -345,16 +347,19 @@ export function useSessionPersistence(): void {
   const ragIsIndexing = useAppStore((s) => s.ragState.isIndexing);
   const isGenerating = useAppStore((s) => s.isGenerating);
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
+  const isCollectionBusy = useAppStore((s) => s.isCollectionBusy);
   const persistEnabled = useAppStore((s) => s.settings.persistSessions);
   const pending = useAppStore((s) => s.sessionRestorePending);
 
   useEffect(() => {
     if (!persistEnabled || !document || pending) return;
     // R43 I-2: 인덱싱 중 보류 — 완료 후 chunkCount settle 시 저장 (부분 인덱스 영속화 방지)
-    if (isGenerating || isQaGenerating || ragIsIndexing) return; // 생성 중 보류 — 완료 후 settle 시 저장
+    // isCollectionBusy(컬렉션 gather) 중 보류 — 활성 문서 머지 read 와 컬렉션 인라인 요약
+    // cross-write 의 lost-update 방지. busy 해제 시 deps 변화로 effect 재실행되어 재예약.
+    if (isGenerating || isQaGenerating || ragIsIndexing || isCollectionBusy) return;
     const hasContent = !!summaryStream || qaMessages.length > 0 || ragChunkCount > 0;
     if (!hasContent) return;
     const timer = setTimeout(() => { void persistCurrentSession(); }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [document, summaryStream, qaMessages, ragChunkCount, ragIsIndexing, isGenerating, isQaGenerating, persistEnabled, pending]);
+  }, [document, summaryStream, qaMessages, ragChunkCount, ragIsIndexing, isGenerating, isQaGenerating, isCollectionBusy, persistEnabled, pending]);
 }

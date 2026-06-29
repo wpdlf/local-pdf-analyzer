@@ -1122,7 +1122,7 @@ export function useQa() {
         const message = err instanceof Error ? err.message : String(err);
         errState.setError({
           code: 'GENERATE_FAIL',
-          message: message || 'Q&A 답변 생성에 실패했습니다.',
+          message: message || t('qa.answerFail'),
         });
       }
     } finally {

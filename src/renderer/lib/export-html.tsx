@@ -67,7 +67,7 @@ export function summaryToHtml(markdown: string, title: string): string {
     <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={exportComponents}>{markdown}</ReactMarkdown>,
   );
   return `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">`
-    + `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src local;">`
+    + `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src 'self';">`
     + `<title>${escapeHtml(title)}</title><style>${PRINT_CSS}</style></head>`
     + `<body><main class="doc">${body}</main></body></html>`;
 }

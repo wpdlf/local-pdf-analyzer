@@ -10,7 +10,7 @@ export function StatusBar() {
   const providerStatus = () => {
     if (settings.provider === 'ollama') {
       if (ollamaStatus.running) {
-        return <span className="text-green-600 dark:text-green-400">✅ Running ({settings.model})</span>;
+        return <span className="text-green-600 dark:text-green-400">✅ {t('status.running')} ({settings.model})</span>;
       } else if (ollamaStatus.installed) {
         return <span className="text-yellow-600 dark:text-yellow-400">⚠️ {t('status.stopped')}</span>;
       }

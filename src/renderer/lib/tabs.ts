@@ -20,10 +20,12 @@ import type { OpenTab, PdfDocument, PersistedSession } from '../types';
  * UI(TabBar)와 분리한 이유: electronAPI/handlePdfData 모킹으로 단위 테스트 가능하게.
  */
 
-/** 생성/파싱 중 전환 차단 — handlePdfData 내부 가드와 동일 기준 (사전 차단으로 UX 개선) */
+/** 생성/파싱 중 전환 차단 — handlePdfData 내부 가드와 동일 기준 (사전 차단으로 UX 개선).
+ * isCollectionBusy(컬렉션 gather)도 포함 — gather 단계는 isQaGenerating 설정 전이라, 누락 시
+ * in-flight 멤버 요약(클라우드)이 끊기지 않은 채 탭 전환되어 토큰 낭비/백그라운드 완주가 발생. */
 export function isTabSwitchBlocked(): boolean {
   const s = useAppStore.getState();
-  return s.isGenerating || s.isQaGenerating || s.isParsing;
+  return s.isGenerating || s.isQaGenerating || s.isParsing || s.isCollectionBusy;
 }
 
 function findTab(filePath: string): OpenTab | undefined {

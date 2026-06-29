@@ -43,6 +43,13 @@ export const _translations = {
   'ai.generateFail': { ko: '요약 생성에 실패했습니다.', en: 'Failed to generate summary.' },
   'ai.requestFail': { ko: '요약 요청에 실패했습니다.', en: 'Failed to send summary request.' },
   'ai.streamInterrupted': { ko: 'AI 응답 수신이 중단되었습니다. 네트워크 연결과 AI 서비스 상태를 확인해주세요.', en: 'AI response stream interrupted. Please check your network connection and AI service status.' },
+  // QA: use-summarize 가 직접 setError/throw 하던 하드코딩 한국어 → i18n(영어 UI 미번역 해소)
+  'ai.imageAnalysisFail': { ko: '이미지 분석에 실패했습니다. Vision 모델을 확인해주세요.', en: 'Image analysis failed. Please check your Vision model.' },
+  'ai.summaryTimeout': { ko: '요약 시간이 초과되었습니다. 생성된 부분까지 표시됩니다. 청크 크기를 줄이거나 경량 모델을 사용해보세요.', en: 'Summary timed out. The portion generated so far is shown. Try reducing chunk size or using a lighter model.' },
+  'ai.ollamaNotRunning': { ko: 'Ollama가 실행 중이 아닙니다. 설정을 확인해주세요.', en: 'Ollama is not running. Please check your settings.' },
+  'ai.apiKeyMissing': { ko: '{provider} API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.', en: '{provider} API key is not set. Please enter it in Settings.' },
+  'ai.serviceUnavailable': { ko: 'AI 서비스를 사용할 수 없습니다.', en: 'AI service is unavailable.' },
+  'ai.noText': { ko: '요약할 내용이 없습니다. PDF에서 유의미한 텍스트를 추출하지 못했습니다.', en: 'Nothing to summarize. No meaningful text could be extracted from the PDF.' },
   'common.save': { ko: '저장', en: 'Save' },
   'common.delete': { ko: '삭제', en: 'Delete' },
   'common.cancel': { ko: '취소', en: 'Cancel' },
@@ -139,6 +146,7 @@ export const _translations = {
   'qa.emptyHint': { ko: '요약된 내용이나 원문에 대해 궁금한 점을 질문해보세요', en: 'Ask questions about the summary or original document' },
   'qa.generating': { ko: '답변 생성 중...', en: 'Generating answer...' },
   'qa.verifying': { ko: '답변 준비 중 (근거 확인)...', en: 'Preparing answer (checking sources)...' },
+  'qa.answerFail': { ko: 'Q&A 답변 생성에 실패했습니다.', en: 'Failed to generate Q&A answer.' },
   'qa.waitIndexing': { ko: 'RAG 인덱싱 중입니다. 잠시 후 다시 시도해주세요.', en: 'RAG is indexing. Please wait a moment and try again.' },
   'qa.charLimit': { ko: '질문은 {max}자까지 입력 가능합니다 ({current}/{max})', en: 'Question limited to {max} characters ({current}/{max})' },
   'qa.placeholder': { ko: '질문을 입력하세요... (Enter: 전송, Shift+Enter: 줄바꿈)', en: 'Type your question... (Enter: send, Shift+Enter: newline)' },
@@ -201,6 +209,7 @@ export const _translations = {
   'progress.elapsed': { ko: '{time} 경과', en: '{time} elapsed' },
 
   // ─── StatusBar ───
+  'status.running': { ko: '실행 중', en: 'Running' },
   'status.stopped': { ko: '중지됨', en: 'Stopped' },
   'status.notInstalled': { ko: '미설치', en: 'Not installed' },
 
