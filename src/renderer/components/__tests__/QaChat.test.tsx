@@ -5,7 +5,6 @@
 // RAG 인덱싱 중 전송 차단·안내. useQa 훅과 자식/마크다운은 목으로 격리.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { ReactNode } from 'react';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -27,11 +26,8 @@ vi.mock('../../lib/use-qa', () => ({
   useQa: () => ({ handleAsk: Q.handleAsk, handleQaAbort: Q.handleQaAbort, ...Q.state }),
 }));
 vi.mock('../CollectionBar', () => ({ CollectionBar: () => <div data-testid="collectionbar" /> }));
-vi.mock('react-markdown', () => ({ default: ({ children }: { children: string }) => <div data-testid="md">{children}</div> }));
 vi.mock('../../lib/safe-markdown', () => ({
-  REMARK_PLUGINS: [],
-  safeComponents: {},
-  MarkdownErrorBoundary: ({ children }: { children: ReactNode }) => <>{children}</>,
+  SafeMarkdown: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
 }));
 
 import { QaChat } from '../QaChat';

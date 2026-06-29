@@ -1,7 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
-import { REMARK_PLUGINS, safeComponents } from './safe-markdown';
+import remarkGfm from 'remark-gfm';
+import { safeComponents } from './safe-markdown';
+
+// export-html 은 PDF 내보내기 시점에만 동적 import 되는 별도 lazy 청크라, react-markdown·
+// remark-gfm 을 직접 정적 import 해도 cold-start eager 번들에 들어가지 않는다.
+// (요약/Q&A 화면 렌더는 safe-markdown 의 SafeMarkdown → markdown-renderer 경로를 쓴다.)
+const REMARK_PLUGINS = [remarkGfm];
 
 // PDF 내보내기용 마크다운 → 정적 HTML 변환.
 //

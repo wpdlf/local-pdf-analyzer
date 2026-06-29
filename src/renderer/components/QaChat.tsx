@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
-import ReactMarkdown from 'react-markdown';
 import { useQa } from '../lib/use-qa';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
-import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
+import { SafeMarkdown } from '../lib/safe-markdown';
 import { CollectionBar } from './CollectionBar';
 
 // 어시스턴트 답변 본문 — React.memo 로 완료 메시지의 markdown 재파싱을 차단.
@@ -22,9 +21,7 @@ const AssistantMessage = memo(function AssistantMessage({ id, content, degraded,
   const t = useT();
   return (
     <>
-      <MarkdownErrorBoundary fallbackText={content}>
-        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{content}</ReactMarkdown>
-      </MarkdownErrorBoundary>
+      <SafeMarkdown content={content} />
       {/* M3: 컬렉션 강등 답변이면 바로 아래 인라인 안내 (이전엔 전역 단일 슬롯 notice 배너) */}
       {degraded && (
         <p className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800/50 text-xs text-amber-600 dark:text-amber-400 not-prose">
@@ -187,9 +184,7 @@ export function QaChat() {
           {qaStream && (
             <div className="flex justify-start">
               <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 prose prose-sm dark:prose-invert max-w-none">
-                <MarkdownErrorBoundary fallbackText={qaStream}>
-                  <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{qaStream}</ReactMarkdown>
-                </MarkdownErrorBoundary>
+                <SafeMarkdown content={qaStream} />
               </div>
             </div>
           )}

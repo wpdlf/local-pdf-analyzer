@@ -49,13 +49,17 @@ export default defineConfig({
           // import 로 별도 정적 자산으로 emit 되어(`assets/pdf.worker.min-*.mjs`, ~1.3MB)
           // 본 manualChunks 와 무관하게 lazy-loaded. 'pdfjs' 청크는 메인 thread 측 pdfjs API
           // 만 담는다. 이 비대칭은 의도된 것 — worker 파일은 Worker constructor 가 URL 로 받음.
+          // react/jsx-runtime·scheduler 를 명시하지 않으면 첫 importer 로 React 코어가 호이스팅돼
+          // 분리가 무력화된다. 명시 지정으로 React 를 vendor 로 고정(앱 코드 변경 시 vendor 캐시 유지).
+          //
+          // 'markdown' 명시 청크는 두지 않는다 — react-markdown+remark-gfm 을 강제 그룹화하면 그
+          // 공유 의존(react/jsx-runtime)이 markdown 청크로 빨려 들어가 entry 가 정적 import → markdown
+          // 이 영구 eager 가 되어 lazy 전환이 무력화됐다. 명시 청크 없이 두면 react-markdown 생태계는
+          // 동적 import 경계(safe-markdown 의 lazy MarkdownRenderer·export-html)에 따라 async 청크로
+          // 자동 분리되어 cold-start eager 그래프에서 빠진다.
           manualChunks: {
-            // react/jsx-runtime·scheduler 를 명시하지 않으면 첫 importer(react-markdown)로
-            // React 코어가 호이스팅돼 markdown 청크에 갇히고 react-vendor 분리가 무력화된다.
-            // 명시 지정으로 React 를 vendor 로 고정(앱 코드 변경 시 vendor 캐시 유지).
             'react-vendor': ['react', 'react-dom', 'react/jsx-runtime', 'scheduler'],
             'pdfjs': ['pdfjs-dist'],
-            'markdown': ['react-markdown', 'remark-gfm'],
           },
         },
       },

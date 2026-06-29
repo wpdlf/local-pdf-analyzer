@@ -3,10 +3,9 @@
 // SummaryViewer 행위 — 헤더(문서명·페이지) / 생성 중 스피너 / 완료 후 내보내기·복사·QaChat /
 // 내보내기·복사 실패 배너 / 닫기(생성 중 onAbort 우선, H1 비파괴적 접기 setSummaryCollapsed) /
 // citationTarget 활성 시에만 우측 PdfViewer 패널 + ResizeHandle 마운트.
-// 자식 컴포넌트(QaChat/PdfViewer/ResizeHandle)와 react-markdown 은 목으로 격리.
+// 자식 컴포넌트(QaChat/PdfViewer/ResizeHandle)와 마크다운 렌더러는 목으로 격리.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { ReactNode } from 'react';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -22,11 +21,10 @@ const M = vi.hoisted(() => ({
 vi.mock('../QaChat', () => ({ QaChat: () => <div data-testid="qachat" /> }));
 vi.mock('../PdfViewer', () => ({ PdfViewerPanel: () => <div data-testid="pdfviewer" /> }));
 vi.mock('../ResizeHandle', () => ({ ResizeHandle: () => <div data-testid="resize" /> }));
-vi.mock('react-markdown', () => ({ default: ({ children }: { children: string }) => <div data-testid="md">{children}</div> }));
 vi.mock('../../lib/safe-markdown', () => ({
-  REMARK_PLUGINS: [],
+  SafeMarkdown: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
+  // 내보내기 경로가 동적 import 하는 export-html 이 safeComponents(a/img 오버라이드)를 참조하므로 유지.
   safeComponents: {},
-  MarkdownErrorBoundary: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 vi.stubGlobal('window', Object.assign(window, {

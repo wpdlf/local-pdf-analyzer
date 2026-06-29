@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
-import { REMARK_PLUGINS, safeComponents, MarkdownErrorBoundary } from '../lib/safe-markdown';
+import { SafeMarkdown } from '../lib/safe-markdown';
 import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
 import { PdfViewerPanel } from './PdfViewer';
@@ -182,9 +181,7 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
             </p>
           </div>
         ) : debouncedContent ? (
-          <MarkdownErrorBoundary fallbackText={debouncedContent}>
-            <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={safeComponents}>{debouncedContent}</ReactMarkdown>
-          </MarkdownErrorBoundary>
+          <SafeMarkdown content={debouncedContent} />
         ) : null}
       </div>
 

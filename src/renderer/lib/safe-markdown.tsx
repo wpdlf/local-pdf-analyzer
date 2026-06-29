@@ -1,6 +1,5 @@
-import { Component, Fragment, type ReactNode } from 'react';
+import { Component, Fragment, Suspense, lazy, type ReactNode } from 'react';
 import type { Components } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { t } from './i18n';
 import { parseCitations } from './citation';
 import { CitationButton } from '../components/CitationButton';
@@ -37,9 +36,6 @@ export class MarkdownErrorBoundary extends Component<
     return this.props.children;
   }
 }
-
-/** remark 플러그인 — 모듈 스코프 상수로 매 렌더 새 참조 생성 방지 */
-export const REMARK_PLUGINS = [remarkGfm];
 
 // R28 P2 (v0.18.12) / R29 (v0.18.13): href 에 포함된 위험 제어/방향 문자 검출.
 // - 제어문자 (U+0000~U+001F, U+007F): null-byte injection / 헤더 split 류 방지
@@ -158,3 +154,22 @@ export const safeComponents: Components = {
   h6: ({ children }) => <h6>{renderWithCitations(children)}</h6>,
   blockquote: ({ children }) => <blockquote>{renderWithCitations(children)}</blockquote>,
 };
+
+// react-markdown(≈50KB gzip)·remark-gfm 은 cold-start 부담을 줄이기 위해 지연 청크로 분리한다.
+// `markdown-renderer` 만이 이들을 정적 import 하고, 본 컴포넌트가 React.lazy 로 그 모듈을 끌어온다.
+const MarkdownRenderer = lazy(() => import('./markdown-renderer'));
+
+/**
+ * 안전 마크다운 렌더러 — 지연 로딩(Suspense) + 파싱 실패 fallback(ErrorBoundary)을 한데 묶은 진입점.
+ * - 청크 로드 전 짧은 순간 및 파싱 실패 시 모두 `content` 원본을 plain text 로 표시(레이아웃 유지).
+ * - `content` 가 ErrorBoundary 의 reset 신호도 겸함([[MarkdownErrorBoundary]] R34 P1 참조).
+ */
+export function SafeMarkdown({ content }: { content: string }) {
+  return (
+    <MarkdownErrorBoundary fallbackText={content}>
+      <Suspense fallback={<pre className="whitespace-pre-wrap text-sm">{content}</pre>}>
+        <MarkdownRenderer>{content}</MarkdownRenderer>
+      </Suspense>
+    </MarkdownErrorBoundary>
+  );
+}
