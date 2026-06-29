@@ -47,7 +47,7 @@ vi.mock('fs/promises', () => {
 });
 
 import {
-  writeSession, readSession, mergeSessionSummary, deleteSession, clearAll,
+  writeSession, readSession, patchSession, mergeSessionSummary, deleteSession, clearAll,
   listSessions, sessionStats, enforceLru, isValidDocHash, loadManifest,
 } from '../session-store';
 
@@ -284,6 +284,81 @@ describe('writeSession keepIndex (serialize-skip, Tier2)', () => {
     expect(r.ok).toBe(true);
     expect((await readSession(DIR, h))!.blob).toBeNull();
     expect(Number.isFinite((await listSessions(DIR))[0]!.byteSize)).toBe(true);
+  });
+});
+
+describe('patchSession (부분저장 IPC, Tier3)', () => {
+  it('qa/summary delta 만 패치 — 불변 본문(extractedText)·index.bin 보존', async () => {
+    const h = hashOf(11);
+    const blob = new Float32Array([1, 0, 0, 0, 1, 0]).buffer;
+    // 전체 저장으로 완전한 세션 생성
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: {
+        docHash: h, extractedText: '아주 긴 본문'.repeat(100), pageTexts: ['p1', 'p2'],
+        chunkMeta: [{ text: 'c', index: 0 }], summaries: { full: { content: '구요약', model: 'm', provider: 'ollama' } },
+        summaryType: 'full', qaMessages: [],
+      },
+      blob, now: 1000,
+    });
+    const before = (await readSession(DIR, h))!;
+    const bodyText = (before.session as { extractedText: string }).extractedText;
+
+    // 부분 패치 — qa 추가 + 요약 갱신
+    const r = await patchSession(DIR, {
+      docHash: h,
+      summary: { type: 'full', content: '새요약', model: 'm2', provider: 'ollama' },
+      summaryType: 'full',
+      qaMessages: [{ id: 'q', role: 'user', content: '질문' }],
+      now: 2000,
+    });
+    expect(r.ok).toBe(true);
+
+    const after = await readSession(DIR, h);
+    const sess = after!.session as { extractedText: string; pageTexts: string[]; chunkMeta: unknown[]; summaries: Record<string, { content: string }>; qaMessages: unknown[] };
+    expect(sess.extractedText).toBe(bodyText);          // 불변 본문 보존
+    expect(sess.pageTexts).toEqual(['p1', 'p2']);
+    expect(sess.chunkMeta).toHaveLength(1);
+    expect(after!.blob).not.toBeNull();                 // index.bin 보존
+    expect(after!.blob!.byteLength).toBe(blob.byteLength);
+    expect(sess.summaries.full!.content).toBe('새요약'); // 요약 갱신
+    expect(sess.qaMessages).toHaveLength(1);            // qa 갱신
+  });
+
+  it('다른 타입 요약은 보존하고 해당 타입만 교체', async () => {
+    const h = hashOf(12);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, summaries: { full: { content: 'F', model: 'm', provider: 'ollama' }, keywords: { content: 'K', model: 'm', provider: 'ollama' } }, summaryType: 'full', qaMessages: [] },
+      blob: null, now: 1000,
+    });
+    await patchSession(DIR, { docHash: h, summary: { type: 'full', content: 'F2', model: 'm', provider: 'ollama' }, summaryType: 'full', qaMessages: [], now: 2000 });
+    const sess = (await readSession(DIR, h))!.session as { summaries: Record<string, { content: string }> };
+    expect(sess.summaries.full!.content).toBe('F2');  // 교체
+    expect(sess.summaries.keywords!.content).toBe('K'); // 보존
+  });
+
+  it('디스크 세션 부재 → {ok:false} (호출자 전체저장 폴백 신호)', async () => {
+    const r = await patchSession(DIR, { docHash: hashOf(99), summary: null, summaryType: 'full', qaMessages: [], now: 1000 });
+    expect(r.ok).toBe(false);
+  });
+
+  it('잘못된 docHash → {ok:false}', async () => {
+    const r = await patchSession(DIR, { docHash: '../evil', summary: null, summaryType: 'full', qaMessages: [], now: 1000 });
+    expect(r.ok).toBe(false);
+  });
+
+  it('summary=null 이면 요약 미변경(qa 만 갱신)', async () => {
+    const h = hashOf(13);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, summaries: { full: { content: 'keep', model: 'm', provider: 'ollama' } }, summaryType: 'full', qaMessages: [] },
+      blob: null, now: 1000,
+    });
+    await patchSession(DIR, { docHash: h, summary: null, summaryType: 'full', qaMessages: [{ id: 'q', role: 'user', content: 'x' }], now: 2000 });
+    const sess = (await readSession(DIR, h))!.session as { summaries: Record<string, { content: string }>; qaMessages: unknown[] };
+    expect(sess.summaries.full!.content).toBe('keep'); // 요약 보존
+    expect(sess.qaMessages).toHaveLength(1);           // qa 갱신
   });
 });
 

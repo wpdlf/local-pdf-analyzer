@@ -305,6 +305,79 @@ export async function mergeSessionSummary(
   }
 }
 
+/**
+ * 자동저장 부분 패치(serialize-skip 의 짝, Tier3) — 인덱스가 무변경일 때 자동저장이 호출.
+ *
+ * 불변 본문(extractedText/pageTexts/chunkMeta)·index.bin 을 렌더러가 매 턴 IPC 로 재전송하던 것을
+ * 제거한다: 렌더러는 변하는 qa/summary delta 만 보내고, Main 이 디스크 session.json 을 읽어 해당
+ * 필드만 교체 후 재기록한다(IPC ~5MB→~50KB). index.bin 은 손대지 않으므로 임베딩 보존.
+ *
+ * 디스크 세션이 없거나(최초 저장 전·LRU evict) 손상이면 {ok:false} — 호출자(use-session)는 이때
+ * 전체 저장(writeSession)으로 폴백해 세션·인덱스를 재생성한다. mergeSessionSummary 와 동일 mutex
+ * (serializeSessionWrite)로 직렬화되어 활성 문서 저장·컬렉션 인라인 요약과 원자적이다.
+ */
+export async function patchSession(
+  sessionsDir: string,
+  params: {
+    docHash: string;
+    summary: { type: string; content: string; model: string; provider: string } | null;
+    summaryType: string;
+    qaMessages: unknown;
+    now: number;
+  },
+): Promise<{ ok: boolean }> {
+  const { docHash, summary, summaryType, qaMessages, now } = params;
+  if (!isValidDocHash(docHash)) return { ok: false };
+  try {
+    const dir = sessionDir(sessionsDir, docHash);
+    const jsonPath = path.join(dir, SESSION_JSON);
+    let session: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(await fsp.readFile(jsonPath, 'utf-8'));
+      if (!parsed || typeof parsed !== 'object') return { ok: false };
+      session = parsed as Record<string, unknown>;
+    } catch {
+      return { ok: false }; // 디스크 세션 부재/손상 → 호출자가 전체 저장으로 폴백
+    }
+    // summary delta — 해당 타입 한 칸만 교체(다른 타입 보존). mergeSessionSummary 와 동일 정규화.
+    if (summary && typeof summary.type === 'string' && summary.type.length > 0
+        && typeof summary.content === 'string' && summary.content.trim().length > 0) {
+      const summaries = (session.summaries && typeof session.summaries === 'object')
+        ? session.summaries as Record<string, unknown>
+        : {};
+      summaries[summary.type.slice(0, 64)] = {
+        content: summary.content,
+        model: typeof summary.model === 'string' ? summary.model.slice(0, 128) : '',
+        provider: typeof summary.provider === 'string' ? summary.provider.slice(0, 64) : '',
+      };
+      session.summaries = summaries;
+    }
+    if (typeof summaryType === 'string' && summaryType.length > 0 && summaryType.length <= 64) {
+      session.summaryType = summaryType;
+    }
+    if (Array.isArray(qaMessages)) session.qaMessages = qaMessages;
+
+    const jsonStr = JSON.stringify(session);
+    await writeFileAtomic(jsonPath, jsonStr);
+
+    // manifest: lastAccessed 갱신 + byteSize 재계산(json + 기존 index.bin 보존분). 엔트리 없으면
+    // skip(고아 best-effort). 인덱스 메타(embedModel/dim/chunkCount)는 무변경이라 그대로 둔다.
+    let blobBytes = 0;
+    try { blobBytes = (await fsp.stat(path.join(dir, INDEX_BIN))).size; } catch { blobBytes = 0; }
+    const manifest = await loadManifest(sessionsDir);
+    const entry = manifest.entries.find((e) => e.docHash === docHash);
+    if (entry) {
+      entry.byteSize = Buffer.byteLength(jsonStr) + blobBytes;
+      entry.lastAccessed = new Date(now).toISOString();
+      await saveManifest(sessionsDir, manifest);
+    }
+    return { ok: true };
+  } catch (err) {
+    console.warn('[session] partial save failed:', (err as Error)?.message);
+    return { ok: false };
+  }
+}
+
 /** load 시 lastAccessed 갱신(최근 사용 표시). 실패는 무시(best-effort). */
 export async function touchSession(sessionsDir: string, docHash: string, now: number): Promise<void> {
   if (!isValidDocHash(docHash)) return;

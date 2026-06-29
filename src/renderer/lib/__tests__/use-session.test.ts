@@ -9,7 +9,7 @@ vi.stubGlobal('localStorage', {
   removeItem: (k: string) => { delete lsStore[k]; },
 });
 const api = {
-  session: { load: vi.fn(), loadMeta: vi.fn(), save: vi.fn((_payload: unknown) => Promise.resolve({ ok: true })) },
+  session: { load: vi.fn(), loadMeta: vi.fn(), save: vi.fn((_payload: unknown) => Promise.resolve({ ok: true })), savePartial: vi.fn((_payload: unknown) => Promise.resolve({ ok: true })) },
   ai: { checkEmbedModel: vi.fn(() => Promise.resolve({ available: true, model: 'nomic-embed-text' })), abort: vi.fn(() => Promise.resolve()) },
   settings: { set: vi.fn(() => Promise.resolve()), get: vi.fn(() => Promise.resolve({})) },
 };
@@ -65,6 +65,7 @@ function persistedSession(doc: PdfDocument, withIndex: boolean): { session: Pers
 beforeEach(() => {
   vi.clearAllMocks();
   api.session.save.mockResolvedValue({ ok: true });
+  api.session.savePartial.mockResolvedValue({ ok: true });
   api.session.loadMeta.mockResolvedValue(null); // 비-인덱싱 머지 경로 기본값(본문만 로드)
   api.ai.checkEmbedModel.mockResolvedValue({ available: true, model: 'nomic-embed-text' });
   // store 초기화
@@ -323,45 +324,54 @@ describe('persistCurrentSession (module-3)', () => {
 });
 
 // serialize-skip(자동저장 비용↓): 인덱스가 직전 영속화 이후 무변경이면 blob 재직렬화/재전송/
-// index.bin 재기록을 생략(keepIndex=true). instance+revision 시그니처로 변경을 판정.
+// index.bin 재기록을 생략. instance+revision 시그니처로 변경을 판정. 무변경이면 부분저장
+// (savePartial: qa/summary delta 만)으로 전환 → 불변 본문 IPC 도 생략.
 type SavePayload = {
   meta: { chunkCount: number };
   session: PersistedSession;
   blob: ArrayBuffer | null;
   keepIndex?: boolean;
 };
-describe('persistCurrentSession serialize-skip (Tier2)', () => {
+type PartialPayload = {
+  docHash: string;
+  summary: { type: string; content: string } | null;
+  summaryType: string;
+  qaMessages: { id: string }[];
+};
+describe('persistCurrentSession serialize-skip + 부분저장 (Tier2/3)', () => {
   const summaryState = (doc: PdfDocument, content: string) => ({
     summary: { id: 's', documentId: doc.id, type: 'full' as const, content, model: 'm', provider: 'ollama' as const, createdAt: new Date(), durationMs: 1 },
     summaryStream: content,
   });
 
-  it('인덱스 무변경 시 2번째 저장은 keepIndex=true·blob 미전송 (메타·본문은 갱신)', async () => {
+  it('인덱스 무변경 시 2번째 저장은 부분저장(savePartial)으로 — 전체 save 미호출·본문 미전송', async () => {
     const doc = makeDoc('skip-doc');
     const vs = VectorStore.restore(makeIndexFixture());
     useAppStore.setState({ document: doc, ...summaryState(doc, '요약'), qaMessages: [{ id: 'q', role: 'user', content: 'q' }], ragIndex: vs });
     api.session.load.mockResolvedValue(null);
     api.session.loadMeta.mockResolvedValue(null);
 
-    // 1번째: 전체 blob 기록 + 시그니처 등록
+    // 1번째: 전체 blob 기록 + 시그니처 등록 (save, savePartial 아님)
     await persistCurrentSession();
+    expect(api.session.save).toHaveBeenCalledTimes(1);
+    expect(api.session.savePartial).not.toHaveBeenCalled();
     const first = api.session.save.mock.calls[0]![0] as SavePayload;
     expect(first.blob).not.toBeNull();
-    expect(first.keepIndex).toBeFalsy();
 
-    // 2번째: 인덱스 무변경, Q&A만 추가 → keepIndex
+    // 2번째: 인덱스 무변경, Q&A만 추가 → 부분저장(delta 만)
     useAppStore.setState({ qaMessages: [{ id: 'q', role: 'user', content: 'q' }, { id: 'q2', role: 'user', content: 'q2' }] });
     await persistCurrentSession();
-    const second = api.session.save.mock.calls[1]![0] as SavePayload;
-    expect(second.keepIndex).toBe(true);
-    expect(second.blob).toBeNull();
-    expect(second.meta.chunkCount).toBe(2);                 // 메타(chunkMeta)는 보존
-    expect(second.session.embedModel).toBe('nomic-embed-text');
-    expect(second.session.chunkMeta).toHaveLength(2);
-    expect(second.session.qaMessages).toHaveLength(2);      // 본문은 갱신
+    expect(api.session.save).toHaveBeenCalledTimes(1);        // 전체 save 추가 호출 없음
+    expect(api.session.savePartial).toHaveBeenCalledTimes(1);
+    const partial = api.session.savePartial.mock.calls[0]![0] as PartialPayload;
+    expect(partial.qaMessages).toHaveLength(2);               // 변하는 본문(delta)
+    expect(partial.summary?.content).toBe('요약');
+    expect(partial.summaryType).toBe('full');
+    expect(partial).not.toHaveProperty('session');           // 불변 본문 미전송
+    expect(partial).not.toHaveProperty('blob');
   });
 
-  it('인덱스가 바뀌면(revision↑) 다시 전체 blob 전송', async () => {
+  it('인덱스가 바뀌면(revision↑) 부분저장이 아니라 전체 blob 전송', async () => {
     const doc = makeDoc('change-doc');
     const vs = VectorStore.restore(makeIndexFixture());
     useAppStore.setState({ document: doc, ...summaryState(doc, 's'), ragIndex: vs });
@@ -372,13 +382,14 @@ describe('persistCurrentSession serialize-skip (Tier2)', () => {
     vs.addChunk('new chunk', [0, 0, 1], 2, { pageStart: 3, pageEnd: 3 }); // revision↑
 
     await persistCurrentSession();
+    expect(api.session.savePartial).not.toHaveBeenCalled();
     const second = api.session.save.mock.calls[1]![0] as SavePayload;
     expect(second.keepIndex).toBeFalsy();
     expect(second.blob).not.toBeNull();
     expect(second.meta.chunkCount).toBe(3);
   });
 
-  it('복원 직후 첫 자동저장은 keepIndex=true (디스크와 일치, index.bin 재기록 회피)', async () => {
+  it('복원 직후 첫 자동저장은 부분저장 (디스크 일치, index.bin·본문 재전송 회피)', async () => {
     const doc = makeDoc('restore-skip-doc');
     useAppStore.setState({ document: doc, sessionRestorePending: true });
     const fixture = persistedSession(doc, true);
@@ -386,16 +397,58 @@ describe('persistCurrentSession serialize-skip (Tier2)', () => {
 
     await restoreSessionForDocument(doc); // ragIndex 복원 + baseline 시그니처 등록
 
-    // 이후 자동저장 — 인덱스는 그대로, 요약만 변경
     api.session.load.mockResolvedValue(null);
     api.session.loadMeta.mockResolvedValue(null);
     useAppStore.setState({ ...summaryState(doc, '요약 변경') });
     await persistCurrentSession();
 
-    const payload = api.session.save.mock.calls.at(-1)![0] as SavePayload;
-    expect(payload.keepIndex).toBe(true);
-    expect(payload.blob).toBeNull();
-    expect(payload.meta.chunkCount).toBe(2);
+    expect(api.session.savePartial).toHaveBeenCalledTimes(1);
+    expect(api.session.save).not.toHaveBeenCalled();
+    const partial = api.session.savePartial.mock.calls[0]![0] as PartialPayload;
+    expect(partial.summary?.content).toBe('요약 변경');
+  });
+
+  it('부분저장 실패(디스크 세션 부재) → 전체 저장으로 폴백·인덱스 재생성(blob)', async () => {
+    const doc = makeDoc('partial-fail-doc');
+    const vs = VectorStore.restore(makeIndexFixture());
+    useAppStore.setState({ document: doc, ...summaryState(doc, 's'), ragIndex: vs });
+    api.session.load.mockResolvedValue(null);
+    api.session.loadMeta.mockResolvedValue(null);
+
+    await persistCurrentSession(); // 전체 저장 + 시그니처 등록
+    expect(api.session.save).toHaveBeenCalledTimes(1);
+
+    // 디스크 세션이 사라진 상황 시뮬레이션 — 부분저장이 ok:false
+    api.session.savePartial.mockResolvedValue({ ok: false });
+    await persistCurrentSession();
+
+    expect(api.session.savePartial).toHaveBeenCalledTimes(1);
+    // 폴백으로 전체 저장이 다시 호출되어 blob 재기록(인덱스 재생성)
+    expect(api.session.save).toHaveBeenCalledTimes(2);
+    const fallback = api.session.save.mock.calls[1]![0] as SavePayload;
+    expect(fallback.blob).not.toBeNull();
+    expect(fallback.keepIndex).toBeFalsy();
+  });
+
+  it('savePartial 미지원(구버전 preload) → keepIndex 전체 저장으로 graceful degrade', async () => {
+    const doc = makeDoc('no-partial-doc');
+    const vs = VectorStore.restore(makeIndexFixture());
+    useAppStore.setState({ document: doc, ...summaryState(doc, 's'), ragIndex: vs });
+    api.session.load.mockResolvedValue(null);
+    api.session.loadMeta.mockResolvedValue(null);
+
+    await persistCurrentSession(); // 등록
+    // savePartial 제거(구버전 preload)
+    const saved = api.session.savePartial;
+    (api.session as { savePartial?: unknown }).savePartial = undefined;
+    try {
+      await persistCurrentSession();
+      const second = api.session.save.mock.calls[1]![0] as SavePayload;
+      expect(second.keepIndex).toBe(true); // blob 은 생략하되 전체 저장으로
+      expect(second.blob).toBeNull();
+    } finally {
+      (api.session as { savePartial?: unknown }).savePartial = saved;
+    }
   });
 });
 

@@ -35,6 +35,7 @@ import {
   readSession,
   readSessionMeta,
   writeSession,
+  patchSession,
   mergeSessionSummary,
   touchSession,
   deleteSession,
@@ -504,6 +505,33 @@ export function registerIpcHandlers(): void {
     const blob = p.blob ?? null;
     const keepIndex = p.keepIndex === true;
     return serializeSessionWrite(() => writeSession(sessionsDir, { meta, session, blob, keepIndex, now: Date.now() }));
+  });
+
+  // 부분 저장(serialize-skip 짝) — 인덱스 무변경 시 자동저장이 호출. qa/summary delta 만 받아
+  // 디스크 session.json 을 패치(불변 본문·index.bin 재전송 회피). save/saveSummary 와 동일 mutex.
+  ipcMain.handle('session:savePartial', async (_event, payload: unknown) => {
+    const p = payload as {
+      docHash?: unknown;
+      summary?: { type?: unknown; content?: unknown; model?: unknown; provider?: unknown } | null;
+      summaryType?: unknown;
+      qaMessages?: unknown;
+    } | null;
+    if (!p || !isValidDocHash(p.docHash)) return { ok: false };
+    const summary = (p.summary && typeof p.summary.type === 'string' && typeof p.summary.content === 'string')
+      ? {
+          type: p.summary.type,
+          content: p.summary.content,
+          model: typeof p.summary.model === 'string' ? p.summary.model : '',
+          provider: typeof p.summary.provider === 'string' ? p.summary.provider : '',
+        }
+      : null;
+    return serializeSessionWrite(() => patchSession(sessionsDir, {
+      docHash: p.docHash as string,
+      summary,
+      summaryType: typeof p.summaryType === 'string' ? p.summaryType : '',
+      qaMessages: p.qaMessages,
+      now: Date.now(),
+    }));
   });
 
   // 컬렉션 인라인 요약 영속화(multi-doc Phase 3): summaries[type] 한 칸만 병합. session:save 와

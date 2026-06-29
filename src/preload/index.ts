@@ -64,6 +64,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     loadMeta: (docHash: string) => ipcRenderer.invoke('session:loadMeta', docHash),
     save: (payload: { meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null; keepIndex?: boolean }) =>
       ipcRenderer.invoke('session:save', payload),
+    savePartial: (payload: { docHash: string; summary: { type: string; content: string; model: string; provider: string } | null; summaryType: string; qaMessages: unknown }) =>
+      ipcRenderer.invoke('session:savePartial', payload),
     saveSummary: (payload: { docHash: string; type: string; summary: { content: string; model: string; provider: string } }) =>
       ipcRenderer.invoke('session:saveSummary', payload),
     list: () => ipcRenderer.invoke('session:list'),
@@ -160,6 +162,7 @@ export type ElectronAPI = {
     load: (docHash: string) => Promise<{ session: unknown; blob: ArrayBuffer | null } | null>;
     loadMeta: (docHash: string) => Promise<{ session: unknown } | null>;
     save: (payload: { meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null; keepIndex?: boolean }) => Promise<{ ok: boolean }>;
+    savePartial: (payload: { docHash: string; summary: { type: string; content: string; model: string; provider: string } | null; summaryType: string; qaMessages: unknown }) => Promise<{ ok: boolean }>;
     saveSummary: (payload: { docHash: string; type: string; summary: { content: string; model: string; provider: string } }) => Promise<{ ok: boolean }>;
     list: () => Promise<SessionManifestEntry[]>;
     delete: (docHash: string) => Promise<{ ok: boolean }>;

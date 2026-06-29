@@ -200,10 +200,34 @@ async function doPersistCurrentSession(): Promise<void> {
     // serialize-skip: 인덱스가 직전 영속화 이후 무변경이고 디스크에 이미 있으면(시그니처 일치)
     // blob 재직렬화/재전송/index.bin 재기록을 생략한다. 불변 인덱스 재처리가 자동저장 비용의
     // 대부분(Q&A 턴마다 멀티MB 벡터 버퍼 재작성)이었다.
-    const idxUnchanged =
+    let idxUnchanged =
       hasIndex &&
       persistedIndexSig?.ref.deref() === ragIndex &&
       persistedIndexSig.revision === ragIndex.revision;
+
+    // ── 부분저장 fast-path (Tier3, serialize-skip 의 짝) ──
+    // 인덱스 무변경 ⟹ 직전 전체저장/복원으로 디스크에 완전한 session.json+index.bin 이 존재.
+    // 불변 본문(extractedText/pageTexts/chunkMeta)·blob 재전송 없이 변하는 qa/summary delta 만
+    // 보내고 main 이 디스크 session.json 을 패치한다(IPC ~5MB→~50KB, 렌더러측 loadMeta 읽기도 생략).
+    if (idxUnchanged && typeof api.savePartial === 'function') {
+      const summaryPatch = (s.summaryStream && s.summary)
+        ? { type: s.summary.type, content: s.summaryStream, model: s.summary.model, provider: s.summary.provider }
+        : null;
+      let partialOk = false;
+      try {
+        const r = await api.savePartial({
+          docHash,
+          summary: summaryPatch,
+          summaryType: s.summaryType,
+          qaMessages: s.qaMessages,
+        });
+        partialOk = r?.ok === true;
+      } catch { partialOk = false; }
+      if (partialOk) { recordSaveResult(true); return; }
+      // 디스크 세션 부재(LRU evict 등)/실패 → 시그니처 무효화 후 전체 저장으로 재생성(blob 포함).
+      persistedIndexSig = null;
+      idxUnchanged = false;
+    }
 
     // 기존 세션의 타입별 요약을 머지(다른 요약 타입 보존) + 인덱싱 중이면 기존 인덱스 보존
     let summaries: PersistedSession['summaries'] = {};
