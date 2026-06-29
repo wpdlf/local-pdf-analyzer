@@ -12,7 +12,7 @@
 
 import { normalizeToFloat32, dotClamped } from '../shared/vector-math';
 import type { GlobalSearchResult, SearchSnippet, SemanticSearchResponse } from '../shared/session-types';
-import { listSessions, readSession } from './session-store';
+import { listSessions, readIndexMeta, readIndexBlob, readSession } from './session-store';
 
 const TOP_K_PER_DOC = 3;
 const MIN_SCORE = 0.3; // RAG_MIN_SCORE 와 동일 — 약한 유사도 노이즈 컷 (renderer 와 일치)
@@ -34,12 +34,10 @@ function chunkSnippet(text: string, pageStart?: number): SearchSnippet {
 }
 
 /**
- * opaque 세션 JSON 에서 chunkMeta 를 방어적으로 추출. text 가 문자열이 아니거나 구조가
- * 어긋나면 null(해당 문서 skip — 부분 성공). pageStart 만 코사인 결과 스니펫에 필요.
+ * chunkMeta 배열을 방어적으로 검증. text 가 문자열이 아니거나 구조가 어긋나면 null
+ * (해당 문서 skip — 부분 성공). pageStart 만 코사인 결과 스니펫에 필요.
  */
-function extractChunkMeta(session: unknown): ChunkMetaLite[] | null {
-  if (typeof session !== 'object' || session === null) return null;
-  const cm = (session as { chunkMeta?: unknown }).chunkMeta;
+function validateChunkMeta(cm: unknown): ChunkMetaLite[] | null {
   if (!Array.isArray(cm)) return null;
   const out: ChunkMetaLite[] = [];
   for (const m of cm) {
@@ -50,6 +48,30 @@ function extractChunkMeta(session: unknown): ChunkMetaLite[] | null {
     out.push({ text, pageStart: typeof ps === 'number' ? ps : undefined });
   }
   return out;
+}
+
+/**
+ * 의미검색용 인덱스 로드 — chunkMeta(사이드카) + 벡터 blob 만 읽어 session.json(extractedText/
+ * pageTexts 등 멀티MB) 파싱을 회피한다(메모리 M2). 신규 세션은 index.meta.json 에서 chunkMeta 를
+ * 얻고, 사이드카가 없는 구버전 세션만 session.json 으로 fallback(그 문서 1건만 본문 파싱).
+ */
+async function loadSearchIndex(
+  sessionsDir: string,
+  docHash: string,
+): Promise<{ chunkMeta: ChunkMetaLite[]; blob: ArrayBuffer } | null> {
+  const blob = await readIndexBlob(sessionsDir, docHash);
+  if (!blob) return null;
+  const indexMeta = await readIndexMeta(sessionsDir, docHash);
+  if (indexMeta) {
+    const cm = validateChunkMeta(indexMeta.chunkMeta);
+    if (cm) return { chunkMeta: cm, blob };
+    return null;
+  }
+  // 구버전 fallback: 사이드카 없음 → session.json 의 chunkMeta (이 문서만 본문 파싱)
+  const loaded = await readSession(sessionsDir, docHash);
+  const cm = validateChunkMeta((loaded?.session as { chunkMeta?: unknown } | undefined)?.chunkMeta);
+  if (cm && loaded?.blob) return { chunkMeta: cm, blob: loaded.blob };
+  return null;
 }
 
 /**
@@ -112,16 +134,14 @@ export async function runSemanticSearch(
   // perf: 후보 세션 read 병렬화(결과는 끝에서 점수 정렬이라 순서 무관). libuv fs 풀 자연 바운드.
   const perDoc = await Promise.all(
     candidates.map(async (e): Promise<GlobalSearchResult | null> => {
-      let loaded: Awaited<ReturnType<typeof readSession>>;
+      let idx: Awaited<ReturnType<typeof loadSearchIndex>>;
       try {
-        loaded = await readSession(sessionsDir, e.docHash);
+        idx = await loadSearchIndex(sessionsDir, e.docHash);
       } catch {
-        return null;
+        return null; // 일시 I/O 오류 → 해당 문서만 skip(부분 성공)
       }
-      if (!loaded?.blob) return null;
-      const chunkMeta = extractChunkMeta(loaded.session);
-      if (!chunkMeta) return null;
-      const hits = searchIndexBlob(queryNorm, dim, chunkMeta, loaded.blob);
+      if (!idx) return null;
+      const hits = searchIndexBlob(queryNorm, dim, idx.chunkMeta, idx.blob);
       if (hits.length === 0) return null;
       return {
         docHash: e.docHash,

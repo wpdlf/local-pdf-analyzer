@@ -26,6 +26,12 @@ import {
 
 const SESSION_JSON = 'session.json';
 const INDEX_BIN = 'index.bin';
+// chunkMeta(청크 텍스트+페이지) 전용 경량 사이드카 — index.bin 과 동일 생명주기.
+// 전역 의미검색(semantic-search)이 멀티MB session.json(extractedText/pageTexts)을 파싱하지 않고
+// chunkMeta 만 읽도록 분리(메모리 M2). 저장 시 session.json 에서 분리해 이 파일에 쓰고, 읽기 시
+// session.chunkMeta 로 다시 병합해 호출자(복원 경로)는 종전과 동일한 shape 를 본다. 구버전 세션
+// (이 파일 없음)은 readSession 이 session.json 의 chunkMeta 로 fallback — 파괴적 마이그레이션 없음.
+const INDEX_META = 'index.meta.json';
 
 export function isValidDocHash(docHash: unknown): docHash is string {
   return typeof docHash === 'string' && DOC_HASH_RE.test(docHash);
@@ -140,6 +146,38 @@ function isRealIoError(err: unknown): boolean {
   return typeof code === 'string' && code !== 'ENOENT';
 }
 
+/** index.meta.json(사이드카) 의 chunkMeta 만 읽기. 부재 시 null(구버전 → session.json fallback). */
+export async function readIndexMeta(
+  sessionsDir: string,
+  docHash: string,
+): Promise<{ chunkMeta: unknown } | null> {
+  if (!isValidDocHash(docHash)) return null;
+  try {
+    const raw = await fsp.readFile(path.join(sessionDir(sessionsDir, docHash), INDEX_META), 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return parsed as { chunkMeta: unknown };
+    return null;
+  } catch (err) {
+    if (isRealIoError(err)) throw err;
+    return null; // 부재/손상 → 구버전 fallback
+  }
+}
+
+/** index.bin(벡터 blob)만 읽기 — 의미검색이 session.json 파싱 없이 코사인하도록. 부재 시 null. */
+export async function readIndexBlob(
+  sessionsDir: string,
+  docHash: string,
+): Promise<ArrayBuffer | null> {
+  if (!isValidDocHash(docHash)) return null;
+  try {
+    const buf = await fsp.readFile(path.join(sessionDir(sessionsDir, docHash), INDEX_BIN));
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  } catch (err) {
+    if (isRealIoError(err)) throw err;
+    return null;
+  }
+}
+
 /** 세션 본문 + 인덱스 블롭 로드. 부재/손상 시 null. 실제 I/O 오류는 throw(호출자 보존 판단). */
 export async function readSession(
   sessionsDir: string,
@@ -154,6 +192,15 @@ export async function readSession(
   } catch (err) {
     if (isRealIoError(err)) throw err; // 일시 I/O 오류 → 전파(호출자가 디스크 보존)
     return null; // 부재(ENOENT)/손상(파싱) → 정상 재계산 흐름
+  }
+  // chunkMeta 사이드카 병합: 신규 세션은 session.json 에 chunkMeta 가 없고 index.meta.json 에 있다.
+  // 호출자(복원)가 session.chunkMeta 를 그대로 쓰도록 여기서 합친다. 구버전(사이드카 없음)은
+  // session.json 의 chunkMeta 를 유지(병합 no-op).
+  if (session && typeof session === 'object') {
+    const indexMeta = await readIndexMeta(sessionsDir, docHash);
+    if (indexMeta && Array.isArray(indexMeta.chunkMeta)) {
+      (session as Record<string, unknown>).chunkMeta = indexMeta.chunkMeta;
+    }
   }
   let blob: ArrayBuffer | null = null;
   try {
@@ -195,27 +242,44 @@ export async function writeSession(
     const dir = sessionDir(sessionsDir, meta.docHash);
     await fsp.mkdir(dir, { recursive: true });
 
-    const jsonStr = JSON.stringify(session);
+    // chunkMeta 사이드카 분리: session.json 에서 chunkMeta 를 떼어 index.meta.json 으로 보낸다
+    // (의미검색이 본문을 파싱하지 않도록, 메모리 M2). 호출자(렌더러)는 종전대로 chunkMeta 를 포함한
+    // session 을 보내고, 여기서 분리한다 — 읽기 때 readSession 이 다시 병합하므로 contract 무변경.
+    let chunkMeta: unknown = undefined;
+    let sessionForDisk: unknown = session;
+    if (session && typeof session === 'object') {
+      const { chunkMeta: cm, ...rest } = session as Record<string, unknown>;
+      chunkMeta = cm;
+      sessionForDisk = rest;
+    }
+
+    const jsonStr = JSON.stringify(sessionForDisk);
     await writeFileAtomic(path.join(dir, SESSION_JSON), jsonStr);
     const indexBinPath = path.join(dir, INDEX_BIN);
+    const indexMetaPath = path.join(dir, INDEX_META);
     let blobBytes = 0;
+    let metaBytes = 0;
     if (keepIndex) {
-      // serialize-skip(인덱스 무변경): 기존 index.bin 을 건드리지 않고 보존한다. blob 미전송이지만
-      // 아래 null→unlink 분기와 명확히 구분해야 한다 — keepIndex 는 "그대로 둬라", null 은
-      // "인덱스 없음, 지워라"라는 서로 다른 계약. byteSize 는 현재 index.bin 크기를 stat 해 반영.
+      // serialize-skip(인덱스 무변경): 기존 index.bin·index.meta.json 을 건드리지 않고 보존한다.
+      // blob 미전송이지만 아래 null→unlink 분기와 명확히 구분 — keepIndex 는 "그대로 둬라", null 은
+      // "인덱스 없음, 지워라". byteSize 는 현재 두 사이드카 크기를 stat 해 반영.
       try { blobBytes = (await fsp.stat(indexBinPath)).size; } catch { blobBytes = 0; }
+      try { metaBytes = (await fsp.stat(indexMetaPath)).size; } catch { metaBytes = 0; }
     } else if (blob) {
       const u8 = new Uint8Array(blob);
       await writeFileAtomic(indexBinPath, u8);
       blobBytes = u8.byteLength;
+      // index.bin 과 짝을 이루는 chunkMeta 를 함께 기록(원자적 쌍 — 둘 다 새 인덱스 기준).
+      const metaStr = JSON.stringify({ chunkMeta: Array.isArray(chunkMeta) ? chunkMeta : [] });
+      await writeFileAtomic(indexMetaPath, metaStr);
+      metaBytes = Buffer.byteLength(metaStr);
     } else {
-      // R41 fix: blob 없이 갱신 시 이전 index.bin 을 제거한다. 미제거 시 (1) stale 임베딩
-      // 인덱스가 디스크에 잔존해 다음 readSession 이 새 session.json 과 옛 index.bin 을 짝지어
-      // 차원/모델 불일치 복원을 유발하고, (2) byteSize 가 과소 계상되어 LRU 200MB 캡이 실제
-      // 디스크 사용량을 과소평가한다.
+      // R41 fix: blob 없이 갱신 시 이전 index.bin 을 제거한다(stale 임베딩 잔존·byteSize 과소 방지).
+      // chunkMeta 사이드카도 함께 제거해 index.bin 과 생명주기를 일치시킨다.
       try { await fsp.unlink(indexBinPath); } catch { /* 없으면 무시 */ }
+      try { await fsp.unlink(indexMetaPath); } catch { /* 없으면 무시 */ }
     }
-    const byteSize = Buffer.byteLength(jsonStr) + blobBytes;
+    const byteSize = Buffer.byteLength(jsonStr) + blobBytes + metaBytes;
     const nowIso = new Date(now).toISOString();
 
     const manifest = await loadManifest(sessionsDir);
@@ -308,6 +372,7 @@ export async function mergeSessionSummary(
     // manifest: lastAccessed 갱신 + byteSize 재계산(json + 기존 index.bin). 엔트리 없으면 skip(고아 best-effort).
     let blobBytes = 0;
     try { blobBytes = (await fsp.stat(path.join(dir, INDEX_BIN))).size; } catch { blobBytes = 0; }
+    try { blobBytes += (await fsp.stat(path.join(dir, INDEX_META))).size; } catch { /* 사이드카 없음 */ }
     const manifest = await loadManifest(sessionsDir);
     const entry = manifest.entries.find((e) => e.docHash === docHash);
     if (entry) {
@@ -381,6 +446,7 @@ export async function patchSession(
     // skip(고아 best-effort). 인덱스 메타(embedModel/dim/chunkCount)는 무변경이라 그대로 둔다.
     let blobBytes = 0;
     try { blobBytes = (await fsp.stat(path.join(dir, INDEX_BIN))).size; } catch { blobBytes = 0; }
+    try { blobBytes += (await fsp.stat(path.join(dir, INDEX_META))).size; } catch { /* 사이드카 없음 */ }
     const manifest = await loadManifest(sessionsDir);
     const entry = manifest.entries.find((e) => e.docHash === docHash);
     if (entry) {

@@ -381,6 +381,64 @@ describe('patchSession (부분저장 IPC, Tier3)', () => {
   });
 });
 
+describe('chunkMeta 사이드카 분리 (index.meta.json, Tier3)', () => {
+  const cm = [{ text: '청크A', index: 0, pageStart: 1 }, { text: '청크B', index: 1, pageStart: 2 }];
+  const idxBlob = () => new Float32Array([1, 0, 0, 0, 1, 0]).buffer; // 2×3
+  const p = (h: string, f: string) => `${DIR}/${h}/${f}`;
+
+  it('writeSession: chunkMeta 를 index.meta.json 으로 분리(session.json 엔 없음), readSession 이 병합 복원', async () => {
+    const h = hashOf(31);
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h, extractedText: '본문', chunkMeta: cm }, blob: idxBlob(), now: 1000 });
+
+    // 디스크: index.meta.json 에 chunkMeta, session.json 엔 없음
+    const metaRaw = V.files.get(p(h, 'index.meta.json'));
+    expect(metaRaw).toBeTruthy();
+    expect(JSON.parse(String(metaRaw)).chunkMeta).toHaveLength(2);
+    const sessRaw = JSON.parse(String(V.files.get(p(h, 'session.json'))));
+    expect(sessRaw.chunkMeta).toBeUndefined();  // 본문 파일엔 chunkMeta 없음
+    expect(sessRaw.extractedText).toBe('본문');  // 본문은 그대로
+
+    // readSession 병합 → 호출자(복원)는 종전대로 session.chunkMeta 를 본다
+    const loaded = await readSession(DIR, h);
+    expect((loaded!.session as { chunkMeta: unknown[] }).chunkMeta).toHaveLength(2);
+    expect(loaded!.blob).not.toBeNull();
+  });
+
+  it('구버전(session.json 에 chunkMeta, 사이드카 없음) → readSession fallback', async () => {
+    const h = hashOf(32);
+    V.files.set(p(h, 'session.json'), JSON.stringify({ docHash: h, chunkMeta: cm })); // 구버전 직접 주입
+    const loaded = await readSession(DIR, h);
+    expect((loaded!.session as { chunkMeta: unknown[] }).chunkMeta).toHaveLength(2);
+  });
+
+  it('blob null → index.meta.json 도 함께 제거(index.bin 과 생명주기 일치)', async () => {
+    const h = hashOf(33);
+    await writeSession(DIR, { meta: metaOf(h), session: { chunkMeta: cm }, blob: idxBlob(), now: 1000 });
+    expect(V.files.get(p(h, 'index.meta.json'))).toBeTruthy();
+    await writeSession(DIR, { meta: { ...metaOf(h), embedModel: null, embedDim: null, chunkCount: 0 }, session: { chunkMeta: [] }, blob: null, now: 2000 });
+    expect(V.files.get(p(h, 'index.meta.json'))).toBeUndefined(); // 제거
+    expect(V.files.get(p(h, 'index.bin'))).toBeUndefined();
+  });
+
+  it('keepIndex → index.meta.json 보존(재기록 안 함)', async () => {
+    const h = hashOf(34);
+    await writeSession(DIR, { meta: metaOf(h), session: { chunkMeta: cm }, blob: idxBlob(), now: 1000 });
+    const before = V.files.get(p(h, 'index.meta.json'));
+    await writeSession(DIR, { meta: metaOf(h), session: { chunkMeta: cm }, blob: null, keepIndex: true, now: 2000 });
+    expect(V.files.get(p(h, 'index.meta.json'))).toBe(before); // 그대로 보존
+  });
+
+  it('byteSize 가 index.meta.json 크기를 포함(LRU 과소계상 방지)', async () => {
+    const h = hashOf(35);
+    await writeSession(DIR, { meta: metaOf(h), session: { chunkMeta: cm }, blob: idxBlob(), now: 1000 });
+    const sessBytes = Buffer.byteLength(String(V.files.get(p(h, 'session.json'))));
+    const metaBytes = Buffer.byteLength(String(V.files.get(p(h, 'index.meta.json'))));
+    const binBytes = (V.files.get(p(h, 'index.bin')) as Buffer).byteLength;
+    const entry = (await listSessions(DIR)).find((e) => e.docHash === h)!;
+    expect(entry.byteSize).toBe(sessBytes + binBytes + metaBytes);
+  });
+});
+
 describe('R42 fixes (session-store)', () => {
   // 손상된 manifest(부분 쓰기/외부 편집) 의 개별 엔트리를 loadManifest 가 정규화/폐기하는지 검증.
   // 과거: entries 배열 여부만 검사 → 비문자열 lastAccessed 가 listSessions/enforceLru 의
