@@ -126,7 +126,21 @@ export function enforceLru(
   return evict;
 }
 
-/** 세션 본문 + 인덱스 블롭 로드. 없거나 손상 시 null(blob 만 없으면 blob: null). */
+/**
+ * 실제 I/O 오류(EBUSY/EACCES/EPERM/EMFILE 등)와 "부재(ENOENT)"·"손상(JSON 파싱 실패)"를 구분.
+ *
+ * QA 발견(영속화 정합성): 읽기 실패를 일괄 null 로 흡수하면, 자동저장의 read-modify-write 경로
+ * (full-save 머지·인덱싱 flush)가 일시적 I/O 실패를 "세션 부재"로 오인해 디스크의 타 타입 요약을
+ * 덮어쓰거나 멀쩡한 index.bin 을 삭제(R41 회귀의 transient 변형)한다. 실제 I/O 오류는 전파해
+ * 호출자가 파괴적 쓰기 대신 보존(저장 건너뜀)하도록 한다. ENOENT/파싱오류는 종전대로 null —
+ * 부재는 정상(첫 저장 전), 손상은 재계산으로 자가치유.
+ */
+function isRealIoError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' && code !== 'ENOENT';
+}
+
+/** 세션 본문 + 인덱스 블롭 로드. 부재/손상 시 null. 실제 I/O 오류는 throw(호출자 보존 판단). */
 export async function readSession(
   sessionsDir: string,
   docHash: string,
@@ -137,14 +151,16 @@ export async function readSession(
   try {
     const raw = await fsp.readFile(path.join(dir, SESSION_JSON), 'utf-8');
     session = JSON.parse(raw);
-  } catch {
-    return null; // 부재/손상 → 정상 재계산 흐름
+  } catch (err) {
+    if (isRealIoError(err)) throw err; // 일시 I/O 오류 → 전파(호출자가 디스크 보존)
+    return null; // 부재(ENOENT)/손상(파싱) → 정상 재계산 흐름
   }
   let blob: ArrayBuffer | null = null;
   try {
     const buf = await fsp.readFile(path.join(dir, INDEX_BIN));
     blob = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-  } catch {
+  } catch (err) {
+    if (isRealIoError(err)) throw err; // index.bin 일시 I/O 오류 → 전파(보존). 부재는 null.
     blob = null; // 인덱스 없으면 텍스트만 복원
   }
   return { session, blob };
@@ -162,7 +178,8 @@ export async function readSessionMeta(
   try {
     const raw = await fsp.readFile(path.join(sessionDir(sessionsDir, docHash), SESSION_JSON), 'utf-8');
     return { session: JSON.parse(raw) };
-  } catch {
+  } catch (err) {
+    if (isRealIoError(err)) throw err; // 일시 I/O 오류 → 전파(호출자가 디스크 보존). 부재/손상은 null.
     return null;
   }
 }

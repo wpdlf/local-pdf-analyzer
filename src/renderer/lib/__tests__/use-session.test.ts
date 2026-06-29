@@ -389,6 +389,33 @@ describe('persistCurrentSession serialize-skip + 부분저장 (Tier2/3)', () => 
     expect(second.meta.chunkCount).toBe(3);
   });
 
+  it('QA: 머지 read 가 실제 I/O 오류면 저장 건너뜀(파괴적 덮어쓰기 대신 디스크 보존)', async () => {
+    const doc = makeDoc('io-fail-doc');
+    useAppStore.setState({ document: doc, ...summaryState(doc, 's'), qaMessages: [], ragIndex: new VectorStore() });
+    // loadMeta(비-인덱싱 머지 경로)가 throw → 타 타입 요약 소실 방지 위해 저장 건너뜀
+    api.session.loadMeta.mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    api.session.load.mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+
+    await persistCurrentSession();
+
+    expect(api.session.save).not.toHaveBeenCalled();
+    expect(api.session.savePartial).not.toHaveBeenCalled();
+  });
+
+  it('QA: 인덱싱 중 머지 read I/O 오류 → 저장 건너뜀(기존 index.bin 보존)', async () => {
+    const doc = makeDoc('io-fail-indexing');
+    useAppStore.setState({
+      document: doc, summaryStream: '', qaMessages: [{ id: 'q', role: 'user', content: 'q' }],
+      ragIndex: new VectorStore(),
+      ragState: { isIndexing: true, progress: null, isAvailable: false, model: 'nomic-embed-text', chunkCount: 1 },
+    });
+    api.session.load.mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+
+    await persistCurrentSession();
+
+    expect(api.session.save).not.toHaveBeenCalled(); // index.bin unlink 회귀 방지
+  });
+
   it('복원 직후 첫 자동저장은 부분저장 (디스크 일치, index.bin·본문 재전송 회피)', async () => {
     const doc = makeDoc('restore-skip-doc');
     useAppStore.setState({ document: doc, sessionRestorePending: true });

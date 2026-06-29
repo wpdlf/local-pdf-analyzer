@@ -47,7 +47,8 @@ function safeId(): string {
  * ★ 핵심: 탭 전환마다 handlePdfData(parsePdf) 로 PDF 를 통째로 재파싱하면 대용량/이미지
  * PDF 에서 이미지 추출·OCR 에 수십 초가 걸려 "전환이 안 되는" 것처럼 보인다(parsePdf 가
  * 끝날 때까지 isParsing=true 로 후속 클릭까지 차단). 파싱 결과는 이미 세션에 영속화돼 있으므로
- * 재사용해 즉시 전환하고, 뷰어용 원본 바이트만 파싱 없이 파일에서 읽어 주입한다.
+ * 재사용해 즉시 전환한다. 뷰어용 원본 바이트는 상주시키지 않고(pdfBytes 비상주, 메모리 M1)
+ * 인용 클릭 시 PdfViewerPanel 이 디스크에서 lazy 로드한다.
  */
 async function openTabTarget(tab: OpenTab): Promise<boolean> {
   // ① 세션 우선: 콘텐츠 해시로 저장된 분석 상태(텍스트/요약/Q&A/인덱스)를 즉시 복원
@@ -67,8 +68,8 @@ async function openTabTarget(tab: OpenTab): Promise<boolean> {
 }
 
 /**
- * 영속 세션에서 탭을 복원 — 재파싱 없이 즉시 전환. 뷰어용 원본 바이트는 파싱 없이 파일만
- * 읽어 주입(읽기 실패 시 뷰어만 비활성, 분석은 그대로 복원). 세션 부재/손상 시 false.
+ * 영속 세션에서 탭을 복원 — 재파싱 없이 즉시 전환. 뷰어용 원본 바이트는 비상주(pdfBytes=null)
+ * 로 두고 인용 클릭 시 PdfViewerPanel 이 lazy 로드한다. 세션 부재/손상 시 false.
  */
 async function restoreTabFromSession(tab: OpenTab): Promise<boolean> {
   if (!tab.docHash) return false;

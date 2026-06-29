@@ -287,6 +287,17 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
           renderedPagesRef.current.add(pageNum);
           continue;
         }
+        // QA(메모리): 큐에 적재된 뒤 pump 가 도달하기 전 ±2 뷰포트(EVICT 윈도우)를 벗어난
+        // 페이지는 렌더하지 않는다. 중속 스크롤로 통과한 페이지가 윈도우 밖에 canvas 로 박혀
+        // (evict IO 는 canvas 부재 시 no-op 으로 흘렸음) LRU 상주 바운드를 무력화하던 누수 방지.
+        // 활성 인용 대상은 먼 점프 도중 윈도우 밖이라도 렌더해야 하므로 예외. (happy-dom 은 rect
+        // 가 0 이라 cr.height>0 가드로 skip 되지 않음 — 테스트 동작 보존.)
+        if (pageNum !== targetPageRef.current) {
+          const cr = container.getBoundingClientRect();
+          const wr = wrapper.getBoundingClientRect();
+          const margin = cr.height * 2;
+          if (cr.height > 0 && (wr.bottom < cr.top - margin || wr.top > cr.bottom + margin)) continue;
+        }
         // 문서 교체 가드: doc-load effect 가 pdfBytes 변경 시 이 doc 을 파기했을 수 있다
         // (렌더 effect 는 loadState/totalPages 가 갱신될 때까지 재실행 안 됨). 파기된 doc 으로
         // 렌더를 시작하지 않고 종료 — 곧 새 doc 의 렌더 effect 가 인수한다.
@@ -468,6 +479,10 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
     const maxAttempts = 30;
     const interval = setInterval(() => {
       attempts++;
+      // QA: 폴링 도중 렌더 effect 가 재실행되면(리사이즈→renderVersion↑) 큐·렌더기록이 비워져
+      // 대상 페이지가 윈도우 밖이면 재 enqueue 되지 않아 폴링이 타임아웃되던 엣지(canvas LRU
+      // 도입으로 노출). 매 틱 멱등 재요청해 큐가 비워져도 대상 렌더를 복구한다.
+      enqueueRenderRef.current?.(targetPage);
       if (renderedPagesRef.current.has(targetPage)) {
         clearInterval(interval);
         scrollToPage();

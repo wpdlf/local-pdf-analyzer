@@ -14,8 +14,10 @@ const P = vi.hoisted(() => {
     render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
     cleanup: vi.fn(),
   };
-  const makeDoc = (numPages: number) => ({ numPages, getPage: vi.fn(() => Promise.resolve(page)), destroy: vi.fn(() => Promise.resolve()) });
-  return { page, makeDoc, getDocument: vi.fn(() => ({ promise: Promise.resolve(makeDoc(3)), destroy: vi.fn(() => Promise.resolve()) })) };
+  // getPage 는 공유 spy — pump 가 어떤 페이지를 실제 렌더하려 했는지(=윈도우 안) 호출로 검증.
+  const getPage = vi.fn((_n: number) => Promise.resolve(page));
+  const makeDoc = (numPages: number) => ({ numPages, getPage, destroy: vi.fn(() => Promise.resolve()) });
+  return { page, getPage, makeDoc, getDocument: vi.fn(() => ({ promise: Promise.resolve(makeDoc(3)), destroy: vi.fn(() => Promise.resolve()) })) };
 });
 vi.mock('pdfjs-dist', () => ({ GlobalWorkerOptions: { workerSrc: 'mock' }, getDocument: P.getDocument }));
 
@@ -109,5 +111,33 @@ describe('PdfViewer LRU 윈도잉', () => {
 
     trigger(renderIO, [{ target: w1, isIntersecting: true }]);
     await waitFor(() => expect(w1.querySelector('canvas')).toBeTruthy());
+  });
+
+  // QA(메모리): 큐 적재 후 ±2 윈도우 밖으로 나간 비-대상 페이지는 pump 가 getPage 전에 skip.
+  it('윈도우 밖(±2) 비-대상 페이지는 렌더 skip, 대상 페이지는 예외로 렌더', async () => {
+    // getBoundingClientRect stub: 컨테이너=뷰포트(0~500,h500), 페이지 i=top i*5000(±2=1000 밖)
+    const origRect = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
+      const idx = (this as HTMLElement).dataset?.pageIndex;
+      const top = idx !== undefined ? Number(idx) * 5000 : 0;
+      const bottom = idx !== undefined ? top + 480 : 500;
+      const height = idx !== undefined ? 480 : 500;
+      return { top, bottom, height, left: 0, right: 360, width: 360, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
+    };
+    try {
+      const { container } = render(<PdfViewer pdfBytes={new Uint8Array([1, 2, 3])} targetPage={1} onClose={vi.fn()} />);
+      // 대상 page1(idx0, 뷰포트 안)은 렌더됨 → pump 가 실제로 동작했다는 증거
+      await waitFor(() => expect(P.getPage.mock.calls.some((c) => c[0] === 1)).toBe(true));
+      const renderIO = findIO('100% 0px')!;
+      const wrappers = Array.from(container.querySelectorAll('[data-page-index]')) as HTMLElement[];
+
+      // 먼 비-대상 페이지(idx1=page2)를 render IO 로 교차 통지 → pump 가 윈도우 밖이라 getPage 전 skip
+      trigger(renderIO, [{ target: wrappers[1]!, isIntersecting: true }]);
+      await Promise.resolve();
+      expect(P.getPage.mock.calls.some((c) => c[0] === 2)).toBe(false); // skip — getPage 미호출
+      expect(wrappers[1]!.querySelector('canvas')).toBeNull();
+    } finally {
+      Element.prototype.getBoundingClientRect = origRect;
+    }
   });
 });

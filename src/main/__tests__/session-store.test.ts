@@ -46,8 +46,9 @@ vi.mock('fs/promises', () => {
   };
 });
 
+import fsp from 'fs/promises';
 import {
-  writeSession, readSession, patchSession, mergeSessionSummary, deleteSession, clearAll,
+  writeSession, readSession, readSessionMeta, patchSession, mergeSessionSummary, deleteSession, clearAll,
   listSessions, sessionStats, enforceLru, isValidDocHash, loadManifest,
 } from '../session-store';
 
@@ -343,9 +344,27 @@ describe('patchSession (부분저장 IPC, Tier3)', () => {
     expect(r.ok).toBe(false);
   });
 
+
   it('잘못된 docHash → {ok:false}', async () => {
     const r = await patchSession(DIR, { docHash: '../evil', summary: null, summaryType: 'full', qaMessages: [], now: 1000 });
     expect(r.ok).toBe(false);
+  });
+
+  it('QA: readSession/readSessionMeta 는 실제 I/O 오류(EBUSY)는 throw, 부재(ENOENT)는 null', async () => {
+    const h = hashOf(91);
+    await writeSession(DIR, { meta: metaOf(h), session: { v: 1 }, blob: null, now: 1000 });
+    expect(await readSession(DIR, h)).not.toBeNull();   // 정상
+    expect(await readSessionMeta(DIR, h)).not.toBeNull();
+
+    // 다음 readFile(session.json) 1회만 EBUSY — 일시 I/O 오류 시 전파(보존 신호)
+    vi.mocked(fsp.readFile).mockImplementationOnce(async () => { throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' }); });
+    await expect(readSession(DIR, h)).rejects.toThrow();
+    vi.mocked(fsp.readFile).mockImplementationOnce(async () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); });
+    await expect(readSessionMeta(DIR, h)).rejects.toThrow();
+
+    // 부재(ENOENT)는 종전대로 null (전파 안 함)
+    expect(await readSession(DIR, hashOf(92))).toBeNull();
+    expect(await readSessionMeta(DIR, hashOf(93))).toBeNull();
   });
 
   it('summary=null 이면 요약 미변경(qa 만 갱신)', async () => {

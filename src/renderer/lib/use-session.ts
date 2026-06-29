@@ -252,7 +252,15 @@ async function doPersistCurrentSession(): Promise<void> {
         const existSession = existing?.session as PersistedSession | undefined;
         if (existSession?.summaries) summaries = { ...existSession.summaries };
       }
-    } catch { /* 무시 */ }
+    } catch {
+      // QA 정합성: 머지 read 가 실제 I/O 오류로 실패하면(load/loadMeta 가 throw) 디스크엔 유효
+      // 세션이 있을 수 있는데, 여기서 그대로 진행하면 타 타입 요약을 빈 {}로 덮어쓰거나(전체저장)
+      // 멀쩡한 index.bin 을 삭제(인덱싱 flush, R41 회귀)한다. 파괴적 쓰기 대신 이번 저장을
+      // 건너뛰어 디스크를 보존하고, 실패로 집계해 연속 실패 시 통지(다음 디바운스에서 재시도).
+      // (부재/손상은 read 함수가 null 로 반환하므로 여기 도달 안 함 — 첫 저장은 정상 진행.)
+      recordSaveResult(false);
+      return;
+    }
     if (s.summaryStream && s.summary) {
       summaries[s.summary.type] = {
         content: s.summaryStream,
