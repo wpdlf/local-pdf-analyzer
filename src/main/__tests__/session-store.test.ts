@@ -428,6 +428,20 @@ describe('chunkMeta 사이드카 분리 (index.meta.json, Tier3)', () => {
     expect(V.files.get(p(h, 'index.meta.json'))).toBe(before); // 그대로 보존
   });
 
+  it('keepIndex 인데 사이드카 부재(구버전) → strip 된 chunkMeta 로 self-heal 생성 (영구 소실 방지)', async () => {
+    const h = hashOf(36);
+    // 사이드카 없이 index.bin 만 있는 구버전 상태 시뮬레이션
+    V.files.set(p(h, 'index.bin'), Buffer.from(new Uint8Array(idxBlob())));
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h, chunkMeta: cm }, blob: null, keepIndex: true, now: 1000 });
+    // session.json 엔 chunkMeta 없지만 사이드카가 self-heal 로 생성됨
+    expect(JSON.parse(String(V.files.get(p(h, 'session.json')))).chunkMeta).toBeUndefined();
+    const metaRaw = V.files.get(p(h, 'index.meta.json'));
+    expect(metaRaw).toBeTruthy();
+    expect(JSON.parse(String(metaRaw)).chunkMeta).toHaveLength(2);
+    // readSession 병합 → chunkMeta 복원됨(소실 없음)
+    expect(((await readSession(DIR, h))!.session as { chunkMeta: unknown[] }).chunkMeta).toHaveLength(2);
+  });
+
   it('byteSize 가 index.meta.json 크기를 포함(LRU 과소계상 방지)', async () => {
     const h = hashOf(35);
     await writeSession(DIR, { meta: metaOf(h), session: { chunkMeta: cm }, blob: idxBlob(), now: 1000 });

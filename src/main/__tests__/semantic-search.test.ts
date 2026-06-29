@@ -7,13 +7,13 @@ import type { SessionManifestEntry } from '../../shared/session-types';
 
 const store = vi.hoisted(() => ({
   listSessions: vi.fn(),
-  readSession: vi.fn(),
+  readSessionMeta: vi.fn(),
   readIndexMeta: vi.fn(),
   readIndexBlob: vi.fn(),
 }));
 vi.mock('../session-store', () => ({
   listSessions: store.listSessions,
-  readSession: store.readSession,
+  readSessionMeta: store.readSessionMeta,
   readIndexMeta: store.readIndexMeta,
   readIndexBlob: store.readIndexBlob,
 }));
@@ -46,7 +46,7 @@ function setIndex(over: { chunkMeta?: unknown; vecs?: number[][] } = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   store.listSessions.mockResolvedValue([]);
-  store.readSession.mockResolvedValue(null);
+  store.readSessionMeta.mockResolvedValue(null);
   store.readIndexMeta.mockResolvedValue(null);
   store.readIndexBlob.mockResolvedValue(null);
 });
@@ -61,7 +61,7 @@ describe('runSemanticSearch (main 코사인)', () => {
     expect(out.results[0]!.snippets[0]!.page).toBe(5);
     expect(out.results[0]!.snippets[0]!.text).toContain('관련 청크');
     expect(out.results[0]!.inSummary).toBe(false);
-    expect(store.readSession).not.toHaveBeenCalled(); // 사이드카 경로 — 본문 파싱 안 함
+    expect(store.readSessionMeta).not.toHaveBeenCalled(); // 사이드카 경로 — session.json 안 읽음
   });
 
   it('임베딩 모델/차원 불일치 문서는 제외(excludedCount) — read 조차 안 함', async () => {
@@ -134,14 +134,15 @@ describe('runSemanticSearch (main 코사인)', () => {
     expect(out.results).toHaveLength(0);
   });
 
-  it('구버전 세션(사이드카 없음) → session.json 의 chunkMeta 로 fallback', async () => {
+  it('구버전 세션(사이드카 없음) → session.json 의 chunkMeta 로 fallback(readSessionMeta, index.bin 재독 없음)', async () => {
     store.listSessions.mockResolvedValue([entry({})]);
-    store.readIndexBlob.mockResolvedValue(blob([[1, 0]])); // index.bin 은 존재
+    store.readIndexBlob.mockResolvedValue(blob([[1, 0]])); // index.bin 은 존재(1회 읽음)
     store.readIndexMeta.mockResolvedValue(null);            // index.meta.json 없음(구버전)
-    store.readSession.mockResolvedValue({ session: { chunkMeta: defaultChunkMeta }, blob: blob([[1, 0]]) });
+    store.readSessionMeta.mockResolvedValue({ session: { chunkMeta: defaultChunkMeta } }); // session.json 만
     const out = await runSemanticSearch(DIR, [1, 0], 'nomic', 2);
-    expect(out.results).toHaveLength(1); // fallback 으로 매칭
-    expect(store.readSession).toHaveBeenCalled();
+    expect(out.results).toHaveLength(1);                      // fallback 으로 매칭
+    expect(store.readSessionMeta).toHaveBeenCalled();
+    expect(store.readIndexBlob).toHaveBeenCalledTimes(1);     // index.bin 1회만(이중 읽기 회귀 방지)
   });
 
   it('점수 내림차순 정렬', async () => {

@@ -12,7 +12,7 @@
 
 import { normalizeToFloat32, dotClamped } from '../shared/vector-math';
 import type { GlobalSearchResult, SearchSnippet, SemanticSearchResponse } from '../shared/session-types';
-import { listSessions, readIndexMeta, readIndexBlob, readSession } from './session-store';
+import { listSessions, readIndexMeta, readIndexBlob, readSessionMeta } from './session-store';
 
 const TOP_K_PER_DOC = 3;
 const MIN_SCORE = 0.3; // RAG_MIN_SCORE 와 동일 — 약한 유사도 노이즈 컷 (renderer 와 일치)
@@ -67,10 +67,12 @@ async function loadSearchIndex(
     if (cm) return { chunkMeta: cm, blob };
     return null;
   }
-  // 구버전 fallback: 사이드카 없음 → session.json 의 chunkMeta (이 문서만 본문 파싱)
-  const loaded = await readSession(sessionsDir, docHash);
+  // 구버전 fallback: 사이드카 없음 → session.json 의 chunkMeta. readSessionMeta(index.bin 미독)로
+  // chunkMeta 만 파싱하고 위에서 읽은 blob 을 재사용한다 — readSession 을 쓰면 index.bin 을 한 번 더
+  // 읽어 변경 전보다 오히려 손해이므로(레거시 라이브러리 회귀) 경량 경로로 처리.
+  const loaded = await readSessionMeta(sessionsDir, docHash);
   const cm = validateChunkMeta((loaded?.session as { chunkMeta?: unknown } | undefined)?.chunkMeta);
-  if (cm && loaded?.blob) return { chunkMeta: cm, blob: loaded.blob };
+  if (cm) return { chunkMeta: cm, blob };
   return null;
 }
 

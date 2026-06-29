@@ -259,20 +259,33 @@ export async function writeSession(
     const indexMetaPath = path.join(dir, INDEX_META);
     let blobBytes = 0;
     let metaBytes = 0;
+    const metaStrOf = () => JSON.stringify({ chunkMeta: Array.isArray(chunkMeta) ? chunkMeta : [] });
     if (keepIndex) {
       // serialize-skip(인덱스 무변경): 기존 index.bin·index.meta.json 을 건드리지 않고 보존한다.
       // blob 미전송이지만 아래 null→unlink 분기와 명확히 구분 — keepIndex 는 "그대로 둬라", null 은
       // "인덱스 없음, 지워라". byteSize 는 현재 두 사이드카 크기를 stat 해 반영.
       try { blobBytes = (await fsp.stat(indexBinPath)).size; } catch { blobBytes = 0; }
-      try { metaBytes = (await fsp.stat(indexMetaPath)).size; } catch { metaBytes = 0; }
+      try {
+        metaBytes = (await fsp.stat(indexMetaPath)).size;
+      } catch {
+        // QA: 사이드카 부재(구버전 세션이 keepIndex 경로 진입 — session.json 의 chunkMeta 가 위에서
+        // strip 되어 사라졌다)면 strip 된 chunkMeta 로 1회 self-heal 생성. "keepIndex ⟹ 사이드카 존재"
+        // 불변식을 코드로 봉인해 chunkMeta 영구 소실(→재임베딩/검색 누락)을 차단.
+        const metaStr = metaStrOf();
+        await writeFileAtomic(indexMetaPath, metaStr);
+        metaBytes = Buffer.byteLength(metaStr);
+      }
     } else if (blob) {
+      // index.bin 과 짝을 이루는 chunkMeta 를 함께 기록(둘 다 새 인덱스 기준).
+      // QA(크래시 안전): 사이드카를 먼저 쓰고 index.bin 을 마지막에 기록한다. 중간 크래시 시 blob 이
+      // 부재(또는 옛 것)로 귀결돼 재오픈이 throw→재임베딩(또는 옛 짝)으로 안전 수렴 — "blob 있는데
+      // chunkMeta 없음" 의 새 실패 모드를 피한다.
+      const metaStr = metaStrOf();
+      await writeFileAtomic(indexMetaPath, metaStr);
+      metaBytes = Buffer.byteLength(metaStr);
       const u8 = new Uint8Array(blob);
       await writeFileAtomic(indexBinPath, u8);
       blobBytes = u8.byteLength;
-      // index.bin 과 짝을 이루는 chunkMeta 를 함께 기록(원자적 쌍 — 둘 다 새 인덱스 기준).
-      const metaStr = JSON.stringify({ chunkMeta: Array.isArray(chunkMeta) ? chunkMeta : [] });
-      await writeFileAtomic(indexMetaPath, metaStr);
-      metaBytes = Buffer.byteLength(metaStr);
     } else {
       // R41 fix: blob 없이 갱신 시 이전 index.bin 을 제거한다(stale 임베딩 잔존·byteSize 과소 방지).
       // chunkMeta 사이드카도 함께 제거해 index.bin 과 생명주기를 일치시킨다.
