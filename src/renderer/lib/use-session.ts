@@ -3,7 +3,7 @@ import { useAppStore } from './store';
 import { t } from './i18n';
 import { hashDocumentText } from './session-hash';
 import { VectorStore } from './vector-store';
-import type { PdfDocument, PersistedSession, Summary, DefaultSummaryType } from '../types';
+import type { PdfDocument, PersistedSession, Summary, DefaultSummaryType, SerializedIndex } from '../types';
 import { SESSION_SCHEMA_VERSION, type SessionSaveMeta } from '../../shared/session-types';
 
 /**
@@ -18,6 +18,13 @@ import { SESSION_SCHEMA_VERSION, type SessionSaveMeta } from '../../shared/sessi
  */
 
 const PERSIST_DEBOUNCE_MS = 1500;
+
+// serialize-skip 시그니처: 디스크 index.bin 과 일치한다고 판단되는 인덱스의 (인스턴스, revision).
+// 자동저장이 현재 ragIndex 와 이 시그니처를 비교해 "직전 영속화 이후 무변경"이면 blob 재직렬화/
+// 재전송/index.bin 재기록을 생략(keepIndex)한다. WeakRef 로 보관해 교체된 옛 인덱스를 붙들지 않는다
+// (인덱스가 GC 되면 deref()→undefined 라 자동으로 불일치=full save 로 안전 폴백).
+// 설정 시점: ①전체 blob 저장 성공 직후 ②복원 직후(디스크에서 막 로드해 일치 보장).
+let persistedIndexSig: { ref: WeakRef<object>; revision: number } | null = null;
 
 /** 문서 로드 직후 호출 — 세션 복원 시도 후 restore-pending 게이트 해제. */
 export async function restoreSessionForDocument(doc: PdfDocument): Promise<void> {
@@ -98,6 +105,9 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
             buffer: res.blob,
           });
           store.setRagIndex(vs);
+          // serialize-skip baseline: 방금 디스크 index.bin 에서 복원했으므로 디스크와 일치.
+          // 첫 자동저장부터 keepIndex 로 불필요한 index.bin 재기록을 피한다.
+          persistedIndexSig = { ref: new WeakRef(vs), revision: vs.revision };
           store.setRagState({
             isIndexing: false, progress: null, isAvailable: true,
             model: session.embedModel, chunkCount: vs.size,
@@ -184,8 +194,16 @@ async function doPersistCurrentSession(): Promise<void> {
   try {
     const docHash = await getCachedDocHash(doc.id, doc.extractedText);
     if (useAppStore.getState().document?.id !== doc.id) return; // 레이스
-    const serialized = s.ragIndex.serialize();
-    const hasIndex = !indexing && serialized.chunkMeta.length > 0;
+
+    const ragIndex = s.ragIndex;
+    const hasIndex = !indexing && ragIndex.size > 0;
+    // serialize-skip: 인덱스가 직전 영속화 이후 무변경이고 디스크에 이미 있으면(시그니처 일치)
+    // blob 재직렬화/재전송/index.bin 재기록을 생략한다. 불변 인덱스 재처리가 자동저장 비용의
+    // 대부분(Q&A 턴마다 멀티MB 벡터 버퍼 재작성)이었다.
+    const idxUnchanged =
+      hasIndex &&
+      persistedIndexSig?.ref.deref() === ragIndex &&
+      persistedIndexSig.revision === ragIndex.revision;
 
     // 기존 세션의 타입별 요약을 머지(다른 요약 타입 보존) + 인덱싱 중이면 기존 인덱스 보존
     let summaries: PersistedSession['summaries'] = {};
@@ -219,6 +237,34 @@ async function doPersistCurrentSession(): Promise<void> {
       };
     }
 
+    // 인덱스 필드/blob/keepIndex 결정 — 4-상태:
+    //  ①idxUnchanged → keepIndex(blob 미전송, 메타만 경량 추출, main 이 index.bin 보존)
+    //  ②hasIndex(변경/최초) → 전체 serialize 후 blob 기록
+    //  ③indexing → 디스크의 기존 인덱스 보존(prevIndex.blob)
+    //  ④그 외(인덱스 없음) → blob:null(main 이 stale index.bin 제거)
+    let embedModel: string | null;
+    let embedDim: number | null;
+    let chunkMeta: PersistedSession['chunkMeta'];
+    let blob: ArrayBuffer | null;
+    let keepIndex = false;
+    let fullSerialized: SerializedIndex | null = null;
+    if (idxUnchanged) {
+      const m = ragIndex.serializeMeta(); // 벡터 버퍼 생성 없이 chunkMeta/model/dim 만
+      embedModel = m.model; embedDim = m.dimension; chunkMeta = m.chunkMeta;
+      blob = null; keepIndex = true;
+    } else if (hasIndex) {
+      fullSerialized = ragIndex.serialize();
+      embedModel = fullSerialized.model; embedDim = fullSerialized.dimension; chunkMeta = fullSerialized.chunkMeta;
+      blob = fullSerialized.buffer;
+    } else if (indexing) {
+      embedModel = prevIndex?.embedModel ?? null;
+      embedDim = prevIndex?.embedDim ?? null;
+      chunkMeta = prevIndex?.chunkMeta ?? [];
+      blob = prevIndex?.blob ?? null;
+    } else {
+      embedModel = null; embedDim = null; chunkMeta = []; blob = null;
+    }
+
     const session: PersistedSession = {
       schemaVersion: SESSION_SCHEMA_VERSION,
       docHash,
@@ -232,21 +278,26 @@ async function doPersistCurrentSession(): Promise<void> {
       summaries,
       summaryType: s.summaryType,
       qaMessages: s.qaMessages,
-      embedModel: hasIndex ? serialized.model : prevIndex?.embedModel ?? null,
-      embedDim: hasIndex ? serialized.dimension : prevIndex?.embedDim ?? null,
-      chunkMeta: hasIndex ? serialized.chunkMeta : prevIndex?.chunkMeta ?? [],
+      embedModel,
+      embedDim,
+      chunkMeta,
     };
     const meta: SessionSaveMeta = {
       docHash,
       fileName: doc.fileName,
       filePath: doc.filePath,
       pageCount: doc.pageCount,
-      embedModel: session.embedModel,
-      embedDim: session.embedDim,
-      chunkCount: session.chunkMeta.length,
+      embedModel,
+      embedDim,
+      chunkCount: chunkMeta.length,
     };
-    const result = await api.save({ meta, session, blob: hasIndex ? serialized.buffer : prevIndex?.blob ?? null });
-    recordSaveResult(result?.ok !== false); // {ok:false}=실패, 그 외(true/구형 undefined)=성공 취급
+    const result = await api.save({ meta, session, blob, keepIndex });
+    const ok = result?.ok !== false; // {ok:false}=실패, 그 외(true/구형 undefined)=성공 취급
+    // 전체 blob 을 성공적으로 기록했을 때만 시그니처 갱신 → 다음 턴부터 동일 인덱스는 keepIndex.
+    if (ok && fullSerialized) {
+      persistedIndexSig = { ref: new WeakRef(ragIndex), revision: ragIndex.revision };
+    }
+    recordSaveResult(ok);
   } catch {
     // 저장 실패는 작업을 막지 않음(best-effort) — 단 연속 실패는 집계해 임계 초과 시 1회 통지(E3)
     recordSaveResult(false);

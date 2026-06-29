@@ -322,6 +322,83 @@ describe('persistCurrentSession (module-3)', () => {
   });
 });
 
+// serialize-skip(자동저장 비용↓): 인덱스가 직전 영속화 이후 무변경이면 blob 재직렬화/재전송/
+// index.bin 재기록을 생략(keepIndex=true). instance+revision 시그니처로 변경을 판정.
+type SavePayload = {
+  meta: { chunkCount: number };
+  session: PersistedSession;
+  blob: ArrayBuffer | null;
+  keepIndex?: boolean;
+};
+describe('persistCurrentSession serialize-skip (Tier2)', () => {
+  const summaryState = (doc: PdfDocument, content: string) => ({
+    summary: { id: 's', documentId: doc.id, type: 'full' as const, content, model: 'm', provider: 'ollama' as const, createdAt: new Date(), durationMs: 1 },
+    summaryStream: content,
+  });
+
+  it('인덱스 무변경 시 2번째 저장은 keepIndex=true·blob 미전송 (메타·본문은 갱신)', async () => {
+    const doc = makeDoc('skip-doc');
+    const vs = VectorStore.restore(makeIndexFixture());
+    useAppStore.setState({ document: doc, ...summaryState(doc, '요약'), qaMessages: [{ id: 'q', role: 'user', content: 'q' }], ragIndex: vs });
+    api.session.load.mockResolvedValue(null);
+    api.session.loadMeta.mockResolvedValue(null);
+
+    // 1번째: 전체 blob 기록 + 시그니처 등록
+    await persistCurrentSession();
+    const first = api.session.save.mock.calls[0]![0] as SavePayload;
+    expect(first.blob).not.toBeNull();
+    expect(first.keepIndex).toBeFalsy();
+
+    // 2번째: 인덱스 무변경, Q&A만 추가 → keepIndex
+    useAppStore.setState({ qaMessages: [{ id: 'q', role: 'user', content: 'q' }, { id: 'q2', role: 'user', content: 'q2' }] });
+    await persistCurrentSession();
+    const second = api.session.save.mock.calls[1]![0] as SavePayload;
+    expect(second.keepIndex).toBe(true);
+    expect(second.blob).toBeNull();
+    expect(second.meta.chunkCount).toBe(2);                 // 메타(chunkMeta)는 보존
+    expect(second.session.embedModel).toBe('nomic-embed-text');
+    expect(second.session.chunkMeta).toHaveLength(2);
+    expect(second.session.qaMessages).toHaveLength(2);      // 본문은 갱신
+  });
+
+  it('인덱스가 바뀌면(revision↑) 다시 전체 blob 전송', async () => {
+    const doc = makeDoc('change-doc');
+    const vs = VectorStore.restore(makeIndexFixture());
+    useAppStore.setState({ document: doc, ...summaryState(doc, 's'), ragIndex: vs });
+    api.session.load.mockResolvedValue(null);
+    api.session.loadMeta.mockResolvedValue(null);
+
+    await persistCurrentSession(); // 등록 (chunkCount 2)
+    vs.addChunk('new chunk', [0, 0, 1], 2, { pageStart: 3, pageEnd: 3 }); // revision↑
+
+    await persistCurrentSession();
+    const second = api.session.save.mock.calls[1]![0] as SavePayload;
+    expect(second.keepIndex).toBeFalsy();
+    expect(second.blob).not.toBeNull();
+    expect(second.meta.chunkCount).toBe(3);
+  });
+
+  it('복원 직후 첫 자동저장은 keepIndex=true (디스크와 일치, index.bin 재기록 회피)', async () => {
+    const doc = makeDoc('restore-skip-doc');
+    useAppStore.setState({ document: doc, sessionRestorePending: true });
+    const fixture = persistedSession(doc, true);
+    api.session.load.mockImplementation(async (hash: string) => { fixture.session.docHash = hash; return fixture; });
+
+    await restoreSessionForDocument(doc); // ragIndex 복원 + baseline 시그니처 등록
+
+    // 이후 자동저장 — 인덱스는 그대로, 요약만 변경
+    api.session.load.mockResolvedValue(null);
+    api.session.loadMeta.mockResolvedValue(null);
+    useAppStore.setState({ ...summaryState(doc, '요약 변경') });
+    await persistCurrentSession();
+
+    const payload = api.session.save.mock.calls.at(-1)![0] as SavePayload;
+    expect(payload.keepIndex).toBe(true);
+    expect(payload.blob).toBeNull();
+    expect(payload.meta.chunkCount).toBe(2);
+  });
+});
+
 describe('R41 fixes', () => {
   it('High: summaryType 키가 없으면 fallback 요약의 실제 타입으로 복원 (불일치 방지)', async () => {
     const doc = makeDoc();

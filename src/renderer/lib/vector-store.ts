@@ -44,9 +44,17 @@ export class VectorStore {
   private chunks: VectorChunk[] = [];
   private _model: string | null = null;
   private _dimension: number | null = null;
+  // 내용 변경 카운터(serialize-skip). addChunk/clear 마다 증가 → 자동저장이 (인스턴스, revision)
+  // 으로 "직전 영속화 이후 인덱스가 바뀌었는가"를 판정해, 불변이면 blob 재직렬화/재전송/index.bin
+  // 재기록을 생략한다. restore() 는 직접 push 하므로 0 으로 시작(복원 직후 디스크와 동일 = baseline).
+  private _revision = 0;
 
   get size(): number {
     return this.chunks.length;
+  }
+
+  get revision(): number {
+    return this._revision;
   }
 
   get model(): string | null {
@@ -75,6 +83,7 @@ export class VectorStore {
       pageStart: metadata?.pageStart,
       pageEnd: metadata?.pageEnd,
     });
+    this._revision++;
   }
 
   /**
@@ -112,6 +121,19 @@ export class VectorStore {
     this.chunks = [];
     this._model = null;
     this._dimension = null;
+    this._revision++;
+  }
+
+  /**
+   * 메타만 직렬화 — 정규화 벡터 버퍼(가장 비싼 부분)를 만들지 않는다.
+   * serialize-skip 경로에서 index.bin 은 그대로 두되 session.json 에 들어갈 chunkMeta/model/dim
+   * 만 필요할 때 사용(버퍼 할당·복사·IPC 전송 생략).
+   */
+  serializeMeta(): { model: string | null; dimension: number | null; chunkMeta: PersistedChunkMeta[] } {
+    const chunkMeta: PersistedChunkMeta[] = this.chunks.map((c) => ({
+      text: c.text, index: c.index, pageStart: c.pageStart, pageEnd: c.pageEnd,
+    }));
+    return { model: this._model, dimension: this._dimension, chunkMeta };
   }
 
   /**

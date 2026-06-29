@@ -36,6 +36,12 @@ vi.mock('fs/promises', () => {
         }
       }),
       unlink: vi.fn(async (p: string) => { V.files.delete(norm(p)); }),
+      stat: vi.fn(async (p: string) => {
+        const v = V.files.get(norm(p));
+        if (v === undefined) throw enoent();
+        const size = typeof v === 'string' ? Buffer.byteLength(v) : v.byteLength;
+        return { size };
+      }),
     },
   };
 });
@@ -247,6 +253,37 @@ describe('R41 fixes (session-store)', () => {
     expect(e.chunkCount).toBe(0);     // Infinity → 0
     // byteSize 합산이 NaN 으로 오염되지 않음 → LRU 용량 캡 정상 동작
     expect(Number.isFinite((await sessionStats(DIR)).totalBytes)).toBe(true);
+  });
+});
+
+describe('writeSession keepIndex (serialize-skip, Tier2)', () => {
+  it('keepIndex=true → 기존 index.bin 보존(재기록·삭제 안 함) + byteSize 에 기존 크기 반영', async () => {
+    const h = hashOf(7);
+    const blob = new Float32Array([1, 0, 0, 0, 1, 0]).buffer; // 2×3 인덱스
+    await writeSession(DIR, { meta: metaOf(h), session: { v: 1 }, blob, now: 1000 });
+    const withBlob = (await readSession(DIR, h))!.blob!;
+    const byteWithBlob = (await listSessions(DIR))[0]!.byteSize;
+
+    // keepIndex 로 재저장(blob 미전송) → 인덱스 그대로, 본문만 갱신
+    const r = await writeSession(DIR, { meta: metaOf(h), session: { v: 2 }, blob: null, keepIndex: true, now: 2000 });
+    expect(r.ok).toBe(true);
+
+    const after = await readSession(DIR, h);
+    expect(after!.blob).not.toBeNull();                       // index.bin 보존됨 (null→unlink 와 구분)
+    expect(after!.blob!.byteLength).toBe(withBlob.byteLength); // 동일 인덱스
+    expect((after!.session as { v: number }).v).toBe(2);      // 본문은 갱신
+    // byteSize 가 index.bin 크기를 계속 포함 (과소계상 방지 — LRU 캡 정상)
+    const byteAfter = (await listSessions(DIR))[0]!.byteSize;
+    expect(byteAfter).toBeGreaterThan(Buffer.byteLength(JSON.stringify({ v: 2 })));
+    expect(Math.abs(byteAfter - byteWithBlob)).toBeLessThan(50); // json 차이만큼만 변동
+  });
+
+  it('keepIndex 인데 index.bin 이 없으면 byteSize=json 만 (graceful)', async () => {
+    const h = hashOf(8);
+    const r = await writeSession(DIR, { meta: { ...metaOf(h), embedModel: null, embedDim: null, chunkCount: 0 }, session: { v: 1 }, blob: null, keepIndex: true, now: 1000 });
+    expect(r.ok).toBe(true);
+    expect((await readSession(DIR, h))!.blob).toBeNull();
+    expect(Number.isFinite((await listSessions(DIR))[0]!.byteSize)).toBe(true);
   });
 });
 

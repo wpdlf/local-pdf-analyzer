@@ -207,4 +207,47 @@ describe('VectorStore', () => {
       expect(() => VectorStore.restore(bad)).toThrow(/크기 불일치/);
     });
   });
+
+  // serialize-skip 지원: 자동저장이 "직전 영속화 이후 인덱스가 바뀌었는가"를 판정하는 신호.
+  describe('revision (serialize-skip 신호)', () => {
+    it('addChunk 마다 증가, clear 도 증가', () => {
+      const vs = new VectorStore();
+      expect(vs.revision).toBe(0);
+      vs.addChunk('a', [1, 0, 0], 0);
+      const r1 = vs.revision;
+      expect(r1).toBeGreaterThan(0);
+      vs.addChunk('b', [0, 1, 0], 1);
+      expect(vs.revision).toBeGreaterThan(r1);
+      const r2 = vs.revision;
+      vs.clear();
+      expect(vs.revision).toBeGreaterThan(r2);
+    });
+
+    it('restore 로 만든 인덱스는 revision 0 에서 시작 (복원 직후 디스크와 동일 baseline)', () => {
+      const src = new VectorStore();
+      src.addChunk('a', [1, 0, 0], 0);
+      const restored = VectorStore.restore(src.serialize());
+      expect(restored.revision).toBe(0);
+      expect(restored.size).toBe(1);
+    });
+  });
+
+  describe('serializeMeta (버퍼 없는 경량 직렬화)', () => {
+    it('chunkMeta/model/dim 을 반환하되 벡터 버퍼는 만들지 않는다', () => {
+      const vs = new VectorStore();
+      vs.setModel('nomic-embed-text');
+      vs.addChunk('chunk one', [1, 0, 0], 0, { pageStart: 1, pageEnd: 2 });
+      vs.addChunk('chunk two', [0, 1, 0], 1, { pageStart: 3, pageEnd: 3 });
+
+      const meta = vs.serializeMeta();
+      expect(meta.model).toBe('nomic-embed-text');
+      expect(meta.dimension).toBe(3);
+      expect(meta).not.toHaveProperty('buffer'); // 버퍼 미생성
+      expect(meta.chunkMeta).toHaveLength(2);
+      expect(meta.chunkMeta[0]).toEqual({ text: 'chunk one', index: 0, pageStart: 1, pageEnd: 2 });
+
+      // 전체 serialize 의 chunkMeta 와 동일해야 함(session.json 일관성)
+      expect(meta.chunkMeta).toEqual(vs.serialize().chunkMeta);
+    });
+  });
 });

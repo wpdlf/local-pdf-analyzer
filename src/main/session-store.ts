@@ -170,9 +170,9 @@ export async function readSessionMeta(
 /** 세션 저장 + manifest upsert + LRU 정리. best-effort — 실패 시 { ok:false }. */
 export async function writeSession(
   sessionsDir: string,
-  params: { meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null; now: number },
+  params: { meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null; keepIndex?: boolean; now: number },
 ): Promise<{ ok: boolean }> {
-  const { meta, session, blob, now } = params;
+  const { meta, session, blob, keepIndex, now } = params;
   if (!isValidDocHash(meta.docHash)) return { ok: false };
   try {
     const dir = sessionDir(sessionsDir, meta.docHash);
@@ -180,17 +180,23 @@ export async function writeSession(
 
     const jsonStr = JSON.stringify(session);
     await writeFileAtomic(path.join(dir, SESSION_JSON), jsonStr);
+    const indexBinPath = path.join(dir, INDEX_BIN);
     let blobBytes = 0;
-    if (blob) {
+    if (keepIndex) {
+      // serialize-skip(인덱스 무변경): 기존 index.bin 을 건드리지 않고 보존한다. blob 미전송이지만
+      // 아래 null→unlink 분기와 명확히 구분해야 한다 — keepIndex 는 "그대로 둬라", null 은
+      // "인덱스 없음, 지워라"라는 서로 다른 계약. byteSize 는 현재 index.bin 크기를 stat 해 반영.
+      try { blobBytes = (await fsp.stat(indexBinPath)).size; } catch { blobBytes = 0; }
+    } else if (blob) {
       const u8 = new Uint8Array(blob);
-      await writeFileAtomic(path.join(dir, INDEX_BIN), u8);
+      await writeFileAtomic(indexBinPath, u8);
       blobBytes = u8.byteLength;
     } else {
       // R41 fix: blob 없이 갱신 시 이전 index.bin 을 제거한다. 미제거 시 (1) stale 임베딩
       // 인덱스가 디스크에 잔존해 다음 readSession 이 새 session.json 과 옛 index.bin 을 짝지어
       // 차원/모델 불일치 복원을 유발하고, (2) byteSize 가 과소 계상되어 LRU 200MB 캡이 실제
       // 디스크 사용량을 과소평가한다.
-      try { await fsp.unlink(path.join(dir, INDEX_BIN)); } catch { /* 없으면 무시 */ }
+      try { await fsp.unlink(indexBinPath); } catch { /* 없으면 무시 */ }
     }
     const byteSize = Buffer.byteLength(jsonStr) + blobBytes;
     const nowIso = new Date(now).toISOString();

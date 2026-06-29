@@ -497,12 +497,13 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('session:save', async (_event, payload: unknown) => {
-    const p = payload as { meta?: SessionSaveMeta; session?: unknown; blob?: ArrayBuffer | null } | null;
+    const p = payload as { meta?: SessionSaveMeta; session?: unknown; blob?: ArrayBuffer | null; keepIndex?: boolean } | null;
     if (!p || !p.meta || !isValidDocHash(p.meta.docHash)) return { ok: false };
     const meta = p.meta;
     const session = p.session;
     const blob = p.blob ?? null;
-    return serializeSessionWrite(() => writeSession(sessionsDir, { meta, session, blob, now: Date.now() }));
+    const keepIndex = p.keepIndex === true;
+    return serializeSessionWrite(() => writeSession(sessionsDir, { meta, session, blob, keepIndex, now: Date.now() }));
   });
 
   // 컬렉션 인라인 요약 영속화(multi-doc Phase 3): summaries[type] 한 칸만 병합. session:save 와
