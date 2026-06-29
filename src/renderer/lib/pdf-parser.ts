@@ -25,6 +25,18 @@ export function loadPdfjs(): Promise<PdfjsModule> {
   return pdfjsPromise;
 }
 
+/**
+ * 문서의 filePath 가 디스크에서 재읽기 가능한 실경로인지 — pdfBytes 비상주(메모리 M1) 판정용.
+ *
+ * 모든 정상 진입 경로(IPC 드롭 file.path / 다이얼로그 result.path / DOM 드롭 getPathForFile /
+ * 최근목록·탭 openPath)는 절대경로를 준다. DOM 드롭에서 getPathForFile 이 실패할 때만 `file.name`
+ * (경로 구분자 없는 합성명)으로 fallback 하는데, 이건 file:open-path 로 재읽기가 불가능하다.
+ * 파일명에는 `/`·`\` 가 들어갈 수 없으므로 "경로 구분자 유무"가 재읽기 가능성의 견고한 신호.
+ */
+export function isReReadablePath(filePath: string): boolean {
+  return /[\\/]/.test(filePath);
+}
+
 export interface ParsePdfOptions {
   enableOcrFallback?: boolean;
   onOcrProgress?: (current: number, total: number) => void;
@@ -743,7 +755,10 @@ export async function handlePdfData(
     store.setProgressInfo(null);
     store.clearQa();
     store.setDocument(doc);
-    store.setPdfBytes(pdfBytesCopy); // PdfViewer 가 참조할 원본
+    // pdfBytes 비상주(메모리 M1): 원본 바이트(최대 100MB)는 인용 클릭 시 PdfViewer 만 쓴다.
+    // 재읽기 가능한 실경로 문서는 상주시키지 않고(=null), PdfViewerPanel 이 인용 클릭 시 디스크에서
+    // 1회 lazy 로드한다. 경로 없는 합성 드롭 문서만 재읽기 불가라 fallback 으로 상주 유지.
+    store.setPdfBytes(isReReadablePath(doc.filePath) ? null : pdfBytesCopy);
     // multi-doc Phase 1: 모든 성공 로드 경로(드롭/다이얼로그/IPC/최근 문서/탭 전환)가 본
     // 함수를 경유하므로 여기가 탭 등록의 단일 지점 — filePath 중복은 메타 갱신(중복 탭 없음).
     store.upsertOpenTab({ filePath: doc.filePath, fileName: doc.fileName, pageCount: doc.pageCount });

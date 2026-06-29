@@ -78,13 +78,9 @@ async function restoreTabFromSession(tab: OpenTab): Promise<boolean> {
     return false;
   }
 
-  // 뷰어용 원본 바이트: 파일만 읽음(파싱 없음 — 빠름). 실패해도 분석 복원은 진행(뷰어만 비활성).
-  let pdfBytes: Uint8Array | null = null;
-  const fileRes = await window.electronAPI.file.openPath(tab.filePath).catch(() => null);
-  if (fileRes && !('error' in fileRes)) {
-    try { pdfBytes = new Uint8Array(fileRes.data); } catch { pdfBytes = null; }
-  }
-
+  // pdfBytes 비상주(메모리 M1): 뷰어용 원본 바이트는 인용 클릭 시 PdfViewerPanel 이 디스크에서
+  // lazy 로드한다(여기서 eager 로 읽지 않음 → 전환 더 빠르고 ~100MB 상주 회피). 분석 상태는
+  // 세션에서 즉시 복원. (재읽기 불가 합성경로 탭은 어차피 이전에도 바이트 주입 실패였음 — 무회귀.)
   const doc: PdfDocument = {
     id: safeId(),
     // 세션은 콘텐츠 주소(해시) 기반이라 동일 내용의 다른 파일이 마지막 저장자의 이름으로
@@ -107,7 +103,7 @@ async function restoreTabFromSession(tab: OpenTab): Promise<boolean> {
   s.setProgressInfo(null);
   s.clearQa();
   s.setDocument(doc);
-  s.setPdfBytes(pdfBytes);
+  s.setPdfBytes(null); // 비상주 — 인용 클릭 시 lazy 로드
   s.upsertOpenTab({ filePath: tab.filePath, fileName: doc.fileName, pageCount: doc.pageCount, docHash: tab.docHash });
   s.setSessionRestorePending(true);
   // 동일 콘텐츠 → 동일 해시 → 복원 hit (요약/Q&A/인덱스, 재임베딩 0)

@@ -165,29 +165,70 @@ describe('PdfViewer 목차(outline)', () => {
 });
 
 describe('PdfViewerPanel', () => {
+  const docFixture = (filePath: string) => ({
+    id: 'doc-lazy', fileName: 'big.pdf', filePath, pageCount: 3,
+    extractedText: 't', pageTexts: ['t'], chapters: [], images: [], createdAt: new Date(),
+  });
+
   it('citationTarget 없으면 null', () => {
     useAppStore.setState({ pdfBytes: new Uint8Array([1]), citationTarget: null });
     const { container } = render(<PdfViewerPanel />);
     expect(container.firstChild).toBeNull();
   });
 
-  it('pdfBytes 없으면 null', () => {
-    useAppStore.setState({ pdfBytes: null, citationTarget: { page: 1 } });
+  it('문서 없으면 null (citationTarget 만 있어도)', () => {
+    useAppStore.setState({ document: null, pdfBytes: null, citationTarget: { page: 1 } });
     const { container } = render(<PdfViewerPanel />);
     expect(container.firstChild).toBeNull();
   });
 
-  it('둘 다 있으면 뷰어 마운트', () => {
-    useAppStore.setState({ pdfBytes: new Uint8Array([1, 2]), citationTarget: { page: 1 } });
+  it('상주 바이트 + 문서 → 뷰어 마운트 (합성경로/드롭 fallback)', () => {
+    useAppStore.setState({ document: docFixture('big.pdf'), pdfBytes: new Uint8Array([1, 2]), citationTarget: { page: 1 } });
     render(<PdfViewerPanel />);
     expect(screen.getAllByText(t('pdfviewer.title')).length).toBeGreaterThan(0);
   });
 
   it('뷰어 닫기 → citationTarget 해제', async () => {
-    useAppStore.setState({ pdfBytes: new Uint8Array([1, 2]), citationTarget: { page: 1 } });
+    useAppStore.setState({ document: docFixture('big.pdf'), pdfBytes: new Uint8Array([1, 2]), citationTarget: { page: 1 } });
     const user = userEvent.setup();
     render(<PdfViewerPanel />);
     await user.click(screen.getByRole('button', { name: t('pdfviewer.close') }));
     expect(useAppStore.getState().citationTarget).toBeNull();
+  });
+
+  // pdfBytes 비상주(메모리 M1): 상주 바이트 없고 실경로면 인용 클릭 시 디스크에서 lazy 로드.
+  it('lazy 로드: 상주 바이트 없는 실경로 문서 → openPath 로 읽어 store 주입', async () => {
+    const openPath = vi.fn(async () => ({ path: '/d/big.pdf', name: 'big.pdf', data: new ArrayBuffer(8) }));
+    (window as unknown as { electronAPI: unknown }).electronAPI = { file: { openPath } };
+    try {
+      useAppStore.setState({ document: docFixture('/d/big.pdf'), pdfBytes: null, citationTarget: { page: 1 } });
+      render(<PdfViewerPanel />);
+      // 초기엔 로딩 표시
+      expect(screen.getByText(t('pdfviewer.loading'))).toBeTruthy();
+      // 디스크 로드 후 store 에 바이트 주입
+      await waitFor(() => expect(useAppStore.getState().pdfBytes).not.toBeNull());
+      expect(openPath).toHaveBeenCalledWith('/d/big.pdf');
+    } finally {
+      delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+    }
+  });
+
+  it('lazy 로드 실패(파일 이동/삭제) → 에러 안내, store 미주입', async () => {
+    const openPath = vi.fn(async () => ({ error: 'not found' }));
+    (window as unknown as { electronAPI: unknown }).electronAPI = { file: { openPath } };
+    try {
+      useAppStore.setState({ document: docFixture('/d/gone.pdf'), pdfBytes: null, citationTarget: { page: 1 } });
+      render(<PdfViewerPanel />);
+      await waitFor(() => expect(screen.getByText(t('pdfviewer.renderFail'))).toBeTruthy());
+      expect(useAppStore.getState().pdfBytes).toBeNull();
+    } finally {
+      delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+    }
+  });
+
+  it('합성경로(재읽기 불가) + 상주 바이트 없음 → 즉시 에러 안내 (lazy 시도 안 함)', () => {
+    useAppStore.setState({ document: docFixture('big.pdf'), pdfBytes: null, citationTarget: { page: 1 } });
+    render(<PdfViewerPanel />);
+    expect(screen.getByText(t('pdfviewer.renderFail'))).toBeTruthy();
   });
 });

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy, PDFDocumentLoadingTask } from 'pdfjs-dist';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
-import { loadPdfjs } from '../lib/pdf-parser';
+import { loadPdfjs, isReReadablePath } from '../lib/pdf-parser';
 import { extractOutline, type OutlineNode } from '../lib/pdf-outline';
 
 // pdfjs-dist 는 지연 로딩(성능): 정적 import 를 제거해 콜드스타트 eager 번들에서 제외하고,
@@ -649,21 +649,87 @@ function OutlineTree({
 /**
  * store.citationTarget 및 pdfBytes 와 연결된 wrapper.
  * SummaryViewer 에서 이 컴포넌트만 조건부 마운트하면 됨.
+ *
+ * pdfBytes 비상주(메모리 M1): 상주 바이트가 없고(경로 기반 문서) 인용 패널이 열리면 디스크에서
+ * 1회 lazy 로드해 store 에 주입한다(이후 동작·캐시는 상주 경로와 동일). 로드 도중엔 스피너,
+ * 실패(파일 이동/삭제·재읽기 불가)면 안내. 합성경로 드롭 문서는 파싱 시 이미 상주돼 즉시 렌더.
  */
 export function PdfViewerPanel() {
+  const t = useT();
   const citationTarget = useAppStore((s) => s.citationTarget);
   const citationJumpNonce = useAppStore((s) => s.citationJumpNonce);
   const pdfBytes = useAppStore((s) => s.pdfBytes);
+  const filePath = useAppStore((s) => s.document?.filePath ?? null);
+  const docId = useAppStore((s) => s.document?.id ?? null);
   const setCitationTarget = useAppStore((s) => s.setCitationTarget);
+  const [loadFailed, setLoadFailed] = useState(false);
 
-  if (!citationTarget || !pdfBytes) return null;
+  // 상주 바이트가 없고 재읽기 가능한 실경로면 디스크에서 1회 로드 → store 주입.
+  const canLazyLoad = !pdfBytes && !!filePath && isReReadablePath(filePath) && !!docId;
+  useEffect(() => {
+    if (!canLazyLoad || !filePath || !docId) return;
+    let cancelled = false;
+    setLoadFailed(false);
+    (async () => {
+      let bytes: Uint8Array | null = null;
+      try {
+        const res = await window.electronAPI?.file?.openPath(filePath);
+        if (res && !('error' in res)) bytes = new Uint8Array(res.data);
+      } catch { bytes = null; }
+      if (cancelled) return;
+      // 로드 도중 문서가 전환됐으면 stale 주입 방지
+      if (useAppStore.getState().document?.id !== docId) return;
+      if (bytes) useAppStore.getState().setPdfBytes(bytes);
+      else setLoadFailed(true);
+    })();
+    return () => { cancelled = true; };
+  }, [canLazyLoad, filePath, docId]);
 
+  if (!citationTarget || !docId) return null; // 문서 없으면 패널 무의미
+
+  // 상주/lazy 바이트가 준비되면 정상 뷰어
+  if (pdfBytes) {
+    return (
+      <PdfViewer
+        pdfBytes={pdfBytes}
+        targetPage={citationTarget.page}
+        jumpNonce={citationJumpNonce}
+        onClose={() => setCitationTarget(null)}
+      />
+    );
+  }
+
+  // 바이트 미준비 — lazy 로드 중(스피너) 또는 로드 불가/실패(안내)
+  const unrecoverable = loadFailed || !canLazyLoad;
   return (
-    <PdfViewer
-      pdfBytes={pdfBytes}
-      targetPage={citationTarget.page}
-      jumpNonce={citationJumpNonce}
-      onClose={() => setCitationTarget(null)}
-    />
+    <div className="flex flex-col h-full bg-white border-l dark:border-gray-700" role="region" aria-label={t('pdfviewer.title')}>
+      <div className="flex items-center justify-between px-3 py-2 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800 shrink-0">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-200 truncate">{t('pdfviewer.title')}</span>
+        <button
+          type="button"
+          onClick={() => setCitationTarget(null)}
+          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm px-2 py-1 shrink-0"
+          aria-label={t('pdfviewer.close')}
+        >
+          ✕
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 p-4 text-center" aria-busy={!unrecoverable}>
+        {unrecoverable ? (
+          <>
+            <div className="text-2xl">⚠️</div>
+            <p className="text-sm text-red-600 dark:text-red-400">{t('pdfviewer.renderFail')}</p>
+          </>
+        ) : (
+          <>
+            <svg aria-hidden="true" className="animate-spin h-8 w-8 text-blue-500" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <p className="text-sm text-gray-500 dark:text-gray-400">{t('pdfviewer.loading')}</p>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

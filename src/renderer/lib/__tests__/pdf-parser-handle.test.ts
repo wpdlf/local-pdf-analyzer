@@ -105,17 +105,25 @@ describe('handlePdfData — 가드', () => {
 });
 
 describe('handlePdfData — 성공 오케스트레이션', () => {
-  it('유효 PDF → 문서/pdfBytes 설정 + 세션 복원 트리거', async () => {
+  it('유효 PDF(실경로) → 문서 설정 + 세션 복원 트리거, pdfBytes 는 비상주(lazy)', async () => {
     await handlePdfData(pdfBuf(), 'lecture.pdf', '/d/lecture.pdf');
     const s = useAppStore.getState();
     expect(P.getDocument).toHaveBeenCalledTimes(1);
     expect(s.document?.fileName).toBe('lecture.pdf');
     expect(s.document?.pageCount).toBe(2);
     expect(s.document?.chapters.length).toBeGreaterThan(0);
-    expect(s.pdfBytes).not.toBeNull();
+    // pdfBytes 비상주(메모리 M1): 재읽기 가능한 실경로는 상주 안 함 — 인용 클릭 시 lazy 로드.
+    expect(s.pdfBytes).toBeNull();
     expect(P.restore).toHaveBeenCalledTimes(1);
     expect(s.error).toBeNull();
     expect(s.isParsing).toBe(false);
+  });
+
+  it('합성경로(경로 구분자 없음) 드롭 → 재읽기 불가라 pdfBytes 상주(fallback)', async () => {
+    await handlePdfData(pdfBuf(), 'lecture.pdf', 'lecture.pdf'); // getPathForFile 실패 시 파일명 fallback
+    const s = useAppStore.getState();
+    expect(s.document?.fileName).toBe('lecture.pdf');
+    expect(s.pdfBytes).not.toBeNull(); // 재읽기 불가 → 상주 유지
   });
 
   it('기존 문서가 있으면 새 문서 반영 전에 persist flush', async () => {

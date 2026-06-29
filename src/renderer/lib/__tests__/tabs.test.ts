@@ -142,15 +142,16 @@ describe('switchToTab', () => {
     expect(M.restoreSessionForDocument).toHaveBeenCalledTimes(1); // 요약/Q&A/인덱스 복원 위임
   });
 
-  it('docHash + 파일 읽기 가능 → 세션 우선 복원 (재파싱 0, 뷰어 바이트 주입)', async () => {
+  it('docHash + 세션 → 세션 우선 복원 (재파싱 0, pdfBytes 비상주 lazy)', async () => {
     // ★ 사용자 버그 핵심 계약: 탭에 docHash 가 있으면 파일이 읽혀도 handlePdfData(재파싱)
     // 를 호출하지 않고 세션에서 즉시 복원한다. 재파싱은 대용량/이미지 PDF 에서 수십 초가
-    // 걸려 "전환이 안 되는" 것처럼 보이던 원인. 뷰어용 바이트는 파싱 없이 파일만 읽어 주입.
+    // 걸려 "전환이 안 되는" 것처럼 보이던 원인.
+    // pdfBytes 비상주(메모리 M1): 뷰어용 바이트는 더 이상 복원 시 eager 로 읽지 않고(openPath
+    // 미호출) 인용 클릭 시 PdfViewerPanel 이 lazy 로드한다 → 전환 더 빠르고 ~100MB 상주 회피.
     seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
     useAppStore.setState((s) => ({
       openTabs: [...s.openTabs, { filePath: '/docs/big.pdf', fileName: 'big.pdf', pageCount: 49, docHash: 'd'.repeat(64) }],
     }));
-    M.openPath.mockResolvedValue({ path: '/docs/big.pdf', name: 'big.pdf', data: new ArrayBuffer(16) }); // 파일 읽기 성공
     M.sessionLoad.mockResolvedValue({
       session: {
         schemaVersion: 1, docHash: 'd'.repeat(64), fileName: 'big.pdf', filePath: '/docs/big.pdf',
@@ -164,10 +165,11 @@ describe('switchToTab', () => {
 
     expect(M.handlePdfData).not.toHaveBeenCalled(); // ★ 재파싱 안 함
     expect(M.sessionLoad).toHaveBeenCalledWith('d'.repeat(64));
+    expect(M.openPath).not.toHaveBeenCalled(); // ★ 복원 시 eager 파일 읽기 안 함(lazy)
     const st = useAppStore.getState();
     expect(st.document?.fileName).toBe('big.pdf'); // 전환 성공
     expect(st.document?.pageCount).toBe(49);
-    expect(st.pdfBytes).not.toBeNull(); // 뷰어용 바이트 주입(파일 읽기 성공)
+    expect(st.pdfBytes).toBeNull(); // 비상주 — 인용 클릭 시 lazy 로드
     expect(st.error).toBeNull();
     expect(M.restoreSessionForDocument).toHaveBeenCalledTimes(1);
   });
