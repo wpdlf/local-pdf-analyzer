@@ -110,6 +110,8 @@ export const _translations = {
   'selector.keywords': { ko: '키워드 추출', en: 'Keywords' },
   'selector.summaryType': { ko: '요약 유형', en: 'Summary type' },
   'selector.summaryLang': { ko: '요약 언어', en: 'Output language' },
+  // 출력언어 드롭다운의 'auto' 옵션. 나머지(한국어/English/日本語/中文)는 언어명 자체라 비번역.
+  'selector.langAuto': { ko: '원문 유지', en: 'Keep original' },
   'selector.pageRange': { ko: '페이지 범위', en: 'Page range' },
   'selector.pageRangeAll': { ko: '전체', en: 'All' },
   'selector.pageRangeCustom': { ko: '범위 지정', en: 'Custom' },
@@ -301,6 +303,7 @@ export const _translations = {
   'setup.statusRunning': { ko: '진행 중', en: 'in progress' },
   'setup.statusDone': { ko: '완료', en: 'done' },
   'setup.statusError': { ko: '실패', en: 'failed' },
+  'setup.languageGroup': { ko: '언어', en: 'Language' },
   'setup.ollamaCheck': { ko: 'Ollama 설치 확인', en: 'Check Ollama installation' },
   'setup.ollamaStart': { ko: 'Ollama 서비스 시작', en: 'Start Ollama service' },
   'setup.downloadBase': { ko: '기본 AI 모델 다운로드 ({model})', en: 'Download base AI model ({model})' },

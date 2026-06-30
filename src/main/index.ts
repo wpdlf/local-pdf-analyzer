@@ -917,9 +917,20 @@ export function registerIpcHandlers(): void {
       const provider = (settings.provider as 'ollama' | 'claude' | 'openai' | 'gemini') || 'ollama';
       const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
       const apiKey = provider !== 'ollama' ? apiKeyStore.load(provider) : undefined;
+      // QA post-v0.31.14: Ollama 임베딩 모델을 ai:check-embed-model 과 동일하게 해석해 넘긴다.
+      // 이전엔 모델을 undefined 로 넘겨 embedOllama 가 OLLAMA_EMBED_MODELS[0](nomic-embed-text)로
+      // 폴백했는데, check-embed-model 은 "설치된 첫 임베딩 모델"(예: mxbai-embed-large)을 반환한다.
+      // nomic 미설치 + 다른 임베딩 모델만 있는 환경에서 check 는 available 이라 보고하지만 embed 는
+      // 404 로 실패 → buildRagIndex/시맨틱검색이 조용히 키워드로 강등되는 divergence. 같은 해석을
+      // 공유해 제거(Claude 는 Ollama fallback 이므로 동일 처리). openai/gemini 는 고정 단일 모델이라 무관.
+      let embeddingModel: string | undefined;
+      if (provider === 'ollama' || provider === 'claude') {
+        const installed = await ollamaManager.listModels();
+        embeddingModel = (await checkEmbeddingAvailability(ollamaBaseUrl, installed)) ?? undefined;
+      }
       // R38 P1: texts 는 validateEmbedTexts 가 string[] 임을 이미 보증 (위 early return).
       // 검증을 별도 함수로 분리하면서 Array.isArray 의 흐름 narrowing 이 소실되므로 명시 cast.
-      const result = await generateEmbeddings(texts as string[], provider, ollamaBaseUrl, apiKey, undefined, controller?.signal);
+      const result = await generateEmbeddings(texts as string[], provider, ollamaBaseUrl, apiKey, embeddingModel, controller?.signal);
       if (!result) {
         return { success: false, error: '임베딩 생성 불가 (해당 프로바이더 미지원)' };
       }

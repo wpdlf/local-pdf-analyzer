@@ -960,6 +960,21 @@ export function useQa() {
       const client = new AiClient(settings);
       clientRef.current = client;
 
+      // QA post-v0.31.14: requestId 를 검색(임베딩) await *이전*에 동기 발급한다. 이전엔
+      // setQaRequestId 가 resolveCollectionSearch/ragSearch await 이후에야 호출돼, 그 사이
+      // qaRequestId=null 인 소유권 공백 창이 있었다. 그 창에서 Stop→즉시 재질문하면 (a)
+      // handleQaAbort 가 abort 할 id 가 없어 in-flight 임베딩만 끊기고, (b) 늦게 깨어난 stale
+      // 핸들러가 qaRequestId 를 자기 id 로 세팅해 새 질문의 답변을 가로채(stillOurs 통과) Q2 에
+      // Q1 답을 커밋하고 Q2 는 빈 답으로 끝나던 race. 동기 발급으로 stale 핸들러의
+      // qaRequestId===requestId 체크가 항상 어긋나게 만들어 차단(useSummarize runClient 와 동형).
+      requestId = client.prepareSummarize();
+      useAppStore.getState().setQaRequestId(requestId);
+      // 이 핸들러의 소유권 토큰. stream append 루프가 isQaGenerating 만 검사하면 stale 핸들러가
+      // 새 세션(isQaGenerating=true)의 qaStream 을 오염시킬 수 있어, requestId 동일성까지 확인.
+      const stillOwns = () =>
+        useAppStore.getState().isQaGenerating
+        && useAppStore.getState().qaRequestId === requestId;
+
       // 요약 결과를 우선 컨텍스트로 포함
       const summaryText = useAppStore.getState().summaryStream || '';
 
@@ -1012,8 +1027,7 @@ export function useQa() {
 
       const promptText = `${context}${history}\n[질문]\n${sanitizePromptInput(trimmed)}`;
 
-      requestId = client.prepareSummarize();
-      useAppStore.getState().setQaRequestId(requestId);
+      // requestId/qaRequestId 는 위(클라이언트 생성 직후)에서 이미 동기 발급됨.
 
       // 2-pass 검증 파이프라인 사용 여부 결정:
       //  - 설정이 OFF 거나
@@ -1031,7 +1045,7 @@ export function useQa() {
       if (!useVerification) {
         // fast path: 이전 동작 그대로 — 토큰이 도착하는 대로 qaStream 에 append.
         for await (const token of client.summarize(promptText, 'qa', requestId)) {
-          if (!useAppStore.getState().isQaGenerating) break;
+          if (!stillOwns()) break;
           useAppStore.getState().appendQaStream(token);
           answer += token;
         }
@@ -1043,14 +1057,14 @@ export function useQa() {
 
         let draft = '';
         for await (const token of client.summarize(promptText, 'qa', requestId)) {
-          if (!useAppStore.getState().isQaGenerating) break;
+          if (!stillOwns()) break;
           draft += token;
         }
 
         // 사용자 abort 또는 empty draft → 그대로 종료.
         // v0.18.7 R26-C2 fix: 명시적 setQaVerifying(false) 제거 — finally 의 ownership gate 가
         // 처리. stale 핸들러가 ungated 호출로 새 세션 스피너를 끄던 race 방지.
-        if (!useAppStore.getState().isQaGenerating || !draft.trim()) {
+        if (!stillOwns() || !draft.trim()) {
           answer = draft;
         } else {
           // Step 2. 문장 단위 RAG 대조 (내부 임베딩 호출).
@@ -1059,7 +1073,7 @@ export function useQa() {
           const verification = await verifyAnswerSentences(draft, verifyAbortRef.current?.signal, answerVerifier);
 
           // abort 재확인 — 검증 중 사용자가 취소했을 수 있음. finally 가 qaVerifying 해제.
-          if (!useAppStore.getState().isQaGenerating) {
+          if (!stillOwns()) {
             answer = draft;
           } else if (verification.needsRefine) {
             // Step 3b. Refine — 새 requestId 로 두번째 호출. 스트리밍으로 qaStream 에 바로 표시.
@@ -1083,7 +1097,7 @@ export function useQa() {
             answer = await collectRefineAnswer(
               client.summarize(refinePrompt, 'qa', refineRequestId),
               draft,
-              () => useAppStore.getState().isQaGenerating,
+              () => stillOwns(),
               (token) => useAppStore.getState().appendQaStream(token),
             );
           } else {

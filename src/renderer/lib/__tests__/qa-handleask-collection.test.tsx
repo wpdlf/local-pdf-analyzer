@@ -126,6 +126,27 @@ describe('handleAsk — 컬렉션 글루 (CI 통합)', () => {
     expect(useAppStore.getState().notice).toBeNull(); // 더 이상 전역 notice 를 덮어쓰지 않음
   });
 
+  // QA post-v0.31.14 회귀: qaRequestId 를 검색(임베딩) await *이전*에 동기 발급해야 한다.
+  // 이전엔 setQaRequestId 가 ragSearch await 이후라, 그 사이 qaRequestId=null 공백에서
+  // Stop→재질문 시 stale 핸들러가 새 질문 답변을 가로채던 race. 임베딩을 pending 시켜
+  // 그 시점에 이미 qaRequestId 가 세팅돼 있는지 검증한다.
+  it('qaRequestId 를 검색 임베딩 await 이전에 동기 발급한다', async () => {
+    seed(false); // 단일 문서 경로
+    let releaseEmbed!: (v: unknown) => void;
+    mockEmbed.mockReturnValue(new Promise((res) => { releaseEmbed = res; })); // 쿼리 임베딩에서 suspend
+    const { result } = renderHook(() => useQa());
+    let pending!: Promise<void>;
+    await act(async () => {
+      pending = result.current.handleAsk('질문');
+      await Promise.resolve();
+    });
+    // 임베딩이 아직 pending 인데 qaRequestId 는 이미 발급됨(소유권 공백 제거).
+    expect(useAppStore.getState().qaRequestId).toBe('req-1');
+    expect(useAppStore.getState().isQaGenerating).toBe(true);
+    // 정리: 해제 후 완료 대기
+    await act(async () => { releaseEmbed({ success: true, embeddings: [[1, 0, 0]], model: MODEL }); await pending; });
+  });
+
   it('컬렉션 비활성: 단일 문서 경로 — session.list 미호출, Beta 컨텍스트 없음', async () => {
     seed(false);
     const { result } = renderHook(() => useQa());

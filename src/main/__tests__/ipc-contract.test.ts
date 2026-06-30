@@ -147,7 +147,9 @@ describe('main IPC contract — ai:* handler shape (Top5 #2)', () => {
 
   it('ai:embed 가 validateEmbedTexts + validateEmbeddings 에 위임 (NaN/캡 단일 출처)', () => {
     expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:embed['"][\s\S]{0,600}?validateEmbedTexts\(\s*texts\s*\)/);
-    expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:embed['"][\s\S]{0,2500}?validateEmbeddings\(/);
+    // window 상향(2500→3300): QA post-v0.31.14 에서 핸들러에 Ollama embed 모델 해석 블록이
+    // 추가돼 validateEmbeddings 위임 위치가 뒤로 밀림. 위임 불변식 자체는 유지.
+    expect(INDEX_SRC).toMatch(/ipcMain\.handle\(['"]ai:embed['"][\s\S]{0,3300}?validateEmbeddings\(/);
   });
 
   it('settings IPC: settings:get / settings:set 핸들러 등록 + 화이트리스트 검증', () => {

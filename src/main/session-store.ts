@@ -319,10 +319,19 @@ export async function writeSession(
     const evict = enforceLru(next);
     if (evict.length > 0) {
       const evictSet = new Set(evict.filter((h) => h !== meta.docHash));
+      // QA post-v0.31.14: rm 이 성공한 항목만 manifest 에서 제거한다. 이전엔 rm 결과와 무관하게
+      // 무조건 엔트리를 드롭해, Windows 에서 rm 이 EBUSY/EPERM(AV 스캔·동시 session:load/search 가
+      // 디렉토리를 잡고 있을 때 — 읽기는 write mutex 밖에서 돈다)으로 실패하면 디렉토리는 디스크에
+      // 남는데 manifest 엔트리는 사라져 영구 고아가 됐다(LRU·stats 가 manifest 만 보므로 다시는
+      // 제거·집계 안 됨, 디스크 누수). 실패분은 manifest 에 남겨 다음 저장에서 재시도된다.
+      const removed = new Set<string>();
       for (const h of evictSet) {
-        try { await fsp.rm(sessionDir(sessionsDir, h), { recursive: true, force: true }); } catch { /* best-effort */ }
+        try {
+          await fsp.rm(sessionDir(sessionsDir, h), { recursive: true, force: true });
+          removed.add(h);
+        } catch { /* rm 실패 → 엔트리 보존, 다음 저장에서 재시도 */ }
       }
-      manifest.entries = next.filter((e) => !evictSet.has(e.docHash));
+      manifest.entries = next.filter((e) => !removed.has(e.docHash));
     } else {
       manifest.entries = next;
     }
@@ -466,6 +475,12 @@ export async function patchSession(
       entry.byteSize = Buffer.byteLength(jsonStr) + blobBytes;
       entry.lastAccessed = new Date(now).toISOString();
       await saveManifest(sessionsDir, manifest);
+    } else {
+      // QA post-v0.31.14: session.json 은 디스크에 있으나 manifest 엔트리가 없는 경우(manifest
+      // 손상 후 [] 리셋 등) ok:true 를 반환하면 호출자(use-session)가 full save 폴백을 하지 않아
+      // 활성 세션이 최근목록/검색/stats 에서 영구 누락된다. ok:false 로 알려 호출자가 전체
+      // writeSession 으로 폴백 → manifest 엔트리 재등록(use-session.ts:228-231 → api.save).
+      return { ok: false };
     }
     return { ok: true };
   } catch (err) {

@@ -344,6 +344,19 @@ describe('patchSession (부분저장 IPC, Tier3)', () => {
     expect(r.ok).toBe(false);
   });
 
+  // QA post-v0.31.14 회귀: session.json 은 있으나 manifest 엔트리가 없을 때(manifest 손상 후
+  // [] 리셋 등) ok:true 를 주면 호출자가 full save 폴백을 안 해 활성 세션이 최근목록/검색/stats
+  // 에서 영구 누락됐다. ok:false 로 폴백을 유도해 엔트리를 재등록하게 한다.
+  it('session.json 존재 + manifest 엔트리 부재 → {ok:false} (재등록 폴백 유도)', async () => {
+    const h = hashOf(77);
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h, summaries: {}, qaMessages: [] }, blob: null, now: 1000 });
+    // manifest 손상 시뮬레이션: 엔트리만 비운다(세션 디렉토리/json 은 보존).
+    V.files.set('/userData/sessions/manifest.json', JSON.stringify({ schemaVersion: 1, entries: [] }));
+    expect(await readSession(DIR, h)).not.toBeNull(); // 디스크 세션은 멀쩡
+    const r = await patchSession(DIR, { docHash: h, summary: null, summaryType: 'full', qaMessages: [{ id: 'q', role: 'user', content: 'x' }], now: 2000 });
+    expect(r.ok).toBe(false);
+  });
+
 
   it('잘못된 docHash → {ok:false}', async () => {
     const r = await patchSession(DIR, { docHash: '../evil', summary: null, summaryType: 'full', qaMessages: [], now: 1000 });
@@ -509,5 +522,20 @@ describe('writeSession LRU 통합', () => {
     expect(list.some((e) => e.docHash === hashOf(0))).toBe(false);
     expect(list.some((e) => e.docHash === hashOf(9999))).toBe(true);
     expect(await readSession(DIR, hashOf(0))).toBeNull(); // 디렉토리도 제거됨
+  });
+
+  // QA post-v0.31.14 회귀: rm 실패 시 manifest 엔트리를 무조건 드롭하면 디스크엔 디렉토리가
+  // 남는데 manifest 에선 사라져 영구 고아 + stats 과소집계가 됐다(Windows EBUSY 현실적).
+  it('LRU rm 실패 → 엔트리 보존(고아 디렉토리 방지, 다음 저장 재시도)', async () => {
+    for (let i = 0; i < SESSION_MAX_COUNT; i++) {
+      await writeSession(DIR, { meta: metaOf(hashOf(i)), session: { i }, blob: null, now: 1000 + i });
+    }
+    // 가장 오래된 hashOf(0) 이 evict 대상 → 그 rm 을 1회 실패시킨다(EBUSY 모사).
+    vi.mocked(fsp.rm).mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    await writeSession(DIR, { meta: metaOf(hashOf(9999)), session: { x: 1 }, blob: null, now: 9_000_000 });
+    const list = await listSessions(DIR);
+    // rm 실패 → 엔트리 유지(manifest 와 디스크 일치 — 고아 아님).
+    expect(list.some((e) => e.docHash === hashOf(0))).toBe(true);
+    expect(await readSession(DIR, hashOf(0))).not.toBeNull();
   });
 });

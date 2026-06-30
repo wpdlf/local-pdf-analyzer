@@ -460,6 +460,22 @@ describe('ai:embed (동시성 캡 + 카운터 누수 방지)', () => {
     expect(await invoke('ai:embed', [], 'r')).toEqual({ success: false, error: 'Invalid texts array (1-200 items)' });
     expect(H.ai.generateEmbeddings).not.toHaveBeenCalled();
   });
+
+  // QA post-v0.31.14 회귀: Ollama embed 가 check-embed-model 과 동일한 해석 모델을 사용해야 한다.
+  // 이전엔 모델을 undefined 로 넘겨 embedOllama 가 nomic-embed-text 로 폴백 → nomic 미설치 +
+  // 다른 임베딩 모델만 있는 환경에서 404 → 조용한 키워드 강등(divergence).
+  it('Ollama embed 는 설치된 임베딩 모델(nomic 아님)을 해석해 generateEmbeddings 에 넘긴다', async () => {
+    H.ollama.listModels.mockResolvedValue(['mxbai-embed-large:latest', 'llama3:latest']);
+    H.ai.checkEmbeddingAvailability.mockResolvedValue('mxbai-embed-large:latest');
+    H.ai.generateEmbeddings.mockResolvedValue({ embeddings: [[0.1, 0.2]], model: 'mxbai-embed-large:latest' });
+
+    const r = await invoke('ai:embed', ['hello'], 'r1') as { success: boolean; model?: string };
+    expect(r.success).toBe(true);
+    // 5번째 인자(embeddingModel)가 undefined 가 아니라 해석된 모델이어야 한다.
+    const call = H.ai.generateEmbeddings.mock.calls[0]!;
+    expect(call[1]).toBe('ollama');
+    expect(call[4]).toBe('mxbai-embed-large:latest');
+  });
 });
 
 // session-persistence module-2 (L3): session:* IPC 핸들러 — docHash 검증 + session-store 위임 계약.

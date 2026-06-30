@@ -246,7 +246,7 @@ export function OllamaSetupWizard() {
 
   return (
     <div className="relative flex flex-col items-center justify-center h-full p-8">
-      <div className="absolute top-4 right-4 flex items-center gap-1 text-sm" role="group" aria-label="Language">
+      <div className="absolute top-4 right-4 flex items-center gap-1 text-sm" role="group" aria-label={t('setup.languageGroup')}>
         {(['ko', 'en'] as const).map((lang, i) => (
           <span key={lang} className="flex items-center gap-1">
             {i > 0 && <span className="text-gray-300 dark:text-gray-600">|</span>}

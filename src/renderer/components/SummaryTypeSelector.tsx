@@ -111,6 +111,7 @@ export function SummaryTypeSelector() {
         <span className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.summaryLang')}</span>
         <select
           value={lang}
+          aria-label={t('selector.summaryLang')}
           onChange={(e) => {
             // store 에서 최신 settings 를 직접 읽어 다른 컴포넌트(SettingsPanel)가
             // 동시에 저장한 변경을 덮어쓰지 않도록 한다. rendered closure 의 settings 는
@@ -123,7 +124,8 @@ export function SummaryTypeSelector() {
           className="px-2 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         >
           {SUMMARY_LANGUAGES.map((l) => (
-            <option key={l.value} value={l.value}>{l.label}</option>
+            // 'auto' 만 i18n(영어 UI 에 한글 "원문 유지" 노출 방지). 나머지는 언어명 자체라 그대로.
+            <option key={l.value} value={l.value}>{l.value === 'auto' ? t('selector.langAuto') : l.label}</option>
           ))}
         </select>
       </div>
