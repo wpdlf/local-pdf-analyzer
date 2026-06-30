@@ -268,7 +268,13 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
     if (post.qaRequestId === requestId && post.document?.id === activeDocId) {
       post.flushQaStream();
       post.clearQaStream();
-      if (answer.trim()) post.addQaMessage({ role: 'assistant', content: `**${resultTitle}**\n\n${answer}` });
+      if (answer.trim()) {
+        post.addQaMessage({ role: 'assistant', content: `**${resultTitle}**\n\n${answer}` });
+      } else {
+        // QA post-v0.31.14: 비-abort 빈 응답이면 위에서 추가한 user 메시지가 홀로 남아 짝 FIFO
+        // 불변식이 깨진다. handleAsk 와 동일하게 meta='cancelled' placeholder 로 짝 유지.
+        post.addQaMessage({ role: 'assistant', content: t('qa.answerEmpty'), meta: 'cancelled' });
+      }
     }
   } catch (err) {
     if (useAppStore.getState().qaRequestId === requestId) {

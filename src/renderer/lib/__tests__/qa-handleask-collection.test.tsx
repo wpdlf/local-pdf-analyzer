@@ -9,12 +9,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // AiClient 스트리밍 모킹 — summarize 에 전달된 promptText 를 캡처해 컨텍스트 구성 검증.
-const M = vi.hoisted(() => ({ prompt: '' }));
+const M = vi.hoisted(() => ({ prompt: '', empty: false }));
 vi.mock('../ai-client', () => ({
   AiClient: class {
     prepareSummarize() { return 'req-1'; }
     // eslint-disable-next-line require-yield
-    async *summarize(prompt: string) { M.prompt = prompt; yield '답변'; yield ' 본문'; }
+    async *summarize(prompt: string) { M.prompt = prompt; if (M.empty) return; yield '답변'; yield ' 본문'; }
   },
 }));
 
@@ -88,6 +88,7 @@ function seed(collectionEnabled: boolean): void {
 beforeEach(() => {
   vi.clearAllMocks();
   M.prompt = '';
+  M.empty = false;
   mockEmbed.mockResolvedValue({ success: true, embeddings: [[1, 0, 0]], model: MODEL });
   mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), MODEL, 3)]);
   mockSessionLoad.mockResolvedValue(betaBlob());
@@ -145,6 +146,19 @@ describe('handleAsk — 컬렉션 글루 (CI 통합)', () => {
     expect(useAppStore.getState().isQaGenerating).toBe(true);
     // 정리: 해제 후 완료 대기
     await act(async () => { releaseEmbed({ success: true, embeddings: [[1, 0, 0]], model: MODEL }); await pending; });
+  });
+
+  // QA post-v0.31.14 회귀: 비-abort 빈 응답이면 user 단독 orphan 대신 placeholder(meta=cancelled)
+  // assistant 를 주입해 짝 FIFO 불변식을 유지한다.
+  it('비-abort 빈 응답 → orphan user 대신 placeholder(meta=cancelled) 주입', async () => {
+    seed(false);
+    M.empty = true;
+    const { result } = renderHook(() => useQa());
+    await act(async () => { await result.current.handleAsk('질문'); });
+    const msgs = useAppStore.getState().qaMessages;
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0]).toMatchObject({ role: 'user', content: '질문' });
+    expect(msgs[1]).toMatchObject({ role: 'assistant', meta: 'cancelled' });
   });
 
   it('컬렉션 비활성: 단일 문서 경로 — session.list 미호출, Beta 컨텍스트 없음', async () => {

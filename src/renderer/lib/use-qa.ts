@@ -137,7 +137,7 @@ export function selectRelevantChunks(
  * 만들어졌다. addQaMessage(store.ts:285-300) 의 짝수쌍 FIFO 불변과 어긋나는 프롬프트 투영.
  * pair 단위 skip 으로 user + cancelled-assistant 쌍을 통째로 제외해 invariant 유지.
  */
-export function formatHistory(messages: QaMessage[]): string {
+export function formatHistory(messages: QaMessage[], maxChars?: number): string {
   if (messages.length === 0) return '';
   const useable: QaMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -157,11 +157,26 @@ export function formatHistory(messages: QaMessage[]): string {
   // 악성 PDF 가 LLM 을 유도해 답변에 `\n[질문]\n` / `\n---\n` 마커를 포함시키면 후속 턴
   // 프롬프트 구조가 오염되는 indirect prompt-injection 벡터가 존재했다 (R32 Surface 1 P2).
   // user 분기와 동일한 sanitizePromptInput 으로 마커 라인 이스케이프.
-  const lines = useable.map((m) =>
+  let lines = useable.map((m) =>
     m.role === 'user'
       ? `Q: ${sanitizePromptInput(m.content)}`
       : `A: ${sanitizePromptInput(m.content)}`,
   );
+  // QA post-v0.31.14: 예산(maxChars) 초과 시 *가장 최근* 턴을 유지하고 오래된 라인부터 버린다.
+  // 이전엔 호출부에서 formatHistory(...).slice(0, 4000) 로 앞쪽(헤더+오래된 턴)을 남겨,
+  // 멀티턴 대화에서 가장 관련 깊은 최근 맥락이 잘려나갔다(+라인 중간 절단). 라인 단위 tail-bias 로 교체.
+  if (maxChars && maxChars > 0) {
+    const kept: string[] = [];
+    let total = 0;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const len = lines[i]!.length + 1; // join '\n' 1자 포함(근사)
+      // 최소 1개(최근 턴)는 단일 라인이 예산을 넘겨도 보존.
+      if (kept.length > 0 && total + len > maxChars) break;
+      kept.unshift(lines[i]!);
+      total += len;
+    }
+    lines = kept;
+  }
   return `\n[이전 대화]\n${lines.join('\n')}\n`;
 }
 
@@ -1023,7 +1038,7 @@ export function useQa() {
       const context = contextParts.join('\n\n');
 
       const freshMessages = useAppStore.getState().qaMessages;
-      const history = formatHistory(freshMessages.slice(0, -1)).slice(0, 4000);
+      const history = formatHistory(freshMessages.slice(0, -1), 4000);
 
       const promptText = `${context}${history}\n[질문]\n${sanitizePromptInput(trimmed)}`;
 
@@ -1128,6 +1143,11 @@ export function useQa() {
           const normalized = normalizeCitationPlacement(answer);
           // M3: 강등 답변이면 메시지에 표식 — QaChat 이 답변 아래 인라인 안내를 렌더.
           postState.addQaMessage({ role: 'assistant', content: normalized, ...(collectionDegraded ? { degraded: true } : {}) });
+        } else {
+          // QA post-v0.31.14: 비-abort 빈 응답(로컬 모델이 토큰 없이 done 등)이면 user 메시지만
+          // 홀로 남아 짝 FIFO(addQaMessage 짝수 drop) 불변식이 깨질 수 있다. abort 경로처럼
+          // meta='cancelled' placeholder 를 주입해 짝을 유지 + LLM history 에선 제외.
+          postState.addQaMessage({ role: 'assistant', content: t('qa.answerEmpty'), meta: 'cancelled' });
         }
         completed = true;
       }

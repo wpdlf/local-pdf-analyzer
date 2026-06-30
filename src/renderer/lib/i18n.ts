@@ -155,6 +155,8 @@ export const _translations = {
   'qa.inputAria': { ko: '질문 입력', en: 'Question input' },
   'qa.stopAria': { ko: '답변 중지', en: 'Stop answer' },
   'qa.answerCancelled': { ko: '(답변이 취소되었습니다)', en: '(Answer cancelled)' },
+  // 비-abort 빈 응답(로컬 모델이 토큰 없이 done 등) 시 user 단독 orphan 방지용 placeholder.
+  'qa.answerEmpty': { ko: '(답변을 생성하지 못했습니다)', en: '(No answer generated)' },
   'qa.sendAria': { ko: '질문 전송', en: 'Send question' },
   'qa.copyAnswer': { ko: '답변 복사', en: 'Copy answer' },
   'qa.copied': { ko: '복사됨', en: 'Copied' },

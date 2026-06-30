@@ -237,6 +237,31 @@ describe('formatHistory (v0.18.6 D4)', () => {
     expect(formatHistory([])).toBe('');
   });
 
+  // QA post-v0.31.14: maxChars 예산 초과 시 최근 턴 유지·오래된 턴 버림(tail-biased).
+  // 이전엔 호출부 .slice(0,N) 으로 앞쪽(오래된 턴)을 남겨 최근 맥락이 잘렸다.
+  it('maxChars 초과 시 최근 턴을 유지하고 오래된 턴을 버린다', () => {
+    const messages = [
+      userMsg('1', 'OLD'.repeat(50)),
+      asstMsg('2', 'OLDA'.repeat(50)),
+      userMsg('3', '최근질문'),
+      asstMsg('4', '최근답변'),
+    ];
+    const out = formatHistory(messages, 40);
+    expect(out).toContain('Q: 최근질문');
+    expect(out).toContain('A: 최근답변');
+    expect(out).not.toContain('OLD'); // 오래된 큰 턴은 잘림
+  });
+
+  it('단일 라인이 예산을 넘겨도 최근 1턴은 보존', () => {
+    const out = formatHistory([asstMsg('1', 'X'.repeat(100))], 10);
+    expect(out).toContain('A: ' + 'X'.repeat(100));
+  });
+
+  it('maxChars 미지정이면 전부 포함(종전 동작)', () => {
+    const messages = [userMsg('1', 'AAA'.repeat(100)), asstMsg('2', '답변')];
+    expect(formatHistory(messages)).toContain('AAA'.repeat(100));
+  });
+
   // v0.18.7 R26-C1 regression — user 메시지와 cancelled assistant 가 페어를 이루는 경우
   // user 까지 함께 skip 하여 LLM history 에 답변 없는 Q 라인이 남지 않도록 한다.
   it('user → cancelled-assistant 페어는 함께 제외 (D4 회귀 가드)', () => {
