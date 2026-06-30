@@ -15,6 +15,9 @@ const M = vi.hoisted(() => ({
   imageResult: 'IMG_DESC' as string | null,
   imageCalls: 0,
   reqCounter: 0,
+  // Stop→재요약 race 테스트용: 첫 summarize 호출만 이 promise 에서 일시정지시켜
+  // stale run 의 finally 가 새 run 보다 늦게 도달하는 상황을 결정적으로 재현.
+  gate: null as Promise<void> | null,
 }));
 
 vi.mock('../ai-client', () => ({
@@ -25,6 +28,8 @@ vi.mock('../ai-client', () => ({
     // 실제 시그니처: summarize(text, type, requestId?) — 계약 패리티를 위해 3번째 인자 포함.
     async *summarize(text: string, type: string, _requestId?: string): AsyncGenerator<string> {
       M.summarizeCalls.push({ text, type });
+      // 첫 호출만 gate 에서 대기 (race 재현). 이후 호출은 즉시 진행.
+      if (M.gate && M.summarizeCalls.length === 1) { await M.gate; }
       for (const tk of M.tokens) yield tk;
     }
     async analyzeImage(_b: string, _r?: string): Promise<string | null> {
@@ -65,6 +70,7 @@ beforeEach(() => {
   M.imageResult = 'IMG_DESC';
   M.imageCalls = 0;
   M.reqCounter = 0;
+  M.gate = null;
   abortMock.mockClear();
   useAppStore.setState({
     settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: false },
@@ -213,5 +219,46 @@ describe('useSummarize — handleAbort', () => {
     expect(abortMock).toHaveBeenCalledWith('req-9');
     expect(useAppStore.getState().isGenerating).toBe(false);
     expect(useAppStore.getState().currentRequestId).toBeNull();
+  });
+});
+
+describe('useSummarize — Stop→재요약 race (ownership 가드, QA post-v0.31.14)', () => {
+  // 회귀: 이전엔 useSummarize 의 finally 가 ownership 무관하게 무조건 timeoutTimer 를
+  // clear 하고 isGenerating 을 false 로 만들어, Stop 직후 재요약하면 stale run 의 finally 가
+  // 새 run 을 클로버링해 빈 결과로 끝났다(use-qa 의 finallyStillOurs 패턴 누락).
+  it('abort 된 stale run 이 늦게 끝나도 새 run 의 요약 결과를 덮어쓰지 않는다', async () => {
+    let release!: () => void;
+    M.gate = new Promise<void>((r) => { release = r; });
+
+    const { result } = renderHook(() => useSummarize());
+
+    // run1 시작 — 첫 generator 호출이 gate 에서 멈춘다 (await 보류).
+    let run1Done: Promise<void> = Promise.resolve();
+    await act(async () => {
+      run1Done = result.current.handleSummarize();
+      // isAvailable() + generator 진입 + gate 도달까지 pending 작업 flush.
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(useAppStore.getState().isGenerating).toBe(true);
+    expect(M.summarizeCalls).toHaveLength(1);
+
+    // 사용자 Stop → run1 의 clientRef 무효화.
+    act(() => { result.current.handleAbort(); });
+    expect(useAppStore.getState().isGenerating).toBe(false);
+    expect(useAppStore.getState().progressInfo).toBeNull();
+
+    // run2 시작 — gate 없이 완주하여 정상 요약 생성.
+    await act(async () => { await result.current.handleSummarize(); });
+    const run2Summary = useAppStore.getState().summary;
+    expect(run2Summary?.content).toContain('핵심 요약');
+    expect(useAppStore.getState().isGenerating).toBe(false);
+
+    // run1 gate 해제 → stale run 이 뒤늦게 finally 까지 진행.
+    await act(async () => { release(); await run1Done; });
+
+    const final = useAppStore.getState();
+    // run1 의 finally/ setSummary 가 ownership 가드로 스킵 → run2 결과 보존.
+    expect(final.summary?.id).toBe(run2Summary?.id);
+    expect(final.isGenerating).toBe(false);
   });
 });

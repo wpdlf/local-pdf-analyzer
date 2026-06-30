@@ -575,11 +575,16 @@ export function registerIpcHandlers(): void {
     // libuv fs 스레드풀(기본 4)이 자연 바운드하고, 본 핸들러는 제출 1회 호출(라이브 아님)·세션 ≤30.
     const perSession = await Promise.all(
       entries.map(async (e) => {
-        // QA: per-session fail-safe — readSession 은 실제 I/O 오류(EBUSY 등) 시 throw 한다.
+        // QA: per-session fail-safe — readSessionMeta 는 실제 I/O 오류(EBUSY 등) 시 throw 한다.
         // 격리하지 않으면 세션 1개의 일시 잠금이 Promise.all 전체를 reject 시켜 검색이 통째로
         // 빈 결과가 된다(의미검색 runSemanticSearch 와 동일하게 해당 문서만 skip).
+        // perf(QA post-v0.31.14): 키워드 검색은 session.json(pageTexts/summaries/fileName)만
+        // 쓰고 벡터 blob(index.bin)은 안 쓴다. readSession 은 index.bin 까지 읽어 ArrayBuffer 를
+        // 복사 할당(세션당 ~1–2MB) 후 즉시 버렸다 — 매 검색마다 전 문서의 blob 을 병렬로 읽어
+        // 디스크 I/O + 힙 스파이크를 낭비. readSessionMeta 로 교체해 session.json 만 읽는다
+        // (의미검색 경로가 이미 채택한 최적화). index.bin 일시 잠금이 결과 누락을 유발하지도 않음.
         try {
-          const loaded = await readSession(sessionsDir, e.docHash);
+          const loaded = await readSessionMeta(sessionsDir, e.docHash);
           if (!loaded) return null;
           return searchPersistedSession(
             { docHash: e.docHash, fileName: e.fileName, filePath: e.filePath, pageCount: e.pageCount },

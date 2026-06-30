@@ -449,8 +449,12 @@ export function useSummarize() {
     clientRef.current = null;
     useAppStore.getState().setCurrentRequestId(null);
     flushStream();
+    // QA(post-v0.31.14): finally 의 진행상태 정리가 ownership 가드 안으로 들어가면서
+    // (clientRef.current === runClient), abort 로 clientRef 를 null 화한 run 은 finally 에서
+    // setProgressInfo(null) 을 건너뛴다. abort 시점에 여기서 직접 정리해 진행률 스피너 잔존 방지.
+    setProgressInfo(null);
     setIsGenerating(false);
-  }, [flushStream, setIsGenerating]);
+  }, [flushStream, setIsGenerating, setProgressInfo]);
 
   // 언마운트 시 진행 중인 요약 정리 (타이머 + AI 요청)
   // v0.18.22 R36 P4: cleanup 은 ref (`timeoutTimerRef`) 와 store 의 latest 값
@@ -504,6 +508,11 @@ export function useSummarize() {
     const startTime = Date.now();
     const TIMEOUT_MS = 300000;
     let timedOut = false;
+    // 이 run 의 소유권 토큰. clientRef.current 와 비교해 Stop→재요약 race 에서 stale run 이
+    // 새 run 의 timeoutTimer/isGenerating/progressInfo 를 클로버링하는 것을 막는다(use-qa 의
+    // finallyStillOurs 패턴을 요약 쌍둥이에 적용). try 블록의 `client` 는 finally 에서 보이지
+    // 않으므로(블록 스코프) try 밖에 캡처. QA post-v0.31.14.
+    let runClient: AiClient | null = null;
 
     timeoutTimerRef.current = setTimeout(() => {
       timedOut = true;
@@ -518,6 +527,7 @@ export function useSummarize() {
     try {
       const client = new AiClient(currentSettings);
       clientRef.current = client;
+      runClient = client;
 
       const trackSummarize = (text: string, type: DefaultSummaryType) => {
         // clientRef 비교로 stale closure 방지: abort 후 재요약 시 이전 client 토큰 무시.
@@ -660,7 +670,9 @@ export function useSummarize() {
       if (finalContent !== rawContent) {
         useAppStore.getState().replaceSummaryStream(finalContent);
       }
-      if (!timedOut && finalContent) {
+      // ownership 가드: Stop→재요약 race 에서 stale run 이 새 run 의 summary 를 덮어쓰거나,
+      // abort 된 부분 콘텐츠를 "완료된" 요약으로 커밋하는 것을 방지(use-qa 의 stillOurs 와 동형).
+      if (!timedOut && finalContent && clientRef.current === runClient) {
         setSummary({
           id: crypto.randomUUID(),
           documentId: doc.id,
@@ -690,14 +702,22 @@ export function useSummarize() {
         });
       }
     } finally {
-      try {
-        if (timeoutTimerRef.current) { clearTimeout(timeoutTimerRef.current); timeoutTimerRef.current = null; }
-        if (useAppStore.getState().document) {
-          flushStream();
-        }
-      } catch { /* finally 블록 에러 무시 */ }
-      setProgressInfo(null);
-      setIsGenerating(false);
+      // ownership 가드(use-qa C25-M2 finallyStillOurs 와 동형): 이 run 이 여전히 hook 을
+      // 소유할 때(clientRef.current === runClient)만 공유 상태(timeoutTimer/stream/progress/
+      // isGenerating)를 정리한다. Stop→재요약 race 에서 stale run 의 finally 가 새 run 의
+      // timeoutTimer 를 clear 하고 isGenerating 을 false 로 클로버링해 재요약이 빈 결과로
+      // 끝나던 결함을 차단. abort 로 clientRef 가 null 화된 run 은 handleAbort 가 이미 정리.
+      if (clientRef.current === runClient) {
+        try {
+          if (timeoutTimerRef.current) { clearTimeout(timeoutTimerRef.current); timeoutTimerRef.current = null; }
+          if (useAppStore.getState().document) {
+            flushStream();
+          }
+        } catch { /* finally 블록 에러 무시 */ }
+        setProgressInfo(null);
+        setIsGenerating(false);
+        clientRef.current = null;
+      }
     }
   };
 
