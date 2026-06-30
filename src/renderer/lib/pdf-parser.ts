@@ -40,6 +40,12 @@ export function isReReadablePath(filePath: string): boolean {
 export interface ParsePdfOptions {
   enableOcrFallback?: boolean;
   onOcrProgress?: (current: number, total: number) => void;
+  /**
+   * 페이지 이미지 추출 여부(기본 true). false 면 페이지당 getOperatorList(pdfjs 최고비용 호출)
+   * + 이미지 디코딩/base64(최대 50장)를 통째로 건너뛴다. 추출된 images 는 Vision 분석
+   * (enableImageAnalysis)에서만 소비되므로, 분석 OFF 시엔 순수 낭비 — 그때 false 로 전달.
+   */
+  extractImages?: boolean;
   /** 사용자 취소 지원. aborted 시 다음 배치/OCR 페이지 진입 직전에 ABORTED 에러로 조기 종료. */
   signal?: AbortSignal;
 }
@@ -77,6 +83,8 @@ export async function parsePdf(
   options?: ParsePdfOptions,
 ): Promise<PdfDocument> {
   const signal = options?.signal;
+  // 하위호환: 미지정이면 종전대로 추출(true).
+  const extractImages = options?.extractImages !== false;
   throwIfAborted(signal);
 
   const pdfjs = await loadPdfjs();
@@ -128,6 +136,8 @@ export async function parsePdf(
             // 이미지 추출 — 캡 검사를 Promise 진입 시점에 수행 (R28: 배치 동시성으로 캡이 우회되지 않도록)
             // 같은 배치의 다른 페이지 promise가 이미 캡을 채웠을 수 있으므로 await 진입 직전에 재확인.
             const imagePromise = (async (): Promise<PageImage[]> => {
+              // perf: 이미지 분석 OFF면 추출 자체를 건너뛴다(getOperatorList + 디코딩/base64 낭비 제거).
+              if (!extractImages) return [];
               if (allImages.length >= MAX_TOTAL_IMAGES) return [];
               try {
                 return await extractPageImages(page, i);
@@ -733,6 +743,8 @@ export async function handlePdfData(
   try {
     const doc = await parsePdf(data, name, filePath, {
       enableOcrFallback: store.settings.enableOcrFallback,
+      // 이미지 분석이 꺼져 있으면 이미지 추출 스킵(파싱 시간↓ — 이미지 많은 PDF에서 큰 폭).
+      extractImages: store.settings.enableImageAnalysis,
       onOcrProgress: ownedProgress,
       signal: controller.signal,
     });

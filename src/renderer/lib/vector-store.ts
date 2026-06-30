@@ -97,6 +97,19 @@ export class VectorStore {
 
     const queryNorm = toNormalizedFloat32(queryEmbedding);
 
+    // top-1 fast-path: 배열 적재·정렬 없이 단일 max 추적(O(n), 정렬 0). 컬렉션 답변 검증은
+    // 문장 V개 × 멤버 M개에 대해 top-1(maxScore)만 필요하므로 V×M 번의 full sort 를 제거한다.
+    if (topK === 1) {
+      let best: SearchResult | null = null;
+      for (const chunk of this.chunks) {
+        const score = dotFloat32(queryNorm, chunk.embedding);
+        if (score >= minScore && Number.isFinite(score) && (best === null || score > best.score)) {
+          best = { text: chunk.text, score, index: chunk.index, pageStart: chunk.pageStart, pageEnd: chunk.pageEnd };
+        }
+      }
+      return best ? [best] : [];
+    }
+
     // 부분 top-K heap 대신 단순 sort — 일반적인 문서(수백~수천 청크)에서
     // sort O(n log n) + slice 가 충분히 빠르고 코드가 단순함.
     const scored: SearchResult[] = [];

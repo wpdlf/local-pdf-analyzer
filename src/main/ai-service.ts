@@ -1219,10 +1219,13 @@ async function embedOpenAi(
 ): Promise<EmbeddingResult> {
   const useModel = model || 'text-embedding-3-small';
   const body = JSON.stringify({ model: useModel, input: texts });
-  const result = await httpPost('https://api.openai.com/v1/embeddings', {
+  // perf/신뢰성: 429 시 지수 백오프 재시도(Gemini embed·Vision 과 동형). 재시도가 없으면 RAG
+  // 인덱싱 배치가 한도에 걸리는 순간 throw → 빌드 루프가 인덱스를 통째 폐기·키워드 모드로 무음
+  // 강등한다. 클라우드 임베딩 동시성 도입의 선결 안전장치이기도 함.
+  const result = await retryOn429(() => httpPost('https://api.openai.com/v1/embeddings', {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${apiKey}`,
-  }, body, 60000, signal);
+  }, body, 60000, signal), signal);
   const parsed = JSON.parse(result);
   if (!parsed.data || !Array.isArray(parsed.data)) {
     throw new Error('OpenAI 임베딩 응답 형식 오류');

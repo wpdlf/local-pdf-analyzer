@@ -465,10 +465,20 @@ export async function collectionRagSearch(
     const queryEmbedding = embedResult.embeddings[0];
     if (!queryEmbedding) return null;
 
+    // perf: 멤버 인덱스 로드(비활성 멤버는 디스크 session.load + 역직렬화)를 병렬화한다. 직렬이면
+    // cold 멤버 N개에서 N회 순차 디스크 I/O 후에야 검색이 시작됐다. 캐시 키는 멤버별로 달라
+    // 동시 로드가 안전(같은 cache Map, 서로 다른 docHash). per-member 실패는 null 로 격리.
+    const loaded = await Promise.all(
+      ready.map((member) =>
+        loadMemberIndex(member, activeDocHash, cache).then(
+          (idx) => ({ member, idx }),
+          () => ({ member, idx: null }),
+        ),
+      ),
+    );
     const perMember: CollectionSearchResult[][] = [];
-    for (const member of ready) {
+    for (const { member, idx } of loaded) {
       if (signal?.aborted) break;
-      const idx = await loadMemberIndex(member, activeDocHash, cache);
       if (!idx || idx.size === 0) continue;
       // 차원 불일치 멤버는 search 가 [] 를 반환하므로 자연히 제외(동질성 게이트 2차 방어)
       const hits = idx.search(queryEmbedding, RAG_TOP_K, RAG_MIN_SCORE);

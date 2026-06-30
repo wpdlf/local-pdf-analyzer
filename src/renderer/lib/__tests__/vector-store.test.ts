@@ -50,6 +50,26 @@ describe('VectorStore', () => {
       expect(result).toHaveLength(3);
     });
 
+    // perf: topK=1 fast-path(정렬 없이 단일 max)가 일반 경로와 동치인지 가드.
+    it('topK=1 fast-path 는 최고 점수 단일 결과를 반환(정렬 경로와 동치)', () => {
+      const store = new VectorStore();
+      store.addChunk('mid', [1, 0.5, 0], 0);
+      store.addChunk('best', [1, 0, 0], 1);   // 질의 [1,0,0]와 최고 코사인
+      store.addChunk('low', [0, 1, 0], 2);
+      const top1 = store.search([1, 0, 0], 1, 0);
+      const topK = store.search([1, 0, 0], 5, 0);
+      expect(top1).toHaveLength(1);
+      expect(top1[0]!.text).toBe('best');
+      expect(top1[0]!.score).toBeCloseTo(topK[0]!.score); // 정렬 경로의 1위와 동일 점수
+      expect(top1[0]!.index).toBe(topK[0]!.index);
+    });
+
+    it('topK=1 fast-path 도 minScore 미만이면 빈 배열', () => {
+      const store = new VectorStore();
+      store.addChunk('low', [0, 1, 0], 0); // 질의와 직교 → 코사인 0
+      expect(store.search([1, 0, 0], 1, 0.5)).toEqual([]);
+    });
+
     it('minScore 이하 결과는 제외된다', () => {
       const store = new VectorStore();
       store.addChunk('high', [1, 0, 0], 0); // 코사인 1.0

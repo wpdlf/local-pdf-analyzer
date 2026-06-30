@@ -7,10 +7,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const P = vi.hoisted(() => {
+  // getOperatorList(이미지 추출 경로의 비싼 호출)를 공유 spy 로 — extractImages 스킵 검증용.
+  const getOperatorList = vi.fn(() => Promise.resolve({ fnArray: [], argsArray: [] }));
   function makePage(items: unknown[]) {
     return {
       getTextContent: () => Promise.resolve({ items }),
-      getOperatorList: () => Promise.resolve({ fnArray: [], argsArray: [] }),
+      getOperatorList,
       objs: { get: () => {} },
       getViewport: () => ({ width: 600, height: 800 }),
       render: () => ({ promise: Promise.resolve() }),
@@ -24,7 +26,7 @@ const P = vi.hoisted(() => {
       destroy: vi.fn(() => Promise.resolve()),
     };
   }
-  return { fakePdf, getDocument: vi.fn(), restore: vi.fn(() => Promise.resolve()), persist: vi.fn(() => Promise.resolve()) };
+  return { fakePdf, getOperatorList, getDocument: vi.fn(), restore: vi.fn(() => Promise.resolve()), persist: vi.fn(() => Promise.resolve()) };
 });
 
 vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: 'mock-worker.js' }));
@@ -124,6 +126,20 @@ describe('handlePdfData — 성공 오케스트레이션', () => {
     const s = useAppStore.getState();
     expect(s.document?.fileName).toBe('lecture.pdf');
     expect(s.pdfBytes).not.toBeNull(); // 재읽기 불가 → 상주 유지
+  });
+
+  // perf(A1): 이미지 분석 OFF면 parsePdf 가 이미지 추출(getOperatorList=pdfjs 최고비용)을 스킵.
+  it('enableImageAnalysis=true → getOperatorList 호출(이미지 경로 실행)', async () => {
+    useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableOcrFallback: false, enableImageAnalysis: true } });
+    await handlePdfData(pdfBuf(), 'a.pdf', '/d/a.pdf');
+    expect(P.getOperatorList).toHaveBeenCalled();
+  });
+
+  it('enableImageAnalysis=false → getOperatorList 미호출(추출 스킵) + images 비어있음', async () => {
+    useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableOcrFallback: false, enableImageAnalysis: false } });
+    await handlePdfData(pdfBuf(), 'b.pdf', '/d/b.pdf');
+    expect(P.getOperatorList).not.toHaveBeenCalled();
+    expect(useAppStore.getState().document?.images).toEqual([]);
   });
 
   it('기존 문서가 있으면 새 문서 반영 전에 persist flush', async () => {
