@@ -320,4 +320,27 @@ describe('openCollection (multi-doc Phase 3)', () => {
     expect(r).toEqual({ opened: 0, total: 0 });
     expect(useAppStore.getState().openTabs.map((tb) => tb.docHash)).toEqual(['keep']); // wipe 안 됨
   });
+
+  // QA post-v0.31.15: 진행 중 재진입 차단 — 첫 openCollection 이 아직 멤버 로드 중일 때
+  // 두 번째 호출(빠른 더블클릭/다른 컬렉션)은 즉시 {0,0} no-op 이어야 탭 세트가 뒤섞이지 않는다.
+  it('진행 중 재진입 차단 — 두 번째 openCollection 은 {0,0} no-op', async () => {
+    seedTabs([], null);
+    let release!: (v: unknown) => void;
+    const gate = new Promise((r) => { release = r; });
+    let firstLoad = true;
+    M.sessionLoad.mockImplementation(async (h: string) => {
+      if (firstLoad) { firstLoad = false; await gate; } // 첫 멤버 로드에서 대기
+      return sessionFor(h);
+    });
+    M.openPath.mockResolvedValue({ error: 'no-file' });
+
+    const p1 = openCollection(['h1', 'h2']); // 동기 구간에서 collectionOpenInFlight=true 세팅 후 gate 대기
+    const r2 = await openCollection(['x', 'y']); // 재진입 → 즉시 차단(탭 wipe 없음)
+    expect(r2).toEqual({ opened: 0, total: 0 });
+
+    release(null); // 첫 호출 재개
+    const r1 = await p1;
+    expect(r1).toEqual({ opened: 2, total: 2 });
+    expect(useAppStore.getState().openTabs.map((tb) => tb.docHash)).toEqual(['h1', 'h2']);
+  });
 });
