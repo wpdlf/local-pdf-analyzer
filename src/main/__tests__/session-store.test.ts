@@ -119,6 +119,15 @@ describe('mergeSessionSummary (컬렉션 인라인 요약 영속화)', () => {
     const entry = (await loadManifest(DIR)).entries.find((e) => e.docHash === h);
     expect(entry?.lastAccessed).toBe(new Date(5000).toISOString());
   });
+
+  // QA post-v0.31.15: patchSession 과 대칭 — session.json 존재 + manifest 엔트리 부재 시 ok:false.
+  it('session.json 존재 + manifest 엔트리 부재 → {ok:false} (divergent write 미은폐)', async () => {
+    const h = hashOf(5);
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h, summaries: {} }, blob: null, now: 1000 });
+    V.files.set('/userData/sessions/manifest.json', JSON.stringify({ schemaVersion: 1, entries: [] }));
+    const r = await mergeSessionSummary(DIR, h, 'full', { content: 'z', model: 'm', provider: 'ollama' }, 2000);
+    expect(r).toEqual({ ok: false });
+  });
 });
 
 describe('writeSession / readSession 라운드트립', () => {

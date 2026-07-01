@@ -9,12 +9,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
 // AiClient 스트리밍 모킹 — summarize 에 전달된 promptText 를 캡처해 컨텍스트 구성 검증.
-const M = vi.hoisted(() => ({ prompt: '', empty: false }));
+const M = vi.hoisted(() => ({ prompt: '', empty: false, onToken: null as null | (() => void) }));
 vi.mock('../ai-client', () => ({
   AiClient: class {
     prepareSummarize() { return 'req-1'; }
     // eslint-disable-next-line require-yield
-    async *summarize(prompt: string) { M.prompt = prompt; if (M.empty) return; yield '답변'; yield ' 본문'; }
+    async *summarize(prompt: string) {
+      M.prompt = prompt;
+      if (M.empty) return;
+      yield '답변';
+      M.onToken?.(); // 첫 토큰 후 훅 — 테스트에서 스트리밍 도중 소유권 변경 주입
+      yield ' 본문';
+    }
   },
 }));
 
@@ -89,6 +95,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   M.prompt = '';
   M.empty = false;
+  M.onToken = null;
   mockEmbed.mockResolvedValue({ success: true, embeddings: [[1, 0, 0]], model: MODEL });
   mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), MODEL, 3)]);
   mockSessionLoad.mockResolvedValue(betaBlob());
@@ -159,6 +166,22 @@ describe('handleAsk — 컬렉션 글루 (CI 통합)', () => {
     expect(msgs).toHaveLength(2);
     expect(msgs[0]).toMatchObject({ role: 'user', content: '질문' });
     expect(msgs[1]).toMatchObject({ role: 'assistant', meta: 'cancelled' });
+  });
+
+  // QA post-v0.31.15(테스트 메타감사 MED-1): qaRequestId 동기발급뿐 아니라 stillOwns() 스트림
+  // 루프 가드 자체를 검증. 스트리밍 도중 소유권(qaRequestId)이 바뀌면 이후 토큰을 qaStream 에
+  // append 하지 않아야 한다(루프 가드가 isQaGenerating 로 회귀하면 이 테스트가 실패).
+  it('스트리밍 도중 소유권 변경 → 이후 토큰 append 중단 + assistant 미커밋 (mechanism)', async () => {
+    seed(false); // fast path (verification off)
+    M.onToken = () => useAppStore.setState({ qaRequestId: 'other-req', isQaGenerating: true });
+    const { result } = renderHook(() => useQa());
+    await act(async () => { await result.current.handleAsk('질문'); });
+
+    // 소유권 상실 → assistant 답변 미커밋(마지막 메시지는 user).
+    expect(useAppStore.getState().qaMessages.at(-1)?.role).toBe('user');
+    // 소유권 상실 후 토큰(' 본문')은 stillOwns() 가드로 append 되지 않음.
+    useAppStore.getState().flushQaStream();
+    expect(useAppStore.getState().qaStream).not.toContain('본문');
   });
 
   it('컬렉션 비활성: 단일 문서 경로 — session.list 미호출, Beta 컨텍스트 없음', async () => {

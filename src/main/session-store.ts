@@ -401,6 +401,12 @@ export async function mergeSessionSummary(
       entry.byteSize = Buffer.byteLength(jsonStr) + blobBytes;
       entry.lastAccessed = new Date(now).toISOString();
       await saveManifest(sessionsDir, manifest);
+    } else {
+      // QA post-v0.31.15: patchSession 과 대칭 — session.json 은 썼으나 manifest 엔트리가 없으면
+      // (manifest 손상 후 [] 리셋 등) ok:true 로 divergent write 를 감추지 않고 ok:false 를 알린다.
+      // 현재 유일 호출자(session:saveSummary)는 반환을 무시하지만, patchSession 과 같은 계약으로
+      // 맞춰 footgun(디스크엔 있고 목록엔 없는 세션의 조용한 방치)을 제거한다.
+      return { ok: false };
     }
     return { ok: true };
   } catch (err) {

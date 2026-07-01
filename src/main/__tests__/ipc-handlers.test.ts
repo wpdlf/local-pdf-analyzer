@@ -476,6 +476,22 @@ describe('ai:embed (동시성 캡 + 카운터 누수 방지)', () => {
     expect(call[1]).toBe('ollama');
     expect(call[4]).toBe('mxbai-embed-large:latest');
   });
+
+  // QA post-v0.31.15(테스트 메타감사 LOW-4): 클라우드 프로바이더는 listModels 로 모델을 해석하지
+  // 않고 embeddingModel=undefined 로 넘긴다(고정 단일 모델). ollama/claude 게이트가 클라우드로
+  // 넓어지는 회귀를 잡는 네거티브 가드.
+  it('openai embed 는 listModels 미호출 + embeddingModel undefined 로 위임', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'openai', ollamaBaseUrl: 'http://localhost:11434' });
+    H.store.load.mockReturnValue('sk-test-key');
+    H.ai.generateEmbeddings.mockResolvedValue({ embeddings: [[0.1, 0.2]], model: 'text-embedding-3-small' });
+
+    const r = await invoke('ai:embed', ['hello'], 'r1') as { success: boolean };
+    expect(r.success).toBe(true);
+    expect(H.ollama.listModels).not.toHaveBeenCalled(); // 클라우드는 모델 해석 안 함
+    const call = H.ai.generateEmbeddings.mock.calls[0]!;
+    expect(call[1]).toBe('openai');
+    expect(call[4]).toBeUndefined(); // 고정 모델 → embeddingModel 미전달
+  });
 });
 
 // session-persistence module-2 (L3): session:* IPC 핸들러 — docHash 검증 + session-store 위임 계약.

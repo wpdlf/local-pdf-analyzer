@@ -234,6 +234,23 @@ describe('useSummarize — 이미지 분석', () => {
     expect(useAppStore.getState().error).toBeNull(); // 스퍼리어스 배너 없음
     expect(M.summarizeCalls).toHaveLength(0);        // 요약 미진행
   });
+
+  // QA post-v0.31.15(테스트 메타감사): 이미지 preflight 도중 문서가 교체되면(!ours) 스퍼리어스
+  // 에러/구 문서 대상 요약 커밋 없이 중단. abort 와 코드 경로는 공유하나 별도 상태전이라 명시 가드.
+  it('이미지 분석 중 문서 전환(!ours) → 에러 없음 + 구 문서 요약 미커밋', async () => {
+    M.imageResult = null;
+    // preflight 도중 다른 문서로 전환(isGenerating 은 true 유지, document.id 만 교체).
+    M.onAnalyzeImage = () => { useAppStore.setState({ document: makeDoc({ id: 'doc-OTHER', images: [] }) }); };
+    useAppStore.setState({
+      settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: true },
+      document: makeDoc({ id: 'doc-1', images: [img(0)] }),
+      notice: null, error: null, summary: null,
+    });
+    await runSummarize();
+    expect(useAppStore.getState().error).toBeNull();  // 스퍼리어스 배너 없음
+    // 구 문서(doc-1) 대상 요약이 새 문서에 커밋되지 않음.
+    expect(useAppStore.getState().summary).toBeNull();
+  });
 });
 
 describe('useSummarize — handleAbort', () => {
