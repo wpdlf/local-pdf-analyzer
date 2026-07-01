@@ -34,6 +34,18 @@ describe('chunkText', () => {
       expect(chunk).not.toMatch(/^\n\n/);
     }
   });
+
+  // QA post-v0.31.15: maxChunkSize 0/음수(손상 settings.json)여도 코드포인트당 1청크로
+  // 폭발하지 않는다 — floor 100 하한으로 청크 수가 문서 크기에 선형 폭증하지 않아야 한다.
+  it('maxChunkSize 0/음수여도 코드포인트 폭발 없음(floor 하한)', () => {
+    const text = '가'.repeat(1000);
+    for (const bad of [0, -5, -1000]) {
+      const chunks = chunkText(text, bad);
+      // 코드포인트당 1청크였다면 ~1000개. floor 100 이면 훨씬 적어야 한다.
+      expect(chunks.length).toBeLessThan(60);
+      expect(chunks.join('')).toContain('가');
+    }
+  });
 });
 
 describe('chunkTextWithOverlap', () => {

@@ -14,6 +14,8 @@ const M = vi.hoisted(() => ({
   summarizeCalls: [] as { text: string; type: string }[],
   imageResult: 'IMG_DESC' as string | null,
   imageCalls: 0,
+  // preflight analyzeImage 호출 시 실행할 훅(테스트에서 abort 등 store 변경 주입용).
+  onAnalyzeImage: null as null | (() => void),
   reqCounter: 0,
   // Stop→재요약 race 테스트용: 첫 summarize 호출만 이 promise 에서 일시정지시켜
   // stale run 의 finally 가 새 run 보다 늦게 도달하는 상황을 결정적으로 재현.
@@ -34,6 +36,7 @@ vi.mock('../ai-client', () => ({
     }
     async analyzeImage(_b: string, _r?: string): Promise<string | null> {
       M.imageCalls++;
+      M.onAnalyzeImage?.();
       return M.imageResult;
     }
   },
@@ -69,6 +72,7 @@ beforeEach(() => {
   M.summarizeCalls = [];
   M.imageResult = 'IMG_DESC';
   M.imageCalls = 0;
+  M.onAnalyzeImage = null;
   M.reqCounter = 0;
   M.gate = null;
   abortMock.mockClear();
@@ -199,15 +203,36 @@ describe('useSummarize — 이미지 분석', () => {
     expect(useAppStore.getState().summary).not.toBeNull();
   });
 
-  it('이미지 preflight 실패(null) → GENERATE_FAIL + 요약 미진행', async () => {
+  // QA post-v0.31.15: 진짜 Vision 실패(비-abort)는 전체 요약을 막지 않고 텍스트 전용으로 강등한다.
+  // (이전엔 GENERATE_FAIL 로 전체 중단 — enableImageAnalysis default ON 이라 vision 모델 없는
+  //  Ollama 사용자가 이미지 PDF 를 아예 요약 못 하던 함정)
+  it('이미지 preflight 실패(비-abort) → 텍스트 전용 강등(에러 없음 + notice + 요약 진행)', async () => {
     M.imageResult = null;
     useAppStore.setState({
       settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: true },
       document: makeDoc({ images: [img(0)] }),
+      notice: null, error: null,
     });
     await runSummarize();
-    expect(useAppStore.getState().error?.code).toBe('GENERATE_FAIL');
-    expect(M.summarizeCalls).toHaveLength(0);
+    expect(useAppStore.getState().error).toBeNull();               // 차단 에러 없음
+    expect(useAppStore.getState().notice?.message).toBeTruthy();   // 비차단 안내
+    expect(M.summarizeCalls.length).toBeGreaterThan(0);            // 텍스트 요약 진행
+    expect(useAppStore.getState().summary).not.toBeNull();
+  });
+
+  // QA post-v0.31.15: 이미지 분석 중 Stop/타임아웃이면 스퍼리어스 배너를 띄우지 않고 요약만 중단.
+  it('이미지 분석 중 abort → 스퍼리어스 에러 없음 + 요약 미진행', async () => {
+    M.imageResult = null;
+    // preflight 도중 사용자 Stop 시뮬레이션(isGenerating→false) 후 null 반환(abort).
+    M.onAnalyzeImage = () => { useAppStore.setState({ isGenerating: false }); };
+    useAppStore.setState({
+      settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: true },
+      document: makeDoc({ images: [img(0)] }),
+      notice: null, error: null,
+    });
+    await runSummarize();
+    expect(useAppStore.getState().error).toBeNull(); // 스퍼리어스 배너 없음
+    expect(M.summarizeCalls).toHaveLength(0);        // 요약 미진행
   });
 });
 

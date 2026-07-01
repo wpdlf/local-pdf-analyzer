@@ -45,6 +45,8 @@ export const _translations = {
   'ai.streamInterrupted': { ko: 'AI 응답 수신이 중단되었습니다. 네트워크 연결과 AI 서비스 상태를 확인해주세요.', en: 'AI response stream interrupted. Please check your network connection and AI service status.' },
   // QA: use-summarize 가 직접 setError/throw 하던 하드코딩 한국어 → i18n(영어 UI 미번역 해소)
   'ai.imageAnalysisFail': { ko: '이미지 분석에 실패했습니다. Vision 모델을 확인해주세요.', en: 'Image analysis failed. Please check your Vision model.' },
+  // Vision 실패 시 전체 요약을 막지 않고 텍스트 전용으로 강등할 때의 비차단 안내.
+  'ai.imageAnalysisSkipped': { ko: '이미지 분석을 건너뛰고 텍스트만 요약했습니다 (Vision 모델 없음/실패 — llava 등 설치 시 이미지 포함).', en: 'Skipped image analysis and summarized text only (no/failed Vision model — install e.g. llava to include images).' },
   'ai.summaryTimeout': { ko: '요약 시간이 초과되었습니다. 생성된 부분까지 표시됩니다. 청크 크기를 줄이거나 경량 모델을 사용해보세요.', en: 'Summary timed out. The portion generated so far is shown. Try reducing chunk size or using a lighter model.' },
   'ai.ollamaNotRunning': { ko: 'Ollama가 실행 중이 아닙니다. 설정을 확인해주세요.', en: 'Ollama is not running. Please check your settings.' },
   'ai.apiKeyMissing': { ko: '{provider} API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.', en: '{provider} API key is not set. Please enter it in Settings.' },

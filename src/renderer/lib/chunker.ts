@@ -79,7 +79,11 @@ export function chunkText(
   if (!text || !text.trim()) return [];
 
   const charsPerToken = estimateCharsPerToken(text);
-  const maxChars = Math.max(1, Math.floor(maxChunkSize * charsPerToken));
+  // QA post-v0.31.15: floor 를 100 으로 상향(이전 1). settings:set 은 maxChunkSize 를 [1000,16000]
+  // 로 검증하지만, 손상/수기편집된 settings.json 의 값(loadSettings 는 값 미검증)이 0/음수면
+  // maxChars=1 → splitByCodepoint 가 코드포인트당 1청크로 폭발(대용량 문서에서 수십만 LLM 호출).
+  // RAG 경로(chunkTextWithOverlapOffsets)가 이미 쓰는 Math.max(200,…) 하한과 동일 방어.
+  const maxChars = Math.max(100, Math.floor(maxChunkSize * charsPerToken));
 
   if (text.length <= maxChars) {
     return [text];

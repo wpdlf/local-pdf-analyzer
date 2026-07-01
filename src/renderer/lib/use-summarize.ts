@@ -607,14 +607,34 @@ export function useSummarize() {
             useAppStore.getState().setEnrichedPageTexts(null);
           }
         } catch (imgErr) {
-          imageAnalysisFailed = true;
-          setError({ code: 'GENERATE_FAIL', message: (imgErr as Error).message });
+          // QA post-v0.31.15: 두 결함 통합 수정.
+          // (1) abort/타임아웃/문서전환 중 이미지 분석이 throw 하면(analyzeImage 가 ABORTED 를
+          //     null 로 뭉갬) 이전엔 무조건 GENERATE_FAIL 배너를 띄워, 사용자 Stop 에 스퍼리어스
+          //     배너가 뜨거나 타임아웃 콜백이 세팅한 GENERATE_TIMEOUT 을 덮어썼다. → 이 경우
+          //     에러를 표시하지 않고 요약만 중단(imageAnalysisFailed=true → 아래 return).
+          // (2) 진짜 Vision 실패(예: vision 모델 미설치 — enableImageAnalysis 는 default ON 이라
+          //     Ollama 사용자에게 흔함)면 이전엔 전체 요약이 통째로 중단됐다. → 텍스트 전용으로
+          //     강등(비차단 notice) 후 계속 진행. textForSummary 는 이미 doc.extractedText(raw),
+          //     enrichedPagesRef 는 null 이라 텍스트 요약이 정상 진행된다.
+          const aborted = timedOut || !useAppStore.getState().isGenerating;
+          const cur = useAppStore.getState().document;
+          const ours = !!cur && cur.id === doc.id;
+          if (aborted || !ours) {
+            imageAnalysisFailed = true;
+          } else {
+            useAppStore.getState().setNotice({ message: t('ai.imageAnalysisSkipped') });
+            // 이전 run 의 enriched 잔존 방지 — raw pageTexts 재빌드 강제(성공 경로 R32 P2 와 동형).
+            if (!isPartialRange && useAppStore.getState().enrichedPageTexts !== null) {
+              useAppStore.getState().setEnrichedPageTexts(null);
+            }
+          }
         } finally {
           if (stopWatch !== null) { clearInterval(stopWatch); stopWatch = null; }
           abortAllVisionInFlight();
         }
         if (imageAnalysisFailed) {
-          // outer finally 에서 flushStream / setIsGenerating / timeout 정리 일괄 처리.
+          // abort/타임아웃/문서전환만 여기 도달 — outer finally 에서 flushStream/setIsGenerating/
+          // timeout 정리 일괄 처리. (진짜 Vision 실패는 위에서 텍스트 강등 후 계속 진행)
           return;
         }
       }

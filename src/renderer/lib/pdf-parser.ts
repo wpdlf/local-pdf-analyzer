@@ -277,30 +277,36 @@ async function renderPageToImage(
   }
   const finalViewport = finalScale !== scale ? page.getViewport({ scale: finalScale }) : viewport;
   const canvas = new OffscreenCanvas(Math.round(finalViewport.width), Math.round(finalViewport.height));
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas context 생성 실패');
-  // pdfjs 6.x: RenderParameters 에 canvas 가 필수(canvasContext 는 deprecated). OffscreenCanvas
-  // 를 canvas 로 전달 — 타입은 HTMLCanvasElement 를 요구하나 런타임은 OffscreenCanvas 를 수용.
-  await page.render({
-    canvas: canvas as unknown as HTMLCanvasElement,
-    canvasContext: ctx as unknown as CanvasRenderingContext2D,
-    viewport: finalViewport,
-  }).promise;
-  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
-  // GPU 메모리 즉시 해제 (대용량 PDF에서 OOM 방지)
-  canvas.width = 0;
-  canvas.height = 0;
-  try { page.cleanup(); } catch (err) {
-    console.warn(`[pdf-parser] OCR page.cleanup() 실패 (page ${pageNum}):`, err);
+  try {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas context 생성 실패');
+    // pdfjs 6.x: RenderParameters 에 canvas 가 필수(canvasContext 는 deprecated). OffscreenCanvas
+    // 를 canvas 로 전달 — 타입은 HTMLCanvasElement 를 요구하나 런타임은 OffscreenCanvas 를 수용.
+    await page.render({
+      canvas: canvas as unknown as HTMLCanvasElement,
+      canvasContext: ctx as unknown as CanvasRenderingContext2D,
+      viewport: finalViewport,
+    }).promise;
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    const CHUNK = 8192;
+    const parts: string[] = [];
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      parts.push(String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length))));
+    }
+    return btoa(parts.join(''));
+  } finally {
+    // QA post-v0.31.15: render/convert 가 reject 해도 GPU backing store(최대 ~36MB) + pdfjs
+    // 페이지 폰트/이미지 버퍼를 즉시 해제한다. 이전엔 성공 경로에서만 해제해, 스캔 PDF 배치 OCR 에서
+    // render 실패(손상 스트림 = OCR 유발 조건)가 누적되면 OOM 방지 의도와 반대로 메모리가 쌓였다.
+    // 이미지추출·PdfViewer 경로가 이미 쓰는 finally 해제 패턴과 정렬.
+    canvas.width = 0;
+    canvas.height = 0;
+    try { page.cleanup(); } catch (err) {
+      console.warn(`[pdf-parser] OCR page.cleanup() 실패 (page ${pageNum}):`, err);
+    }
   }
-  const buffer = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  const CHUNK = 8192;
-  const parts: string[] = [];
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    parts.push(String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length))));
-  }
-  return btoa(parts.join(''));
 }
 
 async function ocrFallback(
