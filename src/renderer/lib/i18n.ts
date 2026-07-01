@@ -93,6 +93,11 @@ export const _translations = {
   'uploader.cannotRead': { ko: 'PDF를 읽을 수 없습니다.', en: 'Cannot read PDF.' },
   'uploader.multipleFiles': { ko: '한 번에 하나의 PDF만 처리할 수 있습니다. 첫 번째 파일({name})만 열었습니다.', en: 'Only one PDF can be processed at a time. Opening the first file ({name}) only.' },
   'uploader.notPdf': { ko: 'PDF 파일만 지원됩니다.', en: 'Only PDF files are supported.' },
+  // ─── handlePdfData 진입 가드(모든 파일 열기 경로 공통) ───
+  'pdf.busyGenerating': { ko: '요약 진행 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while summarizing.' },
+  'pdf.busyQa': { ko: 'Q&A 답변 생성 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while answering Q&A.' },
+  'pdf.busyCollection': { ko: '컬렉션 요약 진행 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while summarizing a collection.' },
+  'pdf.invalidFile': { ko: '유효한 PDF 파일이 아닙니다.', en: 'Not a valid PDF file.' },
   'uploader.tooManyPages': { ko: '페이지 수가 너무 많습니다 ({pages}p). 최대 {max}페이지까지 지원합니다. 문서를 분할해주세요.', en: 'Too many pages ({pages}p). Maximum {max} pages supported. Please split the document.' },
   'uploader.cancelParse': { ko: 'PDF 처리 취소', en: 'Cancel PDF processing' },
   'uploader.cancelBtn': { ko: '■ 취소', en: '■ Cancel' },

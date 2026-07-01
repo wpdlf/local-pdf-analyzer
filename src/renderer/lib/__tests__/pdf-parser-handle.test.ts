@@ -100,6 +100,19 @@ describe('handlePdfData — 가드', () => {
     expect(P.getDocument).not.toHaveBeenCalled();
   });
 
+  // QA post-v0.31.16(i18n 갭): 진입 가드 메시지가 하드코딩 한글이 아니라 i18n 을 거친다.
+  // en 로케일에서 영문으로 표시되어야 한다(이전엔 영어 UI 에도 한글 노출).
+  it('en 로케일: 가드/검증 메시지가 i18n 영문으로 표시된다', async () => {
+    useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, provider: 'ollama', uiLanguage: 'en' }, isGenerating: true });
+    await handlePdfData(pdfBuf(), 'a.pdf', '/d/a.pdf');
+    expect(useAppStore.getState().error?.message).toMatch(/Cannot open a new file while summarizing/);
+
+    // 매직바이트 실패 메시지도 영문(위장 바이너리)
+    useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, provider: 'ollama', uiLanguage: 'en' }, isGenerating: false });
+    await handlePdfData(new Uint8Array([1, 2, 3, 4, 5, 6]).buffer, 'fake.pdf', '/d/fake.pdf');
+    expect(useAppStore.getState().error?.message).toMatch(/Not a valid PDF file/);
+  });
+
   it('용량 초과 → PDF_PARSE_FAIL', async () => {
     const big = new ArrayBuffer(MAX_PDF_SIZE_BYTES + 1);
     await handlePdfData(big, 'big.pdf', '/d/big.pdf');

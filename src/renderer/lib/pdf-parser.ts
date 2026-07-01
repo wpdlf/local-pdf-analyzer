@@ -692,14 +692,14 @@ export async function handlePdfData(
   if (store.isGenerating) {
     store.setError({
       code: 'PDF_PARSE_FAIL',
-      message: '요약 진행 중에는 새 파일을 열 수 없습니다.',
+      message: t('pdf.busyGenerating'),
     } as AppError);
     return;
   }
   if (store.isQaGenerating) {
     store.setError({
       code: 'PDF_PARSE_FAIL',
-      message: 'Q&A 답변 생성 중에는 새 파일을 열 수 없습니다.',
+      message: t('pdf.busyQa'),
     } as AppError);
     return;
   }
@@ -710,14 +710,14 @@ export async function handlePdfData(
   if (store.isCollectionBusy) {
     store.setError({
       code: 'PDF_PARSE_FAIL',
-      message: '컬렉션 요약 진행 중에는 새 파일을 열 수 없습니다.',
+      message: t('pdf.busyCollection'),
     } as AppError);
     return;
   }
   if (data.byteLength > MAX_FILE_SIZE) {
     store.setError({
       code: 'PDF_PARSE_FAIL',
-      message: `파일이 너무 큽니다 (${Math.round(data.byteLength / 1024 / 1024)}MB). 최대 100MB까지 지원합니다.`,
+      message: t('uploader.fileTooLarge', { size: String(Math.round(data.byteLength / 1024 / 1024)) }),
     } as AppError);
     return;
   }
@@ -733,7 +733,7 @@ export async function handlePdfData(
   if (!isPdfMagic) {
     store.setError({
       code: 'PDF_PARSE_FAIL',
-      message: '유효한 PDF 파일이 아닙니다.',
+      message: t('pdf.invalidFile'),
     } as AppError);
     return;
   }
