@@ -84,6 +84,27 @@ describe('stripConversationalText — 대화형 멘트 제거', () => {
       const line = 'The helper function processes input.';
       expect(stripConversationalText(line)).toBe(line);
     });
+
+    // QA post-v0.31.15: 비앵커드 패턴이 실질 문장을 통째로 지우던 결함(요약 내용+인용 소실).
+    it('"…다루고 있습니다." 로 끝나는 실문장은 보존한다(콜론 인트로만 제거)', () => {
+      const line = '본 절은 어텐션 메커니즘을 다루고 있습니다.';
+      expect(stripConversationalText(line)).toBe(line);
+    });
+
+    it('인용 [p.N] 을 담은 라인은 대화체 패턴과 무관하게 항상 보존한다', () => {
+      const line = '본 절은 어텐션 메커니즘을 다루고 있습니다[p.5].';
+      expect(stripConversationalText(line)).toBe(line); // 인용+내용 소실 방지
+    });
+
+    it('콜론 인트로 "…다루고 있습니다:" 는 여전히 제거한다', () => {
+      const input = '핵심 본문입니다.\n다음 주제를 다루고 있습니다:';
+      expect(stripConversationalText(input)).toBe('핵심 본문입니다.');
+    });
+
+    it('본문 중간의 "总结如下" 는 보존, 라인 끝 리드인만 제거', () => {
+      const body = '本文总结如下的方法很有效。'; // 중간 등장 → 보존
+      expect(stripConversationalText(body)).toBe(body);
+    });
   });
 
   describe('개행/공백 정규화', () => {

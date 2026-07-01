@@ -4,7 +4,7 @@ import { t } from './i18n';
 import { PROVIDER_LABELS } from '../types';
 import { AiClient } from './ai-client';
 import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
-import { normalizeCitationPlacement } from './citation';
+import { normalizeCitationPlacement, CITATION_REGEX } from './citation';
 import { enrichDocumentWithImages } from './enrich-doc';
 import { slicePdfDocumentByPageRange, isFullRange } from './page-range';
 
@@ -112,8 +112,11 @@ export function stripConversationalText(text: string): string {
     /설명해\s*드리겠습니다/,
     /정리해\s*드리겠습니다/,
     /알려\s*드리겠습니다/,
-    /다루고\s*있습니다.*:?\s*$/,
-    /주요\s*내용을?\s*요약/,
+    // QA post-v0.31.15: 콜론(인용 리드인)으로 끝날 때만 strip. 이전 `.*:?\s*$` 는 "…를 다루고
+    // 있습니다." 같은 실문장도 통째로 삭제했다(아래 인용 가드와 함께 이중 방어).
+    /다루고\s*있습니다\s*[:：]\s*$/,
+    // 독립 헤딩 라인일 때만 strip (본문 중간의 "주요 내용 요약" 표현 보존).
+    /^주요\s*내용을?\s*요약\s*[:：]?\s*$/,
     /이상으로\s*.*(마치|끝|정리)/,
     /좋은\s*자료입니다/,
     /잘\s*정리되어/,
@@ -133,17 +136,24 @@ export function stripConversationalText(text: string): string {
     /ご質問があれば/,
     /^以上(です|になります|となります)/,
     /お気軽にお聞き/,
-    /要約(いた)?します/,
+    // 짧은 리드인 라인일 때만 strip (본문 문장 "…を要約します。" 보존).
+    /^.{0,12}要約(いた)?します[。：:]?\s*$/,
     // 中文
     /希望(对你|这)有(所)?帮助/,
     /如有(任何)?疑问/,
     /^以上(就是|是|为)/,
-    /总结如下/,
+    // 리드인 "总结如下(:)" 이 라인 끝일 때만 strip — 본문 중간 등장은 보존(끝-앵커).
+    /总结如下\s*[：:]?\s*$/,
   ];
+  // 인용 [p.N] 을 담은 라인은 실질 본문이므로 대화체 strip 대상에서 제외한다(QA post-v0.31.15).
+  // 비앵커드 패턴이 "…를 다루고 있습니다[p.5]." 같은 실문장을 통째로 지워 인용까지 소실하던
+  // 결함의 근본 방어. g 플래그 제외본을 써 .test() 가 lastIndex 무상태(라인 간 재사용 안전).
+  const citationLine = new RegExp(CITATION_REGEX.source, 'i');
   const lines = text.split('\n');
   const filtered = lines.filter((line) => {
     const trimmed = line.trim();
     if (!trimmed) return true; // 빈 줄 유지
+    if (citationLine.test(trimmed)) return true; // 인용 포함 = 본문, 보존
     return !patterns.some((p) => p.test(trimmed));
   });
   return filtered.join('\n').replace(/\n{3,}/g, '\n\n').trim();

@@ -1105,7 +1105,9 @@ export function useQa() {
             // refine 경로는 raw trimmed 를 썼기 때문에, `---` / `[질문]` / `[이전 대화]` 마커가 포함된
             // 질문이 프롬프트 구조를 오염시킬 수 있었다 (v0.18.0 회귀). 두 경로 모두 동일하게 정화.
             const sanitizedQuestion = sanitizePromptInput(trimmed);
-            const refinePrompt = buildRefinePrompt(sanitizedQuestion, draft, `${context}${history}`);
+            // QA post-v0.31.15: draft(1차 LLM 출력)도 sanitize — LLM 이 `---`/`[질문]` 마커를 뱉으면
+            // refine 프롬프트 구조가 오염될 수 있어 "프롬프트 진입 입력은 전부 sanitize"(R32/H1) 불변식 준수.
+            const refinePrompt = buildRefinePrompt(sanitizedQuestion, sanitizePromptInput(draft), `${context}${history}`);
             // v0.18.4 H1 fix: 이전에는 for-await 가 인라인되어 있었고 refine 이 0 토큰을 반환하면
             // answer='' → 바깥 `if (answer)` 가드에 걸려 draft 가 통째로 유실됐다.
             // collectRefineAnswer 헬퍼가 빈 응답 시 draft 로 fallback 시켜 불변식 보장.

@@ -97,7 +97,14 @@ export function buildCollectionSummaryPrompt(
   const body = blocks
     // 보안(R47): 문서명도 정제 — 파일명은 세션 JSON 에 저장돼 외부 편집으로 개행/마커 주입이
     // 가능하므로, 헤더 개행 제거 후 sanitize 하여 reduce 프롬프트 구조 오염(인젝션)을 차단.
-    .map((b) => `## ${sanitizePromptInput(b.fileName.replace(/[\r\n]+/g, ' '))}\n${sanitizePromptInput(b.content)}`)
+    // QA post-v0.31.15: content 의 라인 선두 마크다운 헤더(#)도 이스케이프 — 멤버 블록 구분자
+    // (`## 문서명`)를 모방한 허위 문서블록 주입(가짜 사실을 실제 문서명에 귀속)을 차단.
+    // sanitizePromptInput 은 [질문]/--- 등 전역 마커만 알고 `##` 는 이 프롬프트 고유 구분자라 여기서 처리.
+    .map((b) => {
+      const name = sanitizePromptInput(b.fileName.replace(/[\r\n]+/g, ' '));
+      const content = sanitizePromptInput(b.content).replace(/^(\s*)(#{1,6})/gm, '$1\\$2');
+      return `## ${name}\n${content}`;
+    })
     .join('\n\n');
   return `${instruction}\n\n${body}`;
 }
