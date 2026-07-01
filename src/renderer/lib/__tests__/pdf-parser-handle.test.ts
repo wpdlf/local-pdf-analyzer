@@ -70,7 +70,7 @@ beforeEach(() => {
   P.persist.mockResolvedValue(undefined);
   useAppStore.setState({
     settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableOcrFallback: false },
-    document: null, isGenerating: false, isQaGenerating: false, isParsing: false,
+    document: null, isGenerating: false, isQaGenerating: false, isParsing: false, isCollectionBusy: false,
     error: null, summary: null, summaryStream: '', qaMessages: [], pdfBytes: null,
   });
 });
@@ -86,6 +86,15 @@ describe('handlePdfData — 가드', () => {
 
   it('Q&A 생성 중이면 거부', async () => {
     useAppStore.setState({ isQaGenerating: true });
+    await handlePdfData(pdfBuf(), 'a.pdf', '/d/a.pdf');
+    expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL');
+    expect(P.getDocument).not.toHaveBeenCalled();
+  });
+
+  // QA post-v0.31.15(M2): 컬렉션 gather 단계(isCollectionBusy=true, isQaGenerating 아직 false)에도
+  // 새 파일 열기를 차단 — isTabSwitchBlocked 와 대칭(누락 시 in-flight 멤버 요약 토큰 낭비).
+  it('컬렉션 요약 gather 중(isCollectionBusy)이면 거부', async () => {
+    useAppStore.setState({ isGenerating: false, isQaGenerating: false, isCollectionBusy: true });
     await handlePdfData(pdfBuf(), 'a.pdf', '/d/a.pdf');
     expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL');
     expect(P.getDocument).not.toHaveBeenCalled();

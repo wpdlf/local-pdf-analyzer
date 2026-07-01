@@ -703,6 +703,17 @@ export async function handlePdfData(
     } as AppError);
     return;
   }
+  // QA post-v0.31.15: 컬렉션 교차 요약 gather 단계(isCollectionBusy=true, isQaGenerating 아직
+  // false)에도 새 파일 열기를 차단 — isTabSwitchBlocked 가 이미 isCollectionBusy 를 포함하는 것과
+  // 대칭. 누락 시 드롭이 게이트를 통과해 in-flight 멤버 요약(클라우드)이 끊기지 않고 백그라운드
+  // 완주하며 토큰을 낭비했다(탭 전환 경로 tabs.ts:32-35 가 이미 닫은 것과 동일 결함 클래스).
+  if (store.isCollectionBusy) {
+    store.setError({
+      code: 'PDF_PARSE_FAIL',
+      message: '컬렉션 요약 진행 중에는 새 파일을 열 수 없습니다.',
+    } as AppError);
+    return;
+  }
   if (data.byteLength > MAX_FILE_SIZE) {
     store.setError({
       code: 'PDF_PARSE_FAIL',

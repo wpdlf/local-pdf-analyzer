@@ -123,4 +123,20 @@ describe('buildRagIndex — 방어 분기', () => {
     const ok = await buildRagIndex(TEXT, 'doc1', new AbortController().signal);
     expect(ok).toBe(false);
   });
+
+  // QA post-v0.31.15(M1): 배치 임베딩 도중 문서가 전환되면(signal abort 가 아직 도달 전) addChunk
+  // 없이 즉시 false — 탭 전환/드롭이 clear 한 새 문서 공유 인덱스를 stale 배치가 재오염하는 창 차단.
+  it('배치 임베딩 직후 문서 전환(docId 불일치)이면 addChunk 없이 인덱스 무오염', async () => {
+    useAppStore.setState({ document: { id: 'doc1' } as never });
+    mockCheckEmbedModel.mockResolvedValue({ available: true, model: 'nomic-embed-text' });
+    mockEmbed.mockImplementation((texts: string[]) => {
+      // 임베딩 반환 직전 문서 전환(탭 전환/드롭). signal 은 아직 abort 되지 않은 상태.
+      useAppStore.setState({ document: { id: 'doc2' } as never });
+      return Promise.resolve({ success: true, embeddings: texts.map(() => [0.1, 0.2, 0.3]) });
+    });
+
+    const ok = await buildRagIndex(TEXT, 'doc1', new AbortController().signal);
+    expect(ok).toBe(false);
+    expect(useAppStore.getState().ragIndex.size).toBe(0); // stale 배치가 인덱스를 오염하지 않음
+  });
 });

@@ -300,13 +300,17 @@ export async function buildRagIndex(
     for (let i = 0; i < chunks.length; i += RAG_BATCH_SIZE) {
       // 문서 전환/언마운트 체크 — 이전 빌드 즉시 중단
       // aborted 분기에서는 인덱스/state를 건드리지 않음 (새 build가 소유)
-      if (signal.aborted) return false;
+      // QA post-v0.31.15: signal.aborted 뿐 아니라 document.id 도 확인. 탭 전환/드롭이
+      // 공유 ragIndex 를 clear 한 뒤(resetSummaryState) signal abort 가 React effect cleanup
+      // 지연으로 늦게 도달하는 창에서, stale 배치가 새 문서 소유의 빈 인덱스를 재오염하던 결함
+      // 차단(최종 커밋 라인의 document.id 가드와 동형 — 배치 루프에도 적용).
+      if (signal.aborted || useAppStore.getState().document?.id !== docId) return false;
 
       const batch = chunks.slice(i, i + RAG_BATCH_SIZE);
       const result = await embedWithTimeout(batch, signal);
 
-      // 빌드 도중 문서 전환 재확인
-      if (signal.aborted) return false;
+      // 빌드 도중 문서 전환 재확인 (post-await — 위와 동일 근거)
+      if (signal.aborted || useAppStore.getState().document?.id !== docId) return false;
 
       if (!result.success || !result.embeddings) {
         ragIndex.clear();

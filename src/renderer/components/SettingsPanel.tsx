@@ -26,7 +26,10 @@ export function SettingsPanel() {
   // 영향이 없지만, 진행 중 백엔드 스왑은 다음 요청에서 RAG 재빌드/임베딩 모델 불일치 혼란을 부른다.
   const isGenerating = useAppStore((s) => s.isGenerating);
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
-  const aiBusy = isGenerating || isQaGenerating;
+  // QA post-v0.31.15: isCollectionBusy(교차 요약 gather)도 포함 — gather 단계는 isQaGenerating
+  // 세팅 전이라, 누락 시 provider/model 변경이 열려 useRagBuilder 재빌드가 진행 중 인덱스를 churn.
+  const isCollectionBusy = useAppStore((s) => s.isCollectionBusy);
+  const aiBusy = isGenerating || isQaGenerating || isCollectionBusy;
   const t = useT();
 
   const [draft, setDraft] = useState<AppSettings>({ ...settings });
