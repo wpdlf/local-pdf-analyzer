@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-type KeyResult = { success: boolean; error?: string };
+type KeyResult = { success: boolean; error?: string; code?: string };
 const api = {
   has: vi.fn((_p: string) => Promise.resolve(false)),
   save: vi.fn((): Promise<KeyResult> => Promise.resolve({ success: true })),
@@ -89,13 +89,25 @@ describe('SettingsPanel — API 키 관리', () => {
     await waitFor(() => expect(input.value).toBe(''));
   });
 
-  it('키 저장 실패(result.success=false) → 에러 메시지', async () => {
-    api.save.mockResolvedValueOnce({ success: false, error: 'safeStorage 불가' });
+  // C5-L(QA cycle5): main 의 error 원문(한국어 고정/fs 절대경로 포함 가능)은 표시하지 않고
+  // code→i18n 매핑으로 표시 — KEYCHAIN_UNAVAILABLE 는 전용 메시지, 그 외는 generic.
+  it('키 저장 실패(result.success=false) → i18n generic 메시지(원문/경로 비노출)', async () => {
+    api.save.mockResolvedValueOnce({ success: false, error: 'EACCES: rename C:\\Users\\x\\api-keys.enc.tmp' });
     const user = userEvent.setup();
     render(<SettingsPanel />);
     await user.type(claudeKeyInput(), 'sk-ant-xyz');
     await user.click(screen.getByText(t('common.save')));
-    await waitFor(() => expect(screen.getByText('safeStorage 불가')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(t('settings.keySaveFail'))).toBeTruthy());
+    expect(screen.queryByText(/EACCES/)).toBeNull(); // fs 에러 원문(절대경로) 비노출
+  });
+
+  it('키 저장 실패(code=KEYCHAIN_UNAVAILABLE) → 키체인 전용 i18n 메시지', async () => {
+    api.save.mockResolvedValueOnce({ success: false, error: 'OS 키체인을 사용할 수 없습니다', code: 'KEYCHAIN_UNAVAILABLE' });
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.type(claudeKeyInput(), 'sk-ant-xyz');
+    await user.click(screen.getByText(t('common.save')));
+    await waitFor(() => expect(screen.getByText(t('settings.keychainUnavailable'))).toBeTruthy());
   });
 });
 

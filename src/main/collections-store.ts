@@ -107,7 +107,10 @@ export async function saveCollection(
   const nowIso = new Date(now).toISOString();
   try {
     let collections = await loadFile(filePath);
-    const id = typeof input.id === 'string' && input.id.length > 0 ? input.id : randomUUID();
+    // C5-L(QA cycle5): 저장 시점에도 로드측(normalizeCollection)과 동일한 128자 절단 적용.
+    // 비대칭이면 초과 id 저장 시 {ok:true, id:원본} 을 돌려주고 다음 list 는 절단 id 를 반환해
+    // 렌더러의 후속 갱신이 별개 항목으로 갈라졌다(정상 흐름은 randomUUID 36자 — 정합성 결함).
+    const id = typeof input.id === 'string' && input.id.length > 0 ? input.id.slice(0, 128) : randomUUID();
     const existing = collections.find((c) => c.id === id);
     if (existing) {
       existing.name = name;

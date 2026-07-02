@@ -902,6 +902,41 @@ export function useRagBuilder(): void {
   }, [document, provider, enrichedPageTexts, enrichedVersion, sessionRestorePending]);
 }
 
+/**
+ * C5-L(QA cycle5): hook 컨텍스트 밖에서도 안전한 "불변식 보존" Q&A 중단.
+ *
+ * 언마운트(설정 진입으로 QaChat 언마운트)·뷰어 접기(SummaryViewer.handleClose)는 기존에
+ * qaRequestId 만 raw abort 해서: ① refine 단계의 부분 답변이 통째로 버려지고 ② qaMessages 가
+ * 짝 없는 user 로 끝나 "user→assistant 짝" 불변식(addQaMessage 짝수 FIFO·formatHistory 짝
+ * 스킵의 전제)이 깨졌다 — 다음 턴 히스토리에 무응답 `Q:` 라인이 남아 컨텍스트를 오염시켰다.
+ * handleQaAbort 의 시맨틱(부분 답변 보존 or cancelled placeholder + 상태 정리)을 공유 경로로
+ * 추출해 모든 중단 진입점이 경유한다. 컬렉션 reduce 스트리밍 중단도 동일하게 처리된다.
+ * 비생성 상태면 reqId abort(no-op 안전)만 하고 메시지는 건드리지 않는다.
+ */
+export function abortQaPreservingThread(): void {
+  const store = useAppStore.getState();
+  const reqId = store.qaRequestId;
+  if (reqId) window.electronAPI.ai.abort(reqId);
+  if (!store.isQaGenerating) return;
+  // 검증 단계에서 abort 하면 draft 는 내부 변수라 qaStream 은 비어있음 — partial 없음.
+  // refine 단계에서 abort 하면 qaStream 에 부분 답변이 있어 저장 대상.
+  store.flushQaStream();
+  const partial = useAppStore.getState().qaStream;
+  if (partial) {
+    store.addQaMessage({ role: 'assistant', content: partial });
+  } else {
+    // v0.18.5 Round 23 #1: verify/draft 단계 abort 는 qaStream 이 비어있어 assistant 가
+    // 추가되지 않고 user 만 홀로 남았다. placeholder assistant 를 명시 주입해 짝 불변식 유지.
+    // v0.18.6 D4: meta='cancelled' 표식으로 formatHistory 에서 LLM 컨텍스트 제외.
+    store.addQaMessage({ role: 'assistant', content: t('qa.answerCancelled'), meta: 'cancelled' });
+  }
+  store.clearQaStream();
+  store.setIsQaGenerating(false);
+  store.setQaRequestId(null);
+  // 검증 인디케이터도 항상 해제 — draft 도중 abort 시 스피너가 남는 것 방지
+  store.setQaVerifying(false);
+}
+
 export function useQa() {
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
   const qaMessages = useAppStore((s) => s.qaMessages);
@@ -915,8 +950,9 @@ export function useQa() {
 
   useEffect(() => {
     return () => {
-      const reqId = useAppStore.getState().qaRequestId;
-      if (reqId) window.electronAPI.ai.abort(reqId);
+      // C5-L(QA cycle5): 언마운트(설정 진입 등)도 불변식 보존 중단을 경유 — 이전 raw abort 는
+      // partial 을 버리고 user 메시지를 홀로 남겨 짝(user→assistant) 불변식을 깼다(아래 참조).
+      abortQaPreservingThread();
       verifyAbortRef.current?.abort();
     };
   }, []);
@@ -927,32 +963,10 @@ export function useQa() {
     // 프로그램 경로로 호출될 가능성 대비 + 빈 placeholder 중복 주입 방지.)
     if (!useAppStore.getState().isQaGenerating) return;
     abortedRef.current = true;
-    const reqId = useAppStore.getState().qaRequestId;
-    if (reqId) window.electronAPI.ai.abort(reqId);
     verifyAbortRef.current?.abort();
     clientRef.current = null;
-    const store = useAppStore.getState();
-    // 검증 단계에서 abort 하면 draft 는 내부 변수라 qaStream 은 비어있음 — partial 없음.
-    // refine 단계에서 abort 하면 qaStream 에 부분 답변이 있어 저장 대상.
-    store.flushQaStream();
-    const partial = useAppStore.getState().qaStream;
-    if (partial) {
-      store.addQaMessage({ role: 'assistant', content: partial });
-    } else {
-      // v0.18.5 Round 23 #1: verify/draft 단계 abort 는 qaStream 이 비어있어
-      // assistant 가 추가되지 않고 user 만 홀로 남았다. 이후 다음 handleAsk 가
-      // 또 user 를 append 하면 [..., u_orphan, u_new] 연속 user 상태가 되고,
-      // M3 짝수 FIFO drop 이 그 쌍을 함께 제거해 윈도우 선두가 assistant 로
-      // 시작하는 orphan 을 만들 수 있었다. placeholder assistant 를 명시 주입해
-      // "user→assistant 짝" 불변식을 전 경로에서 유지.
-      // v0.18.6 D4: meta='cancelled' 표식으로 formatHistory 에서 LLM 컨텍스트 제외.
-      store.addQaMessage({ role: 'assistant', content: t('qa.answerCancelled'), meta: 'cancelled' });
-    }
-    store.clearQaStream();
-    store.setIsQaGenerating(false);
-    store.setQaRequestId(null);
-    // 검증 인디케이터도 항상 해제 — draft 도중 abort 시 스피너가 남는 것 방지
-    store.setQaVerifying(false);
+    // 공유 경로(C5-L)로 위임 — reqId abort + partial 보존/placeholder + 상태 정리.
+    abortQaPreservingThread();
   }, []);
 
   const handleAsk = useCallback(async (question: string) => {

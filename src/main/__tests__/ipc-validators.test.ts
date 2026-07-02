@@ -112,7 +112,8 @@ describe('isValidRequestId', () => {
     expect(isValidRequestId('a'.repeat(257))).toBe(false);
   });
 
-  it('max 인자로 캡 조절 (vision=128)', () => {
+  // C5-L: vision/OCR/embed 경로가 기본 캡(256)으로 단일화되어 커스텀 max 실사용처는 없음 — API 자체를 가드.
+  it('max 인자로 캡 조절', () => {
     expect(isValidRequestId('a'.repeat(128), 128)).toBe(true);
     expect(isValidRequestId('a'.repeat(129), 128)).toBe(false);
   });

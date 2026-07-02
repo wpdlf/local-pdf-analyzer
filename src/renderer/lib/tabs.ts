@@ -152,6 +152,10 @@ export async function closeTab(filePath: string): Promise<void> {
   const store = useAppStore.getState();
   const isActive = store.document?.filePath === filePath;
   if (isActive && isTabSwitchBlocked()) return;
+  // C5-L(QA cycle5): 비활성 탭도 컬렉션 작업 중에는 제거 금지 — openCollection 의 멤버 upsert
+  // 루프와 인터리브되면 opened/total 집계·최종 탭 세트가 어긋나고, gather 중에는 memberHashes
+  // 와 캡처된 eligible 목록이 desync 된다(손상은 없으나 표시 불일치).
+  if (!isActive && (store.isCollectionBusy || store.collectionOpenInFlight)) return;
 
   const tabs = store.openTabs;
   const idx = tabs.findIndex((tb) => tb.filePath === filePath);

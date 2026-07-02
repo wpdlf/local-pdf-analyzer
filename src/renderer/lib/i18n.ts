@@ -250,6 +250,7 @@ export const _translations = {
   'settings.apiKeyMasked': { ko: '••••••••••••', en: '••••••••••••' },
   'settings.keySaved': { ko: '{provider} API 키가 저장되었습니다.', en: '{provider} API key saved.' },
   'settings.keySaveFail': { ko: 'API 키 저장에 실패했습니다. 다시 시도해주세요.', en: 'Failed to save API key. Please try again.' },
+  'settings.keychainUnavailable': { ko: 'OS 키체인을 사용할 수 없어 API 키를 저장할 수 없습니다. OS 설정을 확인해주세요.', en: 'Cannot store the API key because the OS keychain is unavailable. Please check your OS settings.' },
   'settings.keyDeleted': { ko: 'API 키가 삭제되었습니다.', en: 'API key deleted.' },
   'settings.keyDeleteFail': { ko: 'API 키 삭제에 실패했습니다. 다시 시도해주세요.', en: 'Failed to delete API key. Please try again.' },
   'settings.saveKeyFirst': { ko: '{provider} API 키를 먼저 저장해주세요.', en: 'Please save {provider} API key first.' },

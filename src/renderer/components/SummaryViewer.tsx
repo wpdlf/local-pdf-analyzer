@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../lib/store';
+import { abortQaPreservingThread } from '../lib/use-qa';
 import { useT } from '../lib/i18n';
 import { SafeMarkdown } from '../lib/safe-markdown';
 import { ProgressBar } from './ProgressBar';
@@ -86,9 +87,9 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
         store.setIsGenerating(false);
       }
     }
-    if (store.qaRequestId) {
-      window.electronAPI.ai.abort(store.qaRequestId);
-    }
+    // C5-L(QA cycle5): raw abort → 불변식 보존 중단. 이전엔 qaRequestId 만 끊어 부분 답변이
+    // 버려지고 user 메시지가 짝 없이 남아 다음 턴 히스토리를 오염시켰다(use-qa 공유 경로 참조).
+    abortQaPreservingThread();
     store.setSummaryCollapsed(true);
   };
 

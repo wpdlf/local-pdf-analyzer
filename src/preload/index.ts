@@ -154,9 +154,11 @@ export type ElectronAPI = {
     set: (settings: Record<string, unknown>) => Promise<Record<string, unknown>>;
   };
   apiKey: {
-    save: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', key: string) => Promise<{ success: boolean; error?: string }>;
+    // C5-L: code — main 이 에러 분류용으로 전파(KEYCHAIN_UNAVAILABLE / fs 에러코드).
+    // 렌더러는 error 원문(한국어/절대경로 가능) 대신 code→i18n 매핑으로 표시한다.
+    save: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', key: string) => Promise<{ success: boolean; error?: string; code?: string }>;
     has: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => Promise<boolean>;
-    delete: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => Promise<{ success: boolean; error?: string }>;
+    delete: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => Promise<{ success: boolean; error?: string; code?: string }>;
   };
   session: {
     load: (docHash: string) => Promise<{ session: unknown; blob: ArrayBuffer | null } | null>;

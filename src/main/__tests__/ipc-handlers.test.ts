@@ -166,11 +166,14 @@ describe('apikey:save', () => {
     expect(H.store.save).toHaveBeenCalledWith('claude', 'sk-123');
   });
 
-  it('KEYCHAIN_UNAVAILABLE throw → {success:false, error} 로 매핑', async () => {
+  // C5-L(QA cycle5): code 도 함께 전파 — 렌더러가 error 원문(한국어/절대경로 가능) 대신
+  // code→i18n 매핑으로 표시할 수 있게 하는 계약.
+  it('KEYCHAIN_UNAVAILABLE throw → {success:false, error, code} 로 매핑', async () => {
     H.store.save.mockImplementation(() => {
       throw Object.assign(new Error('OS 키체인 사용 불가'), { code: 'KEYCHAIN_UNAVAILABLE' });
     });
-    expect(await invoke('apikey:save', 'openai', 'sk-o')).toEqual({ success: false, error: 'OS 키체인 사용 불가' });
+    expect(await invoke('apikey:save', 'openai', 'sk-o'))
+      .toEqual({ success: false, error: 'OS 키체인 사용 불가', code: 'KEYCHAIN_UNAVAILABLE' });
   });
 });
 
@@ -527,6 +530,22 @@ describe('session:* (영속화 핸들러)', () => {
     expect(r).toEqual({ ok: true });
     const wroteSession = H.fsp.writeFile.mock.calls.some((c) => String(c[0]).includes('session.json'));
     expect(wroteSession).toBe(true);
+  });
+
+  // C5-L(QA cycle5): blob 타입/크기 검증 — 숫자 blob 은 writeSession 의 new Uint8Array(blob) 이
+  // **길이** 로 해석해 GB 단위 할당을 시도했고(자기-DoS), 상한 없는 ArrayBuffer 는 사후 LRU 를
+  // 우회한 단건 초대형 기록이 가능했다. 유효 ArrayBuffer(상한 이내)는 계속 허용.
+  it('session:save blob 검증: 숫자/초대형 거부, 유효 ArrayBuffer 허용', async () => {
+    const meta = { docHash: HASH, fileName: 'd.pdf', filePath: '/d.pdf', pageCount: 3, embedModel: 'm', embedDim: 3, chunkCount: 1 };
+    // 숫자 blob(길이 해석 위협) → 할당 시도 전에 거부
+    expect(await invoke('session:save', { meta, session: { docHash: HASH }, blob: 2 ** 31 }))
+      .toEqual({ ok: false });
+    // 문자열 등 비-ArrayBuffer 도 거부
+    expect(await invoke('session:save', { meta, session: { docHash: HASH }, blob: 'x' }))
+      .toEqual({ ok: false });
+    // 유효 ArrayBuffer 는 정상 저장
+    const r = await invoke('session:save', { meta, session: { docHash: HASH }, blob: new ArrayBuffer(16) });
+    expect(r).toEqual({ ok: true });
   });
 
   it('session:delete 잘못된 docHash → { ok:false }', async () => {

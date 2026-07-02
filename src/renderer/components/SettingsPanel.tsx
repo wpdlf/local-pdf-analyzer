@@ -184,8 +184,11 @@ export function SettingsPanel() {
     try {
       const result = await window.electronAPI.apiKey.save(provider, key.trim());
       if (!result.success) {
-        // Main이 구조화된 에러 반환 (예: safeStorage 불가)
-        setKeyMessage(result.error || t('settings.keySaveFail'));
+        // C5-L(QA cycle5): error 원문 대신 code→i18n 매핑 — 원문은 한국어 고정(영어 UI 한글
+        // 노출) 또는 Node fs 에러(절대경로 포함)일 수 있어 표시하지 않는다.
+        setKeyMessage(result.code === 'KEYCHAIN_UNAVAILABLE'
+          ? t('settings.keychainUnavailable')
+          : t('settings.keySaveFail'));
         return;
       }
       if (provider === 'claude') {
@@ -208,7 +211,10 @@ export function SettingsPanel() {
     try {
       const result = await window.electronAPI.apiKey.delete(provider);
       if (!result.success) {
-        setKeyMessage(result.error || t('settings.keyDeleteFail'));
+        // C5-L: save 와 동일 — code→i18n 매핑(원문/경로 비노출).
+        setKeyMessage(result.code === 'KEYCHAIN_UNAVAILABLE'
+          ? t('settings.keychainUnavailable')
+          : t('settings.keyDeleteFail'));
         return;
       }
       // 키 삭제 후 해당 provider 가 선택되어 있으면 Ollama 로 강제 전환 + 모델 명시 리셋.
@@ -704,6 +710,11 @@ export function SettingsPanel() {
 
       {/* 세션 데이터 (session-persistence module-4) */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        {/* C5-L(QA cycle5): AI 필드들과 동일하게 aiBusy 게이트 — 컬렉션 gather 중 세션 삭제는
+            멤버 load 를 null 로 만들어 무음 skip("문서 부족")을 유발하고, persist 토글도
+            in-flight 작업과의 상호작용이 불명확해 게이트 대칭화. (파괴적 상호작용은 main 의
+            serializeSessionWrite 가 이미 차단 — 표시 일관성/혼란 방지 목적) */}
+        <fieldset disabled={aiBusy} className={`min-w-0 border-0 p-0 m-0 ${aiBusy ? 'opacity-60' : ''}`}>
         <h3 className="font-medium mb-3 text-gray-700 dark:text-gray-200">{t('settings.dataSection')}</h3>
         <label className="flex items-center gap-3 cursor-pointer">
           <input type="checkbox" checked={draft.persistSessions} onChange={(e) => updateDraft({ persistSessions: e.target.checked })} className="w-4 h-4 rounded" />
@@ -729,6 +740,7 @@ export function SettingsPanel() {
             </button>
           </div>
         )}
+        </fieldset>
       </section>
 
     </div>

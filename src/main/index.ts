@@ -371,9 +371,13 @@ export function registerIpcHandlers(): void {
       apiKeyStore.save(provider, key.trim());
       return { success: true };
     } catch (err) {
+      // C5-L(QA cycle5): code 를 함께 전파 — 렌더러가 code→i18n 매핑으로 표시한다. 이전엔
+      // error 원문만 반환해 KEYCHAIN_UNAVAILABLE 의 한국어 메시지가 영어 UI 에 그대로 노출
+      // 되고, fs rename 실패(EACCES/EBUSY) 시 Node 에러의 절대경로가 설정 패널에 노출됐다.
       return {
         success: false,
         error: err instanceof Error ? err.message : 'API 키 저장 실패',
+        code: (err as { code?: string }).code,
       };
     }
   });
@@ -394,9 +398,11 @@ export function registerIpcHandlers(): void {
       apiKeyStore.delete(provider);
       return { success: true };
     } catch (err) {
+      // C5-L: apikey:save 와 동일 — code 전파(렌더러 i18n 매핑, 원문/경로 비노출).
       return {
         success: false,
         error: err instanceof Error ? err.message : 'API 키 삭제 실패',
+        code: (err as { code?: string }).code,
       };
     }
   });
@@ -497,12 +503,24 @@ export function registerIpcHandlers(): void {
     return readSessionMeta(sessionsDir, docHash);
   });
 
+  // C5-L(QA cycle5): blob 상한 — 실사용 index.bin 은 수 MB(멀티MB 문서 기준). 세션 LRU(사후
+  // 200MB)는 기록 후에야 동작하므로, 상한 없이는 단건 초대형 blob 이 이를 우회해 기록됐다.
+  const MAX_SESSION_BLOB_BYTES = 64 * 1024 * 1024;
+
   ipcMain.handle('session:save', async (_event, payload: unknown) => {
     const p = payload as { meta?: SessionSaveMeta; session?: unknown; blob?: ArrayBuffer | null; keepIndex?: boolean } | null;
     if (!p || !p.meta || !isValidDocHash(p.meta.docHash)) return { ok: false };
     const meta = p.meta;
     const session = p.session;
-    const blob = p.blob ?? null;
+    // C5-L: blob 타입/크기 검증 — 이전엔 `p.blob ?? null` 무검증 통과라, 손상 렌더러가 숫자
+    // (예: 2**31)를 보내면 writeSession 의 `new Uint8Array(blob)` 이 이를 **길이** 로 해석해
+    // main 프로세스에서 GB 단위 할당을 시도했다(ai:embed 동시성 캡과 동일 위협 클래스인데
+    // 이 채널만 방어가 없던 비대칭). ArrayBuffer 외 타입/상한 초과는 저장 거부.
+    const rawBlob = p.blob ?? null;
+    if (rawBlob !== null && !(rawBlob instanceof ArrayBuffer && rawBlob.byteLength <= MAX_SESSION_BLOB_BYTES)) {
+      return { ok: false };
+    }
+    const blob = rawBlob;
     const keepIndex = p.keepIndex === true;
     return serializeSessionWrite(() => writeSession(sessionsDir, { meta, session, blob, keepIndex, now: Date.now() }));
   });
@@ -822,9 +840,10 @@ export function registerIpcHandlers(): void {
     if (!validateImageBase64(imageBase64)) {
       return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
     }
-    const rawRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
-      ? requestId
-      : null;
+    // C5-L(QA cycle5): 캡을 ai:generate/ai:abort(isValidRequestId 256)와 단일화. 이전 128 캡은
+    // 129~256자 id 를 여기서만 무음 null 강등해 "요청은 진행되는데 abort 불가(Stop 후에도
+    // 과금 지속)" 계약 틈새였다(실사용 id 는 randomUUID 36자라 미도달 — 정합성 결함).
+    const rawRequestId = isValidRequestId(requestId) ? requestId : null;
     const visionRequestId = rawRequestId ? `vision:${rawRequestId}` : null;
     let controller: AbortController | undefined;
     if (visionRequestId) {
@@ -859,9 +878,8 @@ export function registerIpcHandlers(): void {
     if (!validateImageBase64(imageBase64)) {
       return { success: false, error: '이미지 데이터가 유효하지 않습니다.' };
     }
-    const rawRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
-      ? requestId
-      : null;
+    // C5-L: analyze-image 와 동일 — 캡 256 단일화(isValidRequestId).
+    const rawRequestId = isValidRequestId(requestId) ? requestId : null;
     const visionRequestId = rawRequestId ? `vision:${rawRequestId}` : null;
     let controller: AbortController | undefined;
     if (visionRequestId) {
@@ -901,9 +919,8 @@ export function registerIpcHandlers(): void {
     // R29 (v0.18.13): 카운터 증가를 try 블록 *안*으로 이동.
     // 이전엔 controller/registerEmbedRequest 등록이 동기 throw 할 경우 카운터가
     // 증가만 되고 finally 에 도달하지 못해 영구 leak 됐다. 4 회 leak 후 self-DoS 발생.
-    const validRequestId = (typeof requestId === 'string' && requestId.length > 0 && requestId.length <= 128)
-      ? requestId
-      : null;
+    // C5-L: Vision/OCR 경로와 동일 — 캡 256 단일화(isValidRequestId).
+    const validRequestId = isValidRequestId(requestId) ? requestId : null;
     let counted = false;
     let controller: AbortController | undefined;
     try {
