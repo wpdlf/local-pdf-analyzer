@@ -13,4 +13,8 @@ export default defineConfig({
   // 넘기는 flake 가 관측됨 — 신규 트랙 안정화 동안 로컬도 1회 재시도.
   retries: 1,
   reporter: process.env.CI ? 'line' : 'list',
+  // C5-I3(QA cycle5): 재시도(=1차 실패) 시 trace 수집 — CI 에서만 재현되는 실패(xvfb/샌드박스/
+  // 타이밍)가 line 로그 한 줄만 남겨 원인 파악이 비싸고 red 가 방치되기 쉬웠다(M4 사건의 재발
+  // 조건). test.yml e2e 잡의 failure artifact 업로드(test-results/)와 짝.
+  use: { trace: 'on-first-retry' },
 });

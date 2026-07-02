@@ -22,11 +22,20 @@ jobs:
     # `engines.node >=22.12` 를 요구 → 20.11 에서 electron postinstall(install.js, CommonJS)이
     # require('@electron/get') 시 ERR_REQUIRE_ESM 로 `npm ci` 가 하드 실패 (v0.27.0 Test red 원인).
     # 20.11 EoL(2026-04) 도 경과. engines.node 하한도 >=22.12 로 정합.
+    # C5-I4(QA cycle5): windows-2025 유닛 레그 추가 — 이전엔 Windows 유닛 신호가 release.yml
+    # (태그 시점)에만 있어, 경로 구분자/pwsh 회귀가 main 에 조용히 쌓이고 발견 시점 = 태그 push
+    # 후(수정 + 재태깅 강제)였다. Node 22 단일로 비용 최소화(교차 OS×Node 매트릭스 불필요).
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['22', '24']
-    runs-on: ubuntu-latest
+        include:
+          - os: ubuntu-latest
+            node-version: '22'
+          - os: ubuntu-latest
+            node-version: '24'
+          - os: windows-2025
+            node-version: '22'
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       # actions/checkout@v6.0.2 (Node 24 호환, v0.18.11 R29 #1 마이그레이션)
@@ -195,3 +204,16 @@ jobs:
       # (ubuntu-24.04 의 unprivileged userns 제한은 spec 의 CI 한정 --no-sandbox 가 대응)
       - name: E2E smoke (xvfb)
         run: xvfb-run --auto-servernum -- npx playwright test
+
+      # C5-I3(QA cycle5): 실패 포렌식 — playwright.config 의 trace(on-first-retry) 산출물을 회수.
+      # 이전엔 line 로그 한 줄이 전부라 CI 전용 실패의 원인 파악 비용이 커 red 방치를 유발했다
+      # (release.yml build 잡의 진단 artifact 와 대칭). 성공 시 업로드 없음 — 잡 시간 영향 0.
+      # actions/upload-artifact@v4.6.2 (release.yml 과 동일 SHA 핀)
+      - name: Upload E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: e2e-failure-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 7

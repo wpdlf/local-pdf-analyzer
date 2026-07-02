@@ -89,6 +89,27 @@ jobs:
         if: matrix.os == 'windows-2025'
         run: npm test
 
+      # C5-I2(QA cycle5): E2E 스모크를 릴리즈 게이트로 승격. 이전엔 E2E 실행이 test.yml(main push)
+      # 에만 있고 릴리즈 경로는 e2e 타입체크만 해서, 번들/IPC/preload 배선 회귀가 태그 push 로
+      # 그린 릴리즈될 수 있었다 — test.yml 이 4릴리즈 연속 red 였던 M4 사건과 동일 구조의 맹점.
+      # ubuntu 레그에서만 실행(+3~5분): CI-결정적 스펙 9건, AI 백엔드 불필요. Windows 레그는
+      # 경로/pwsh 유닛 회귀 검증 전용 유지(이중 실행 회피).
+      - name: Build + E2E smoke gate (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          npm run build
+          xvfb-run --auto-servernum -- npx playwright test
+
+      # C5-I3: 실패 포렌식 — trace(on-first-retry) 산출물 회수(test.yml e2e 잡과 대칭).
+      - name: Upload E2E failure artifacts
+        if: failure() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-e2e-failure-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 7
+
   build-windows:
     needs: test
     # windows-2025: 2026-06-15 까지 VS2026 으로 자동 전환되나 본 빌드는 VS 무의존(상단 matrix 주석 참조).

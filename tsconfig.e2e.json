@@ -6,5 +6,7 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["e2e/**/*", "playwright.config.ts"]
+  // C5-L(QA cycle5): test/setup.ts 도 편입 — 루트 tsconfig include(src/**) 와 e2e/** 어느 게이트에도
+  // 안 잡혀 타입 에러가 vitest 런타임에서야 표면화되던 갭. 여기가 최소 비용의 기존 게이트.
+  "include": ["e2e/**/*", "playwright.config.ts", "test/**/*"]
 }

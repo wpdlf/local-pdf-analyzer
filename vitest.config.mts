@@ -12,7 +12,7 @@ import { defineConfig } from 'vitest/config';
 //   `vi.stubGlobal('window', { electronAPI: ... })` 패턴이 실제 window 와 충돌하고, 끄면 컴포넌트
 //   레벨 회귀(R31~R35 citation 등) 가드가 불가능하다. 둘의 장점만 취하는 file-pragma 패턴이
 //   v0.18.22 Top5 #4 (CitationButton.test.tsx) 도입 이후 안정화됨.
-//   happy-dom 은 devDependencies 에 정확 핀(20.9.0, `//testingPinPolicy` 참고) 유지 — 제거 금지.
+//   happy-dom 은 devDependencies 에 정확 핀(`//testingPinPolicy` 참고, 현재 20.10.6) 유지 — 제거 금지.
 //   향후 컴포넌트 테스트 추가 시 동일 file pragma 패턴 사용.
 
 export default defineConfig({
@@ -65,10 +65,25 @@ export default defineConfig({
       //      를 http 모킹으로 검증 → ~68% 커버. 포함 시 베이스라인 상승(드래그 아님). 잔여 미커버는
       //      일부 프롬프트 템플릿 조합·streamRequest 의 idle/size-cap 분기 정도.
       //      이제 src/main 에서 % 게이트 제외로 남는 것은 index.ts(P2 행위검증, UI/생성 경로 ~39%) 뿐.
+      //   C5-I1(QA cycle5): Vitest 4 는 coverage.include 미설정 시 "테스트가 import 한 파일만"
+      //      분모에 포함한다(≤3 의 `coverage.all` 전-파일 의미론 제거). 그 결과 테스트 없는 신규
+      //      소스 파일이 분모에서 조용히 사라져 임계 게이트가 영구히 감지 못 했다(실측: App.tsx
+      //      594줄이 lcov 에 부재). include 를 명시해 "제외는 아래 exclude 목록으로만, 명시적으로"
+      //      라는 본 파일의 정책을 Vitest 4 의미론에서 복원한다.
+      include: ['src/**'],
       exclude: [
         'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
         '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
+        // C5-I1: 커버리지 산출물 자체 — include 도입 검증 중 src/ 하위에 우발 생성된 과거
+        // lcov-report(js 125줄, 0%)가 분모를 8pp 끌어내리는 것을 실측. 재발 방어로 명시 제외.
+        '**/coverage/**',
         'src/main/index.ts',
+        // C5-I1: 렌더러 엔트리(마운트 1줄 성격) — 측정 무의미, 명시 제외.
+        'src/renderer/main.tsx',
+        // C5-I1: App.tsx 는 앱 셸(레이아웃 오케스트레이션 + 전역 이벤트 배선) 통합 성격으로
+        // src/main/index.ts 와 동일 사유의 % 게이트 제외. E2E 스모크(app-launch/upload-errors)가
+        // 기동·배선 회귀를 가드한다. 단위 행위 테스트 도입 시 본 라인 제거(절차대로).
+        'src/renderer/App.tsx',
       ],
       // R37 P4-2 (v0.18.23): 후퇴 방지 게이트 도입.
       // 각 지표에서 -5pp 마진을 빼고 게이트 — 우발적 회귀(테스트 누락, 함수 추가 시 미커버)는
@@ -131,11 +146,15 @@ export default defineConfig({
       //   drift 가드(preload-shape.test)는 상보적으로 유지. exclude 에서 src/preload/** 제거(절차대로).
       //   100% 영역이라 분모 편입이 베이스라인을 끌어올림(드래그 아님).
       //   측정: Stmts 82.92 / Branch 74.51 / Funcs 84.74 / Lines 86.29 (-5pp 마진 적용).
+      // C5-I1/L(QA cycle5): 임계 재정렬 — QA 사이클 3~5 테스트 보강으로 베이스라인이 상승했는데
+      //   게이트가 6~8pp 뒤처져(-5pp 정책 위반) 약 3pp 어치 회귀가 무감지 통과 가능했다.
+      //   측정(include 명시 + 사이클5 테스트 반영): Stmts 85.46 / Branch 77.58 / Funcs 85.95 /
+      //   Lines 88.69 (-5pp 마진 적용).
       thresholds: {
-        statements: 77,
-        branches: 69,
-        functions: 79,
-        lines: 81,
+        statements: 80,
+        branches: 72,
+        functions: 80,
+        lines: 83,
       },
     },
   },
