@@ -620,6 +620,13 @@ async function imageDataToBase64(
   height: number,
   data: Uint8ClampedArray,
 ): Promise<string | null> {
+  // C5-R2(QA cycle5): canvas 를 try 밖으로 호이스트하고 finally 에서 일괄 해제. 이전엔 정상/
+  // ctx-거부 경로만 명시 해제하고 catch(putImageData/drawImage/convertToBlob throw — 정확히
+  // 메모리 압박 상황)는 lazy GC 에 맡겨, 배치 병렬(페이지 10×이미지 10) 실패가 겹치면 최대
+  // 16MB RGBA backing store 들이 OCR/추출이 헤드룸을 가장 필요로 하는 순간 잔류했다
+  // (renderPageToImage 의 finally-해제 패턴과 동형화).
+  let srcCanvas: OffscreenCanvas | null = null;
+  let canvas: OffscreenCanvas | null = null;
   try {
     let targetW = width;
     let targetH = height;
@@ -629,7 +636,7 @@ async function imageDataToBase64(
       targetH = Math.round(height * scale);
     }
 
-    const srcCanvas = new OffscreenCanvas(width, height);
+    srcCanvas = new OffscreenCanvas(width, height);
     const srcCtx = srcCanvas.getContext('2d');
     if (!srcCtx) return null;
 
@@ -638,23 +645,15 @@ async function imageDataToBase64(
 
     srcCtx.putImageData(new ImageData(rgbaData, width, height), 0, 0);
 
-    const canvas = new OffscreenCanvas(targetW, targetH);
+    canvas = new OffscreenCanvas(targetW, targetH);
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      // QA(low): 이미 채워진 srcCanvas 의 backing store 를 즉시 반환. 이 경로(2번째 2D
-      // 컨텍스트 거부)는 메모리 압박 시 더 자주 발생하므로 GC 대기 없이 해제한다.
-      srcCanvas.width = 0;
-      srcCanvas.height = 0;
+      // 2번째 2D 컨텍스트 거부 — 메모리 압박 시 더 자주 발생. finally 가 즉시 해제.
       return null;
     }
     ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
 
     const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
-    // GPU 메모리 즉시 해제 (GC 대기 없이 backing store 반환)
-    srcCanvas.width = 0;
-    srcCanvas.height = 0;
-    canvas.width = 0;
-    canvas.height = 0;
     const buffer = await blob.arrayBuffer();
     const bytes = new Uint8Array(buffer);
     // 청크 단위 바이너리→문자열 변환 (8KB 청크는 콜스택 안전 + 고성능)
@@ -667,6 +666,10 @@ async function imageDataToBase64(
   } catch {
     // OOM 또는 Canvas 생성 실패 시 안전하게 null 반환
     return null;
+  } finally {
+    // GPU/backing store 즉시 반환 (GC 대기 없이) — 모든 경로(정상/ctx-거부/throw) 단일 출구
+    if (srcCanvas) { srcCanvas.width = 0; srcCanvas.height = 0; }
+    if (canvas) { canvas.width = 0; canvas.height = 0; }
   }
 }
 
@@ -767,7 +770,11 @@ export async function handlePdfData(
   // page-citation-viewer: PdfViewer lazy 마운트를 위해 원본 바이트를 별도 보관.
   // parsePdf 가 내부적으로 pdfjs.getDocument({ data }) 를 호출할 때 ArrayBuffer 가 transfer 될 수
   // 있으므로, 파싱 전에 복사본을 만들어 두어 detached 상태를 피한다.
-  const pdfBytesCopy = new Uint8Array(data.slice(0));
+  // C5-R1(QA cycle5): 복사는 상주가 실제로 필요한 경우(재읽기 불가 합성경로 드롭)에만 수행.
+  // 게이트 조건(isReReadablePath, doc.filePath === 본 filePath 인자)은 파싱 전에 이미 알 수
+  // 있는데도 무조건 복사해, 모든 정상 경로에서 최대 100MB 사장 힙이 파싱(OCR 스캔 PDF 면
+  // 분 단위) 내내 클로저에 붙들려 있었다 — v0.31.10 pdfBytes 비상주(M1)의 잔여분.
+  const pdfBytesCopy = isReReadablePath(filePath) ? null : new Uint8Array(data.slice(0));
   try {
     const doc = await parsePdf(data, name, filePath, {
       enableOcrFallback: store.settings.enableOcrFallback,
@@ -798,7 +805,8 @@ export async function handlePdfData(
     // pdfBytes 비상주(메모리 M1): 원본 바이트(최대 100MB)는 인용 클릭 시 PdfViewer 만 쓴다.
     // 재읽기 가능한 실경로 문서는 상주시키지 않고(=null), PdfViewerPanel 이 인용 클릭 시 디스크에서
     // 1회 lazy 로드한다. 경로 없는 합성 드롭 문서만 재읽기 불가라 fallback 으로 상주 유지.
-    store.setPdfBytes(isReReadablePath(doc.filePath) ? null : pdfBytesCopy);
+    // (C5-R1: 복사 자체를 위 게이트로 옮겨 null 이면 애초에 할당되지 않음)
+    store.setPdfBytes(pdfBytesCopy);
     // multi-doc Phase 1: 모든 성공 로드 경로(드롭/다이얼로그/IPC/최근 문서/탭 전환)가 본
     // 함수를 경유하므로 여기가 탭 등록의 단일 지점 — filePath 중복은 메타 갱신(중복 탭 없음).
     store.upsertOpenTab({ filePath: doc.filePath, fileName: doc.fileName, pageCount: doc.pageCount });
