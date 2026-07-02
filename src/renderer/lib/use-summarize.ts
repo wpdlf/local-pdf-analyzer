@@ -539,6 +539,16 @@ export function useSummarize() {
       clientRef.current = client;
       runClient = client;
 
+      // C5-M1(QA cycle5): 취소 술어를 소유권 토큰 기준으로 판정. 이전엔 ambient `!isGenerating`
+      // 만 봐서 Stop→즉시 재요약 시 새 run 이 isGenerating 을 true 로 되돌리면 이미지분석 단계의
+      // stale run 이 "부활" — Vision 을 계속 호출(이중 과금)하고 구분선/후처리를 새 run 의
+      // 스트림에 주입했다. 소유권(clientRef)이 넘어간 run 은 영구 취소 상태가 된다.
+      const stillOwns = () => clientRef.current === client;
+      const isRunAborted = () => timedOut || !stillOwns() || !useAppStore.getState().isGenerating;
+      // 스트림 append 도 소유권 게이트 — store.appendStream 의 입구 게이트(isGenerating)는
+      // 새 run 이 다시 켜 두므로 stale run 의 구분선(`\n\n---\n\n`)/통합 헤딩 주입을 막지 못한다.
+      const guardedAppend = (s: string) => { if (stillOwns()) appendStream(s); };
+
       const trackSummarize = (text: string, type: DefaultSummaryType) => {
         // clientRef 비교로 stale closure 방지: abort 후 재요약 시 이전 client 토큰 무시.
         // stale 체크를 prepareSummarize / setCurrentRequestId 이전에 수행해야
@@ -588,14 +598,14 @@ export function useSummarize() {
           // store.subscribe 도 가능하나 isGenerating 외 다른 필드 변경에도 발화하므로
           // 가벼운 셀프 폴링이 동등 효과 + 의존성 최소.
           stopWatch = setInterval(() => {
-            if (timedOut || !useAppStore.getState().isGenerating) {
+            if (isRunAborted()) {
               abortAllVisionInFlight();
               if (stopWatch !== null) { clearInterval(stopWatch); stopWatch = null; }
             }
           }, 250);
           const imageDescriptions = await analyzeDocumentImages(
             doc, client, setProgress, setProgressInfo, startTime,
-            () => timedOut || !useAppStore.getState().isGenerating,
+            isRunAborted,
             currentSettings.provider,
             (id) => visionInFlight.add(id),
             (id) => visionInFlight.delete(id),
@@ -605,11 +615,13 @@ export function useSummarize() {
           enrichedPagesRef = enriched.enrichedPages;
           // Q&A RAG 가 이미지 분석 결과를 함께 인덱싱하도록 store 에 공유.
           // useRagBuilder 는 이 값이 세팅되면 key 에 enrichment 플래그가 바뀌어 재빌드.
-          if (enrichedPagesRef && !isPartialRange) {
+          // C5-M1: enriched 공유도 소유권 게이트 — stale run 의 부분 결과가 RAG 재빌드를
+          // 유발해 새 run 과 인덱스 churn 을 일으키는 것을 방지.
+          if (enrichedPagesRef && !isPartialRange && stillOwns()) {
             // 범위 요약일 때는 마스킹된(부분) enriched 를 RAG 에 공유하지 않는다 — Q&A 는 전체
             // 문서 컨텍스트(useRagBuilder 의 raw pageTexts)를 유지해야 직관적이기 때문.
             useAppStore.getState().setEnrichedPageTexts(enrichedPagesRef);
-          } else if (!isPartialRange && useAppStore.getState().enrichedPageTexts !== null) {
+          } else if (!isPartialRange && stillOwns() && useAppStore.getState().enrichedPageTexts !== null) {
             // v0.18.19 patch R32 P2: 이미지 분석은 켜져 돌았으나 모든 이미지가 실패하여 결과가
             // null 인 경우, 이전 run 에서 세팅된 enrichedPageTexts 가 그대로 남아 RAG 가 stale
             // enriched 데이터로 검색을 수행하던 결함. raw pageTexts 재빌드를 강제하기 위해 명시적
@@ -626,7 +638,7 @@ export function useSummarize() {
           //     Ollama 사용자에게 흔함)면 이전엔 전체 요약이 통째로 중단됐다. → 텍스트 전용으로
           //     강등(비차단 notice) 후 계속 진행. textForSummary 는 이미 doc.extractedText(raw),
           //     enrichedPagesRef 는 null 이라 텍스트 요약이 정상 진행된다.
-          const aborted = timedOut || !useAppStore.getState().isGenerating;
+          const aborted = isRunAborted();
           const cur = useAppStore.getState().document;
           const ours = !!cur && cur.id === doc.id;
           if (aborted || !ours) {
@@ -659,7 +671,7 @@ export function useSummarize() {
         return false;
       };
 
-      if (!useAppStore.getState().isGenerating) return;
+      if (isRunAborted()) return;
 
       const docWithImages = { ...doc, extractedText: textForSummary };
       if (enrichedPagesRef) {
@@ -672,23 +684,28 @@ export function useSummarize() {
         docWithImages.pageTexts = enrichedPagesRef;
       }
 
-      const isCancelled = () => timedOut || !useAppStore.getState().isGenerating;
+      // C5-M1: isCancelled 도 소유권 포함(isRunAborted) — 이전 ambient 술어는 새 run 시작 시
+      // stale run 을 되살렸다.
+      const isCancelled = isRunAborted;
       // R31 (v0.18.18 patch): timeoutTimerRef 콜백이 이미 발화해 timedOut=true 가 됐고
       // handleAbort 가 이전 requestId 를 abort 한 상태에서, 이 시점에 도달하면 새 requestId 가
       // 발급되어 abort 가 무력화되는 race 가 가능했다. 이미지 분석 완료 직후 / cancellation
       // 미감지 사이의 짧은 window. 명시적 가드로 즉시 종료.
-      if (timedOut || !useAppStore.getState().isGenerating) {
+      if (isRunAborted()) {
         return;
       }
       // 이미지 분석이 진행된 경우 진행률 20%부터 이어서 시작 (역행 방지)
       const progressOffset = (doc.images.length > 0 && currentSettings.enableImageAnalysis) ? 20 : 0;
       if (currentSummaryType === 'chapter' && docWithImages.chapters.length > 1) {
-        await summarizeByChapter(docWithImages, currentSettings, trackSummarize, checkTimeout, isCancelled, appendStream, setProgress, setProgressInfo, startTime, progressOffset);
+        await summarizeByChapter(docWithImages, currentSettings, trackSummarize, checkTimeout, isCancelled, guardedAppend, setProgress, setProgressInfo, startTime, progressOffset);
       } else {
-        await summarizeFull(docWithImages, currentSummaryType, currentSettings, trackSummarize, checkTimeout, isCancelled, appendStream, setProgress, setProgressInfo, startTime, progressOffset);
+        await summarizeFull(docWithImages, currentSummaryType, currentSettings, trackSummarize, checkTimeout, isCancelled, guardedAppend, setProgress, setProgressInfo, startTime, progressOffset);
       }
 
       const durationMs = Date.now() - startTime;
+      // C5-M1: 후처리(flush→strip→replace)도 소유권 가드 — stale run 이 새 run 의 live 스트림을
+      // 조기 strip/치환하던 결함. 비소유 run 은 커밋 없이 종료(표시 정리는 handleAbort/새 run 몫).
+      if (!stillOwns()) return;
       flushStream();
       const rawContent = useAppStore.getState().summaryStream;
       // 후처리: (1) 대화형 멘트 제거 → (2) 인용 배치 정규화

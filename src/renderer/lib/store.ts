@@ -17,6 +17,16 @@ import { sanitizeErrorPath } from './error-sanitize';
 
 // 설정 저장 IPC 디바운스 타이머
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+// C5-M3(QA cycle5): 설정 IPC 커밋 대기자. 렌더러 store 는 즉시 갱신되지만 main settings.json 은
+// 300ms 디바운스 뒤에 기록된다 — RAG 빌드처럼 main 이 설정을 읽는 소비자(ai:check-embed-model /
+// ai:embed)가 프로바이더 전환 직후 시작되면 구 설정으로 임베딩해 인덱스가 stale/혼합 차원으로
+// 오염되는 race. 대기 중 커밋이 있으면 그 완료(성공/실패 무관)까지 resolve 를 지연한다.
+let settingsCommitResolve: (() => void) | null = null;
+let settingsCommitPromise: Promise<void> = Promise.resolve();
+/** 대기 중인 설정 IPC 커밋이 flush 될 때까지 대기. 대기 커밋이 없으면 즉시 resolve. */
+export function whenSettingsCommitted(): Promise<void> {
+  return settingsCommitPromise;
+}
 // citationPanelWidth localStorage 저장 디바운스 타이머 — 드래그 중 pointermove 마다
 // setCitationPanelWidth 가 호출되어 동기 localStorage.setItem 이 초당 수백 회 발생하는 것 방지
 let citationPanelWidthSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -79,6 +89,8 @@ if (_meta.hot) {
     streamState.reset();
     qaStreamState.reset();
     if (settingsSaveTimer) { clearTimeout(settingsSaveTimer); settingsSaveTimer = null; }
+    // 커밋 대기자 settle — dispose 로 타이머가 사라진 promise 를 영원히 대기하는 소비자 방지
+    if (settingsCommitResolve) { settingsCommitResolve(); settingsCommitResolve = null; }
     if (citationPanelWidthSaveTimer) { clearTimeout(citationPanelWidthSaveTimer); citationPanelWidthSaveTimer = null; }
     // R31 (v0.18.18 patch): noticeDismissTimer HMR 누락 — 이전 store 인스턴스의 6초
     // 타이머가 fire 하면 새 store 의 notice 를 잘못 dismiss 하려 시도하므로 같이 정리.
@@ -114,6 +126,12 @@ interface AppState {
   // qaStream/qaRequestId 를 클로버링하던 race 차단(QA R: 컬렉션 요약 동시성). 진입 즉시 동기 세팅.
   isCollectionBusy: boolean;
   setCollectionBusy: (v: boolean) => void;
+  // C5-M4(QA cycle5): openCollection(탭 세트 재구성) 진행 표식. 기존 tabs.ts 모듈 플래그는
+  // isTabSwitchBlocked 만 볼 수 있어, 그 경로를 거치지 않는 문서 열기(드롭/최근문서/전역검색/
+  // Ctrl+O → handlePdfData 직행)가 컬렉션 복원 루프와 인터리브돼 탭 세트가 뒤섞였다.
+  // store 로 옮겨 handlePdfData 진입 가드에서도 참조한다(zustand set 은 동기 — 가드 의미 동일).
+  collectionOpenInFlight: boolean;
+  setCollectionOpenInFlight: (v: boolean) => void;
 
   // 요약
   summary: Summary | null;
@@ -280,6 +298,8 @@ export const useAppStore = create<AppState>((set) => ({
   }),
   isCollectionBusy: false,
   setCollectionBusy: (isCollectionBusy) => set({ isCollectionBusy }),
+  collectionOpenInFlight: false,
+  setCollectionOpenInFlight: (collectionOpenInFlight) => set({ collectionOpenInFlight }),
   setDocument: (document) => {
     if (!document) {
       // 문서 닫기 시 RAG 인덱스 + 요약/Q&A 상태 전부 해제. resetSummaryState 와 수렴.
@@ -547,12 +567,21 @@ export const useAppStore = create<AppState>((set) => ({
     set({ settings: newSettings as AppSettings });
     // 디바운스: 빠른 연속 변경 시 마지막 1건만 IPC 전송 (TOCTOU 경쟁 방지)
     if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+    // C5-M3: 커밋 대기자 arm — whenSettingsCommitted() 소비자(RAG 재빌드)가 main settings.json
+    // 이 실제로 갱신될 때까지 기다릴 수 있게 한다. 연속 변경은 같은 promise 로 수렴(마지막
+    // flush 에서 일괄 settle).
+    if (!settingsCommitResolve) {
+      settingsCommitPromise = new Promise<void>((resolve) => { settingsCommitResolve = resolve; });
+    }
     settingsSaveTimer = setTimeout(() => {
       settingsSaveTimer = null;
+      // 성공/실패/컨텍스트 소실 모두에서 settle — 소비자는 "커밋 시도가 끝났다"만 알면 된다
+      // (실패 시 main 은 구 설정으로 남지만, 에러 배너가 뜨고 다음 변경에서 재시도).
+      const settleCommit = () => { settingsCommitResolve?.(); settingsCommitResolve = null; };
       // 300ms 후 발화 시점에 렌더러 컨텍스트(window/electronAPI)가 이미 사라졌을 수 있다
       // (앱 종료 직전, 테스트 환경 teardown). 동기 ReferenceError(unhandled)를 막기 위해 가드.
-      if (typeof window === 'undefined' || !window.electronAPI?.settings?.set) return;
-      window.electronAPI.settings.set(newSettings as unknown as Record<string, unknown>).catch(() => {
+      if (typeof window === 'undefined' || !window.electronAPI?.settings?.set) { settleCommit(); return; }
+      window.electronAPI.settings.set(newSettings as unknown as Record<string, unknown>).then(settleCommit, () => {
         // store 에서 i18n 모듈을 직접 import 하면 circular dependency 발생 (i18n → store).
         // 대신 store 자체에서 현재 uiLanguage 를 읽어 최소 번역을 inline 으로 수행.
         const lang = useAppStore.getState().settings.uiLanguage;
@@ -560,6 +589,7 @@ export const useAppStore = create<AppState>((set) => ({
           ? 'Failed to save settings. Please try again.'
           : '설정 저장에 실패했습니다. 다시 시도해주세요.';
         set({ error: { code: 'SETTINGS_SAVE_FAIL' as const, message } });
+        settleCommit();
       });
     }, 300);
   },

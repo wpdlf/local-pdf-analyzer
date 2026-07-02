@@ -20,14 +20,15 @@ import type { OpenTab, PdfDocument, PersistedSession } from '../types';
  * UI(TabBar)와 분리한 이유: electronAPI/handlePdfData 모킹으로 단위 테스트 가능하게.
  */
 
-// QA post-v0.31.15: openCollection 재진입/동시 실행 가드(동기 모듈 플래그). openCollection 은
-// 진입부에서 isTabSwitchBlocked 로 한 번 차단하지만 실행 중엔 아무 store busy 플래그도 세우지
-// 않아, 진행 중 두 번째 openCollection(컬렉션 빠른 더블클릭/다른 컬렉션 연속 열기)이나 탭 전환이
-// 진입 가드를 통과해 openTabs 를 두 번 비우고 upsertOpenTab/restoreTabFromSession 이 인터리브돼
-// 탭 세트가 뒤섞였다. store 가 아닌 모듈 플래그를 쓰는 이유: restoreTabFromSession 등 openCollection
-// 내부 호출은 isTabSwitchBlocked 를 참조하지 않으므로 자기 차단 위험이 없고, 동기 세팅이라 await
-// 경계 이전에 창을 닫는다(use-collection-summary 의 collectionSummaryInFlight 와 동형).
-let collectionOpenInFlight = false;
+// QA post-v0.31.15: openCollection 재진입/동시 실행 가드. openCollection 은 진입부에서
+// isTabSwitchBlocked 로 한 번 차단하지만 실행 중엔 아무 busy 플래그도 세우지 않아, 진행 중
+// 두 번째 openCollection(컬렉션 빠른 더블클릭/다른 컬렉션 연속 열기)이나 탭 전환이 진입 가드를
+// 통과해 openTabs 를 두 번 비우고 upsertOpenTab/restoreTabFromSession 이 인터리브돼 탭 세트가
+// 뒤섞였다. C5-M4(QA cycle5): 모듈 플래그 → store(collectionOpenInFlight) 이관 — 드롭/최근문서/
+// 전역검색/Ctrl+O 는 isTabSwitchBlocked 를 거치지 않고 handlePdfData 로 직행하므로, 그 진입
+// 가드에서도 참조할 수 있어야 한다. zustand set 은 동기라 "첫 await 이전에 창을 닫는" 계약은
+// 그대로 유지되고, restoreTabFromSession 등 내부 호출은 이 플래그를 참조하지 않아 자기 차단
+// 위험도 없다(use-collection-summary 의 collectionSummaryInFlight 와 동형).
 
 /** 생성/파싱 중 전환 차단 — handlePdfData 내부 가드와 동일 기준 (사전 차단으로 UX 개선).
  * isCollectionBusy(컬렉션 gather)도 포함 — gather 단계는 isQaGenerating 설정 전이라, 누락 시
@@ -35,7 +36,7 @@ let collectionOpenInFlight = false;
  * collectionOpenInFlight — openCollection 진행 중 탭 전환/재진입 차단(위 주석 참조). */
 export function isTabSwitchBlocked(): boolean {
   const s = useAppStore.getState();
-  return s.isGenerating || s.isQaGenerating || s.isParsing || s.isCollectionBusy || collectionOpenInFlight;
+  return s.isGenerating || s.isQaGenerating || s.isParsing || s.isCollectionBusy || s.collectionOpenInFlight;
 }
 
 function findTab(filePath: string): OpenTab | undefined {
@@ -210,9 +211,9 @@ export async function openCollection(docHashes: string[]): Promise<{ opened: num
   // 주 UX 경로(CollectionsList)는 호출 전에 isTabSwitchBlocked 로 안내하지만, 다른 호출자가
   // 우회하더라도 상태를 훼손하지 않도록 함수 진입부에서 한 번 더 차단(switchToTab 등과 대칭).
   if (isTabSwitchBlocked()) return { opened: 0, total: 0 };
-  // 동기 재진입 가드 세팅 — 이후 첫 await 이전에 창을 닫아, 진행 중 두 번째 openCollection/탭 전환이
-  // isTabSwitchBlocked 로 차단되게 한다. finally 에서 반드시 해제.
-  collectionOpenInFlight = true;
+  // 동기 재진입 가드 세팅 — 이후 첫 await 이전에 창을 닫아, 진행 중 두 번째 openCollection/탭 전환/
+  // 문서 열기(handlePdfData)가 차단되게 한다. finally 에서 반드시 해제.
+  useAppStore.getState().setCollectionOpenInFlight(true);
   try {
     // 교체 시맨틱(R47 UX): "이 컬렉션을 연다" = 현재 탭 세트를 컬렉션 멤버로 교체. 업로드 화면
     // (document=null)에서만 호출되고 세션은 이미 영속화돼 있어 기존 탭 목록만 비우면 데이터 손실 없음.
@@ -246,6 +247,6 @@ export async function openCollection(docHashes: string[]): Promise<{ opened: num
     }
     return { opened, total: seen.size }; // 고유 멤버 기준(중복 제외)으로 부분 복원 판정
   } finally {
-    collectionOpenInFlight = false;
+    useAppStore.getState().setCollectionOpenInFlight(false);
   }
 }

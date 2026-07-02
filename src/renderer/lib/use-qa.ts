@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { useAppStore } from './store';
+import { useAppStore, whenSettingsCommitted } from './store';
 import { AiClient } from './ai-client';
 import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage } from './chunker';
 import { formatPageLabel, normalizeCitationPlacement, stripCitations } from './citation';
@@ -263,6 +263,13 @@ export async function buildRagIndex(
   signal: AbortSignal,
   pageTexts?: string[],
 ): Promise<boolean> {
+  // C5-M3(QA cycle5): 설정 IPC 커밋 대기 — 프로바이더 전환은 렌더러 store 에 즉시 반영되지만
+  // main settings.json 은 300ms 디바운스 뒤에 기록된다. 대기 없이 시작하면 checkEmbedModel/
+  // ai:embed(둘 다 main 이 설정을 읽음)가 구 프로바이더로 임베딩해, 인덱스 전체가 stale 모델로
+  // 빌드되거나(→ 이후 질문 임베딩과 차원 불일치로 무음 키워드 강등) 빌드 중간에 차원이 섞여
+  // addChunk throw → RAG 가 조용히 꺼졌다. 커밋 후 시작해 빌드 전체가 단일 설정 스냅샷을 쓴다.
+  await whenSettingsCommitted();
+  if (signal.aborted) return false;
   const store = useAppStore.getState();
 
   // 임베딩 모델 사용 가능 여부 확인

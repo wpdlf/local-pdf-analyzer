@@ -714,6 +714,17 @@ export async function handlePdfData(
     } as AppError);
     return;
   }
+  // C5-M4(QA cycle5): openCollection(탭 세트 재구성) 진행 중에도 새 파일 열기 차단. 드롭/최근
+  // 문서/전역검색/Ctrl+O 는 isTabSwitchBlocked 를 거치지 않고 본 함수로 직행하므로, 누락 시
+  // 컬렉션 멤버 upsert·첫 멤버 활성화 루프와 인터리브돼 탭 세트가 뒤섞이고(멤버+낙오 문서 혼재)
+  // 활성 문서가 경쟁 패자의 것으로 남았다.
+  if (store.collectionOpenInFlight) {
+    store.setError({
+      code: 'PDF_PARSE_FAIL',
+      message: t('pdf.busyCollectionOpen'),
+    } as AppError);
+    return;
+  }
   if (data.byteLength > MAX_FILE_SIZE) {
     store.setError({
       code: 'PDF_PARSE_FAIL',

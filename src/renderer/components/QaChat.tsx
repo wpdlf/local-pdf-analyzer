@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { useQa } from '../lib/use-qa';
+import { abortCollectionGather } from '../lib/use-collection-summary';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { SafeMarkdown } from '../lib/safe-markdown';
@@ -238,9 +239,12 @@ export function QaChat() {
           className="flex-1 resize-none rounded-lg border dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 placeholder:text-gray-400"
           aria-label={t('qa.inputAria')}
         />
-        {isQaGenerating ? (
+        {isQaGenerating || isCollectionBusy ? (
+          // C5-M5(QA cycle5): gather 단계(isCollectionBusy && !isQaGenerating)에도 중지 버튼 노출.
+          // 이전엔 중지가 isQaGenerating 조건부라 인라인 멤버 요약(최대 10건, 분 단위) 동안 모든
+          // 탈출 경로가 busy 게이트에 막혀 취소 수단이 전무했다. reduce 스트리밍은 기존 handleQaAbort.
           <button
-            onClick={handleQaAbort}
+            onClick={isQaGenerating ? handleQaAbort : abortCollectionGather}
             className="px-3 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors shrink-0"
             aria-label={t('qa.stopAria')}
           >

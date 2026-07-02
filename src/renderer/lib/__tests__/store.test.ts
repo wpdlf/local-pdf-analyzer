@@ -19,7 +19,7 @@ vi.stubGlobal('window', {
 let _testIdCounter = 0;
 vi.stubGlobal('crypto', { randomUUID: () => `id-${++_testIdCounter}` });
 
-import { useAppStore } from '../store';
+import { useAppStore, whenSettingsCommitted } from '../store';
 
 // 각 테스트 진입 시 스트림/메시지 상태만 초기화 — timer 는 fake 사용.
 function resetStreams(): void {
@@ -643,6 +643,39 @@ describe('updateSettings — 디바운스 저장 실패 처리', () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(setMock).toHaveBeenCalledTimes(1);
     expect((setMock.mock.calls[0]![0] as { maxChunkSize: number }).maxChunkSize).toBe(4000);
+  });
+
+  // C5-M3(QA cycle5): whenSettingsCommitted — 대기 중 커밋이 있으면 IPC flush 완료까지 대기.
+  // RAG 재빌드가 프로바이더 전환 직후 main 의 구 설정(300ms 디바운스 지연)으로 임베딩하던 race 의 방어.
+  it('C5-M3: whenSettingsCommitted 는 디바운스 flush(IPC 완료) 후에 resolve', async () => {
+    const setMock = vi.mocked(window.electronAPI.settings.set);
+    setMock.mockClear();
+    useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, provider: 'openai' });
+    let resolved = false;
+    void whenSettingsCommitted().then(() => { resolved = true; });
+    await vi.advanceTimersByTimeAsync(299);
+    expect(resolved).toBe(false);           // flush 전 — 아직 대기
+    expect(setMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);   // 300ms 도달 → IPC 발화 + settle
+    expect(setMock).toHaveBeenCalledTimes(1);
+    expect(resolved).toBe(true);
+  });
+
+  it('C5-M3: 대기 커밋이 없으면 whenSettingsCommitted 는 즉시 resolve', async () => {
+    let resolved = false;
+    void whenSettingsCommitted().then(() => { resolved = true; });
+    await vi.advanceTimersByTimeAsync(0); // 마이크로태스크 flush
+    expect(resolved).toBe(true);
+  });
+
+  it('C5-M3: IPC 실패해도 whenSettingsCommitted 는 settle(영구 대기 방지) + 에러 배너', async () => {
+    vi.mocked(window.electronAPI.settings.set).mockRejectedValueOnce(new Error('disk full'));
+    useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, theme: 'dark' });
+    let resolved = false;
+    void whenSettingsCommitted().then(() => { resolved = true; });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(resolved).toBe(true);
+    expect(useAppStore.getState().error?.code).toBe('SETTINGS_SAVE_FAIL');
   });
 
   it('디바운스 발화 전 렌더러 컨텍스트 소실(electronAPI 부재) → 안전 no-op(unhandled 방지)', async () => {

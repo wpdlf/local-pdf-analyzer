@@ -32,7 +32,7 @@ vi.stubGlobal('window', {
 });
 vi.stubGlobal('crypto', { randomUUID: () => 'test-uuid' });
 
-import { buildCollectionSummaryPrompt, generateCollectionSummary } from '../use-collection-summary';
+import { buildCollectionSummaryPrompt, generateCollectionSummary, abortCollectionGather } from '../use-collection-summary';
 import { useAppStore } from '../store';
 import { VectorStore } from '../vector-store';
 
@@ -200,6 +200,24 @@ describe('generateCollectionSummary (L2)', () => {
     // 그래도 두 멤버 헤더는 유지(합성 자체는 정상)
     expect(M.prompt).toContain('## Alpha.pdf');
     expect(M.prompt).toContain('## Beta.pdf');
+  });
+
+  // C5-M5(QA cycle5): gather(인라인 멤버 요약) 단계는 이전엔 취소 수단이 전무했다(모든 탈출
+  // 경로가 isCollectionBusy 게이트에 막힘). abortCollectionGather 가 즉시 중단시키고, 끊긴
+  // 부분 생성물은 영속화/합성에 쓰지 않으며, 의도적 취소라 안내 배너도 띄우지 않는다.
+  it('C5-M5: gather 중 abortCollectionGather → 조용히 종료(부분 생성물 미영속화, busy 해제)', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf',
+        null, h === 'a'.repeat(64) ? '알파 본문' : '베타 본문')));
+    M.midStream = () => abortCollectionGather(); // 첫 인라인 생성의 첫 토큰 직후 사용자 중지
+    await generateCollectionSummary('unified');
+    expect(mockSaveSummary).not.toHaveBeenCalled();             // 부분 생성물 미영속화
+    expect(useAppStore.getState().qaMessages).toHaveLength(0);  // user/결과 메시지 미커밋
+    expect(useAppStore.getState().notice).toBeNull();           // 의도적 취소 — 안내 없음
+    expect(useAppStore.getState().isCollectionBusy).toBe(false); // busy 해제(finally)
+    expect(useAppStore.getState().isQaGenerating).toBe(false);
   });
 
   it('요약 자격 멤버가 1개뿐이면(나머지 missing) 안내 후 중단(AiClient 미호출)', async () => {

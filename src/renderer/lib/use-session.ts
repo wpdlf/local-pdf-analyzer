@@ -56,6 +56,16 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
       return;
     }
 
+    // C5-M2(QA cycle5): 복원 결정(api.load) 이 in-flight 인 동안 사용자가 이미 생성을 시작했으면
+    // 요약/Q&A 를 덮어쓰지 않는다. 이전엔 문서 정체성만 검사해, in-flight 요약 위로
+    // replaceSummaryStream 이 옛 본문을 주입 → 새 토큰이 그 뒤에 append → "옛+새 연결본"이
+    // 완료 요약으로 커밋·영속화됐다(빠른 클릭/느린 디스크에서 재현). 새 run 이 요약의 진실이
+    // 되고, 다른 타입의 디스크 요약은 자동저장의 loadMeta 머지가 보존한다.
+    // (인덱스 복원은 스트림과 무관하므로 계속 진행 — useRagBuilder 채택/재빌드 결정에 필요.)
+    const genState = useAppStore.getState();
+    const skipSummaryRestore = genState.isGenerating;
+    const skipQaRestore = genState.isQaGenerating || genState.isCollectionBusy;
+
     // 요약 복원 (현재 summaryType 우선, 없으면 첫 항목).
     // R41 High fix: fallback 으로 다른 타입 요약을 채택할 때는 그 요약의 **실제 타입**으로
     // 라벨링해야 한다. 이전엔 라벨을 session.summaryType 로 고정해 "keywords 탭인데 full 본문"
@@ -70,7 +80,7 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
         persistedSummary = firstEntry[1];
       }
     }
-    if (persistedSummary) {
+    if (persistedSummary && !skipSummaryRestore) {
       const summary: Summary = {
         id: `restored-${doc.id}`,
         documentId: doc.id,
@@ -86,8 +96,8 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
       store.replaceSummaryStream(persistedSummary.content);
     }
 
-    // Q&A 복원
-    if (Array.isArray(session.qaMessages) && session.qaMessages.length > 0) {
+    // Q&A 복원 (C5-M2: in-flight Q&A/컬렉션 스트리밍 위로 덮어쓰지 않음)
+    if (!skipQaRestore && Array.isArray(session.qaMessages) && session.qaMessages.length > 0) {
       store.setQaMessages(session.qaMessages);
     }
 

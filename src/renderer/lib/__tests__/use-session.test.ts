@@ -158,6 +158,43 @@ describe('restoreSessionForDocument (module-3)', () => {
     expect(s.sessionRestorePending).toBe(false);
   });
 
+  // C5-M2(QA cycle5): 복원 결정(api.load) in-flight 동안 생성이 시작되면 덮어쓰기 금지.
+  // 이전엔 문서 정체성만 검사해 in-flight 요약 위로 옛 본문이 주입 → "옛+새 연결본" 영속화.
+  it('C5-M2: 복원 도중 요약 생성 시작 → 요약/스트림 미덮어쓰기(Q&A 는 복원)', async () => {
+    const doc = makeDoc();
+    useAppStore.setState({ document: doc, sessionRestorePending: true });
+    api.session.load.mockImplementation(async (hash: string) => {
+      const f = persistedSession(doc, false);
+      f.session.docHash = hash;
+      // load in-flight 사이 사용자가 요약 시작 (handleSummarize 는 sessionRestorePending 을 안 봄)
+      useAppStore.setState({ isGenerating: true, summaryStream: '새 요약 스트리밍 중' });
+      return f;
+    });
+    await restoreSessionForDocument(doc);
+    const s = useAppStore.getState();
+    expect(s.summaryStream).toBe('새 요약 스트리밍 중'); // replaceSummaryStream 미주입
+    expect(s.summary).toBeNull();                        // setSummary 미호출
+    expect(s.qaMessages).toHaveLength(2);                // Q&A 는 유휴 — 정상 복원
+    expect(s.sessionRestorePending).toBe(false);         // 게이트는 해제
+  });
+
+  it('C5-M2: 복원 도중 Q&A 생성 시작 → qaMessages 미덮어쓰기(요약은 복원)', async () => {
+    const doc = makeDoc();
+    const liveMsg = { id: 'live', role: 'user' as const, content: '진행 중 질문' };
+    useAppStore.setState({ document: doc, sessionRestorePending: true });
+    api.session.load.mockImplementation(async (hash: string) => {
+      const f = persistedSession(doc, false);
+      f.session.docHash = hash;
+      useAppStore.setState({ isQaGenerating: true, qaMessages: [liveMsg] });
+      return f;
+    });
+    await restoreSessionForDocument(doc);
+    const s = useAppStore.getState();
+    expect(s.qaMessages).toEqual([liveMsg]);             // setQaMessages 미호출
+    expect(s.summary?.content).toBe('복원된 요약');       // 요약은 유휴 — 정상 복원
+    expect(s.sessionRestorePending).toBe(false);
+  });
+
   it('복원 도중 다른 문서로 교체되면 아무것도 건드리지 않음(레이스 가드)', async () => {
     const doc = makeDoc('doc-1');
     useAppStore.setState({ document: doc, sessionRestorePending: true });

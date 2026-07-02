@@ -97,6 +97,7 @@ export const _translations = {
   'pdf.busyGenerating': { ko: '요약 진행 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while summarizing.' },
   'pdf.busyQa': { ko: 'Q&A 답변 생성 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while answering Q&A.' },
   'pdf.busyCollection': { ko: '컬렉션 요약 진행 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while summarizing a collection.' },
+  'pdf.busyCollectionOpen': { ko: '컬렉션을 여는 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while opening a collection.' },
   'pdf.invalidFile': { ko: '유효한 PDF 파일이 아닙니다.', en: 'Not a valid PDF file.' },
   'uploader.tooManyPages': { ko: '페이지 수가 너무 많습니다 ({pages}p). 최대 {max}페이지까지 지원합니다. 문서를 분할해주세요.', en: 'Too many pages ({pages}p). Maximum {max} pages supported. Please split the document.' },
   'uploader.cancelParse': { ko: 'PDF 처리 취소', en: 'Cancel PDF processing' },

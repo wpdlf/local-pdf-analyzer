@@ -54,15 +54,40 @@ interface MemberBlock { fileName: string; content: string; }
  */
 interface ActiveDocContext { docHash: string; summary: string | null; text: string | null; docId: string | null; }
 
+// C5-M5(QA cycle5): gather 단계 취소 인프라. gather(요약 부재 멤버의 인라인 요약 — 최대 10건
+// 순차 LLM 호출, 로컬 모델이면 분 단위) 동안 isCollectionBusy 가 모든 탈출 경로(탭 전환/새 파일/
+// ask/summarize/설정 AI 필드)를 막아, 기존의 내부 취소 신호(활성 문서 교체 감지)는 도달 불가능한
+// 데드코드였다 — 사용자는 앱 강제 종료 외에 탈출 수단이 없었고 클라우드 토큰이 계속 소모됐다.
+// 컨트롤러 + in-flight requestId 를 모듈에 보관해 QaChat 의 중지 버튼이 즉시 끊을 수 있게 한다.
+let gatherAbortController: AbortController | null = null;
+let gatherRequestId: string | null = null;
+
+/** 교차 요약 gather 단계 취소 — QaChat 중지 버튼(isCollectionBusy && !isQaGenerating) 전용.
+ * reduce 스트리밍 단계(isQaGenerating)는 기존 handleQaAbort(qaRequestId abort)가 담당한다. */
+export function abortCollectionGather(): void {
+  gatherAbortController?.abort();
+  const reqId = gatherRequestId;
+  if (reqId) {
+    try { void window.electronAPI.ai.abort(reqId); } catch { /* 테스트/구 preload — 무시 */ }
+  }
+}
+
 /**
  * 멤버 본문에서 단일-문서 요약을 인라인 생성(헤드리스 — 활성 문서 store 미오염). 토큰을 문자열로
  * 수집해 반환. reduce 단계와 동일한 AiClient.summarize 경로(임베딩/RAG 비의존)를 재사용한다.
+ * requestId 를 모듈에 등록해 abortCollectionGather 가 in-flight 호출을 즉시 끊을 수 있게 한다(C5-M5).
  */
-async function generateMemberSummary(client: AiClient, text: string, summaryType: SummaryType): Promise<string> {
+async function generateMemberSummary(client: AiClient, text: string, summaryType: SummaryType, signal?: AbortSignal): Promise<string> {
   const reqId = client.prepareSummarize();
+  gatherRequestId = reqId;
   let out = '';
-  for await (const tk of client.summarize(text.slice(0, INLINE_SUMMARY_INPUT_CHARS), summaryType, reqId)) {
-    out += tk;
+  try {
+    for await (const tk of client.summarize(text.slice(0, INLINE_SUMMARY_INPUT_CHARS), summaryType, reqId)) {
+      if (signal?.aborted) break;
+      out += tk;
+    }
+  } finally {
+    if (gatherRequestId === reqId) gatherRequestId = null;
   }
   return out;
 }
@@ -120,11 +145,14 @@ async function gatherMemberBlocks(
   client: AiClient,
   settings: AppSettings,
   active: ActiveDocContext,
+  signal: AbortSignal,
 ): Promise<MemberBlock[]> {
   const blocks: MemberBlock[] = [];
   let budget = COLLECTION_REDUCE_TOTAL_CHARS;
   for (const m of members.slice(0, COLLECTION_SUMMARY_MAX_MEMBERS)) {
     if (budget < MIN_BLOCK_CHARS) break; // 총량 예산 소진 — 이후 멤버는 제외(컨텍스트 초과 방지)
+    // C5-M5: 사용자 취소(중지 버튼) — 이후 멤버 준비 즉시 중단.
+    if (signal.aborted) break;
     // 취소 신호(QA L1): gather 도중 탭 전환으로 활성 문서가 바뀌면 이후 멤버의 인라인 요약 생성을
     // 중단해 낭비(클라우드 호출 과금)를 막는다. 이미 만든 블록은 어차피 결과 커밋 단계의 소유권
     // 가드(document.id 절)에서 버려진다.
@@ -149,7 +177,10 @@ async function gatherMemberBlocks(
     // 아래 발췌 fallback 으로 자연 강등. 진행 표시는 첫 생성 시 notice 한 번(map 단계는 스트리밍 X).
     if (summary == null && typeof text === 'string' && text.trim().length > 0) {
       useAppStore.getState().setNotice({ message: t('collection.preparingMember', { name: m.fileName }) });
-      const gen = await generateMemberSummary(client, text, summaryType).catch(() => '');
+      const gen = await generateMemberSummary(client, text, summaryType, signal).catch(() => '');
+      // C5-M5: 취소로 끊긴 부분 생성물은 사용/영속화하지 않는다 — 부분 요약이 멤버 세션에
+      // 완성본처럼 저장되면 다음 합성에서 재사용돼 품질이 조용히 저하된다.
+      if (signal.aborted) break;
       if (gen.trim().length > 0) {
         summary = gen;
         // 영속화는 best-effort — 실패해도 이번 합성에는 생성분을 그대로 사용. saveSummary 부재(구
@@ -199,6 +230,9 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
   // false 라 입력창·버튼이 활성으로 남는다. 진입 즉시 동기 세팅해 handleAsk/handleSummarize 가
   // 그 사이 끼어들어 qaStream/qaRequestId 를 클로버링하는 것을 막고, UI 도 즉시 비활성화한다.
   useAppStore.getState().setCollectionBusy(true);
+  // C5-M5: gather 취소 컨트롤러 — QaChat 중지 버튼(abortCollectionGather)이 끊는다.
+  const gatherController = new AbortController();
+  gatherAbortController = gatherController;
 
   // 활성 문서 in-memory 표현(디스크 폴백용 — QA M1). summaryStream(후처리 전체 요약) 우선, 없으면
   // store.summary.content. 본문은 document.extractedText.
@@ -236,7 +270,12 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
 
     // client 를 gather 전에 생성 — 요약 부재 멤버의 인라인 생성에도 동일 인스턴스를 재사용.
     const client = new AiClient(st.settings);
-    const blocks = await gatherMemberBlocks(eligible, st.summaryType, client, st.settings, activeCtx);
+    const blocks = await gatherMemberBlocks(eligible, st.summaryType, client, st.settings, activeCtx, gatherController.signal);
+    // C5-M5: 사용자 취소 — 안내 없이 조용히 종료(의도적 액션, finally 가 busy/notice 정리).
+    if (gatherController.signal.aborted) {
+      useAppStore.getState().setNotice(null);
+      return;
+    }
     if (blocks.length < 2) {
       useAppStore.getState().setNotice({ message: t('collection.summaryNeedsMembers') });
       return;
@@ -292,6 +331,7 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
     }
   } finally {
     collectionSummaryInFlight = false;
+    if (gatherAbortController === gatherController) gatherAbortController = null; // C5-M5 정리
     useAppStore.getState().setCollectionBusy(false); // gather/스트리밍 종료 — 입력창·버튼 복구
     // 우리 소유일 때만 전역 생성 상태 해제 — stale 핸들러가 새 세션을 끄지 않도록.
     if (started && useAppStore.getState().qaRequestId === requestId) {

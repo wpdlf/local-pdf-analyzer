@@ -100,6 +100,16 @@ describe('handlePdfData — 가드', () => {
     expect(P.getDocument).not.toHaveBeenCalled();
   });
 
+  // C5-M4(QA cycle5): openCollection(탭 세트 재구성) 진행 중에도 새 파일 열기 차단 — 드롭/최근
+  // 문서/전역검색/Ctrl+O 는 isTabSwitchBlocked 를 안 거치므로 여기 진입 가드가 유일한 방어선.
+  it('컬렉션 열기 중(collectionOpenInFlight)이면 거부', async () => {
+    useAppStore.setState({ isGenerating: false, isQaGenerating: false, isCollectionBusy: false, collectionOpenInFlight: true });
+    await handlePdfData(pdfBuf(), 'a.pdf', '/d/a.pdf');
+    expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL');
+    expect(P.getDocument).not.toHaveBeenCalled();
+    useAppStore.setState({ collectionOpenInFlight: false });
+  });
+
   // QA post-v0.31.16(i18n 갭): 진입 가드 메시지가 하드코딩 한글이 아니라 i18n 을 거친다.
   // en 로케일에서 영문으로 표시되어야 한다(이전엔 영어 UI 에도 한글 노출).
   it('en 로케일: 가드/검증 메시지가 i18n 영문으로 표시된다', async () => {

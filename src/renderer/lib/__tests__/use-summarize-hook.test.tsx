@@ -20,6 +20,9 @@ const M = vi.hoisted(() => ({
   // Stop→재요약 race 테스트용: 첫 summarize 호출만 이 promise 에서 일시정지시켜
   // stale run 의 finally 가 새 run 보다 늦게 도달하는 상황을 결정적으로 재현.
   gate: null as Promise<void> | null,
+  // C5-M1 race 테스트용: 첫 analyzeImage(preflight) 호출만 일시정지 — 이미지분석 단계에서
+  // Stop→재요약 시 stale run 부활을 결정적으로 재현.
+  imageGate: null as Promise<void> | null,
 }));
 
 vi.mock('../ai-client', () => ({
@@ -37,6 +40,8 @@ vi.mock('../ai-client', () => ({
     async analyzeImage(_b: string, _r?: string): Promise<string | null> {
       M.imageCalls++;
       M.onAnalyzeImage?.();
+      // 첫 호출(run1 preflight)만 gate 에서 대기 (C5-M1 race 재현). 이후 호출은 즉시 진행.
+      if (M.imageGate && M.imageCalls === 1) { await M.imageGate; }
       return M.imageResult;
     }
   },
@@ -75,6 +80,7 @@ beforeEach(() => {
   M.onAnalyzeImage = null;
   M.reqCounter = 0;
   M.gate = null;
+  M.imageGate = null;
   abortMock.mockClear();
   useAppStore.setState({
     settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: false },
@@ -302,5 +308,52 @@ describe('useSummarize — Stop→재요약 race (ownership 가드, QA post-v0.3
     // run1 의 finally/ setSummary 가 ownership 가드로 스킵 → run2 결과 보존.
     expect(final.summary?.id).toBe(run2Summary?.id);
     expect(final.isGenerating).toBe(false);
+  });
+
+  // C5-M1(QA cycle5): 취소 술어가 ambient `!isGenerating` 이던 시절, Stop→즉시 재요약하면
+  // 새 run 이 isGenerating 을 true 로 되돌려 이미지분석 단계의 stale run 이 "부활" — 배치
+  // Vision 을 계속 호출(이중 클라우드 과금)하고 진행률/스트림에 잔여물을 주입했다. 소유권
+  // 토큰(isRunAborted) 전환 후 stale run 은 preflight 복귀 즉시 영구 취소된다.
+  it('C5-M1: 이미지분석 단계에서 Stop→즉시 재요약 시 stale run 이 부활하지 않는다', async () => {
+    useAppStore.setState({
+      document: makeDoc({ images: [img(0), img(1), img(2), img(3)] }),
+      settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: true },
+    });
+    let releaseImage!: () => void;
+    M.imageGate = new Promise<void>((r) => { releaseImage = r; });
+    let releaseStream!: () => void;
+    M.gate = new Promise<void>((r) => { releaseStream = r; });
+
+    const { result } = renderHook(() => useSummarize());
+
+    // run1 — preflight Vision 호출에서 정지(요약 단계 진입 전 = 이미지분석 단계 한복판).
+    let run1Done: Promise<void> = Promise.resolve();
+    await act(async () => {
+      run1Done = result.current.handleSummarize();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(M.imageCalls).toBe(1); // run1 preflight 만
+
+    // Stop → 즉시 재요약. run2 는 이미지분석(preflight+배치 3)을 완주하고 summarize 스트리밍
+    // (gate)에서 대기 — isGenerating=true 인 상태로 유지된다.
+    act(() => { result.current.handleAbort(); });
+    let run2Done: Promise<void> = Promise.resolve();
+    await act(async () => {
+      run2Done = result.current.handleSummarize();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(useAppStore.getState().isGenerating).toBe(true); // run2 in-flight
+    const callsBeforeRelease = M.imageCalls; // 1(run1 preflight) + 4(run2 preflight+배치3)
+
+    // run1 preflight 해제 — ambient 술어였다면 run2 의 isGenerating 때문에 배치 루프에 진입해
+    // Vision 을 3회 더 호출했다. 소유권 술어로는 즉시 취소되어 추가 호출 0.
+    await act(async () => { releaseImage(); await new Promise((r) => setTimeout(r, 0)); });
+    expect(M.imageCalls).toBe(callsBeforeRelease);
+
+    // run2 완주 → 정상 요약 결과가 보존된다(스트림 오염/조기 strip 없음).
+    await act(async () => { releaseStream(); await Promise.all([run1Done, run2Done]); });
+    const st = useAppStore.getState();
+    expect(st.summary?.content).toContain('핵심 요약');
+    expect(st.isGenerating).toBe(false);
   });
 });
