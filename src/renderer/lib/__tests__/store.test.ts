@@ -583,7 +583,24 @@ describe('컬렉션 Q&A 상태 (multi-doc Phase 2)', () => {
   });
 
   // R46 Important: 닫힌 탭의 docHash 가 컬렉션 멤버에 stale 로 남지 않아야 함
-  it('removeOpenTab 은 닫힌 탭의 docHash 를 컬렉션 멤버에서도 제거', () => {
+  it('removeOpenTab 은 닫힌 탭의 docHash 를 컬렉션 멤버에서도 제거 (후보 2개 이상 남으면 모드 유지)', () => {
+    useAppStore.setState({
+      openTabs: [
+        { filePath: '/a', fileName: 'a.pdf', pageCount: 1, docHash: 'ha' },
+        { filePath: '/b', fileName: 'b.pdf', pageCount: 1, docHash: 'hb' },
+        { filePath: '/c', fileName: 'c.pdf', pageCount: 1, docHash: 'hc' },
+      ],
+      collection: { enabled: true, memberHashes: ['ha', 'hb', 'hc'] },
+    });
+    useAppStore.getState().removeOpenTab('/b');
+    expect(useAppStore.getState().collection.memberHashes).toEqual(['ha', 'hc']);
+    expect(useAppStore.getState().collection.enabled).toBe(true); // 후보 2개 남음 → 모드 유지
+  });
+
+  // QA6-C M1: 후보(docHash 탭)가 2개 미만이면 CollectionBar 가 렌더되지 않아 토글을 끌 수 없는
+  // "유령 활성"이 남고, resolveCollectionSearch 가 컬렉션 경로로 진입해 모든 답변에 오도성 강등
+  // 경고가 붙었다 → 후보<2 면 컬렉션 모드 전체 리셋.
+  it('removeOpenTab 으로 docHash 후보가 2개 미만이 되면 컬렉션 모드 초기화 (탭 2→1 유령 활성 방지)', () => {
     useAppStore.setState({
       openTabs: [
         { filePath: '/a', fileName: 'a.pdf', pageCount: 1, docHash: 'ha' },
@@ -592,8 +609,8 @@ describe('컬렉션 Q&A 상태 (multi-doc Phase 2)', () => {
       collection: { enabled: true, memberHashes: ['ha', 'hb'] },
     });
     useAppStore.getState().removeOpenTab('/b');
-    expect(useAppStore.getState().collection.memberHashes).toEqual(['ha']);
-    expect(useAppStore.getState().collection.enabled).toBe(true); // 탭 남아있으면 모드 유지
+    expect(useAppStore.getState().openTabs).toHaveLength(1);
+    expect(useAppStore.getState().collection).toEqual({ enabled: false, memberHashes: [] });
   });
 
   it('removeOpenTab 으로 모든 탭이 닫히면 컬렉션 모드 초기화', () => {

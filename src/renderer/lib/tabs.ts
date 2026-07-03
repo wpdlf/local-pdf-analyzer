@@ -30,13 +30,24 @@ import type { OpenTab, PdfDocument, PersistedSession } from '../types';
 // 그대로 유지되고, restoreTabFromSession 등 내부 호출은 이 플래그를 참조하지 않아 자기 차단
 // 위험도 없다(use-collection-summary 의 collectionSummaryInFlight 와 동형).
 
+// QA6-C M2: switchToTab/closeTab(활성)/openNewTabView 재진입 가드. openCollection 과 동일
+// 결함 클래스 — 진입부 isTabSwitchBlocked 이후 persistCurrentSession/session.load await 동안
+// 아무 busy 플래그도 없어(세션-복원 경로는 isParsing 미사용), 연속 클릭 시 두 번째 전환이
+// 가드를 통과해 늦게 resolve 된 복원이 승자가 됐다(마지막 클릭이 아닌 탭이 활성으로 남음).
+// 모듈 플래그로 첫 await 이전에 창을 닫고 finally 에서 해제. store 이관(C5-M4)과 달리 모듈
+// 로컬로 충분: handlePdfData 직행 경로는 이 플래그를 봐선 안 된다 — openTabTarget 의 파일
+// 재파싱 fallback(②)이 handlePdfData 를 호출하므로, 거기서 참조하면 자기 차단이 된다.
+let tabSwitchInFlight = false;
+
 /** 생성/파싱 중 전환 차단 — handlePdfData 내부 가드와 동일 기준 (사전 차단으로 UX 개선).
  * isCollectionBusy(컬렉션 gather)도 포함 — gather 단계는 isQaGenerating 설정 전이라, 누락 시
  * in-flight 멤버 요약(클라우드)이 끊기지 않은 채 탭 전환되어 토큰 낭비/백그라운드 완주가 발생.
- * collectionOpenInFlight — openCollection 진행 중 탭 전환/재진입 차단(위 주석 참조). */
+ * collectionOpenInFlight — openCollection 진행 중 탭 전환/재진입 차단(위 주석 참조).
+ * tabSwitchInFlight — 탭 전환/닫기 복원 진행 중 재진입 차단(QA6-C M2, 위 주석 참조). */
 export function isTabSwitchBlocked(): boolean {
   const s = useAppStore.getState();
-  return s.isGenerating || s.isQaGenerating || s.isParsing || s.isCollectionBusy || s.collectionOpenInFlight;
+  return tabSwitchInFlight
+    || s.isGenerating || s.isQaGenerating || s.isParsing || s.isCollectionBusy || s.collectionOpenInFlight;
 }
 
 function findTab(filePath: string): OpenTab | undefined {
@@ -135,12 +146,18 @@ export async function switchToTab(filePath: string): Promise<void> {
   const tab = findTab(filePath);
   if (!tab) return;
 
-  // 현재 문서의 미저장 tail 보존 (persistChain 직렬화 — 내부에서 생성 중/게이트 검사)
-  await persistCurrentSession();
+  // QA6-C M2: 첫 await 이전 동기 세팅 — 진행 중 두 번째 전환/닫기 재진입 차단. finally 해제.
+  tabSwitchInFlight = true;
+  try {
+    // 현재 문서의 미저장 tail 보존 (persistChain 직렬화 — 내부에서 생성 중/게이트 검사)
+    await persistCurrentSession();
 
-  const ok = await openTabTarget(tab);
-  if (!ok) {
-    useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('tabs.switchFail') });
+    const ok = await openTabTarget(tab);
+    if (!ok) {
+      useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: t('tabs.switchFail') });
+    }
+  } finally {
+    tabSwitchInFlight = false;
   }
 }
 
@@ -155,7 +172,9 @@ export async function closeTab(filePath: string): Promise<void> {
   // C5-L(QA cycle5): 비활성 탭도 컬렉션 작업 중에는 제거 금지 — openCollection 의 멤버 upsert
   // 루프와 인터리브되면 opened/total 집계·최종 탭 세트가 어긋나고, gather 중에는 memberHashes
   // 와 캡처된 eligible 목록이 desync 된다(손상은 없으나 표시 불일치).
-  if (!isActive && (store.isCollectionBusy || store.collectionOpenInFlight)) return;
+  // tabSwitchInFlight(QA6-C M2)도 동일 사유 — 전환 중 대상/이웃 탭이 제거되면 복원이 지워진
+  // 탭을 upsert 로 되살린다.
+  if (!isActive && (store.isCollectionBusy || store.collectionOpenInFlight || tabSwitchInFlight)) return;
 
   const tabs = store.openTabs;
   const idx = tabs.findIndex((tb) => tb.filePath === filePath);
@@ -163,30 +182,36 @@ export async function closeTab(filePath: string): Promise<void> {
 
   if (!isActive) return;
 
-  // 활성 탭 닫기: 디스크에 보존 후 정리
-  await persistCurrentSession();
-  const remaining = useAppStore.getState().openTabs;
-  if (remaining.length === 0) {
-    // 마지막 탭 — 업로드 화면 (기존 "문서 제거" 버튼과 동일한 정리 시퀀스)
-    const s = useAppStore.getState();
-    s.setDocument(null);
-    s.clearStream();
-    s.setSummary(null);
-    s.setProgress(0);
-    return;
-  }
-  // 이웃 전환: 닫힌 위치의 오른쪽(같은 인덱스), 없으면 마지막
-  const neighbor = remaining[Math.min(idx, remaining.length - 1)];
-  if (!neighbor) return;
-  const ok = await openTabTarget(neighbor);
-  if (!ok) {
-    // 이웃도 복원 불가 — 업로드 화면으로 안전 착지 (탭은 유지해 재시도 가능)
-    const s = useAppStore.getState();
-    s.setDocument(null);
-    s.clearStream();
-    s.setSummary(null);
-    s.setProgress(0);
-    s.setError({ code: 'PDF_PARSE_FAIL', message: t('tabs.switchFail') });
+  // QA6-C M2: 활성 탭 닫기(flush+이웃 복원)도 전환과 동일 클래스 — 재진입 가드. finally 해제.
+  tabSwitchInFlight = true;
+  try {
+    // 활성 탭 닫기: 디스크에 보존 후 정리
+    await persistCurrentSession();
+    const remaining = useAppStore.getState().openTabs;
+    if (remaining.length === 0) {
+      // 마지막 탭 — 업로드 화면 (기존 "문서 제거" 버튼과 동일한 정리 시퀀스)
+      const s = useAppStore.getState();
+      s.setDocument(null);
+      s.clearStream();
+      s.setSummary(null);
+      s.setProgress(0);
+      return;
+    }
+    // 이웃 전환: 닫힌 위치의 오른쪽(같은 인덱스), 없으면 마지막
+    const neighbor = remaining[Math.min(idx, remaining.length - 1)];
+    if (!neighbor) return;
+    const ok = await openTabTarget(neighbor);
+    if (!ok) {
+      // 이웃도 복원 불가 — 업로드 화면으로 안전 착지 (탭은 유지해 재시도 가능)
+      const s = useAppStore.getState();
+      s.setDocument(null);
+      s.clearStream();
+      s.setSummary(null);
+      s.setProgress(0);
+      s.setError({ code: 'PDF_PARSE_FAIL', message: t('tabs.switchFail') });
+    }
+  } finally {
+    tabSwitchInFlight = false;
   }
 }
 
@@ -195,12 +220,18 @@ export async function openNewTabView(): Promise<void> {
   const store = useAppStore.getState();
   if (!store.document) return; // 이미 업로드 화면
   if (isTabSwitchBlocked()) return;
-  await persistCurrentSession();
-  const s = useAppStore.getState();
-  s.setDocument(null);
-  s.clearStream();
-  s.setSummary(null);
-  s.setProgress(0);
+  // QA6-C M2: flush 중 전환/닫기 인터리브 차단(switchToTab 과 대칭)
+  tabSwitchInFlight = true;
+  try {
+    await persistCurrentSession();
+    const s = useAppStore.getState();
+    s.setDocument(null);
+    s.clearStream();
+    s.setSummary(null);
+    s.setProgress(0);
+  } finally {
+    tabSwitchInFlight = false;
+  }
 }
 
 /**
@@ -244,9 +275,12 @@ export async function openCollection(docHashes: string[]): Promise<{ opened: num
       useAppStore.getState().upsertOpenTab(tab);
       opened++;
       // 첫 유효 멤버를 활성 문서로 전체 복원(나머지는 탭으로만 등록 — 클릭 시 세션-우선 복원).
+      // QA6-C: 복원 실패(false — 세션에 extractedText/pageTexts 부재 등 본문 손상)를 무시하고
+      // activated=true 로 굳히면 활성 문서 없이 탭만 남고 이후 멤버로의 활성화 fallback 도
+      // 막혔다. 반환값 기준으로 다음 유효 멤버가 활성화를 이어받는다(탭 등록은 그대로 유지 —
+      // 클릭 시 파일 재파싱 fallback 으로 복구 가능).
       if (!activated) {
-        await restoreTabFromSession(tab);
-        activated = true;
+        activated = await restoreTabFromSession(tab);
       }
     }
     return { opened, total: seen.size }; // 고유 멤버 기준(중복 제외)으로 부분 복원 판정

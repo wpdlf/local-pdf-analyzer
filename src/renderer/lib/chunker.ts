@@ -67,6 +67,15 @@ function tailAtBoundary(text: string, targetChars: number): string {
   return chars.slice(startIdx).join('');
 }
 
+/** QA6-B: settings.json 수기편집/손상으로 비숫자 값(문자열 등)이 유입되면 `maxChunkSize * cpt`
+ * 가 NaN 이 되고, Math.max(100, NaN)=NaN 으로 폭발 하한 방어가 무력화되어 전 문서가 1개 거대
+ * 청크로 강등된다(loadSettings 는 키만 필터, 값 타입 미검증). Number 강제 후 비유한/비양수는
+ * 기본값 폴백 — 숫자형 문자열("4000")은 의도대로 수용된다. */
+function sanitizeChunkSize(maxChunkSize: number, fallback: number): number {
+  const n = Number(maxChunkSize);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /**
  * 텍스트를 토큰 기준으로 청크 분할
  * 한글/영어 비율에 따라 청크 크기를 자동 조절
@@ -83,7 +92,7 @@ export function chunkText(
   // 로 검증하지만, 손상/수기편집된 settings.json 의 값(loadSettings 는 값 미검증)이 0/음수면
   // maxChars=1 → splitByCodepoint 가 코드포인트당 1청크로 폭발(대용량 문서에서 수십만 LLM 호출).
   // RAG 경로(chunkTextWithOverlapOffsets)가 이미 쓰는 Math.max(200,…) 하한과 동일 방어.
-  const maxChars = Math.max(100, Math.floor(maxChunkSize * charsPerToken));
+  const maxChars = Math.max(100, Math.floor(sanitizeChunkSize(maxChunkSize, 4000) * charsPerToken));
 
   if (text.length <= maxChars) {
     return [text];
@@ -138,7 +147,8 @@ function chunkTextWithOverlapOffsets(
 ): ChunkOffsetResult[] {
   if (!text || !text.trim()) return [];
   const charsPerToken = estimateCharsPerToken(text);
-  const maxChars = Math.max(200, Math.floor(maxChunkSize * charsPerToken));
+  // QA6-B: NaN 하한 무력화 방어 — chunkText 와 동일(sanitizeChunkSize 주석 참조)
+  const maxChars = Math.max(200, Math.floor(sanitizeChunkSize(maxChunkSize, 500) * charsPerToken));
   const overlapChars = Math.floor(maxChars * overlapRatio);
   const effectiveMax = maxChars + overlapChars;
 

@@ -41,6 +41,12 @@ export interface PdfDocument {
   images: PageImage[];
   createdAt: Date;
   isOcr?: boolean;
+  /**
+   * QA6-D: 파싱 당시 이미지 분석 설정이 OFF 라 이미지 추출을 스킵했다는 마커.
+   * 이후 설정을 ON 으로 바꿔 재요약해도 images=[] 라 Vision 이 무음 no-op 이 되는데,
+   * 텍스트-only PDF 의 정당한 0장과 구분해 "재오픈 필요" 안내를 띄우기 위해 필요.
+   */
+  imagesSkipped?: boolean;
 }
 
 // 챕터 (페이지 기반 분할)

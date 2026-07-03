@@ -776,13 +776,18 @@ export async function handlePdfData(
   // 분 단위) 내내 클로저에 붙들려 있었다 — v0.31.10 pdfBytes 비상주(M1)의 잔여분.
   const pdfBytesCopy = isReReadablePath(filePath) ? null : new Uint8Array(data.slice(0));
   try {
+    // 이미지 분석이 꺼져 있으면 이미지 추출 스킵(파싱 시간↓ — 이미지 많은 PDF에서 큰 폭).
+    // QA6-D: 스킵 여부를 doc 에 마커로 남긴다 — 이후 설정을 ON 으로 바꿔 재요약하면 images=[]
+    // 라 Vision 이 무음 no-op 이었는데, 텍스트-only PDF 의 정당한 0장과 구분할 수 없었다.
+    // use-summarize 가 이 마커로 "재오픈 필요" 안내를 띄운다.
+    const extractImagesEnabled = store.settings.enableImageAnalysis;
     const doc = await parsePdf(data, name, filePath, {
       enableOcrFallback: store.settings.enableOcrFallback,
-      // 이미지 분석이 꺼져 있으면 이미지 추출 스킵(파싱 시간↓ — 이미지 많은 PDF에서 큰 폭).
-      extractImages: store.settings.enableImageAnalysis,
+      extractImages: extractImagesEnabled,
       onOcrProgress: ownedProgress,
       signal: controller.signal,
     });
+    if (!extractImagesEnabled) doc.imagesSkipped = true;
     // abort-replace 로 우리가 초과(supersede)된 경우, 성공한 파싱 결과를 store 에 반영하지 않는다.
     // 그렇지 않으면 오래된 문서가 새 문서를 덮어쓰는 경쟁 조건이 발생.
     if (activeParseController !== controller) return;

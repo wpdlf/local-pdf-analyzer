@@ -117,6 +117,33 @@ describe('restoreSessionForDocument (module-3)', () => {
     expect(s.restoredSession).toBeNull();
   });
 
+  // QA6-B: 수기 편집/parseable 손상 세션 — 비문자열 summary content 는 복원 skip,
+  // qaMessages 는 role/content 유효 항목만 주입(다음 턴 formatHistory→sanitizePromptInput
+  // 이 비문자열 content 에서 TypeError 로 턴을 실패시키는 것 방지).
+  it('손상 본문 정규화 — 비문자열 summary content 미복원 + 무효 qaMessages 항목 필터', async () => {
+    const doc = makeDoc();
+    useAppStore.setState({ document: doc, sessionRestorePending: true });
+    const fixture = persistedSession(doc, false);
+    (fixture.session.summaries as Record<string, unknown>).full = { content: 12345, model: 'm', provider: 'ollama' };
+    fixture.session.qaMessages = [
+      { id: 'q1', role: 'user', content: '질문?' },
+      { id: 'bad1', role: 'user', content: 123 },      // 비문자열 content → 제외
+      null,                                            // 항목 자체 손상 → 제외
+      { id: 'bad2', role: 'system', content: 'x' },    // 무효 role → 제외
+      { id: 'a1', role: 'assistant', content: '답변.' },
+    ] as unknown as PersistedSession['qaMessages'];
+    api.session.load.mockImplementation(async (hash: string) => {
+      fixture.session.docHash = hash;
+      return fixture;
+    });
+
+    await restoreSessionForDocument(doc);
+    const s = useAppStore.getState();
+    expect(s.summary).toBeNull();       // 비문자열 content → 복원 안 함(크래시/오염 대신 재계산)
+    expect(s.summaryStream).toBe('');
+    expect(s.qaMessages.map((m) => m.id)).toEqual(['q1', 'a1']); // 유효 항목만 주입
+  });
+
   it('persistSessions=false → load 미호출, 게이트 해제', async () => {
     const doc = makeDoc();
     useAppStore.setState({ document: doc, sessionRestorePending: true, settings: { ...useAppStore.getState().settings, persistSessions: false } });

@@ -1,4 +1,4 @@
-import { useState, useCallback, type ReactNode } from 'react';
+import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { useT } from '../lib/i18n';
 import { useAppStore } from '../lib/store';
 import { handlePdfData } from '../lib/pdf-parser';
@@ -53,6 +53,15 @@ export function GlobalSearch() {
   const [lastQuery, setLastQuery] = useState('');
   const [lastMode, setLastMode] = useState<SearchMode>('keyword');
   const [note, setNote] = useState<string | null>(null); // no-embed-model / embed-failed / 제외 안내
+  // QA6-C: 열기 성공(handlePdfData → setDocument) 시 이 컴포넌트는 즉시 언마운트된다(App 의
+  // `!document` 블록). 이후 finally setBusy / 검색 결과 setState 가 언마운트 상태에서 실행되므로
+  // 가드한다 — 동일 흐름의 RecentDocuments/CollectionsList/SettingsPanel 과 패턴 일치.
+  const mountedRef = useRef(true);
+  // StrictMode(dev) 더블 마운트 가드: 재마운트 시 true 리셋 필수 (RecentDocuments 와 동일).
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const handleSearch = useCallback(async () => {
     const q = query.trim();
@@ -64,18 +73,19 @@ export function GlobalSearch() {
     try {
       if (mode === 'semantic') {
         const out = await searchSessionsSemantic(q);
+        if (!mountedRef.current) return;
         if (out.status === 'no-embed-model') { setResults([]); setNote(tr('search.noEmbedModel')); return; }
         if (out.status === 'embed-failed') { setResults([]); setNote(tr('search.embedFailed')); return; }
         setResults(out.results);
         if (out.excludedCount > 0) setNote(tr('search.excluded', { count: out.excludedCount }));
       } else {
         const r = await window.electronAPI.session.search(q);
-        setResults(Array.isArray(r) ? r : []);
+        if (mountedRef.current) setResults(Array.isArray(r) ? r : []);
       }
     } catch {
-      setResults([]);
+      if (mountedRef.current) setResults([]);
     } finally {
-      setSearching(false);
+      if (mountedRef.current) setSearching(false);
     }
   }, [query, searching, mode, tr]);
 
@@ -91,7 +101,7 @@ export function GlobalSearch() {
     } catch {
       useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: tr('recent.openFail') });
     } finally {
-      setBusy(null);
+      if (mountedRef.current) setBusy(null);
     }
   }, [tr]);
 

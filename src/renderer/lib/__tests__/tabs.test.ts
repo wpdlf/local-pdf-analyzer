@@ -5,7 +5,7 @@
 // ③ 재오픈 실패는 에러 배너 + 탭 유지, ④ 활성 탭 닫기는 오른쪽 이웃 우선 전환,
 // ⑤ 마지막 탭 닫기는 업로드 화면 정리, ⑥ 생성/파싱 중 전환·활성 닫기 차단.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const M = vi.hoisted(() => ({
   handlePdfData: vi.fn(() => Promise.resolve()),
@@ -342,5 +342,71 @@ describe('openCollection (multi-doc Phase 3)', () => {
     const r1 = await p1;
     expect(r1).toEqual({ opened: 2, total: 2 });
     expect(useAppStore.getState().openTabs.map((tb) => tb.docHash)).toEqual(['h1', 'h2']);
+  });
+
+  // QA6-C: 첫 멤버 세션이 본문 손상(extractedText/pageTexts 부재)이면 restoreTabFromSession 이
+  // false 인데도 activated=true 로 굳혀 활성 문서 없이 탭만 남고 이후 멤버 fallback 이 막혔다.
+  it('첫 멤버 활성화 실패 시 다음 유효 멤버가 활성화를 이어받는다', async () => {
+    seedTabs([], null);
+    M.sessionLoad.mockImplementation(async (h: string) => {
+      if (h === 'broken') {
+        // 메타(fileName/filePath)는 유효 → 탭 등록은 되지만 본문이 없어 활성 복원은 실패
+        return { session: { schemaVersion: 1, docHash: h, fileName: 'broken.pdf', filePath: '/d/broken.pdf', pageCount: 1 }, blob: null };
+      }
+      return sessionFor(h);
+    });
+    M.openPath.mockResolvedValue({ error: 'no-file' });
+    const r = await openCollection(['broken', 'h2']);
+    expect(r).toEqual({ opened: 2, total: 2 }); // 탭 등록 집계는 유지(클릭 시 재파싱 fallback 가능)
+    const st = useAppStore.getState();
+    expect(st.openTabs.map((tb) => tb.docHash)).toEqual(['broken', 'h2']);
+    expect(st.document?.fileName).toBe('h2.pdf'); // 다음 유효 멤버가 활성
+  });
+});
+
+// QA6-C M2: switchToTab/closeTab(활성) 재진입 가드 — persist/복원 await 동안 busy 플래그가
+// 없어 연속 클릭 시 늦게 resolve 된 복원이 승자가 되던 race(openCollection C5-M4 와 동일 클래스).
+describe('탭 전환/닫기 재진입 가드 (QA6-C M2)', () => {
+  // 이 describe 는 persistCurrentSession 을 pending Promise 로 바꾸므로, 다른 테스트로 새지
+  // 않도록 전후로 기본(즉시 resolve) 구현을 복원한다(전역 clearMocks 미사용 환경).
+  beforeEach(() => { M.persistCurrentSession.mockImplementation(() => Promise.resolve()); });
+  afterEach(() => { M.persistCurrentSession.mockImplementation(() => Promise.resolve()); });
+
+  it('전환 진행 중 두 번째 switchToTab 은 차단 — 첫 전환만 수행', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/b.pdf', '/docs/c.pdf'], '/docs/a.pdf');
+    let release!: () => void;
+    M.persistCurrentSession.mockImplementation(() => new Promise<void>((r) => { release = r; }));
+    const first = switchToTab('/docs/b.pdf'); // persist 대기 중 (in-flight)
+    await switchToTab('/docs/c.pdf');         // 재진입 → 즉시 차단
+    expect(M.persistCurrentSession).toHaveBeenCalledTimes(1);
+    release();
+    await first;
+    expect(M.openPath).toHaveBeenCalledTimes(1);
+    expect(M.openPath).toHaveBeenCalledWith('/docs/b.pdf');
+  });
+
+  it('전환 진행 중 비활성 탭 닫기 차단 — 복원이 지워진 탭을 되살리는 desync 방지', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/b.pdf', '/docs/c.pdf'], '/docs/a.pdf');
+    let release!: () => void;
+    M.persistCurrentSession.mockImplementation(() => new Promise<void>((r) => { release = r; }));
+    const first = switchToTab('/docs/b.pdf');
+    await closeTab('/docs/c.pdf'); // 비활성 탭 닫기 시도 → 차단
+    expect(useAppStore.getState().openTabs).toHaveLength(3);
+    release();
+    await first;
+    expect(useAppStore.getState().openTabs).toHaveLength(3); // 전환 완료 후에도 탭 세트 보존
+  });
+
+  it('활성 탭 닫기 진행 중 switchToTab 차단', async () => {
+    seedTabs(['/docs/a.pdf', '/docs/b.pdf', '/docs/c.pdf'], '/docs/a.pdf');
+    let release!: () => void;
+    M.persistCurrentSession.mockImplementation(() => new Promise<void>((r) => { release = r; }));
+    const closing = closeTab('/docs/a.pdf'); // 활성 닫기 — persist 대기 중
+    await switchToTab('/docs/c.pdf');        // 재진입 → 차단
+    release();
+    await closing;
+    // 이웃(오른쪽 우선 = /docs/b.pdf) 전환만 수행 — switchToTab('/docs/c.pdf') 는 개입 못함
+    expect(M.openPath).toHaveBeenCalledTimes(1);
+    expect(M.openPath).toHaveBeenCalledWith('/docs/b.pdf');
   });
 });

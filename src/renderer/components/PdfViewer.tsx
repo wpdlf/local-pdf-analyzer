@@ -490,12 +490,15 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
         clearInterval(interval);
         scrollToPage();
         // L1: 폴링 소진(렌더 지연/실패) — 빈 placeholder 로 스크롤되므로 무성 실패 대신 안내.
-        useAppStore.getState().setNotice({ message: t('pdfviewer.jumpTimeout') });
+        // QA6-C: tRef 로 참조 — deps 에 t 를 두면 UI 언어 변경(새 함수 참조)만으로 effect 가
+        // 재발화해, 다른 페이지를 읽던 중에도 인용 대상 페이지로 원치 않는 재스크롤이 일어났다
+        // (렌더 effect 의 tRef 정책과 대칭).
+        useAppStore.getState().setNotice({ message: tRef.current('pdfviewer.jumpTimeout') });
       }
     }, 100);
     return () => clearInterval(interval);
     // jumpNonce: 동일 targetPage 재지정 시에도 effect 재실행해 재스크롤 (M1).
-  }, [targetPage, jumpNonce, loadState, totalPages, t]);
+  }, [targetPage, jumpNonce, loadState, totalPages]);
 
   // 4. ESC 키로 닫기
   //    v0.18.4 H3 fix: editable 포커스(textarea/input/contenteditable) 에서 ESC 는

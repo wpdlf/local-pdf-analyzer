@@ -574,6 +574,12 @@ export function useSummarize() {
       // 이미지 분석
       let textForSummary = doc.extractedText;
       let enrichedPagesRef: string[] | null = null;
+      // QA6-D: 파싱 당시 이미지 분석 OFF 로 추출이 스킵된 문서(imagesSkipped)는 지금 ON 이어도
+      // 분석할 이미지가 메모리에 없어 무음 no-op 이었다 — 재오픈 안내로 표면화(텍스트-only PDF
+      // 의 정당한 images=0 과 마커로 구분).
+      if (currentSettings.enableImageAnalysis && doc.images.length === 0 && doc.imagesSkipped) {
+        useAppStore.getState().setNotice({ message: t('summary.imagesSkippedNotice') });
+      }
       if (doc.images.length > 0 && currentSettings.enableImageAnalysis) {
         setProgressInfo({
           percent: 0, phase: 'image', current: 0, total: doc.images.length, elapsedMs: 0,

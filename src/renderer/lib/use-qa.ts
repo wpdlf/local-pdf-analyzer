@@ -947,12 +947,21 @@ export function useQa() {
   // verify 단계 embedding 중단용 — qaRequestId 는 draft/refine LLM 호출만 커버하므로
   // verifyAnswerSentences 내부의 배치 임베딩(rag-*)은 별도 signal 로 abort 해야 한다.
   const verifyAbortRef = useRef<AbortController | null>(null);
+  // QA6-C: 이 훅 인스턴스가 발급한 최신 requestId — 언마운트 cleanup 의 abort 소유권 판정용.
+  const ownRequestIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
       // C5-L(QA cycle5): 언마운트(설정 진입 등)도 불변식 보존 중단을 경유 — 이전 raw abort 는
       // partial 을 버리고 user 메시지를 홀로 남겨 짝(user→assistant) 불변식을 깼다(아래 참조).
-      abortQaPreservingThread();
+      // QA6-C: 단, 이 훅이 시작한 요청일 때만 — 컬렉션 reduce 스트림은 모듈
+      // (generateCollectionSummary) 소유라, dev StrictMode 의 마운트 유래 cleanup 1회 실행이
+      // QaChat 재마운트만으로 타 소유자의 reduce 를 잘라 partial 을 커밋했다. requestId 는
+      // 요청마다 유일하므로 소유 요청이 실제 in-flight 일 때만 일치한다.
+      const currentReqId = useAppStore.getState().qaRequestId;
+      if (currentReqId !== null && currentReqId === ownRequestIdRef.current) {
+        abortQaPreservingThread();
+      }
       verifyAbortRef.current?.abort();
     };
   }, []);
@@ -1009,6 +1018,7 @@ export function useQa() {
       // qaRequestId===requestId 체크가 항상 어긋나게 만들어 차단(useSummarize runClient 와 동형).
       requestId = client.prepareSummarize();
       useAppStore.getState().setQaRequestId(requestId);
+      ownRequestIdRef.current = requestId; // QA6-C: 언마운트 cleanup 소유권 판정용
       // 이 핸들러의 소유권 토큰. stream append 루프가 isQaGenerating 만 검사하면 stale 핸들러가
       // 새 세션(isQaGenerating=true)의 qaStream 을 오염시킬 수 있어, requestId 동일성까지 확인.
       const stillOwns = () =>
@@ -1126,6 +1136,7 @@ export function useQa() {
             const refineRequestId = client.prepareSummarize();
             useAppStore.getState().setQaRequestId(refineRequestId);
             requestId = refineRequestId; // 소유권 체크를 위해 갱신
+            ownRequestIdRef.current = refineRequestId; // QA6-C: 언마운트 cleanup 도 refine 을 소유
             // v0.18.3 H1 fix: draft 경로(line 581)는 question 을 sanitizePromptInput 으로 이스케이프하지만
             // refine 경로는 raw trimmed 를 썼기 때문에, `---` / `[질문]` / `[이전 대화]` 마커가 포함된
             // 질문이 프롬프트 구조를 오염시킬 수 있었다 (v0.18.0 회귀). 두 경로 모두 동일하게 정화.

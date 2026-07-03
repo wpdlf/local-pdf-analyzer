@@ -26,6 +26,18 @@ describe('chunkText', () => {
     expect(chunkText('\n\n\t', 4000)).toEqual([]);
   });
 
+  // QA6-B: 손상/수기편집 settings 의 비숫자 maxChunkSize 는 Math.max(100, NaN)=NaN 으로 폭발
+  // 하한이 무력화돼 전 문서가 1개 거대 청크로 강등됐다 — 기본값 폴백으로 정상 분할 유지.
+  it('비유한/비양수 maxChunkSize 는 기본값 폴백 (NaN 하한 무력화 방지)', () => {
+    const text = Array.from({ length: 200 }, (_, i) => `문단 ${i}: ${'가'.repeat(120)}`).join('\n\n');
+    expect(chunkText(text, Number('abc'))).toEqual(chunkText(text));      // NaN → 기본 4000
+    expect(chunkText(text, -5)).toEqual(chunkText(text));                 // 음수 → 기본 4000
+    // 숫자형 문자열(JSON 수기편집)은 숫자로 수용
+    expect(chunkText(text, '10' as unknown as number)).toEqual(chunkText(text, 10));
+    // RAG 경로도 동일 방어 (기본 500 폴백 — 단일 거대 청크 아님)
+    expect(chunkTextWithOverlap(text, Number('abc'))).toEqual(chunkTextWithOverlap(text));
+  });
+
   it('문단 경계에서 분할한다', () => {
     const text = '첫 번째 문단\n\n두 번째 문단\n\n세 번째 문단';
     const chunks = chunkText(text, 3); // 매우 작은 청크 크기

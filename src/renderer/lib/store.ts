@@ -273,9 +273,13 @@ export const useAppStore = create<AppState>((set) => ({
     if (removed?.docHash && collection.memberHashes.includes(removed.docHash)) {
       collection = { ...collection, memberHashes: collection.memberHashes.filter((h) => h !== removed.docHash) };
     }
-    // 모든 탭이 닫히면(문서 묶음 종료) 컬렉션 모드도 초기화 — 다음 묶음에 이전 상태가 새지 않도록.
-    // (탭 전환/+ 새 탭은 openTabs 가 비지 않으므로 컬렉션 상태 유지)
-    if (openTabs.length === 0 && (collection.enabled || collection.memberHashes.length > 0)) {
+    // 컬렉션 후보(docHash 보유 탭)가 2개 미만이면 컬렉션 모드 초기화 — CollectionBar 는
+    // candidates<2 에서 렌더되지 않아(토글 UI 소멸) enabled 가 잔존하면 끌 방법이 없고,
+    // resolveCollectionSearch 가 컬렉션 경로로 진입해 모든 답변에 오도성 강등 경고가 붙는다
+    // (QA6-C M1: 탭 2→1 축소 유령 활성). 0개(전체 닫힘) 리셋의 일반화 — 다음 묶음 누수 방지 겸용.
+    // (탭 전환/+ 새 탭은 openTabs 가 줄지 않으므로 컬렉션 상태 유지)
+    const candidateCount = openTabs.filter((t) => t.docHash).length;
+    if (candidateCount < 2 && (collection.enabled || collection.memberHashes.length > 0)) {
       collection = { enabled: false, memberHashes: [] };
     }
     return { openTabs, collection };
@@ -577,7 +581,15 @@ export const useAppStore = create<AppState>((set) => ({
       settingsSaveTimer = null;
       // 성공/실패/컨텍스트 소실 모두에서 settle — 소비자는 "커밋 시도가 끝났다"만 알면 된다
       // (실패 시 main 은 구 설정으로 남지만, 에러 배너가 뜨고 다음 변경에서 재시도).
-      const settleCommit = () => { settingsCommitResolve?.(); settingsCommitResolve = null; };
+      // QA6-D: 단, 새 pending flush(settingsSaveTimer 비-null)가 있으면 settle 을 그 flush 로
+      // 이월 — A 의 IPC in-flight 중 변경 B 가 들어오면 같은 promise 를 공유하는데, A 완료
+      // 시점에 settle 하면 B 미커밋 상태에서 whenSettingsCommitted() 가 통과해 구 프로바이더로
+      // 임베딩하는 창(C5-M3 가 막으려던 결과)이 남았다.
+      const settleCommit = () => {
+        if (settingsSaveTimer !== null) return;
+        settingsCommitResolve?.();
+        settingsCommitResolve = null;
+      };
       // 300ms 후 발화 시점에 렌더러 컨텍스트(window/electronAPI)가 이미 사라졌을 수 있다
       // (앱 종료 직전, 테스트 환경 teardown). 동기 ReferenceError(unhandled)를 막기 위해 가드.
       if (typeof window === 'undefined' || !window.electronAPI?.settings?.set) { settleCommit(); return; }

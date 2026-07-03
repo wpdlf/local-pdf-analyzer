@@ -80,6 +80,12 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
         persistedSummary = firstEntry[1];
       }
     }
+    // QA6-B: 본문 필드값 검증 — 수기 편집/parseable 손상 세션의 비문자열 content 는 main 스토어의
+    // normalize 철학과 비대칭하게 무검증 주입되어, SafeMarkdown ErrorBoundary 렌더 크래시 흡수
+    // 이후에도 다음 Q&A 턴의 formatHistory→sanitizePromptInput 이 TypeError 로 턴을 실패시켰다.
+    if (persistedSummary && typeof persistedSummary.content !== 'string') {
+      persistedSummary = undefined;
+    }
     if (persistedSummary && !skipSummaryRestore) {
       const summary: Summary = {
         id: `restored-${doc.id}`,
@@ -97,8 +103,13 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
     }
 
     // Q&A 복원 (C5-M2: in-flight Q&A/컬렉션 스트리밍 위로 덮어쓰지 않음)
+    // QA6-B: 항목 정규화 — role/content 가 유효한 메시지만 주입(위 summary 검증과 동일 사유).
     if (!skipQaRestore && Array.isArray(session.qaMessages) && session.qaMessages.length > 0) {
-      store.setQaMessages(session.qaMessages);
+      const validMessages = session.qaMessages.filter((m) =>
+        !!m && typeof m === 'object'
+        && (m.role === 'user' || m.role === 'assistant')
+        && typeof m.content === 'string');
+      if (validMessages.length > 0) store.setQaMessages(validMessages);
     }
 
     // 인덱스 복원 — 현재 임베딩 모델과 일치할 때만(불일치 → useRagBuilder 가 재빌드).
