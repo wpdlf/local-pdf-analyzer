@@ -42,6 +42,23 @@ vi.mock('fs/promises', () => {
         const size = typeof v === 'string' ? Buffer.byteLength(v) : v.byteLength;
         return { size };
       }),
+      // QA6-B(reconcile): withFileTypes readdir — 평면 파일맵에서 1단계 하위 항목을 유도.
+      // '<dir>/<name>/...' 형태면 <name> 은 디렉토리, '<dir>/<name>' 이 파일이면 파일.
+      readdir: vi.fn(async (p: string, _opts?: unknown) => {
+        const prefix = norm(p).replace(/\/$/, '') + '/';
+        const entries = new Map<string, boolean>(); // name → isDirectory
+        let found = false;
+        for (const k of V.files.keys()) {
+          if (!k.startsWith(prefix)) continue;
+          found = true;
+          const rest = k.slice(prefix.length);
+          const idx = rest.indexOf('/');
+          if (idx === -1) entries.set(rest, entries.get(rest) ?? false);
+          else entries.set(rest.slice(0, idx), true);
+        }
+        if (!found) throw enoent();
+        return [...entries.entries()].map(([name, isDir]) => ({ name, isDirectory: () => isDir }));
+      }),
     },
   };
 });
@@ -49,7 +66,7 @@ vi.mock('fs/promises', () => {
 import fsp from 'fs/promises';
 import {
   writeSession, readSession, readSessionMeta, patchSession, mergeSessionSummary, deleteSession, clearAll,
-  listSessions, sessionStats, enforceLru, isValidDocHash, loadManifest,
+  listSessions, sessionStats, enforceLru, isValidDocHash, loadManifest, reconcileSessions,
 } from '../session-store';
 
 const DIR = '/userData/sessions';
@@ -546,5 +563,70 @@ describe('writeSession LRU 통합', () => {
     // rm 실패 → 엔트리 유지(manifest 와 디스크 일치 — 고아 아님).
     expect(list.some((e) => e.docHash === hashOf(0))).toBe(true);
     expect(await readSession(DIR, hashOf(0))).not.toBeNull();
+  });
+});
+
+// QA6-B: 부팅 시 1회 자가치유 — manifest 손상 리셋/엔트리 폐기로 디스크에 남은 고아 세션
+// 디렉토리를 재등록하고, 복원 불가(부재/손상/정체성 불일치 session.json) 디렉토리를 회수.
+describe('reconcileSessions (부팅 자가치유)', () => {
+  const p = (h: string, f: string) => `${DIR}/${h}/${f}`;
+
+  it('manifest 손상 리셋 후 고아 디렉토리를 재등록 — 목록·stats 에 복귀', async () => {
+    const h1 = hashOf(1);
+    const h2 = hashOf(2);
+    await writeSession(DIR, { meta: metaOf(h1), session: { docHash: h1, fileName: 'a.pdf', filePath: '/a.pdf', pageCount: 3 }, blob: null, now: 1000 });
+    await writeSession(DIR, { meta: metaOf(h2), session: { docHash: h2, fileName: 'b.pdf', filePath: '/b.pdf', pageCount: 5 }, blob: null, now: 2000 });
+    // manifest 부분 쓰기 손상 → loadManifest 가 [] 로 리셋되는 상황 모사
+    V.files.set(`${DIR}/manifest.json`, '{corrupt');
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r).toEqual({ registered: 2, removed: 0 });
+    const list = await listSessions(DIR);
+    expect(list.map((e) => e.docHash).sort()).toEqual([h1, h2].sort());
+    const e1 = list.find((e) => e.docHash === h1)!;
+    expect(e1.fileName).toBe('a.pdf');           // session.json 본문 기준 재구성
+    expect(e1.byteSize).toBeGreaterThan(0);      // 디스크 실측 기준
+    expect((await sessionStats(DIR)).count).toBe(2);
+  });
+
+  it('session.json 부재/손상/docHash 불일치 디렉토리는 회수(removed) — 등록분은 보존', async () => {
+    const good = hashOf(11);
+    const corrupt = hashOf(12);
+    const mismatch = hashOf(13);
+    const empty = hashOf(14);
+    await writeSession(DIR, { meta: metaOf(good), session: { docHash: good, fileName: 'g.pdf', filePath: '/g.pdf' }, blob: null, now: 1000 });
+    V.files.set(p(corrupt, 'session.json'), '{broken');
+    V.files.set(p(mismatch, 'session.json'), JSON.stringify({ docHash: hashOf(99), fileName: 'x.pdf', filePath: '/x.pdf' }));
+    V.files.set(p(empty, 'index.bin'), Buffer.from([1, 2, 3])); // session.json 없이 blob 만 — 복원 불가 찌꺼기
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r).toEqual({ registered: 0, removed: 3 });
+    expect(V.files.has(p(corrupt, 'session.json'))).toBe(false);
+    expect(V.files.has(p(mismatch, 'session.json'))).toBe(false);
+    expect(V.files.has(p(empty, 'index.bin'))).toBe(false);
+    expect((await listSessions(DIR)).map((e) => e.docHash)).toEqual([good]);
+  });
+
+  it('전부 등록된 상태면 no-op — manifest 재기록 없음', async () => {
+    const h = hashOf(21);
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h, fileName: 'a.pdf', filePath: '/a.pdf' }, blob: null, now: 1000 });
+    vi.mocked(fsp.writeFile).mockClear();
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r).toEqual({ registered: 0, removed: 0 });
+    expect(vi.mocked(fsp.writeFile)).not.toHaveBeenCalled();
+  });
+
+  it('sessions 디렉토리 부재(첫 실행) → {0,0} (throw 없음)', async () => {
+    expect(await reconcileSessions(DIR, 1)).toEqual({ registered: 0, removed: 0 });
+  });
+
+  it('사이드카(index.meta.json) chunkMeta 로 chunkCount 복원', async () => {
+    const h = hashOf(31);
+    V.files.set(p(h, 'session.json'), JSON.stringify({ docHash: h, fileName: 'c.pdf', filePath: '/c.pdf', pageCount: 2, embedModel: 'nomic-embed-text', embedDim: 3 }));
+    V.files.set(p(h, 'index.meta.json'), JSON.stringify({ chunkMeta: [{ t: 'a' }, { t: 'b' }, { t: 'c' }] }));
+    V.files.set(p(h, 'index.bin'), Buffer.from(new Uint8Array(36)));
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r.registered).toBe(1);
+    const entry = (await listSessions(DIR)).find((e) => e.docHash === h)!;
+    expect(entry.chunkCount).toBe(3);
+    expect(entry.embedModel).toBe('nomic-embed-text');
   });
 });

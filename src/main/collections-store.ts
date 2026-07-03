@@ -23,6 +23,12 @@ async function writeFileAtomic(filePath: string, data: string): Promise<void> {
   const tmp = filePath + '.tmp';
   try {
     await fsp.writeFile(tmp, data);
+    // QA6-B: rename 전 fsync(best-effort) — 전원 차단 시 0바이트/절단 파일 방지. 컬렉션 파일은
+    // 손상 1회에 전량 리셋되는 단일 실패점이라 소형 파일 한정으로 동기화(session-store 와 동일 정책).
+    try {
+      const fh = await fsp.open(tmp, 'r+');
+      try { await fh.sync(); } finally { await fh.close(); }
+    } catch { /* fsync 불가 환경(테스트 모킹 등) — best-effort */ }
     await fsp.rename(tmp, filePath);
   } catch (err) {
     try { await fsp.unlink(tmp); } catch { /* 이미 삭제됨 */ }

@@ -46,6 +46,12 @@ export async function saveSettings(
   const tmpPath = filePath + '.tmp';
   try {
     await fsp.writeFile(tmpPath, JSON.stringify(settings, null, 2), 'utf-8');
+    // QA6-B: rename 전 fsync(best-effort) — 전원 차단 시 0바이트/절단 settings 방지
+    // (session-store/collections-store 와 동일 정책, 소형 크리티컬 파일 한정).
+    try {
+      const fh = await fsp.open(tmpPath, 'r+');
+      try { await fh.sync(); } finally { await fh.close(); }
+    } catch { /* fsync 불가 환경(테스트 모킹 등) — best-effort */ }
     await fsp.rename(tmpPath, filePath);
   } catch (err) {
     try { await fsp.unlink(tmpPath); } catch { /* 이미 삭제됨 */ }

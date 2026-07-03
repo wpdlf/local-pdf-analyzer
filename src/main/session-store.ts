@@ -45,10 +45,20 @@ function manifestPath(sessionsDir: string): string {
   return path.join(sessionsDir, 'manifest.json');
 }
 
-async function writeFileAtomic(filePath: string, data: string | Uint8Array): Promise<void> {
+async function writeFileAtomic(filePath: string, data: string | Uint8Array, options?: { sync?: boolean }): Promise<void> {
   const tmp = filePath + '.tmp';
   try {
     await fsp.writeFile(tmp, data);
+    // QA6-B: rename 전 fsync(best-effort) — 저널링 FS 에서 전원 차단 시 rename 메타데이터만
+    // 커밋되어 0바이트/절단 파일이 남는 것을 방지. manifest 처럼 "손상 1회=전량 리셋"인 소형
+    // 크리티컬 파일만 opt-in(세션 본문/index.bin 은 손상 시 재계산으로 자가치유되고 멀티MB
+    // fsync 는 저장 지연이 커서 제외). 실패는 무시 — 원자성(rename)은 그대로 유지된다.
+    if (options?.sync) {
+      try {
+        const fh = await fsp.open(tmp, 'r+');
+        try { await fh.sync(); } finally { await fh.close(); }
+      } catch { /* fsync 불가 환경(테스트 모킹 등) — best-effort */ }
+    }
     await fsp.rename(tmp, filePath);
   } catch (err) {
     try { await fsp.unlink(tmp); } catch { /* 이미 삭제됨 */ }
@@ -107,7 +117,8 @@ export async function loadManifest(sessionsDir: string): Promise<SessionManifest
 
 async function saveManifest(sessionsDir: string, manifest: SessionManifest): Promise<void> {
   await fsp.mkdir(sessionsDir, { recursive: true });
-  await writeFileAtomic(manifestPath(sessionsDir), JSON.stringify(manifest, null, 2));
+  // sync: manifest 는 손상 시 전 세션이 목록·LRU·검색에서 사라지는 단일 실패점 (QA6-B)
+  await writeFileAtomic(manifestPath(sessionsDir), JSON.stringify(manifest, null, 2), { sync: true });
 }
 
 /**
@@ -541,4 +552,100 @@ export async function sessionStats(sessionsDir: string): Promise<SessionStats> {
   const manifest = await loadManifest(sessionsDir);
   const totalBytes = manifest.entries.reduce((sum, e) => sum + e.byteSize, 0);
   return { count: manifest.entries.length, totalBytes, dir: sessionsDir };
+}
+
+/**
+ * 부팅 시 1회 자가치유(QA6-B): manifest 손상 리셋(부분 쓰기/전원 차단 → loadManifest 가 [] 로
+ * 복구)이나 개별 엔트리 폐기(normalizeEntry) 후 디스크에 남은 세션 디렉토리는 목록·검색·LRU·
+ * stats 에서 영구 제외된 채 잔존했다(재오픈하는 문서만 savePartial ok:false → full-save 폴백으로
+ * 자가치유, 나머지는 "전체 삭제" 외 회수 수단 없음 — 최대 수백 MB 디스크 누수). 디렉토리 ↔
+ * manifest 를 대조해 유효한 session.json 을 가진 고아는 재등록하고, 본문 부재/손상/정체성
+ * 불일치로 어떤 경로로도 복원 불가능한 디렉토리는 제거한다.
+ *
+ * - 호출자는 세션 쓰기 mutex(serializeSessionWrite)로 직렬화할 것 — saveManifest 원자성.
+ * - 일시 I/O 오류(readSessionMeta throw)는 판단 불가로 보존, 다음 부팅에서 재시도.
+ * - LRU 는 여기서 강제하지 않는다 — 다음 writeSession 의 enforceLru 가 정상 수렴.
+ * - 절대 throw 하지 않는다(부팅 경로 best-effort).
+ */
+export async function reconcileSessions(
+  sessionsDir: string,
+  now: number,
+): Promise<{ registered: number; removed: number }> {
+  let registered = 0;
+  let removed = 0;
+  try {
+    let dirents;
+    try {
+      dirents = await fsp.readdir(sessionsDir, { withFileTypes: true });
+    } catch {
+      return { registered, removed }; // 첫 실행(sessions 디렉토리 부재) 등 — 할 일 없음
+    }
+    const manifest = await loadManifest(sessionsDir);
+    const known = new Set(manifest.entries.map((e) => e.docHash));
+    for (const d of dirents) {
+      if (!d.isDirectory() || !DOC_HASH_RE.test(d.name) || known.has(d.name)) continue;
+      let meta: { session: unknown } | null = null;
+      try {
+        meta = await readSessionMeta(sessionsDir, d.name);
+      } catch {
+        continue; // 일시 I/O 오류 → 판단 불가, 보존
+      }
+      const s = meta?.session as Record<string, unknown> | null | undefined;
+      const restorable = !!s && typeof s === 'object'
+        && s.docHash === d.name // 렌더러 복원 가드(session.docHash===docHash)와 동일 — 불일치면 영원히 복원 불가
+        && typeof s.fileName === 'string' && typeof s.filePath === 'string';
+      const dir = sessionDir(sessionsDir, d.name);
+      if (!restorable) {
+        // session.json 부재/손상/정체성 불일치 — 어떤 경로로도 사용 불가한 찌꺼기, 회수
+        try {
+          await fsp.rm(dir, { recursive: true, force: true });
+          removed++;
+        } catch { /* rm 실패(잠김) → 다음 부팅에서 재시도 */ }
+        continue;
+      }
+      // byteSize·타임스탬프는 디스크 실측 기준으로 재구성
+      let byteSize = 0;
+      let mtimeIso = new Date(now).toISOString();
+      for (const f of [SESSION_JSON, INDEX_BIN, INDEX_META]) {
+        try {
+          const st = await fsp.stat(path.join(dir, f));
+          byteSize += st.size;
+          // mtimeMs 비유한(모킹/특수 FS) 시 now 폴백 유지
+          if (f === SESSION_JSON && Number.isFinite(st.mtimeMs)) {
+            mtimeIso = new Date(st.mtimeMs).toISOString();
+          }
+        } catch { /* 부재 파일 skip */ }
+      }
+      // chunkCount: 구버전은 session.json 의 chunkMeta, 신버전은 index.meta.json 사이드카
+      let chunkCount = Array.isArray(s.chunkMeta) ? s.chunkMeta.length : 0;
+      if (chunkCount === 0) {
+        try {
+          const im = await readIndexMeta(sessionsDir, d.name);
+          if (im && Array.isArray(im.chunkMeta)) chunkCount = im.chunkMeta.length;
+        } catch { /* 사이드카 I/O 오류 — chunkCount 0 유지 */ }
+      }
+      // writeSession 의 meta 정규화와 동일 규칙으로 재등록
+      manifest.entries.push({
+        docHash: d.name,
+        fileName: (s.fileName as string).slice(0, 512),
+        filePath: (s.filePath as string).slice(0, 4096),
+        pageCount: typeof s.pageCount === 'number' && Number.isFinite(s.pageCount) ? s.pageCount : 0,
+        embedModel: typeof s.embedModel === 'string' ? s.embedModel.slice(0, 128) : null,
+        embedDim: typeof s.embedDim === 'number' && Number.isFinite(s.embedDim) ? s.embedDim : null,
+        chunkCount,
+        byteSize,
+        createdAt: mtimeIso,
+        lastAccessed: mtimeIso, // mtime 기준 — 오래된 고아는 이후 LRU 에서 자연히 먼저 밀린다
+      });
+      registered++;
+    }
+    if (registered > 0) {
+      manifest.schemaVersion = SESSION_SCHEMA_VERSION;
+      await saveManifest(sessionsDir, manifest);
+    }
+    return { registered, removed };
+  } catch (err) {
+    console.warn('[session] reconcile failed:', (err as Error)?.message);
+    return { registered, removed };
+  }
 }

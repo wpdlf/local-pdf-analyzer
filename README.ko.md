@@ -483,7 +483,7 @@ PDF 파일
 
 - **단위 테스트 1373건 / 82파일** — renderer·shared 916 + main 457. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service·전체 문서 검색까지 행위 테스트, 렌더러/preload 레이어(컴포넌트 16종 전수 + use-summarize/use-session/pdf-parser/safe-markdown 등 핵심 라이브러리 + preload 브리지)는 happy-dom 으로 행위 테스트
 - **Playwright E2E** — 실제 Electron 빌드를 구동하는 CI-결정적 테스트 9건(콜드 스타트 위자드·PDF 파싱·세션/설정 재시작 복원·업로드 에러 경로), 전부 AI 비의존, 멀티탭 복원과 요약/Q&A/컬렉션은 로컬-전용 Ollama 스펙으로 커버
-- **CI 게이트** — `tsc --noEmit`(strict, e2e 전용 타입체크 프로젝트 포함), 커버리지 임계(77/69/79/81) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 22/24 매트릭스
+- **CI 게이트** — `tsc --noEmit`(strict, e2e 전용 타입체크 프로젝트 포함), 커버리지 임계(80/72/80/83) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 22/24 매트릭스 + Windows 유닛 테스트 레그
 - **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, 50+ 라운드 연속 Critical 0건 (검출된 High/Important 는 릴리즈 전 즉시 수정 — 예: R41 이 v0.19.0 의 세션 손상 High 를 사전 차단; 최근 라운드는 Low~Medium 검출(여전히 Critical 0) — 최근 라운드들은 성능 딥다이브(지연 로딩·PDF 뷰어 메모리 윈도잉·자동저장/IPC 절감)와 안정성·데이터무결성 하드닝을 뒷받침해 v0.31.16 까지 출시)
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 

@@ -168,12 +168,14 @@ describe('apikey:save', () => {
 
   // C5-L(QA cycle5): code 도 함께 전파 — 렌더러가 error 원문(한국어/절대경로 가능) 대신
   // code→i18n 매핑으로 표시할 수 있게 하는 계약.
-  it('KEYCHAIN_UNAVAILABLE throw → {success:false, error, code} 로 매핑', async () => {
+  // QA6-A: error 페이로드 자체도 generic — fs 에러 원문의 userData 절대경로를 IPC 로 실어
+  // 보내지 않는다(렌더러는 code 만 사용).
+  it('KEYCHAIN_UNAVAILABLE throw → {success:false, error(generic), code} 로 매핑 — 원문 비전송', async () => {
     H.store.save.mockImplementation(() => {
-      throw Object.assign(new Error('OS 키체인 사용 불가'), { code: 'KEYCHAIN_UNAVAILABLE' });
+      throw Object.assign(new Error('EACCES: rename C:\\Users\\x\\api-keys.enc.tmp'), { code: 'KEYCHAIN_UNAVAILABLE' });
     });
     expect(await invoke('apikey:save', 'openai', 'sk-o'))
-      .toEqual({ success: false, error: 'OS 키체인 사용 불가', code: 'KEYCHAIN_UNAVAILABLE' });
+      .toEqual({ success: false, error: 'API key save failed', code: 'KEYCHAIN_UNAVAILABLE' });
   });
 });
 
@@ -532,10 +534,9 @@ describe('session:* (영속화 핸들러)', () => {
     expect(wroteSession).toBe(true);
   });
 
-  // C5-L(QA cycle5): blob 타입/크기 검증 — 숫자 blob 은 writeSession 의 new Uint8Array(blob) 이
-  // **길이** 로 해석해 GB 단위 할당을 시도했고(자기-DoS), 상한 없는 ArrayBuffer 는 사후 LRU 를
-  // 우회한 단건 초대형 기록이 가능했다. 유효 ArrayBuffer(상한 이내)는 계속 허용.
-  it('session:save blob 검증: 숫자/초대형 거부, 유효 ArrayBuffer 허용', async () => {
+  // C5-L(QA cycle5): blob 타입 검증 — 숫자 blob 은 writeSession 의 new Uint8Array(blob) 이
+  // **길이** 로 해석해 GB 단위 할당을 시도했다(자기-DoS). 유효 ArrayBuffer 는 계속 허용.
+  it('session:save blob 검증: 숫자/비-ArrayBuffer 거부, 유효 ArrayBuffer 허용', async () => {
     const meta = { docHash: HASH, fileName: 'd.pdf', filePath: '/d.pdf', pageCount: 3, embedModel: 'm', embedDim: 3, chunkCount: 1 };
     // 숫자 blob(길이 해석 위협) → 할당 시도 전에 거부
     expect(await invoke('session:save', { meta, session: { docHash: HASH }, blob: 2 ** 31 }))
@@ -546,6 +547,25 @@ describe('session:* (영속화 핸들러)', () => {
     // 유효 ArrayBuffer 는 정상 저장
     const r = await invoke('session:save', { meta, session: { docHash: HASH }, blob: new ArrayBuffer(16) });
     expect(r).toEqual({ ok: true });
+  });
+
+  // QA6-D: 상한(64MB) 초과 blob 은 세션 전체 거부 대신 blob 만 강등 — 이전엔 정당한 초대형
+  // 인덱스(고차원 클라우드 임베딩 × 수천 청크)가 요약/Q&A/본문까지 영구 저장 불가로 만들었다.
+  // 본문은 저장, index.bin 미기록, manifest 인덱스 메타는 비워 '인덱스 있음' 오표시 방지.
+  it('session:save 상한 초과 blob → blob 강등 + { ok:true } (본문 저장, index.bin 미기록)', async () => {
+    const meta = { docHash: HASH, fileName: 'd.pdf', filePath: '/d.pdf', pageCount: 3, embedModel: 'm', embedDim: 3, chunkCount: 1 };
+    H.fsp.writeFile.mockClear();
+    const r = await invoke('session:save', { meta, session: { docHash: HASH }, blob: new ArrayBuffer(64 * 1024 * 1024 + 1) });
+    expect(r).toEqual({ ok: true });
+    expect(H.fsp.writeFile.mock.calls.some((c) => String(c[0]).includes('session.json'))).toBe(true);
+    expect(H.fsp.writeFile.mock.calls.some((c) => String(c[0]).includes('index.bin'))).toBe(false);
+    // manifest 인덱스 메타 강등 확인 (embedModel null / chunkCount 0)
+    const manifestWrite = H.fsp.writeFile.mock.calls.filter((c) => String(c[0]).includes('manifest.json')).pop();
+    expect(manifestWrite).toBeDefined();
+    const written = JSON.parse(String(manifestWrite?.[1])) as { entries: { docHash: string; embedModel: string | null; chunkCount: number }[] };
+    const entry = written.entries.find((e) => e.docHash === HASH);
+    expect(entry?.embedModel).toBeNull();
+    expect(entry?.chunkCount).toBe(0);
   });
 
   it('session:delete 잘못된 docHash → { ok:false }', async () => {

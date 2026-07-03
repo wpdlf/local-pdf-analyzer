@@ -43,6 +43,7 @@ import {
   listSessions,
   sessionStats,
   isValidDocHash,
+  reconcileSessions,
 } from './session-store';
 // 전체 문서 키워드 검색(순수). session:search 핸들러가 각 세션 본문을 읽어 위임한다.
 import { searchPersistedSession, rankSearchResults, MIN_QUERY_LENGTH } from './session-search';
@@ -374,9 +375,12 @@ export function registerIpcHandlers(): void {
       // C5-L(QA cycle5): code 를 함께 전파 — 렌더러가 code→i18n 매핑으로 표시한다. 이전엔
       // error 원문만 반환해 KEYCHAIN_UNAVAILABLE 의 한국어 메시지가 영어 UI 에 그대로 노출
       // 되고, fs rename 실패(EACCES/EBUSY) 시 Node 에러의 절대경로가 설정 패널에 노출됐다.
+      // QA6-A: error 페이로드 자체도 generic 으로 — 렌더러는 code 만 사용하므로, fs 에러
+      // 원문의 userData 절대경로(...\api-keys.enc)를 IPC 로 실어 보낼 이유가 없다(우발적
+      // 로그/표시 노출 차단). 진단은 code 로 충분.
       return {
         success: false,
-        error: err instanceof Error ? err.message : 'API 키 저장 실패',
+        error: 'API key save failed',
         code: (err as { code?: string }).code,
       };
     }
@@ -399,9 +403,10 @@ export function registerIpcHandlers(): void {
       return { success: true };
     } catch (err) {
       // C5-L: apikey:save 와 동일 — code 전파(렌더러 i18n 매핑, 원문/경로 비노출).
+      // QA6-A: error 페이로드도 generic (save 와 동일 — fs 에러 원문의 절대경로 비전송).
       return {
         success: false,
-        error: err instanceof Error ? err.message : 'API 키 삭제 실패',
+        error: 'API key delete failed',
         code: (err as { code?: string }).code,
       };
     }
@@ -489,6 +494,16 @@ export function registerIpcHandlers(): void {
     return next;
   }
 
+  // QA6-B: 부팅 시 1회 자가치유 — manifest 손상 리셋/엔트리 폐기로 고아가 된 세션 디렉토리를
+  // 재등록하고, 복원 불가능한 찌꺼기 디렉토리를 회수한다(디스크 누수 차단). 쓰기 mutex 로
+  // 직렬화해 초기 자동저장과의 manifest read-modify-write 경합을 배제. 실패는 무해(best-effort,
+  // reconcileSessions 는 throw 하지 않음).
+  void serializeSessionWrite(() => reconcileSessions(sessionsDir, Date.now())).then((r) => {
+    if (r.registered > 0 || r.removed > 0) {
+      console.log(`[session] reconcile: ${r.registered} re-registered, ${r.removed} removed`);
+    }
+  });
+
   ipcMain.handle('session:load', async (_event, docHash: unknown) => {
     if (!isValidDocHash(docHash)) return null;
     const result = await readSession(sessionsDir, docHash);
@@ -510,17 +525,25 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('session:save', async (_event, payload: unknown) => {
     const p = payload as { meta?: SessionSaveMeta; session?: unknown; blob?: ArrayBuffer | null; keepIndex?: boolean } | null;
     if (!p || !p.meta || !isValidDocHash(p.meta.docHash)) return { ok: false };
-    const meta = p.meta;
+    let meta = p.meta;
     const session = p.session;
     // C5-L: blob 타입/크기 검증 — 이전엔 `p.blob ?? null` 무검증 통과라, 손상 렌더러가 숫자
     // (예: 2**31)를 보내면 writeSession 의 `new Uint8Array(blob)` 이 이를 **길이** 로 해석해
     // main 프로세스에서 GB 단위 할당을 시도했다(ai:embed 동시성 캡과 동일 위협 클래스인데
-    // 이 채널만 방어가 없던 비대칭). ArrayBuffer 외 타입/상한 초과는 저장 거부.
+    // 이 채널만 방어가 없던 비대칭). ArrayBuffer 외 타입은 저장 거부.
     const rawBlob = p.blob ?? null;
-    if (rawBlob !== null && !(rawBlob instanceof ArrayBuffer && rawBlob.byteLength <= MAX_SESSION_BLOB_BYTES)) {
+    if (rawBlob !== null && !(rawBlob instanceof ArrayBuffer)) {
       return { ok: false };
     }
-    const blob = rawBlob;
+    // QA6-D: 상한 초과는 세션 전체 거부 대신 blob 만 강등 — 정당한 초대형 인덱스(고차원 클라우드
+    // 임베딩 × 수천 청크)가 요약/Q&A/본문까지 영구 저장 불가로 만들던 것을 해소. 인덱스는
+    // 미영속(재오픈 시 재임베딩)하고 manifest 인덱스 메타도 함께 비워 '인덱스 있음' 오표시
+    // (컬렉션 ready 오판정)를 막는다. 타입 위반 거부(보안 가드)는 위에서 그대로 유지.
+    let blob = rawBlob;
+    if (blob !== null && blob.byteLength > MAX_SESSION_BLOB_BYTES) {
+      blob = null;
+      meta = { ...meta, embedModel: null, embedDim: null, chunkCount: 0 };
+    }
     const keepIndex = p.keepIndex === true;
     return serializeSessionWrite(() => writeSession(sessionsDir, { meta, session, blob, keepIndex, now: Date.now() }));
   });
