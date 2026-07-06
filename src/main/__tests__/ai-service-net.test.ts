@@ -581,6 +581,29 @@ describe('generate → streamRequest (스트리밍)', () => {
     expect(__activeRequestCount()).toBe(0);
   });
 
+  // 4-way 파리티(딥다이브): 클라우드 생성 출력 토큰 상한(4096)이 세 프로바이더 모두 요청 바디에
+  // 실리는지. 이전엔 Claude/Gemini 만 있고 OpenAI 는 누락돼 출력 길이·비용이 갈렸다.
+  it.each([
+    ['claude', '"max_tokens":4096', 'data: {"type":"content_block_delta","delta":{"text":"hi"}}\n'],
+    ['openai', '"max_tokens":4096', 'data: {"choices":[{"delta":{"content":"hi"}}]}\n'],
+    ['gemini', '"maxOutputTokens":4096', 'data: {"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}\n'],
+  ] as const)('%s generate 요청 바디에 출력 토큰 상한 포함', async (provider, needle, tokenLine) => {
+    let capturedReq: ReturnType<typeof makeReq> | undefined;
+    M.httpsRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      capturedReq = req;
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => { res.emit('data', Buffer.from(tokenLine)); res.emit('end'); });
+      });
+      return req;
+    });
+    await generate('cap1', { text: 'x', type: 'full', provider, model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'key', makeWin() as never);
+    const body = String(capturedReq!.write.mock.calls[0]![0]);
+    expect(body).toContain(needle);
+  });
+
   it('gemini finishReason MAX_TOKENS 라도 토큰을 방출했으면 정상 완료 (과차단 방지)', async () => {
     M.httpsRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
       const req = makeReq();
