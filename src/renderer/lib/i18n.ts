@@ -379,6 +379,9 @@ export const _translations = {
   'mainerr.apiKeyMissing': { ko: '{provider} API 키가 설정되지 않았습니다.', en: 'No {provider} API key is configured.' },
   'mainerr.apiKeyInvalid': { ko: 'API 키가 유효하지 않습니다.', en: 'The API key is not valid.' },
   'mainerr.responseBlocked': { ko: 'AI 응답이 차단되었습니다 (사유: {reason}). 문서 내용 또는 출력 한도를 확인해주세요.', en: 'The AI response was blocked (reason: {reason}). Check the document content or output limits.' },
+  // QA8(B-MED): 토큰 0개로 정상 종료(HTTP 200)한 스트림 — Gemini 는 blockReason 으로 잡혔지만
+  // Claude/OpenAI 는 content_filter/빈 delta 로 조용히 빈 요약을 "완료"로 표시했다(무음 no-op).
+  'mainerr.emptyResponse': { ko: 'AI 가 빈 응답을 반환했습니다. 잠시 후 다시 시도하거나 요약 유형·문서를 확인해주세요.', en: 'The AI returned an empty response. Please retry, or check the summary type and document.' },
   'mainerr.streamNoResponse': { ko: 'AI 서버 응답이 중단되었습니다 (60초 무응답).', en: 'The AI server stopped responding (no data for 60s).' },
   'mainerr.streamDisconnected': { ko: 'AI 스트림 연결이 끊어졌습니다.', en: 'The AI stream connection was lost.' },
   'mainerr.streamTimeout': { ko: 'AI 서버 응답 타임아웃 (5분).', en: 'The AI server response timed out (5 min).' },

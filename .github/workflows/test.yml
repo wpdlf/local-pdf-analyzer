@@ -21,7 +21,7 @@ jobs:
     # (v0.28.0): Node 20.11 매트릭스 제거. electron@41.8.0 / @electron/get@5.0.0 가 ESM 전용으로
     # `engines.node >=22.12` 를 요구 → 20.11 에서 electron postinstall(install.js, CommonJS)이
     # require('@electron/get') 시 ERR_REQUIRE_ESM 로 `npm ci` 가 하드 실패 (v0.27.0 Test red 원인).
-    # 20.11 EoL(2026-04) 도 경과. engines.node 하한도 >=22.12 로 정합.
+    # 20.11 EoL(2026-04) 도 경과. engines.node 하한도 이후 >=22.13 으로 상향 정합(현행).
     # C5-I4(QA cycle5): windows-2025 유닛 레그 추가 — 이전엔 Windows 유닛 신호가 release.yml
     # (태그 시점)에만 있어, 경로 구분자/pwsh 회귀가 main 에 조용히 쌓이고 발견 시점 = 태그 push
     # 후(수정 + 재태깅 강제)였다. Node 22 단일로 비용 최소화(교차 OS×Node 매트릭스 불필요).

@@ -14,6 +14,7 @@ import type { OpenTab, CollectionState } from '../types';
 import { DEFAULT_SETTINGS } from '../types';
 import { VectorStore } from './vector-store';
 import { sanitizeErrorPath } from './error-sanitize';
+import { persistCurrentSession } from './use-session';
 
 // 설정 저장 IPC 디바운스 타이머
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -57,6 +58,14 @@ export function flushPendingWrites(): void {
     // 대기자 settle — flush 로 타이머가 사라진 promise 를 영원히 대기하는 소비자 방지
     if (settingsCommitResolve) { settingsCommitResolve(); settingsCommitResolve = null; }
   }
+  // QA8(A+C 수렴 MED): 세션 자동저장(요약·Q&A·RAG 인덱스)은 1500ms 디바운스라, 답변/요약/인덱싱
+  // 완료 직후 종료(Cmd+Q)·새로고침(Ctrl+R)하면 useSessionPersistence 의 effect cleanup 이
+  // 타이머만 clear 하고 persist 없이 소멸 → 마지막 턴/요약/인덱스가 소실됐다(≤1.5s, 비파괴적).
+  // 저가치 데이터(테마·폭)는 flush 하면서 고가치 세션은 누락된 비대칭 해소. best-effort 로
+  // 즉시 발화 — persistCurrentSession 은 실행 시점 getState() 를 읽는 직렬화 체인이고, 내부에서
+  // 생성중/복원대기/컬렉션busy/persistSessions OFF 를 스스로 skip 하므로 여기서 무조건 호출해도 안전.
+  // before-quit 이 ollamaManager.stop() 로 quit 을 지연시키는 창이 있어 IPC save 가 착지할 여지가 있다.
+  try { void persistCurrentSession(); } catch { /* best-effort */ }
 }
 
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {

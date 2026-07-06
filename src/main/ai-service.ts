@@ -798,15 +798,25 @@ function streamRequest(
               } catch { /* 파싱 실패 무시 */ }
             }
           }
-          // R43 H-1: 토큰을 하나도 방출하지 못한 채 차단 사유와 함께 정상 종료(HTTP 200)한
-          // 스트림은 성공이 아니다 — ai:done 을 보내면 renderer 가 빈 요약을 "완료"로 표시하고
-          // Q&A 는 user 메시지만 남는 고아 상태가 된다. 명시 거부로 에러 배너 노출.
-          if (emittedTokens === 0 && blockReason) {
+          // R43 H-1: 토큰을 하나도 방출하지 못한 채 정상 종료(HTTP 200)한 스트림은 성공이 아니다 —
+          // ai:done 을 보내면 renderer 가 빈 요약을 "완료"로 표시하고 Q&A 는 user 메시지만 남는
+          // 고아 상태가 된다. 명시 거부로 에러 배너 노출.
+          // QA8(B-MED): 이전엔 blockReason(Gemini 전용) 이 있을 때만 거부해, Claude/OpenAI 가
+          // content_filter/빈 delta 로 0토큰 종료하면 무음 no-op 이 됐다. blockReason 유무와 무관하게
+          // 0토큰이면 거부하되, 사유가 있으면 responseBlocked, 없으면 generic emptyResponse 로 매핑.
+          if (emittedTokens === 0) {
             safeDeleteRequest();
-            safeReject(Object.assign(
-              new Error(`AI 응답이 차단되었습니다 (사유: ${blockReason}). 문서 내용 또는 출력 한도를 확인해주세요.`),
-              { code: 'BLOCKED', errorKey: 'responseBlocked', errorParams: { reason: blockReason } },
-            ));
+            if (blockReason) {
+              safeReject(Object.assign(
+                new Error(`AI 응답이 차단되었습니다 (사유: ${blockReason}). 문서 내용 또는 출력 한도를 확인해주세요.`),
+                { code: 'BLOCKED', errorKey: 'responseBlocked', errorParams: { reason: blockReason } },
+              ));
+            } else {
+              safeReject(Object.assign(
+                new Error('AI 가 빈 응답을 반환했습니다. 잠시 후 다시 시도해주세요.'),
+                { code: 'EMPTY_RESPONSE', errorKey: 'emptyResponse' },
+              ));
+            }
             return;
           }
           safeDeleteRequest();
@@ -947,11 +957,17 @@ async function callVision(
           ],
         }],
       });
-      const result = await httpPost('https://api.anthropic.com/v1/messages', {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      }, body, config.timeoutMs, signal);
+      // QA8(B-MED): cloud vision 도 429 시 지수 백오프 재시도 — Gemini 만 있던 방어를 back-port.
+      // vision 은 BATCH=8 동시 호출이라 rate limit 이 쉽게 나는데, 재시도 없이 실패하면
+      // Promise.allSettled → null → 이미지 설명이 요약에서 무음 드롭됐다(embed 경로는 이미 재시도).
+      const result = await retryOn429(
+        () => httpPost('https://api.anthropic.com/v1/messages', {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        }, body, config.timeoutMs, signal),
+        signal,
+      );
       const parsed = JSON.parse(result);
       return config.sanitize(parsed.content?.[0]?.text || '');
     }
@@ -968,10 +984,14 @@ async function callVision(
           ],
         }],
       });
-      const result = await httpPost('https://api.openai.com/v1/chat/completions', {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      }, body, config.timeoutMs, signal);
+      // QA8(B-MED): cloud vision 429 재시도 back-port (Claude 와 동일 근거).
+      const result = await retryOn429(
+        () => httpPost('https://api.openai.com/v1/chat/completions', {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        }, body, config.timeoutMs, signal),
+        signal,
+      );
       const parsed = JSON.parse(result);
       return config.sanitize(parsed.choices?.[0]?.message?.content || '');
     }

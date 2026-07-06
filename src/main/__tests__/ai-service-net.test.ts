@@ -304,6 +304,44 @@ describe('analyzeImage (callVision → httpPost)', () => {
       vi.useRealTimers();
     }
   });
+
+  // QA8(B-MED): cloud vision 429 재시도 back-port — 이전엔 Gemini 만 재시도해 Claude/OpenAI 는
+  // rate limit 시 이미지 설명이 무음 드롭됐다. Claude/OpenAI 도 429 → 백오프 재시도 후 성공하는지.
+  it.each([
+    ['claude', (t: string) => JSON.stringify({ content: [{ text: t }] })],
+    ['openai', (t: string) => JSON.stringify({ choices: [{ message: { content: t } }] })],
+  ] as const)('%s vision 429 1회 → 백오프 재시도로 성공', async (provider, okBody) => {
+    vi.useFakeTimers();
+    try {
+      M.httpsRequest
+        .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+          const req = makeReq();
+          queueMicrotask(() => {
+            const res = makeRes({ statusCode: 429 });
+            cb(res);
+            queueMicrotask(() => { res.emit('data', Buffer.from('{"error":{"message":"rate"}}')); res.emit('end'); });
+          });
+          return req;
+        })
+        .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+          const req = makeReq();
+          queueMicrotask(() => {
+            const res = makeRes({ statusCode: 200 });
+            cb(res);
+            queueMicrotask(() => { res.emit('data', Buffer.from(okBody('재시도 설명'))); res.emit('end'); });
+          });
+          return req;
+        });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const p = analyzeImage('img', provider, 'm', 'x', 'key');
+      await vi.advanceTimersByTimeAsync(2600);
+      expect(await p).toBe('재시도 설명');
+      expect(M.httpsRequest).toHaveBeenCalledTimes(2);
+      errSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // R44(R43 후속 M5): 429 한정 지수 백오프 재시도 헬퍼
@@ -514,6 +552,32 @@ describe('generate → streamRequest (스트리밍)', () => {
       generate('g2', { text: 'x', type: 'full', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', win as never),
     ).rejects.toMatchObject({ code: 'BLOCKED' });
     expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'g2');
+    expect(__activeRequestCount()).toBe(0);
+  });
+
+  // QA8(B-MED): blockReason 없이 0토큰으로 정상 종료(HTTP 200)한 non-Gemini 스트림도 성공이 아니다 —
+  // 이전엔 Gemini blockReason 이 있을 때만 거부해 Claude/OpenAI 가 content_filter/빈 delta 로
+  // 무음 no-op(스피너만 사라짐)이 됐다. generic emptyResponse 로 명시 거부되는지.
+  it('openai 스트림 0토큰(빈 delta) 종료 → EMPTY_RESPONSE reject + ai:done 미전송', async () => {
+    M.httpsRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => {
+          // finish_reason 만 있고 delta.content 없음 → extractToken null → 0토큰
+          res.emit('data', Buffer.from('data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}\n'));
+          res.emit('data', Buffer.from('data: [DONE]\n'));
+          res.emit('end');
+        });
+      });
+      return req;
+    });
+    const win = makeWin();
+    await expect(
+      generate('e1', { text: 'x', type: 'full', provider: 'openai', model: 'gpt-4o', ollamaBaseUrl: 'http://localhost:11434' }, 'okey', win as never),
+    ).rejects.toMatchObject({ code: 'EMPTY_RESPONSE', errorKey: 'emptyResponse' });
+    expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'e1');
     expect(__activeRequestCount()).toBe(0);
   });
 
