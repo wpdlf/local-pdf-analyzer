@@ -31,6 +31,40 @@ export function whenSettingsCommitted(): Promise<void> {
 // setCitationPanelWidth 가 호출되어 동기 localStorage.setItem 이 초당 수백 회 발생하는 것 방지
 let citationPanelWidthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
+// QA7(B-LOW): pagehide flush 대상 — 디바운스 미발화 pending 값. 앱 종료(Cmd+Q)/새로고침 시
+// 300ms(설정)·200ms(패널폭) 발화 전이면 값이 소실됐다(테마/언어 토글 직후 종료 등). 종료
+// 직전 pagehide 에서 즉시 커밋한다. localStorage 는 동기라 확실히 저장되고, 설정 IPC 는
+// 비동기라 완료 보장은 없으나 best-effort 로 즉시 발화한다.
+let pendingPanelWidth: number | null = null;
+let pendingSettingsPayload: Record<string, unknown> | null = null;
+
+export function flushPendingWrites(): void {
+  if (citationPanelWidthSaveTimer !== null) {
+    clearTimeout(citationPanelWidthSaveTimer);
+    citationPanelWidthSaveTimer = null;
+    if (pendingPanelWidth !== null) {
+      try { localStorage.setItem('citationPanelWidth', String(pendingPanelWidth)); } catch { /* 무시 */ }
+      pendingPanelWidth = null;
+    }
+  }
+  if (settingsSaveTimer !== null) {
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = null;
+    if (pendingSettingsPayload !== null && typeof window !== 'undefined' && window.electronAPI?.settings?.set) {
+      try { void window.electronAPI.settings.set(pendingSettingsPayload); } catch { /* best-effort */ }
+    }
+    pendingSettingsPayload = null;
+    // 대기자 settle — flush 로 타이머가 사라진 promise 를 영원히 대기하는 소비자 방지
+    if (settingsCommitResolve) { settingsCommitResolve(); settingsCommitResolve = null; }
+  }
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  // pagehide: 탭/창 종료·새로고침 직전 동기 실행 창(unload 보다 신뢰성 높음). 중복 등록은
+  // HMR dispose 에서 해제.
+  window.addEventListener('pagehide', flushPendingWrites);
+}
+
 // v0.18.22 R36 P4: 모듈 스코프 notice 타이머 — 기존엔 useAppStore 생성부 이후 (line 507) 에
 // 선언되었으나 HMR dispose 핸들러(line 77) 와 setNotice (store 내부) 양쪽이 module init
 // 후 closure 로 접근하므로 동작은 정상이었다. 다른 디바운스 타이머와 동일 영역에 배치하여
@@ -95,6 +129,11 @@ if (_meta.hot) {
     // R31 (v0.18.18 patch): noticeDismissTimer HMR 누락 — 이전 store 인스턴스의 6초
     // 타이머가 fire 하면 새 store 의 notice 를 잘못 dismiss 하려 시도하므로 같이 정리.
     if (noticeDismissTimer) { clearTimeout(noticeDismissTimer); noticeDismissTimer = null; }
+    // QA7: pending flush 상태 + pagehide 리스너 정리(이전 모듈 인스턴스 누수 방지).
+    pendingPanelWidth = null; pendingSettingsPayload = null;
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('pagehide', flushPendingWrites);
+    }
   });
 }
 
@@ -559,8 +598,10 @@ export const useAppStore = create<AppState>((set) => ({
     // 드래그 중 pointermove 마다 호출되므로 localStorage 쓰기는 trailing 200ms 디바운스.
     // 마지막 값만 저장되어 동기 I/O 비용을 수백 회 → 1 회로 줄인다.
     if (citationPanelWidthSaveTimer) clearTimeout(citationPanelWidthSaveTimer);
+    pendingPanelWidth = clamped; // pagehide flush 대상
     citationPanelWidthSaveTimer = setTimeout(() => {
       citationPanelWidthSaveTimer = null;
+      pendingPanelWidth = null;
       try { localStorage.setItem('citationPanelWidth', String(clamped)); } catch { /* 무시 */ }
     }, 200);
   },
@@ -577,8 +618,10 @@ export const useAppStore = create<AppState>((set) => ({
     if (!settingsCommitResolve) {
       settingsCommitPromise = new Promise<void>((resolve) => { settingsCommitResolve = resolve; });
     }
+    pendingSettingsPayload = newSettings as unknown as Record<string, unknown>; // pagehide flush 대상
     settingsSaveTimer = setTimeout(() => {
       settingsSaveTimer = null;
+      pendingSettingsPayload = null;
       // 성공/실패/컨텍스트 소실 모두에서 settle — 소비자는 "커밋 시도가 끝났다"만 알면 된다
       // (실패 시 main 은 구 설정으로 남지만, 에러 배너가 뜨고 다음 변경에서 재시도).
       // QA6-D: 단, 새 pending flush(settingsSaveTimer 비-null)가 있으면 settle 을 그 flush 로

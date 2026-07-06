@@ -582,8 +582,19 @@ export async function reconcileSessions(
     }
     const manifest = await loadManifest(sessionsDir);
     const known = new Set(manifest.entries.map((e) => e.docHash));
+
+    // QA7(B-LOW): 크래시/전원차단으로 writeFileAtomic 의 tmp→rename 사이에서 죽으면 stray
+    // `*.tmp` 가 남는데, reconcile 은 session.json 존재만 보므로 이들이 영구 잔존했다(정확히
+    // 그 파일을 다시 쓸 때까지 자가치유 안 됨). tmp 파일명은 고정이라 readdir 없이 결정적으로
+    // unlink 한다 — 루트의 manifest.json.tmp + 각 세션 디렉토리의 3개 사이드카 tmp.
+    try { await fsp.unlink(manifestPath(sessionsDir) + '.tmp'); } catch { /* 없으면 무시 */ }
     for (const d of dirents) {
-      if (!d.isDirectory() || !DOC_HASH_RE.test(d.name) || known.has(d.name)) continue;
+      if (!d.isDirectory() || !DOC_HASH_RE.test(d.name)) continue;
+      const cleanupDir = sessionDir(sessionsDir, d.name);
+      for (const f of [SESSION_JSON, INDEX_BIN, INDEX_META]) {
+        try { await fsp.unlink(path.join(cleanupDir, f) + '.tmp'); } catch { /* 없으면 무시 */ }
+      }
+      if (known.has(d.name)) continue;
       let meta: { session: unknown } | null = null;
       try {
         meta = await readSessionMeta(sessionsDir, d.name);

@@ -629,4 +629,22 @@ describe('reconcileSessions (부팅 자가치유)', () => {
     expect(entry.chunkCount).toBe(3);
     expect(entry.embedModel).toBe('nomic-embed-text');
   });
+
+  // QA7(B-LOW): 크래시로 writeFileAtomic tmp→rename 사이에 죽으면 stray *.tmp 잔존 → 정리.
+  it('stray *.tmp 잔존물 정리 — 루트 manifest.tmp + 세션 디렉토리 사이드카 tmp (등록 세션도)', async () => {
+    const h = hashOf(41);
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h, fileName: 'a.pdf', filePath: '/a.pdf' }, blob: null, now: 1000 });
+    // 크래시 잔존물 모사
+    V.files.set(`${DIR}/manifest.json.tmp`, '{partial');
+    V.files.set(p(h, 'session.json.tmp'), '{partial');
+    V.files.set(p(h, 'index.bin.tmp'), Buffer.from([9, 9]));
+    V.files.set(p(h, 'index.meta.json.tmp'), '{partial');
+    await reconcileSessions(DIR, 5000);
+    expect(V.files.has(`${DIR}/manifest.json.tmp`)).toBe(false);
+    expect(V.files.has(p(h, 'session.json.tmp'))).toBe(false);
+    expect(V.files.has(p(h, 'index.bin.tmp'))).toBe(false);
+    expect(V.files.has(p(h, 'index.meta.json.tmp'))).toBe(false);
+    // 실제 세션 파일은 보존
+    expect(V.files.has(p(h, 'session.json'))).toBe(true);
+  });
 });

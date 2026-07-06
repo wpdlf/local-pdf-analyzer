@@ -19,7 +19,7 @@ vi.stubGlobal('window', {
 let _testIdCounter = 0;
 vi.stubGlobal('crypto', { randomUUID: () => `id-${++_testIdCounter}` });
 
-import { useAppStore, whenSettingsCommitted } from '../store';
+import { useAppStore, whenSettingsCommitted, flushPendingWrites } from '../store';
 
 // 각 테스트 진입 시 스트림/메시지 상태만 초기화 — timer 는 fake 사용.
 function resetStreams(): void {
@@ -708,5 +708,50 @@ describe('updateSettings — 디바운스 저장 실패 처리', () => {
     expect(setMock).not.toHaveBeenCalled();
     expect(useAppStore.getState().error).toBeNull();
     (window as unknown as { electronAPI?: unknown }).electronAPI = savedApi;
+  });
+});
+
+// QA7(B-LOW): pagehide flush — 종료/새로고침 직전 디바운스 미발화 pending 값을 즉시 커밋.
+describe('flushPendingWrites (pagehide 종료 flush)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useAppStore.setState({ error: null });
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    useAppStore.setState({ error: null });
+    delete lsStore['citationPanelWidth'];
+  });
+
+  it('설정 디바운스(300ms) 미발화 상태에서 flush → 즉시 IPC 발화 + 커밋 settle', async () => {
+    const setMock = vi.mocked(window.electronAPI.settings.set);
+    setMock.mockClear();
+    useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, provider: 'openai' });
+    let resolved = false;
+    void whenSettingsCommitted().then(() => { resolved = true; });
+    // 300ms 도달 전 flush
+    flushPendingWrites();
+    expect(setMock).toHaveBeenCalledTimes(1);
+    expect((setMock.mock.calls[0]![0] as { provider: string }).provider).toBe('openai');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resolved).toBe(true);
+    // 이후 300ms 도달해도 중복 발화 없음(타이머 이미 clear)
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('패널폭 디바운스(200ms) 미발화 상태에서 flush → localStorage 즉시 저장', () => {
+    useAppStore.getState().setCitationPanelWidth(0.7);
+    expect(lsStore['citationPanelWidth']).toBeUndefined(); // 아직 미저장(디바운스)
+    flushPendingWrites();
+    expect(lsStore['citationPanelWidth']).toBe('0.7');
+  });
+
+  it('pending 없으면 no-op (throw 없음)', () => {
+    const setMock = vi.mocked(window.electronAPI.settings.set);
+    setMock.mockClear();
+    expect(() => flushPendingWrites()).not.toThrow();
+    expect(setMock).not.toHaveBeenCalled();
   });
 });
