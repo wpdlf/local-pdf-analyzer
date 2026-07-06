@@ -20,6 +20,7 @@ import {
   unregisterEmbedRequest,
   abortGenerate,
   cleanupAiService,
+  abortAllRequests,
 } from '../ai-service';
 
 describe('validateOllamaUrl — SSRF 방어 (Top5 #1)', () => {
@@ -141,6 +142,26 @@ describe('activeRequests 등록/해제/cleanup (Top5 #1)', () => {
     const fresh = new AbortController();
     registerEmbedRequest('rag-5', fresh);
     // c1 은 이미 cleanupAiService 가 abort 했음 — 이중 abort 가 일어나도 idempotent.
+    expect(fresh.signal.aborted).toBe(false);
+  });
+
+  // QA7(B-MED): 렌더러 새로고침/크래시 시 in-flight 전량 abort (TTL 타이머는 유지 — 종료 아님).
+  it('abortAllRequests 가 모든 entry 를 abort + map 비우고 count 반환 (TTL 타이머 유지)', () => {
+    const c1 = new AbortController();
+    const c2 = new AbortController();
+    registerEmbedRequest('rag-8', c1);
+    registerEmbedRequest('rag-9', c2);
+
+    const n = abortAllRequests();
+
+    expect(n).toBe(2);
+    expect(c1.signal.aborted).toBe(true);
+    expect(c2.signal.aborted).toBe(true);
+    // 두 번째 호출은 빈 상태라 0
+    expect(abortAllRequests()).toBe(0);
+    // entry 삭제 확인 — 같은 id 로 새 controller 등록 시 이전 것이 재abort 되지 않음
+    const fresh = new AbortController();
+    registerEmbedRequest('rag-8', fresh);
     expect(fresh.signal.aborted).toBe(false);
   });
 });

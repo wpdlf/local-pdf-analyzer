@@ -94,6 +94,28 @@ describe('AiClient', () => {
     }).rejects.toThrow('API 키가 없습니다');
   });
 
+  // QA7: errorKey 가 있으면 main 의 error 원문(한국어 고정) 대신 UI 언어로 번역된 메시지를 던진다.
+  it('summarize() errorKey 동반 에러 → 번역 메시지(원문 아님)로 예외', async () => {
+    let doneCallback: ((id: string) => void) | null = null;
+    mockElectronAPI.ai.onToken.mockImplementation(() => vi.fn());
+    mockElectronAPI.ai.onDone.mockImplementation((cb) => { doneCallback = cb; return vi.fn(); });
+    mockElectronAPI.ai.generate.mockImplementation(async () => {
+      setTimeout(() => doneCallback?.('test-uuid'), 50);
+      // error 원문은 sentinel — errorKey 가 우선하면 이 문자열이 노출되지 않아야 한다
+      return { success: false, error: 'RAW_SHOULD_NOT_SHOW', errorKey: 'cloudRateLimit', errorParams: { provider: 'Claude' } };
+    });
+
+    const client = new AiClient(DEFAULT_SETTINGS);
+    let thrown: Error | null = null;
+    try {
+      for await (const _ of client.summarize('test', 'full')) { /* consume */ }
+    } catch (e) { thrown = e as Error; }
+    expect(thrown).toBeTruthy();
+    expect(thrown!.message).not.toContain('RAW_SHOULD_NOT_SHOW'); // errorKey 우선
+    expect(thrown!.message).toContain('Claude');                  // provider 치환
+    expect(thrown!.message).toContain('rate limit');              // cloudRateLimit 사전 문구
+  });
+
   it('abort()가 Main 프로세스에 위임한다', () => {
     const client = new AiClient(DEFAULT_SETTINGS);
     client.abort('request-123');

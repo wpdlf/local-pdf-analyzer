@@ -103,7 +103,7 @@ export async function parsePdf(
   // 워커측 PDFDocumentProxy 누수를 막기 위해 throw 전에 명시적으로 파기한다.
   if (pageCount === 0) {
     await loadingTask.destroy().catch(() => { /* ignore */ });
-    throw Object.assign(new Error('PDF에 페이지가 없습니다.'), { code: 'PDF_NO_TEXT' });
+    throw Object.assign(new Error(t('uploader.emptyPdf')), { code: 'PDF_NO_TEXT' });
   }
   if (pageCount > MAX_PAGE_COUNT) {
     await loadingTask.destroy().catch(() => { /* ignore */ });
@@ -212,7 +212,7 @@ export async function parsePdf(
     // 공백 제거 후 실제 텍스트 길이로 OCR 진입 판정 (watermark 등 공백 패딩 우회 방지)
     if (extractedText.replace(/\s+/g, '').length < 50) {
       if (!options?.enableOcrFallback) {
-        throw Object.assign(new Error('PDF에서 텍스트를 추출할 수 없습니다. 설정에서 "스캔 PDF OCR"을 활성화하면 이미지 기반 PDF를 분석할 수 있습니다.'), {
+        throw Object.assign(new Error(t('uploader.noText')), {
           code: 'PDF_NO_TEXT',
         });
       }
@@ -221,7 +221,7 @@ export async function parsePdf(
       const ocrPages = await ocrFallback(pdf, pageCount, options.onOcrProgress ?? (() => {}), signal);
       const ocrText = ocrPages.join('\n\n');
       if (ocrText.trim().length < 50) {
-        throw Object.assign(new Error('OCR로도 텍스트를 추출할 수 없습니다. PDF 품질을 확인해주세요.'), {
+        throw Object.assign(new Error(t('uploader.ocrFail')), {
           code: 'OCR_FAIL',
         });
       }
@@ -838,7 +838,7 @@ export async function handlePdfData(
     const code = (error.code && validCodes.has(error.code) ? error.code : 'PDF_PARSE_FAIL') as AppError['code'];
     store.setError({
       code,
-      message: error.message || 'PDF를 읽을 수 없습니다.',
+      message: error.message || t('uploader.cannotRead'),
     });
   } finally {
     // 새 파싱이 abort-replace 로 우리를 덮어쓴 경우, 전역 상태(isParsing, ocrProgress)를

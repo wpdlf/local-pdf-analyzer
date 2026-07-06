@@ -125,6 +125,23 @@ export function cleanupAiService(): void {
   }
 }
 
+/**
+ * QA7(B-MED): 진행 중인 모든 요청을 abort (TTL 타이머는 유지 — 종료가 아닌 렌더러 교체용).
+ * 렌더러 새로고침(Ctrl+R)/크래시 시 호출 — main 의 in-flight generate/embed/vision 이 계속
+ * 진행돼 클라우드 토큰이 끝까지 청구되고 activeRequests 가 10분 TTL 까지 잔존하던 것을 차단한다.
+ * safeSend 는 win.isDestroyed() 만 보는데 새로고침 시 win 은 유지돼 가드가 안 걸렸다(단일 윈도우라
+ * 소유 webContents 태깅 없이 전량 abort 가 정확 — 새 렌더러는 fresh store 라 재개 불가한 orphan).
+ * @returns abort 된 요청 수
+ */
+export function abortAllRequests(): number {
+  const count = activeRequests.size;
+  for (const [id, entry] of activeRequests) {
+    entry.abort();
+    activeRequests.delete(id);
+  }
+  return count;
+}
+
 // v0.18.22 Top5 #1: 단위 테스트 노출을 위해 export. validateOllamaUrl 은 generate() 가
 // 호출하는 pure validator 로, http 모듈 없이 SSRF 가드 로직만 검증할 수 있도록 한다.
 export function validateOllamaUrl(url: string): void {
@@ -233,13 +250,13 @@ export async function generate(
       case 'ollama':
         return await generateOllama(requestId, prompt, request, win);
       case 'claude':
-        if (!apiKey) throw Object.assign(new Error('Claude API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING' });
+        if (!apiKey) throw Object.assign(new Error('Claude API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING', errorKey: 'apiKeyMissing', errorParams: { provider: 'Claude' } });
         return await generateClaude(requestId, prompt, request, apiKey, win);
       case 'openai':
-        if (!apiKey) throw Object.assign(new Error('OpenAI API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING' });
+        if (!apiKey) throw Object.assign(new Error('OpenAI API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING', errorKey: 'apiKeyMissing', errorParams: { provider: 'OpenAI' } });
         return await generateOpenAi(requestId, prompt, request, apiKey, win);
       case 'gemini':
-        if (!apiKey) throw Object.assign(new Error('Gemini API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING' });
+        if (!apiKey) throw Object.assign(new Error('Gemini API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING', errorKey: 'apiKeyMissing', errorParams: { provider: 'Gemini' } });
         return await generateGemini(requestId, prompt, request, apiKey, win);
     }
   } catch (err) {
@@ -320,14 +337,26 @@ async function generateOllama(
  * 미매칭은 null → 기존 generic 에러 유지(행위 보존).
  */
 export function mapCloudHttpError(provider: string, status: number, detail: string): Error | null {
+  // QA7: errorKey/errorParams 를 함께 실어 렌더러가 translateMainError 로 UI 언어에 맞게
+  // 표시하도록 한다(이전엔 한국어 원문만 실려 영어 UI 에 그대로 노출됐다 — pull/install 경로의
+  // errorKey 인프라를 AI 스트리밍에도 확장). error 원문은 main 로그·구버전 fallback 용으로 유지.
   if (status === 429) {
     if (/insufficient_quota|exceeded your current quota|billing|quota/i.test(detail)) {
-      return new Error(`${provider} 사용 한도(쿼터)를 초과했습니다. 결제·플랜을 확인한 뒤 다시 시도해주세요.`);
+      return Object.assign(
+        new Error(`${provider} 사용 한도(쿼터)를 초과했습니다. 결제·플랜을 확인한 뒤 다시 시도해주세요.`),
+        { errorKey: 'cloudQuota', errorParams: { provider } },
+      );
     }
-    return new Error(`${provider} 요청 한도를 초과했습니다 (rate limit). 잠시 후 다시 시도해주세요.`);
+    return Object.assign(
+      new Error(`${provider} 요청 한도를 초과했습니다 (rate limit). 잠시 후 다시 시도해주세요.`),
+      { errorKey: 'cloudRateLimit', errorParams: { provider } },
+    );
   }
   if (status === 529 || status === 503) {
-    return new Error(`${provider} 서버가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요.`);
+    return Object.assign(
+      new Error(`${provider} 서버가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요.`),
+      { errorKey: 'cloudOverloaded', errorParams: { provider } },
+    );
   }
   return null;
 }
@@ -453,12 +482,12 @@ async function generateGemini(
     },
     mapHttpError: (status, detail) => {
       if (status === 400 && /api key/i.test(detail)) {
-        return Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID' });
+        return Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID', errorKey: 'apiKeyInvalid' });
       }
-      if (status === 429) {
-        return new Error('Gemini 요청 한도를 초과했습니다 (rate limit). 잠시 후 다시 시도해주세요.');
-      }
-      return null;
+      // QA7(C-LOW): 429/529/503 을 mapCloudHttpError 로 위임해 Claude/OpenAI 와 대칭화.
+      // 이전엔 Gemini 만 503(UNAVAILABLE, 과부하 시 실제 반환 코드)을 generic HTTP 503 으로
+      // 강등했다. mapCloudHttpError 가 null 이면(그 외 상태) 종전대로 generic fallback.
+      return mapCloudHttpError('Gemini', status, detail);
     },
   }, win);
 }
@@ -580,7 +609,7 @@ function streamRequest(
         if (streamAborted) { res.destroy(); return; }
         if (config.checkAuthError?.(res.statusCode || 0)) {
           safeDeleteRequest();
-          safeReject(Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID' }));
+          safeReject(Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID', errorKey: 'apiKeyInvalid' }));
           res.destroy();
           return;
         }
@@ -589,7 +618,7 @@ function streamRequest(
           const errStatus = res.statusCode;
           if (!config.mapHttpError) {
             safeDeleteRequest();
-            safeReject(new Error(`API 요청 실패: HTTP ${errStatus}`));
+            safeReject(Object.assign(new Error(`API 요청 실패: HTTP ${errStatus}`), { errorKey: 'apiHttpError', errorParams: { status: String(errStatus) } }));
             res.destroy();
             return;
           }
@@ -617,7 +646,7 @@ function streamRequest(
               mapped = config.mapHttpError!(errStatus, String(detail));
             } catch { /* 매퍼 결함 — generic fallback */ }
             safeDeleteRequest();
-            safeReject(mapped ?? new Error(`API 요청 실패: HTTP ${errStatus}`));
+            safeReject(mapped ?? Object.assign(new Error(`API 요청 실패: HTTP ${errStatus}`), { errorKey: 'apiHttpError', errorParams: { status: String(errStatus) } }));
           };
           // R44 I-2: 에러 바디 수집에 전용 타이머 — 서버가 4xx 헤더만 보내고 바디를 멈추면
           // 기존엔 req.setTimeout(300s)/renderer IPC 타임아웃(120s)까지 generic 에러로
@@ -653,7 +682,7 @@ function streamRequest(
             streamAborted = true;
             safeDeleteRequest();
             res.destroy();
-            safeReject(new Error('AI 서버 응답이 중단되었습니다 (60초 무응답).'));
+            safeReject(Object.assign(new Error('AI 서버 응답이 중단되었습니다 (60초 무응답).'), { errorKey: 'streamNoResponse' }));
           }
         }, IDLE_TIMEOUT_MS);
 
@@ -776,7 +805,7 @@ function streamRequest(
             safeDeleteRequest();
             safeReject(Object.assign(
               new Error(`AI 응답이 차단되었습니다 (사유: ${blockReason}). 문서 내용 또는 출력 한도를 확인해주세요.`),
-              { code: 'BLOCKED' },
+              { code: 'BLOCKED', errorKey: 'responseBlocked', errorParams: { reason: blockReason } },
             ));
             return;
           }
@@ -801,7 +830,7 @@ function streamRequest(
             streamAborted = true;
             clearIdleTimer();
             safeDeleteRequest();
-            safeReject(new Error('AI 스트림 연결이 끊어졌습니다.'));
+            safeReject(Object.assign(new Error('AI 스트림 연결이 끊어졌습니다.'), { errorKey: 'streamDisconnected' }));
           }
         });
       },
@@ -822,7 +851,7 @@ function streamRequest(
       streamAborted = true; // 타임아웃 후 응답 콜백 도착 시 idle timer 생성/데이터 처리 차단
       safeDeleteRequest();
       req.destroy();
-      safeReject(new Error('AI 서버 응답 타임아웃 (5분)'));
+      safeReject(Object.assign(new Error('AI 서버 응답 타임아웃 (5분)'), { errorKey: 'streamTimeout' }));
     });
 
     // abort를 write 전에 등록하여 race condition 방지

@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import fsp from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { OllamaManager } from './ollama-manager';
-import { generate, abortGenerate, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
+import { generate, abortGenerate, abortAllRequests, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
 import { MAX_PDF_SIZE_BYTES, isLocalhostHost } from '../shared/constants';
 // v0.18.19 patch R34 P2: settings 키 단일 출처. 이전엔 본 파일 두 곳에 별도 리터럴이 있었고
 // R33 Surface 4 P3 가 drift 가드 부재를 지적. settings-keys.ts 가 양쪽을 derive 함.
@@ -194,6 +194,20 @@ function createWindow(): BrowserWindow {
 
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     console.error('Failed to load:', errorCode, errorDescription);
+  });
+
+  // QA7(B-MED): 렌더러 새로고침(Ctrl+R)/크래시 시 in-flight AI 요청을 abort — 그러지 않으면
+  // main 의 generate/embed/vision HTTP 가 끝까지 진행돼 클라우드 토큰이 낭비되고(safeSend 는
+  // win.isDestroyed() 만 보는데 새로고침 시 win 은 유지됨), activeRequests 가 10분 TTL 까지 잔존한다.
+  // 새 렌더러는 fresh store 라 이 요청들을 재개할 수 없는 orphan 이므로 전량 취소가 정확.
+  win.webContents.on('render-process-gone', () => {
+    const n = abortAllRequests();
+    if (n > 0) console.log(`[ai] render-process-gone → aborted ${n} in-flight request(s)`);
+  });
+  // 메인 프레임 네비게이션(새로고침 포함) 시작 시 abort. 최초 로드도 발화하나 그 시점엔
+  // activeRequests 가 비어 no-op — did-start-navigation 은 same-document(앵커 등)에선 안 끊도록 가드.
+  win.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) abortAllRequests();
   });
 
   // will-navigate 와 별개로 will-redirect 도 차단 — 서버측 HTTP 리다이렉트로 인한
@@ -790,11 +804,15 @@ export function registerIpcHandlers(): void {
       await generate(requestId, request, apiKey, win);
       return { success: true };
     } catch (err) {
-      const error = err as Error & { code?: string };
+      const error = err as Error & { code?: string; errorKey?: string; errorParams?: Record<string, string> };
+      // QA7: errorKey/errorParams 전파 — 렌더러가 translateMainError 로 UI 언어에 맞게 표시
+      // (pull/install 경로와 동일 계약). errorKey 없는 에러는 종전대로 error 원문 fallback.
       return {
         success: false,
         error: error.message,
         code: error.code,
+        errorKey: error.errorKey,
+        errorParams: error.errorParams,
       };
     }
   });

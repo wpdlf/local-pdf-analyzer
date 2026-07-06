@@ -399,6 +399,19 @@ describe('mapCloudHttpError (E1)', () => {
     expect(mapCloudHttpError('Claude', 400, 'bad request')).toBeNull();
     expect(mapCloudHttpError('OpenAI', 500, 'server error')).toBeNull();
   });
+
+  // QA7: errorKey/errorParams 를 실어 렌더러가 UI 언어로 번역하도록(영어 UI 한국어 노출 해소).
+  it('errorKey/errorParams 부착 — cloudRateLimit/cloudQuota/cloudOverloaded + provider', () => {
+    const rate = mapCloudHttpError('Claude', 429, 'Rate limited') as Error & { errorKey?: string; errorParams?: Record<string, string> };
+    expect(rate.errorKey).toBe('cloudRateLimit');
+    expect(rate.errorParams).toEqual({ provider: 'Claude' });
+    const quota = mapCloudHttpError('OpenAI', 429, 'insufficient_quota') as Error & { errorKey?: string; errorParams?: Record<string, string> };
+    expect(quota.errorKey).toBe('cloudQuota');
+    expect(quota.errorParams).toEqual({ provider: 'OpenAI' });
+    const over = mapCloudHttpError('Gemini', 503, 'UNAVAILABLE') as Error & { errorKey?: string; errorParams?: Record<string, string> };
+    expect(over.errorKey).toBe('cloudOverloaded');
+    expect(over.errorParams).toEqual({ provider: 'Gemini' });
+  });
 });
 
 describe('generate → streamRequest (스트리밍)', () => {

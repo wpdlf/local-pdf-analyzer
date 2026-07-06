@@ -24,6 +24,7 @@ const H = vi.hoisted(() => ({
   ai: {
     generate: vi.fn(),
     abortGenerate: vi.fn(),
+    abortAllRequests: vi.fn(),
     checkAvailability: vi.fn(),
     analyzeImage: vi.fn(),
     analyzeImageForOcr: vi.fn(),
@@ -293,6 +294,34 @@ describe('file:save (확장자 allowlist + 크기 캡)', () => {
   it('취소(다이얼로그 경로 없음) → null (에러 아님)', async () => {
     H.dialog.showSaveDialog.mockResolvedValue({ filePath: undefined });
     expect(await invoke('file:save', 'hello', 'out.md')).toBeNull();
+  });
+});
+
+describe('ai:generate (errorKey 전파 — QA7 i18n)', () => {
+  const req = {
+    text: 'hi', type: 'full', provider: 'claude', model: 'claude-sonnet-4-20250514',
+    ollamaBaseUrl: 'http://localhost:11434',
+  };
+
+  it('generate 가 errorKey/errorParams 를 실은 에러로 reject → result 에 전파', async () => {
+    H.ai.generate.mockRejectedValueOnce(Object.assign(
+      new Error('Claude 요청 한도를 초과했습니다 (rate limit). 잠시 후 다시 시도해주세요.'),
+      { errorKey: 'cloudRateLimit', errorParams: { provider: 'Claude' } },
+    ));
+    const r = await invoke('ai:generate', 'req-1', req) as { success: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string> };
+    expect(r.success).toBe(false);
+    expect(r.errorKey).toBe('cloudRateLimit');
+    expect(r.errorParams).toEqual({ provider: 'Claude' });
+    // 원문도 fallback 용으로 유지
+    expect(r.error).toContain('rate limit');
+  });
+
+  it('errorKey 없는 에러는 error 원문만(구버전 호환)', async () => {
+    H.ai.generate.mockRejectedValueOnce(Object.assign(new Error('boom'), { code: 'GENERATE_FAIL' }));
+    const r = await invoke('ai:generate', 'req-2', req) as { success: boolean; error?: string; errorKey?: string };
+    expect(r.success).toBe(false);
+    expect(r.error).toBe('boom');
+    expect(r.errorKey).toBeUndefined();
   });
 });
 

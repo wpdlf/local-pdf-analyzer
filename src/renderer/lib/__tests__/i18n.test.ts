@@ -142,9 +142,14 @@ describe('translateMainProgress / translateMainError', () => {
       expect(_translations[`mainprog.${k}` as keyof typeof _translations], `mainprog.${k} 미정의`).toBeTruthy();
     }
 
+    // QA7: ai-service 도 AI 스트리밍 에러에 errorKey 를 방출하므로 스캔 대상에 포함 —
+    // cloudRateLimit/cloudQuota/cloudOverloaded/apiKeyMissing/apiKeyInvalid/responseBlocked/
+    // streamNoResponse/streamDisconnected/streamTimeout/apiHttpError.
+    const aiSrc = readFileSync(resolve(import.meta.dirname, '../../../main/ai-service.ts'), 'utf-8');
     const errKeys = new Set<string>();
     for (const m of managerSrc.matchAll(/errorKey:\s*'([A-Za-z]+)'/g)) errKeys.add(m[1]!);
-    expect(errKeys.size, '추출 실패 의심').toBeGreaterThanOrEqual(4); // pullInProgress/Timeout/Failed/Cancelled
+    for (const m of aiSrc.matchAll(/errorKey:\s*'([A-Za-z]+)'/g)) errKeys.add(m[1]!);
+    expect(errKeys.size, '추출 실패 의심').toBeGreaterThanOrEqual(12); // pull 4 + ai 8+
     for (const k of errKeys) {
       expect(_translations[`mainerr.${k}` as keyof typeof _translations], `mainerr.${k} 미정의`).toBeTruthy();
     }

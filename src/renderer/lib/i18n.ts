@@ -102,6 +102,10 @@ export const _translations = {
   'pdf.busyCollectionOpen': { ko: '컬렉션을 여는 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while opening a collection.' },
   'pdf.invalidFile': { ko: '유효한 PDF 파일이 아닙니다.', en: 'Not a valid PDF file.' },
   'uploader.tooManyPages': { ko: '페이지 수가 너무 많습니다 ({pages}p). 최대 {max}페이지까지 지원합니다. 문서를 분할해주세요.', en: 'Too many pages ({pages}p). Maximum {max} pages supported. Please split the document.' },
+  // QA7(D-MED): 파싱 에러 3종 i18n 이행 — tooManyPages 와 동일 패턴(영어 UI 한국어 노출 해소)
+  'uploader.emptyPdf': { ko: 'PDF에 페이지가 없습니다.', en: 'The PDF has no pages.' },
+  'uploader.noText': { ko: 'PDF에서 텍스트를 추출할 수 없습니다. 설정에서 "스캔 PDF OCR"을 활성화하면 이미지 기반 PDF를 분석할 수 있습니다.', en: 'No text could be extracted from the PDF. Enable "Scanned PDF OCR" in Settings to analyze image-based PDFs.' },
+  'uploader.ocrFail': { ko: 'OCR로도 텍스트를 추출할 수 없습니다. PDF 품질을 확인해주세요.', en: 'Text could not be extracted even with OCR. Please check the PDF quality.' },
   'uploader.cancelParse': { ko: 'PDF 처리 취소', en: 'Cancel PDF processing' },
   'uploader.cancelBtn': { ko: '■ 취소', en: '■ Cancel' },
   'uploader.ocrProgress': { ko: '스캔 PDF 텍스트 인식 중...', en: 'Recognizing scanned PDF text...' },
@@ -368,6 +372,17 @@ export const _translations = {
   'mainerr.installFailed': { ko: '설치 실패: {detail}. https://ollama.com 에서 수동 설치해주세요.', en: 'Installation failed: {detail}. Please install manually from https://ollama.com.' },
   'setup.manualInstall': { ko: '수동 설치:', en: 'Manual install:' },
   'setup.cancel': { ko: '취소하고 다른 Provider 사용', en: 'Cancel and use another provider' },
+  // QA7: AI 스트리밍 에러 errorKey — 이전엔 ai-service 가 한국어 원문만 실어 영어 UI 에 노출됐다.
+  'mainerr.cloudQuota': { ko: '{provider} 사용 한도(쿼터)를 초과했습니다. 결제·플랜을 확인한 뒤 다시 시도해주세요.', en: 'Your {provider} usage quota has been exceeded. Check your billing/plan and try again.' },
+  'mainerr.cloudRateLimit': { ko: '{provider} 요청 한도를 초과했습니다 (rate limit). 잠시 후 다시 시도해주세요.', en: '{provider} rate limit exceeded. Please try again in a moment.' },
+  'mainerr.cloudOverloaded': { ko: '{provider} 서버가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요.', en: '{provider} servers are temporarily overloaded. Please try again in a moment.' },
+  'mainerr.apiKeyMissing': { ko: '{provider} API 키가 설정되지 않았습니다.', en: 'No {provider} API key is configured.' },
+  'mainerr.apiKeyInvalid': { ko: 'API 키가 유효하지 않습니다.', en: 'The API key is not valid.' },
+  'mainerr.responseBlocked': { ko: 'AI 응답이 차단되었습니다 (사유: {reason}). 문서 내용 또는 출력 한도를 확인해주세요.', en: 'The AI response was blocked (reason: {reason}). Check the document content or output limits.' },
+  'mainerr.streamNoResponse': { ko: 'AI 서버 응답이 중단되었습니다 (60초 무응답).', en: 'The AI server stopped responding (no data for 60s).' },
+  'mainerr.streamDisconnected': { ko: 'AI 스트림 연결이 끊어졌습니다.', en: 'The AI stream connection was lost.' },
+  'mainerr.streamTimeout': { ko: 'AI 서버 응답 타임아웃 (5분).', en: 'The AI server response timed out (5 min).' },
+  'mainerr.apiHttpError': { ko: 'API 요청 실패: HTTP {status}', en: 'API request failed: HTTP {status}' },
 
   // ─── 세션 영속화 (session-persistence) ───
   'recent.title': { ko: '최근 문서', en: 'Recent Documents' },

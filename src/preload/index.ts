@@ -133,7 +133,7 @@ export type ElectronAPI = {
       ollamaBaseUrl: string;
       temperature?: number;
       language?: string;
-    }) => Promise<{ success: boolean; error?: string; code?: string }>;
+    }) => Promise<{ success: boolean; error?: string; code?: string; errorKey?: string; errorParams?: Record<string, string> }>;
     abort: (requestId: string) => Promise<{ success: boolean; error?: string }>;
     analyzeImage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; description?: string; error?: string; code?: string }>;
     ocrPage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; text?: string; error?: string; code?: string }>;

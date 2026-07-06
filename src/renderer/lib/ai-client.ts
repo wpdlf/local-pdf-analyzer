@@ -1,5 +1,5 @@
 import type { SummaryType, AppSettings } from '../types';
-import { t } from './i18n';
+import { t, translateMainError } from './i18n';
 
 export class AiClient {
   private settings: AppSettings;
@@ -67,9 +67,11 @@ export class AiClient {
       // onDone 에 의해 main loop 가 빠져나간 다음 generate() 의 거절 마이크로태스크가
       // 실행되면, `if (error) throw` 가 동기 실행돼 거절이 누락되고 사용자가
       // 빈/부분 요약을 "성공" 으로 보는 경로가 있었다.
-      const captureResult = (result: { success: boolean; error?: string; code?: string }): void => {
+      const captureResult = (result: { success: boolean; error?: string; code?: string; errorKey?: string; errorParams?: Record<string, string> }): void => {
         if (!result.success) {
-          error = Object.assign(new Error(result.error || t('ai.generateFail')), {
+          // QA7: main 의 errorKey 를 UI 언어로 번역(429/529·타임아웃·응답차단 등이 영어 UI 에
+          // 한국어 원문으로 노출되던 i18n 우회 해소). errorKey 없는 에러는 error 원문 fallback.
+          error = Object.assign(new Error(translateMainError(result, t('ai.generateFail'))), {
             code: result.code || 'GENERATE_FAIL',
           });
           done = true;
