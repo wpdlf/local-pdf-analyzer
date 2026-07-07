@@ -16,8 +16,11 @@ const M = vi.hoisted(() => ({
   writeText: vi.fn(() => Promise.resolve()),
   reset: vi.fn(),
   setCollapsed: vi.fn(),
+  abortGather: vi.fn(),
 }));
 
+// QA9(D-MED): 뷰어 접기 시 gather abort 호출을 검증하기 위해 스파이로 대체.
+vi.mock('../../lib/use-collection-summary', () => ({ abortCollectionGather: M.abortGather }));
 vi.mock('../QaChat', () => ({ QaChat: () => <div data-testid="qachat" /> }));
 vi.mock('../PdfViewer', () => ({ PdfViewerPanel: () => <div data-testid="pdfviewer" /> }));
 vi.mock('../ResizeHandle', () => ({ ResizeHandle: () => <div data-testid="resize" /> }));
@@ -171,6 +174,18 @@ describe('SummaryViewer', () => {
     expect(useAppStore.getState().isGenerating).toBe(false);
     expect(M.setCollapsed).toHaveBeenCalledWith(true);
     expect(M.reset).not.toHaveBeenCalled();
+  });
+
+  it('컬렉션 gather 중 닫기 → abortCollectionGather 호출(토큰 소각 방지) + 접기 (QA9 D-MED)', async () => {
+    // gather 단계는 isCollectionBusy=true 이나 qaRequestId 없음 → abortQaPreservingThread 는 no-op.
+    // 뷰어 접기가 gatherAbortController 를 끊지 않으면 gather 가 취소불가 백그라운드로 고아화됐다.
+    setState({ stream: '부분' });
+    useAppStore.setState({ isCollectionBusy: true });
+    const user = userEvent.setup();
+    render(<SummaryViewer />);
+    await user.click(screen.getByRole('button', { name: '닫기' }));
+    expect(M.abortGather).toHaveBeenCalledTimes(1);
+    expect(M.setCollapsed).toHaveBeenCalledWith(true);
   });
 
   it('citationTarget 없으면 PdfViewer 패널·ResizeHandle 미마운트', () => {

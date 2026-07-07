@@ -234,7 +234,11 @@ export async function parsePdf(
         extractedText: ocrText,
         pageTexts: ocrPages,
         chapters,
-        images: [],
+        // QA9(A-MED): 이미지 추출 패스가 OCR 판정보다 먼저 돌아 allImages 를 이미 채웠다(가장 비싼
+        // getOperatorList+decode+base64 완료분). OCR 진입 시 images:[] 로 버리면 extractImages 가
+        // 켜져 있어도 imagesSkipped=false → 정당한 text-only PDF 와 구분 불가한 무음 no-op 이 됐다
+        // (QA6-D 가 닫은 클래스 재현). 이미 메모리에 있는 추출 이미지를 그대로 실어 Vision 분석 대상에 포함.
+        images: allImages,
         createdAt: new Date(),
         isOcr: true,
       };

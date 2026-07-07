@@ -26,6 +26,15 @@ describe('chunkText', () => {
     expect(chunkText('\n\n\t', 4000)).toEqual([]);
   });
 
+  // QA9(B-LOW): 경계에서 whitespace-only 문단이 단독 current 로 남으면 in-loop push 가 빈 청크를
+  // 방출했다(오버랩 경로엔 이미 가드). 빈 청크가 섞이지 않아야 한다.
+  it('경계의 whitespace-only 문단이 빈 청크를 만들지 않는다', () => {
+    const text = 'A'.repeat(35) + '\n\n   \n\n' + 'B'.repeat(35);
+    const chunks = chunkText(text, 30);
+    expect(chunks).not.toContain('');
+    expect(chunks.every((c) => c.trim().length > 0)).toBe(true);
+  });
+
   // QA6-B: 손상/수기편집 settings 의 비숫자 maxChunkSize 는 Math.max(100, NaN)=NaN 으로 폭발
   // 하한이 무력화돼 전 문서가 1개 거대 청크로 강등됐다 — 기본값 폴백으로 정상 분할 유지.
   it('비유한/비양수 maxChunkSize 는 기본값 폴백 (NaN 하한 무력화 방지)', () => {

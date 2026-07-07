@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAppStore } from '../lib/store';
 import { abortQaPreservingThread } from '../lib/use-qa';
+import { abortCollectionGather } from '../lib/use-collection-summary';
 import { useT } from '../lib/i18n';
 import { SafeMarkdown } from '../lib/safe-markdown';
 import { ProgressBar } from './ProgressBar';
@@ -90,6 +91,11 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
     // C5-L(QA cycle5): raw abort → 불변식 보존 중단. 이전엔 qaRequestId 만 끊어 부분 답변이
     // 버려지고 user 메시지가 짝 없이 남아 다음 턴 히스토리를 오염시켰다(use-qa 공유 경로 참조).
     abortQaPreservingThread();
+    // QA9(D-MED): 컬렉션 교차요약 gather 단계(isCollectionBusy && !isQaGenerating)는 qaRequestId 가
+    // 아직 없어 abortQaPreservingThread 가 no-op 이다. 뷰어를 접으면 QaChat 이 언마운트되며 gather 의
+    // 유일한 Stop 컨트롤도 사라지는데, 여기서 gatherAbortController 를 끊지 않으면 gather 가 취소 불가
+    // 백그라운드로 고아화돼 최대 10개 멤버 요약이 끝까지 돌며 토큰을 계속 청구했다. gather 미진행 시 no-op.
+    abortCollectionGather();
     store.setSummaryCollapsed(true);
   };
 

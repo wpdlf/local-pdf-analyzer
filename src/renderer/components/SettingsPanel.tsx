@@ -19,8 +19,6 @@ export function SettingsPanel() {
   const ollamaStatus = useAppStore((s) => s.ollamaStatus);
   const setOllamaStatus = useAppStore((s) => s.setOllamaStatus);
   const setView = useAppStore((s) => s.setView);
-  const setError = useAppStore((s) => s.setError);
-  const setNotice = useAppStore((s) => s.setNotice);
   // M2(UX): 생성 중에도 설정 진입을 허용하되(테마/언어 즉시 변경), AI 백엔드 정의 항목
   // (provider/model/URL/청크)은 진행 중 변경을 막는다 — in-flight 요청은 config 를 이미 캡처해
   // 영향이 없지만, 진행 중 백엔드 스왑은 다음 요청에서 RAG 재빌드/임베딩 모델 불일치 혼란을 부른다.
@@ -39,6 +37,9 @@ export function SettingsPanel() {
   const [pullModelName, setPullModelName] = useState('');
   const [isPulling, setIsPulling] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false); // L3: 재시작 진행 표시 + 연타 가드
+  // QA9(D-MED): Ollama 재시작 결과는 전역 notice/error 로 보냈으나 설정 화면(early-return)은
+  // 그 배너를 렌더하지 않아 성공은 안 보이고 실패는 메인 복귀 시 stale 로 떴다 → 패널-로컬 피드백으로.
+  const [restartMessage, setRestartMessage] = useState<{ text: string; ok: boolean } | null>(null);
   // R45(R44 후속): 진행 메시지를 이벤트로 보관하고 렌더 시점에 번역 — pull 중 언어 토글이
   // 다음 진행 이벤트를 기다리지 않고 즉시 반영 (위자드 F8 패턴과 통일)
   const [pullProgress, setPullProgress] = useState<
@@ -83,6 +84,14 @@ export function SettingsPanel() {
     const timer = setTimeout(() => setKeyMessage(''), 2000);
     return () => clearTimeout(timer);
   }, [keyMessage]);
+
+  // QA9(D-MED): 성공 피드백은 3초 후 자동 소멸(과알림 방지), 실패는 사용자가 원인을 볼 수 있도록
+  // 다음 재시작 시도(setRestartMessage(null))까지 유지.
+  useEffect(() => {
+    if (!restartMessage?.ok) return;
+    const timer = setTimeout(() => setRestartMessage(null), 3000);
+    return () => clearTimeout(timer);
+  }, [restartMessage]);
 
   useEffect(() => {
     if (!saved) return;
@@ -323,6 +332,7 @@ export function SettingsPanel() {
   const handleRestartOllama = async () => {
     if (isRestarting) return; // 연타 가드 — stop/start 진행 중 재진입 차단
     setIsRestarting(true);
+    setRestartMessage(null);
     try {
       await window.electronAPI.ollama.stop();
       if (!mountedRef.current) return;
@@ -331,11 +341,11 @@ export function SettingsPanel() {
       const status = await window.electronAPI.ollama.getStatus();
       if (!mountedRef.current) return;
       setOllamaStatus(status);
-      // L3: 성공 피드백 — 기존엔 무반응이라 눌렸는지 알 수 없었음. 전역 notice 로 1회 안내.
-      setNotice({ message: t('settings.restartOk') });
+      // QA9(D-MED): 패널-로컬 피드백 — 설정 화면에서 바로 보이는 sticky 헤더 배너로.
+      setRestartMessage({ text: t('settings.restartOk'), ok: true });
     } catch {
       if (!mountedRef.current) return;
-      setError({ code: 'OLLAMA_NOT_RUNNING', message: t('settings.restartFail') });
+      setRestartMessage({ text: t('settings.restartFail'), ok: false });
     } finally {
       if (mountedRef.current) setIsRestarting(false);
     }
@@ -392,6 +402,20 @@ export function SettingsPanel() {
         {keyMessage && (
           <div role="status" className="mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-sm text-blue-700 dark:text-blue-400 text-center">
             {keyMessage}
+          </div>
+        )}
+        {/* QA9(D-MED): Ollama 재시작 결과 — sticky 헤더 내부라 설정 화면 어느 스크롤에서도 보임.
+            성공=초록/status, 실패=빨강/alert. */}
+        {restartMessage && (
+          <div
+            role={restartMessage.ok ? 'status' : 'alert'}
+            className={`mt-3 p-2 border rounded text-sm text-center ${
+              restartMessage.ok
+                ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'
+                : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+            }`}
+          >
+            {restartMessage.text}
           </div>
         )}
       </div>

@@ -57,6 +57,7 @@ beforeEach(() => {
     ollamaStatus: { installed: true, running: true, models: ['gemma3:latest'] },
     view: 'settings',
     error: null,
+    notice: null,
   });
   window.confirm = vi.fn(() => true);
 });
@@ -179,7 +180,7 @@ describe('SettingsPanel — 세션 데이터 / Ollama', () => {
     expect(sessionMock.clear).not.toHaveBeenCalled();
   });
 
-  it('Ollama 재시작 성공 → stop/start/getStatus → ollamaStatus 갱신 + 성공 notice(L3)', async () => {
+  it('Ollama 재시작 성공 → stop/start/getStatus → ollamaStatus 갱신 + 패널-로컬 성공 배너(QA9 D-MED)', async () => {
     const user = userEvent.setup();
     render(<SettingsPanel />);
     await user.click(screen.getByText(t('settings.restartOllama')));
@@ -188,16 +189,19 @@ describe('SettingsPanel — 세션 데이터 / Ollama', () => {
       expect(ollamaMock.start).toHaveBeenCalled();
       expect(useAppStore.getState().ollamaStatus.version).toBe('0.6.0');
     });
-    // L3: 성공 후 전역 notice 로 피드백
-    await waitFor(() => expect(useAppStore.getState().notice?.message).toBe(t('settings.restartOk')));
+    // QA9(D-MED): 성공 피드백이 패널 내부(sticky 헤더 status 배너)에 렌더 — 전역 notice 아님
+    await waitFor(() => expect(screen.queryByText(t('settings.restartOk'))).not.toBeNull());
+    expect(useAppStore.getState().notice).toBeNull();
   });
 
-  it('Ollama 재시작 실패 → OLLAMA_NOT_RUNNING 에러', async () => {
+  it('Ollama 재시작 실패 → 패널-로컬 실패 배너(alert), 전역 error 미오염(QA9 D-MED)', async () => {
     ollamaMock.stop.mockRejectedValueOnce(new Error('no daemon'));
     const user = userEvent.setup();
     render(<SettingsPanel />);
     await user.click(screen.getByText(t('settings.restartOllama')));
-    await waitFor(() => expect(useAppStore.getState().error?.code).toBe('OLLAMA_NOT_RUNNING'));
+    // 실패 피드백이 패널 내부 alert 배너로 — 이전엔 전역 error 로 보내 메인 복귀 시 stale 로 떴다
+    await waitFor(() => expect(screen.queryByText(t('settings.restartFail'))).not.toBeNull());
+    expect(useAppStore.getState().error).toBeNull();
   });
 });
 

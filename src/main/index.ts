@@ -469,7 +469,8 @@ export function registerIpcHandlers(): void {
             if (VALID_SUMMARY_TYPES.includes(val as typeof VALID_SUMMARY_TYPES[number])) filtered[key] = val;
             break;
           case 'maxChunkSize':
-            if (typeof val === 'number' && val >= 1000 && val <= 16000) filtered[key] = val;
+            // QA9(C-LOW): Number.isInteger 로 float(예 1500.5) 저장 방지 — dim 검증(Number.isInteger)과 대칭.
+            if (typeof val === 'number' && Number.isInteger(val) && val >= 1000 && val <= 16000) filtered[key] = val;
             break;
           case 'enableImageAnalysis':
             if (typeof val === 'boolean') filtered[key] = val;

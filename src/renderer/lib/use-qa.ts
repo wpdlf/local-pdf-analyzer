@@ -534,7 +534,11 @@ export async function collectionRagSearch(
     for (const r of merged) {
       const pageLabel = formatPageLabel(r.pageStart); // "[p.N]" 또는 ''
       const page = pageLabel ? ` ${pageLabel.replace(/^\[|\]$/g, '')}` : ''; // "p.N"
-      const label = `[${r.fileName}${page}]`;
+      // QA9(B-LOW): 파일명에 예약문자([ ] | 개행)나 120자 초과가 있으면 CITATION_REGEX 의 doc 그룹
+      // ([^[\]|\n]{1,120})에 안 걸려 교차인용 라벨이 비클릭 plain text 로 강등됐다(페이지 네비 상실).
+      // 파서 문법에 맞게 예약문자를 공백치환하고 110자로 절단(뒤 " p.N" 여유). 전부 제거되면 페이지만.
+      const safeName = r.fileName.replace(/[[\]|\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 110).trim();
+      const label = safeName ? `[${safeName}${page}]` : (pageLabel || '');
       const segment = `${label}\n${r.text}`;
       if (totalLen + segment.length > MAX_QA_CONTEXT_CHARS) break;
       parts.push(segment);

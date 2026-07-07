@@ -437,6 +437,14 @@ describe('settings:set (검증 + 직렬화 mutex)', () => {
     expect(H.settings.save).toHaveBeenCalledTimes(1);
   });
 
+  it('maxChunkSize: float 은 거부, 정수는 통과 (QA9 C-LOW, Number.isInteger)', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama' });
+    const rejected = await invoke('settings:set', { maxChunkSize: 1500.5 }) as Record<string, unknown>;
+    expect(rejected).not.toHaveProperty('maxChunkSize');
+    const accepted = await invoke('settings:set', { maxChunkSize: 2000 }) as Record<string, unknown>;
+    expect(accepted.maxChunkSize).toBe(2000);
+  });
+
   it('burst 동시 호출 시 lost update 없음 (load→save 직렬화)', async () => {
     // stateful 저장소 — saveSettings 에 인위적 지연을 둬 mutex 가 없으면 두 번째 호출이
     // 첫 번째 쓰기를 덮어쓰도록(lost update) 만든다.

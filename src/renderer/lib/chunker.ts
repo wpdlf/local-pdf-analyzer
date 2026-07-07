@@ -104,7 +104,10 @@ export function chunkText(
 
   for (const para of paragraphs) {
     if ((current + '\n\n' + para).length > maxChars && current.length > 0) {
-      chunks.push(current.trim());
+      // QA9(B-LOW): whitespace-only 문단이 경계에서 단독 current 로 남으면 ''.trim() 이 빈 청크로
+      // 푸시됐다(오버랩 경로엔 이미 빈문자 가드 있음). 대칭 맞춰 빈 청크는 건너뛴다.
+      const trimmed = current.trim();
+      if (trimmed) chunks.push(trimmed);
       current = para;
     } else {
       current = current ? current + '\n\n' + para : para;
