@@ -637,12 +637,15 @@ function OutlineTree({
 }) {
   const t = useT();
   return (
-    // L-a11y1: 스크린리더가 계층/현재 위치를 안내하도록 트리 ARIA 시맨틱 부여.
-    // 최상위만 role="tree", 중첩은 role="group", 각 항목은 treeitem + aria-level.
-    <ul role={depth === 0 ? 'tree' : 'group'} className={depth === 0 ? 'space-y-0.5' : 'ml-3 space-y-0.5'}>
+    // QA10(A-LOW): 목차는 상위 <nav aria-label={outline.title}> 랜드마크 안의 중첩 리스트로 계층을
+    // 전달한다. 이전엔 role="tree"/"treeitem"+aria-level 을 부여했으나 roving tabindex·화살표
+    // 탐색을 구현하지 않아(각 항목이 개별 Tab 스톱) 트리 상호작용 계약을 과선언했다 — SR 이
+    // 화살표 탐색을 기대하나 미동작. 평범한 중첩 <ul>/<li> 로 강등해 실제 동작(각 버튼=Tab 스톱)과
+    // 시맨틱을 일치시킨다(TabBar 가 nav>ul>li 로 role=tab 을 피한 것과 동일 판단).
+    <ul className={depth === 0 ? 'space-y-0.5' : 'ml-3 space-y-0.5'}>
       {nodes.map((node, i) => (
         // L-key: 인덱스 단독 대신 page+title 합성 — 동일 제목/페이지 형제도 안정적으로 구분.
-        <li key={`${i}-${node.page ?? 'x'}-${node.title}`} role="treeitem" aria-level={depth + 1}>
+        <li key={`${i}-${node.page ?? 'x'}-${node.title}`}>
           {node.page != null ? (
             <button
               type="button"

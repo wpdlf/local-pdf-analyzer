@@ -57,6 +57,10 @@ export default function App() {
   const settingsBtnRef = useRef<HTMLButtonElement>(null);
   const altViewRef = useRef<HTMLElement>(null);
   const prevViewRef = useRef(useAppStore.getState().view);
+  // QA10(A-LOW): 요약 뷰어 접기(✕) 시 포커스가 사라진 ✕ 버튼에서 body 로 표류하지 않도록,
+  // 재진입("요약 보기") 버튼으로 이동시키기 위한 ref/전이 추적.
+  const viewSummaryBtnRef = useRef<HTMLButtonElement>(null);
+  const prevCollapsedRef = useRef(useAppStore.getState().summaryCollapsed);
   const [bgModelSync, setBgModelSync] = useState<string | null>(null);
   const [bgModelLoading, setBgModelLoading] = useState(false);
   // Ctrl+O / 파일 다이얼로그 재진입 가드. 진행 중이면 연타 Ctrl+O 를 무시한다.
@@ -387,6 +391,17 @@ export default function App() {
     prevViewRef.current = view;
   }, [view]);
 
+  // QA10(A-LOW): 요약 뷰어 접기(false→true) 시 포커스 표류 방지. SummaryViewer(✕ 버튼 포함)가
+  // 언마운트되며 block-2 가 렌더되므로, 재진입("요약 보기") 버튼으로 포커스를 넘긴다(없으면 메인
+  // 컨테이너). 접힘 상태의 매 렌더가 아니라 전이 시점에만 이동(M5 뷰 전환 패턴과 대칭).
+  useEffect(() => {
+    const prev = prevCollapsedRef.current;
+    prevCollapsedRef.current = summaryCollapsed;
+    if (!prev && summaryCollapsed && document) {
+      (viewSummaryBtnRef.current ?? altViewRef.current)?.focus();
+    }
+  }, [summaryCollapsed, document]);
+
   // H3(UX): 요약 시작 전 백엔드 사전 체크 — ollama provider 인데 미실행이거나 설치된 모델이
   // 없으면 요약 버튼을 비활성화하고 "설정 열기" 경로를 제시한다. 클릭→실패→재설정의 헛수고를 방지.
   // (claude/openai/gemini 키 확인은 비동기라 여기선 제외 — 클릭 시점 에러가 backstop)
@@ -547,6 +562,7 @@ export default function App() {
             {/* H1: 접힌 요약(완료/부분)이 있으면 재진입을 1순위로. 뷰어 복귀는 백엔드 불필요. */}
             {hasSummary && (
               <button
+                ref={viewSummaryBtnRef}
                 onClick={() => setSummaryCollapsed(false)}
                 className="px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-lg font-medium transition-colors"
               >

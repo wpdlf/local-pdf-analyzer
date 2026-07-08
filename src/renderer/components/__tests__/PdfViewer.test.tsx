@@ -5,7 +5,7 @@
 // 실제 canvas 렌더는 happy-dom 한계로 검증 대상 아님 — 상태/DOM 골격만 가드.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const P = vi.hoisted(() => {
@@ -142,18 +142,21 @@ describe('PdfViewer 목차(outline)', () => {
     expect(useAppStore.getState().citationTarget).toEqual({ page: 3 });
   });
 
-  it('L-a11y1: 목차 트리에 role=tree/treeitem + aria-level 부여', async () => {
+  it('QA10 a11y: 목차는 nav 랜드마크 안 버튼 리스트 — tree/treeitem 과선언 제거', async () => {
     P.getDocument.mockReturnValue({ promise: Promise.resolve(makeOutlineDoc()), destroy: vi.fn(() => Promise.resolve()) });
     const user = userEvent.setup();
     render(<PdfViewer pdfBytes={new Uint8Array([1, 2, 3])} targetPage={1} onClose={vi.fn()} />);
     const toggle = await screen.findByRole('button', { name: t('outline.toggle') });
     await user.click(toggle);
 
-    // 최상위 ul 은 tree, 항목은 treeitem(aria-level=1)
-    expect(screen.getByRole('tree')).toBeTruthy();
-    const items = screen.getAllByRole('treeitem');
-    expect(items.length).toBe(2);
-    expect(items[0]?.getAttribute('aria-level')).toBe('1');
+    // roving tabindex·화살표 탐색을 구현하지 않으므로 트리 상호작용 계약을 선언하지 않는다.
+    expect(screen.queryByRole('tree')).toBeNull();
+    expect(screen.queryAllByRole('treeitem').length).toBe(0);
+    // 대신 상위 nav 랜드마크(aria-label=outline.title) 안에서 각 목차 항목이 점프 버튼으로 노출된다.
+    const nav = screen.getByRole('navigation', { name: t('outline.title') });
+    const jumpButtons = within(nav).getAllByRole('button');
+    expect(jumpButtons.length).toBe(2);
+    expect(jumpButtons[0]?.getAttribute('aria-label')).toBe(t('outline.jumpToPage', { page: 1 }));
   });
 
   it('목차 없으면 토글 미노출', async () => {
