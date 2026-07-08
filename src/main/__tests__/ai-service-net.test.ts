@@ -225,6 +225,9 @@ describe('analyzeImage (callVision → httpPost)', () => {
     ['sk-ant (JSON error.message)', { error: { message: 'invalid sk-ant-api03-SECRETSECRETSECRET99999' } }, 'SECRETSECRETSECRET99999'],
     ['소문자 bearer (비-JSON body)', 'unauthorized: bearer SUPERSECRETTOKENVALUE1234567', 'SUPERSECRETTOKENVALUE1234567'],
     ['sk-proj (JSON)', { error: { message: 'bad sk-proj-SUPERSECRETPROJKEY1234567890' } }, 'SUPERSECRETPROJKEY1234567890'],
+    // QA10(D-LOW): AIza(Google API 키) 분기 — 이전엔 redaction 정규식이 실제 AIza 키로 검증되지
+    // 않아, 패턴 오타 시 Gemini 4xx 바디에 에코된 키가 로그로 유출돼도 미탐지였다.
+    ['AIza (Google 키, JSON)', { error: { message: 'API key not valid AIzaSyD1234567890ABCDEFGHIJKLMNOPQRSTUV' } }, 'SyD1234567890ABCDEFGHIJKLMNOPQRSTUV'],
   ])('에러 응답 로그에서 키 redaction: %s', async (_l, body, rawSecret) => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     respond(M.httpsRequest, 401, body);
@@ -579,6 +582,83 @@ describe('generate → streamRequest (스트리밍)', () => {
     ).rejects.toMatchObject({ code: 'EMPTY_RESPONSE', errorKey: 'emptyResponse' });
     expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'e1');
     expect(__activeRequestCount()).toBe(0);
+  });
+
+  // QA10(D-MED): streamRequest 인터럽션/사이즈 한도 분기 회귀 가드. 이 분기들은 "무음실패→명시
+  // reject" 로 전환된 R32/R43 수정의 핵심인데 전혀 구동되지 않아, silent continue/ai:done 로
+  // 되돌아가도 실패하는 테스트가 없었다(빈 결과를 '완료'로 보고하는 버그가 무경보 통과).
+  it('스트림 1MB 초과 라인 → 명시 reject + ai:done 미전송 (R32 P2)', async () => {
+    M.httpRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => {
+          res.emit('data', Buffer.from('x'.repeat(1024 * 1024 + 1) + '\n'));
+          res.emit('end');
+        });
+      });
+      return req;
+    });
+    const win = makeWin();
+    await expect(
+      generate('big1', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never),
+    ).rejects.toThrow(/비정상적으로 큰 라인/);
+    expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'big1');
+    expect(__activeRequestCount()).toBe(0);
+  });
+
+  it('스트림 close 시 res.complete=false → streamDisconnected reject + ai:done 미전송', async () => {
+    M.httpRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200, complete: false });
+        cb(res);
+        queueMicrotask(() => { res.emit('close'); });
+      });
+      return req;
+    });
+    const win = makeWin();
+    await expect(
+      generate('disc1', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never),
+    ).rejects.toMatchObject({ errorKey: 'streamDisconnected' });
+    expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'disc1');
+    expect(__activeRequestCount()).toBe(0);
+  });
+
+  it('5분 요청 타임아웃 발화 → streamTimeout reject + ai:done 미전송', async () => {
+    let capturedReq: ReturnType<typeof makeReq> | undefined;
+    M.httpRequest.mockImplementation(() => { capturedReq = makeReq(); return capturedReq; });
+    const win = makeWin();
+    const p = generate('to1', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never);
+    // streamRequest 가 req.setTimeout(300000, cb) 를 등록할 때까지 대기 후 콜백 직접 발화(결정적).
+    await vi.waitFor(() => { if (typeof capturedReq?.__timeoutCb !== 'function') throw new Error('pending'); });
+    capturedReq!.__timeoutCb!();
+    await expect(p).rejects.toMatchObject({ errorKey: 'streamTimeout' });
+    expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'to1');
+    expect(__activeRequestCount()).toBe(0);
+  });
+
+  it('60초 무응답(idle) → streamNoResponse reject + ai:done 미전송', async () => {
+    vi.useFakeTimers();
+    try {
+      M.httpRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+        const req = makeReq();
+        // 응답 헤더만 도착하고 data/end 가 오지 않아 idle timer(60s) 가 발화하는 시나리오.
+        queueMicrotask(() => { cb(makeRes({ statusCode: 200 })); });
+        return req;
+      });
+      const win = makeWin();
+      const p = generate('idle1', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never);
+      // rejection 핸들러를 타이머 전진 전에 부착 — 60s 발화가 unhandled 로 뜨는 창 제거.
+      const assertion = expect(p).rejects.toMatchObject({ errorKey: 'streamNoResponse' });
+      await vi.advanceTimersByTimeAsync(60000);
+      await assertion;
+      expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'idle1');
+      expect(__activeRequestCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // 4-way 파리티(딥다이브): 클라우드 생성 출력 토큰 상한(4096)이 세 프로바이더 모두 요청 바디에

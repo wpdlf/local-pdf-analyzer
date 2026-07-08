@@ -257,4 +257,28 @@ describe('SettingsPanel — a11y', () => {
     await user.keyboard('{Escape}');
     expect(useAppStore.getState().view).toBe('main');
   });
+
+  // QA10(A-MED): 입력/IME 조합 중 Escape 가 패널을 닫으면 draft(API키·URL·모델명·청크크기) 손실 +
+  // IME 조합 취소가 패널 전체를 닫는다. PdfViewer 와 동일한 editable/isComposing 가드가 있는지 회귀 가드.
+  it('L2 guard: 입력 필드 포커스 중 Escape 는 패널을 닫지 않는다(draft 보호, QA10 A-MED)', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    expect(useAppStore.getState().view).toBe('settings');
+    const inputs = [...screen.queryAllByRole('spinbutton'), ...screen.queryAllByRole('textbox')];
+    expect(inputs.length).toBeGreaterThan(0);
+    (inputs[0] as HTMLElement).focus();
+    await user.keyboard('{Escape}');
+    expect(useAppStore.getState().view).toBe('settings'); // 닫히지 않음
+  });
+
+  it('L2 guard: IME 조합 중(isComposing) Escape 는 패널을 닫지 않는다(QA10 A-MED)', () => {
+    render(<SettingsPanel />);
+    expect(useAppStore.getState().view).toBe('settings');
+    (document.activeElement as HTMLElement | null)?.blur();
+    const evt = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true });
+    // happy-dom 생성자가 isComposing 을 항상 반영하진 않으므로 명시적으로 세팅.
+    Object.defineProperty(evt, 'isComposing', { value: true });
+    window.dispatchEvent(evt);
+    expect(useAppStore.getState().view).toBe('settings'); // 닫히지 않음
+  });
 });

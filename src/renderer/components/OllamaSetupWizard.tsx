@@ -364,9 +364,9 @@ export function OllamaSetupWizard() {
             {/* a11y M3: 설치 실패를 SR 에 즉시 통지 */}
             <p className="text-red-600 dark:text-red-400 mb-2" role="alert">{errorMsg}</p>
             {errorCode && errorHints[errorCode] && (
-              <p className="text-gray-500 text-sm mb-4">{errorHints[errorCode]}</p>
+              <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">{errorHints[errorCode]}</p>
             )}
-            <p className="text-gray-500 text-sm mb-4">
+            <p className="text-gray-500 dark:text-gray-400 text-sm mb-4">
               {t('setup.manualInstall')}{' '}
               <button onClick={() => window.electronAPI.openExternal('https://ollama.com')} className="underline text-blue-500 cursor-pointer bg-transparent border-none p-0">
                 https://ollama.com

@@ -282,7 +282,23 @@ export function SettingsPanel() {
   const handleCancelRef = useRef(handleCancel);
   handleCancelRef.current = handleCancel;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleCancelRef.current(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // QA10(A-MED): 입력/IME 조합 중 Escape 는 필드 롤백·조합 취소 관례라 가로채면 draft(API키·
+      // URL·모델명·청크크기) 손실 + IME 조합 취소가 패널 전체를 닫는다. PdfViewer(v0.18.5 L1) 와
+      // 동일하게 editable 포커스·IME 조합 중이면 흘려보낸다(shadow DOM 은 재귀로 실제 포커스 추적).
+      if (e.isComposing) return;
+      let active = document.activeElement as Element | null;
+      while (active?.shadowRoot?.activeElement) {
+        active = active.shadowRoot.activeElement;
+      }
+      if (active) {
+        const tag = active.tagName;
+        const editable = (active as HTMLElement).isContentEditable;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || editable) return;
+      }
+      handleCancelRef.current();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
@@ -495,9 +511,9 @@ export function SettingsPanel() {
         <select value={draft.model} onChange={(e) => updateDraft({ model: e.target.value })} aria-label={t('settings.model')} className="w-full px-3 py-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
           {modelOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
-        {draft.provider !== 'ollama' && <p className="text-xs text-gray-500 mt-2">{t('settings.apiBilling')}</p>}
+        {draft.provider !== 'ollama' && <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">{t('settings.apiBilling')}</p>}
         {draft.provider === 'ollama' && ollamaModels.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">{t('settings.noModels')}</p>}
-        {draft.provider === 'ollama' && ollamaModels.length > 0 && <p className="text-xs text-gray-500 mt-2">{t('settings.modelRecommend')}</p>}
+        {draft.provider === 'ollama' && ollamaModels.length > 0 && <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">{t('settings.modelRecommend')}</p>}
       </section>
       </fieldset>
 
@@ -688,7 +704,7 @@ export function SettingsPanel() {
             aria-invalid={chunkSizeError}
             aria-describedby={chunkSizeError ? 'settings-chunk-error' : undefined}
           />
-          <span className="text-sm text-gray-500">tokens</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">tokens</span>
           {chunkSizeError && (
             <span id="settings-chunk-error" className="text-xs text-red-500">1000–16000</span>
           )}

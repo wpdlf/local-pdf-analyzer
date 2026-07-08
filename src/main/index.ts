@@ -339,13 +339,44 @@ app.on('window-all-closed', () => {
   }
 });
 
+// QA10(C-MED, 실데이터 손실): 종료 시 렌더러 persist(요약·Q&A·RAG 인덱스)를 명시적으로 기다린다.
+// 기존엔 ollamaManager.stop() 의 지연에 quit 착지를 의존했으나, 클라우드/외부 Ollama 사용자는
+// stop() 이 즉시(this.process===null) 리턴해 async pagehide persist 가 디스크에 닿기 전에
+// app.quit() 이 진행돼 마지막 델타(답변/요약/인덱스)가 소실됐다. 렌더러 ack 또는 하드 타임아웃
+// (렌더러 무응답·크래시 방어) 중 먼저 오는 쪽까지만 보류하므로 앱이 종료에서 멈추지 않는다.
+const FLUSH_BEFORE_QUIT_TIMEOUT_MS = 2000;
+function flushRenderersBeforeQuit(): Promise<void> {
+  const wins = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+  if (wins.length === 0) return Promise.resolve();
+  return Promise.all(wins.map((win) => new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      ipcMain.removeListener('app:flush-done', onDone);
+      resolve();
+    };
+    const onDone = (event: Electron.IpcMainEvent) => {
+      if (event.sender === win.webContents) finish();
+    };
+    const timer = setTimeout(finish, FLUSH_BEFORE_QUIT_TIMEOUT_MS);
+    ipcMain.on('app:flush-done', onDone);
+    try { win.webContents.send('app:flush-before-quit'); } catch { finish(); }
+  }))).then(() => undefined);
+}
+
 let isQuitting = false;
 app.on('before-quit', (e) => {
   cleanupAiService();
   if (!isQuitting) {
     isQuitting = true;
     e.preventDefault();
-    ollamaManager.stop().finally(() => app.quit());
+    void (async () => {
+      try { await flushRenderersBeforeQuit(); } catch { /* best-effort */ }
+      try { await ollamaManager.stop(); } catch { /* ignore */ }
+      app.quit();
+    })();
   }
 });
 

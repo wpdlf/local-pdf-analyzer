@@ -543,7 +543,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
               aria-label={t('outline.toggle')}
               aria-pressed={showOutline}
               title={t('outline.title')}
-              className={`shrink-0 inline-flex items-center justify-center min-w-[24px] min-h-[24px] text-sm rounded ${showOutline ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'}`}
+              className={`shrink-0 inline-flex items-center justify-center min-w-[24px] min-h-[24px] text-sm rounded ${showOutline ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
             >
               ☰
             </button>

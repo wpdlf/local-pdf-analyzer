@@ -107,6 +107,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('file:dropped', handler);
     return () => ipcRenderer.removeListener('file:dropped', handler);
   },
+  // QA10(C-MED, 실데이터 손실): 종료(before-quit) 시 main 이 렌더러에 flush 를 요청하고 persist
+  // 착지를 기다린다. 기존 pagehide flush 는 async(hash+IPC+원자적 쓰기)라 클라우드/외부 Ollama
+  // 사용자는 ollamaManager.stop() 이 즉시 리턴해 quit 이 persist 를 앞질러 마지막 델타를 소실했다.
+  // main 은 flushBeforeQuitDone ack 또는 하드 타임아웃까지 quit 을 보류한다(무응답 시 강제 진행).
+  onFlushBeforeQuit: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('app:flush-before-quit', handler);
+    return () => ipcRenderer.removeListener('app:flush-before-quit', handler);
+  },
+  flushBeforeQuitDone: () => ipcRenderer.send('app:flush-done'),
 });
 
 export type ElectronAPI = {
@@ -182,6 +192,8 @@ export type ElectronAPI = {
   getPathForFile: (file: File) => string;
   onSetupProgress: (callback: (event: { key: string; params?: Record<string, string>; source?: 'install' | 'pull'; model?: string }) => void) => () => void;
   onFileDropped: (callback: (file: { path: string; name: string; data: ArrayBuffer }) => void) => () => void;
+  onFlushBeforeQuit: (callback: () => void) => () => void;
+  flushBeforeQuitDone: () => void;
 };
 
 declare global {

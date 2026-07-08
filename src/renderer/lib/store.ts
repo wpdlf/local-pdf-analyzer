@@ -39,7 +39,7 @@ let citationPanelWidthSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingPanelWidth: number | null = null;
 let pendingSettingsPayload: Record<string, unknown> | null = null;
 
-export function flushPendingWrites(): void {
+export function flushPendingWrites(): Promise<void> {
   if (citationPanelWidthSaveTimer !== null) {
     clearTimeout(citationPanelWidthSaveTimer);
     citationPanelWidthSaveTimer = null;
@@ -64,8 +64,28 @@ export function flushPendingWrites(): void {
   // 저가치 데이터(테마·폭)는 flush 하면서 고가치 세션은 누락된 비대칭 해소. best-effort 로
   // 즉시 발화 — persistCurrentSession 은 실행 시점 getState() 를 읽는 직렬화 체인이고, 내부에서
   // 생성중/복원대기/컬렉션busy/persistSessions OFF 를 스스로 skip 하므로 여기서 무조건 호출해도 안전.
-  // before-quit 이 ollamaManager.stop() 로 quit 을 지연시키는 창이 있어 IPC save 가 착지할 여지가 있다.
-  try { void persistCurrentSession(); } catch { /* best-effort */ }
+  // QA10(C-MED): persist 완료 promise 를 반환한다. 새로고침(pagehide)엔 이 반환이 무시되지만,
+  // 종료 handshake(onFlushBeforeQuit)는 이 promise 착지를 기다린 뒤 ack 하여 main 이 persist 가
+  // 디스크에 닿을 때까지 quit 을 보류한다(기존 pagehide 는 async 라 클라우드/외부 Ollama 사용자에서
+  // ollamaManager.stop() 즉시리턴에 quit 이 persist 를 앞질러 마지막 델타를 소실했음).
+  let persisted: Promise<void> = Promise.resolve();
+  try { persisted = persistCurrentSession(); } catch { /* best-effort */ }
+  return persisted;
+}
+
+// QA10(C-MED): 종료 handshake 리스너. main 의 before-quit 이 app:flush-before-quit 를 보내면
+// flush(설정·패널폭·세션 persist)를 수행하고 착지 후 flushBeforeQuitDone 으로 ack 한다. main 은
+// ack 또는 하드 타임아웃까지 quit 을 보류하므로 무응답이어도 앱이 멈추지 않는다. 테스트/비-electron
+// 환경(electronAPI.onFlushBeforeQuit 미존재)에서는 등록을 건너뛴다.
+let flushBeforeQuitUnsub: (() => void) | null = null;
+if (typeof window !== 'undefined' && window.electronAPI?.onFlushBeforeQuit) {
+  flushBeforeQuitUnsub = window.electronAPI.onFlushBeforeQuit(() => {
+    const ack = () => {
+      try { window.electronAPI.flushBeforeQuitDone?.(); } catch { /* best-effort */ }
+    };
+    // flushPendingWrites 는 persist 완료 promise 를 반환 → 착지(성공/실패 무관) 후 1회 ack.
+    Promise.resolve(flushPendingWrites()).then(ack, ack);
+  });
 }
 
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
@@ -143,6 +163,8 @@ if (_meta.hot) {
     if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
       window.removeEventListener('pagehide', flushPendingWrites);
     }
+    // QA10(C-MED): 종료 handshake IPC 리스너도 해제(이전 인스턴스 중복 ack 방지).
+    if (flushBeforeQuitUnsub) { flushBeforeQuitUnsub(); flushBeforeQuitUnsub = null; }
   });
 }
 
