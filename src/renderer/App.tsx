@@ -18,6 +18,7 @@ import { applyTheme } from './lib/theme';
 import { useSummarize } from './lib/use-summarize';
 import { useRagBuilder } from './lib/use-qa';
 import { useSessionPersistence } from './lib/use-session';
+import { prefetchMarkdownRenderer } from './lib/safe-markdown';
 import { MAX_PDF_SIZE_BYTES } from '../shared/constants';
 import logoImg from './assets/logo.png';
 
@@ -103,6 +104,19 @@ export default function App() {
 
   // session-persistence(module-3): 요약·Q&A·인덱스 변경이 settle 되면 자동 저장.
   useSessionPersistence();
+
+  // 유휴 시점에 markdown 렌더러 지연 청크를 warm — 세션 복원/최초 요약 렌더 시 Suspense fallback
+  // 깜빡임(재오픈 첫 화면이 잠깐 원본 텍스트로 보이던 현상) 방지. 초기 페인트 이후에 로드하므로
+  // cold-start 부담 없음. requestIdleCallback 미지원 환경은 짧은 setTimeout 으로 폴백.
+  useEffect(() => {
+    const ric = window.requestIdleCallback;
+    if (typeof ric === 'function') {
+      const id = ric(() => prefetchMarkdownRenderer());
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const timer = setTimeout(prefetchMarkdownRenderer, 1500);
+    return () => clearTimeout(timer);
+  }, []);
 
   // 초기화: 설정 로드 + Ollama 상태 확인
   useEffect(() => {

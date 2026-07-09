@@ -157,7 +157,19 @@ export const safeComponents: Components = {
 
 // react-markdown(≈50KB gzip)·remark-gfm 은 cold-start 부담을 줄이기 위해 지연 청크로 분리한다.
 // `markdown-renderer` 만이 이들을 정적 import 하고, 본 컴포넌트가 React.lazy 로 그 모듈을 끌어온다.
-const MarkdownRenderer = lazy(() => import('./markdown-renderer'));
+const importMarkdownRenderer = () => import('./markdown-renderer');
+const MarkdownRenderer = lazy(importMarkdownRenderer);
+
+/**
+ * 지연 청크(react-markdown/remark-gfm)를 유휴 시점에 미리 로드(warm)한다.
+ * 신규 앱 기동 후 세션 복원·최초 요약 렌더 시, 청크가 아직 없으면 Suspense fallback(원본 텍스트)이
+ * 한 프레임 노출됐다(재오픈 첫 화면이 잠깐 코드블록처럼 보이던 현상). import() 는 모듈 단위로 캐시되므로
+ * 초기 페인트 이후 유휴에 한 번 호출해 두면 이후 SafeMarkdown 이 즉시 렌더돼 깜빡임이 사라진다.
+ * cold-start 부담은 없다 — 호출 시점을 초기 렌더 이후로 미루기 때문(App 마운트 시 requestIdleCallback).
+ */
+export function prefetchMarkdownRenderer(): void {
+  void importMarkdownRenderer();
+}
 
 /**
  * 안전 마크다운 렌더러 — 지연 로딩(Suspense) + 파싱 실패 fallback(ErrorBoundary)을 한데 묶은 진입점.
@@ -167,7 +179,9 @@ const MarkdownRenderer = lazy(() => import('./markdown-renderer'));
 export function SafeMarkdown({ content }: { content: string }) {
   return (
     <MarkdownErrorBoundary fallbackText={content}>
-      <Suspense fallback={<pre className="whitespace-pre-wrap text-sm">{content}</pre>}>
+      {/* 청크 로드 전 짧은 순간의 fallback — 상위 prose 타이포그래피가 <pre> 를 코드블록(다크·모노스페이스)
+          으로 스타일링하므로, 원본을 plain text 로 보여주려는 의도대로 <div> 로 렌더한다(레이아웃 유지). */}
+      <Suspense fallback={<div className="whitespace-pre-wrap text-sm">{content}</div>}>
         <MarkdownRenderer>{content}</MarkdownRenderer>
       </Suspense>
     </MarkdownErrorBoundary>

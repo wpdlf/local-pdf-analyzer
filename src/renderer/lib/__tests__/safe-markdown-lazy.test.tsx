@@ -8,7 +8,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { SafeMarkdown } from '../safe-markdown';
+import { SafeMarkdown, prefetchMarkdownRenderer } from '../safe-markdown';
 
 afterEach(() => cleanup());
 
@@ -26,6 +26,17 @@ describe('SafeMarkdown lazy 경계 (통합)', () => {
     render(<SafeMarkdown content={'~~삭제~~'} />);
     const del = await screen.findByText('삭제', {}, { timeout: 5000 });
     expect(del.tagName).toBe('DEL'); // GFM strikethrough — remark-gfm 미로드 시 평문으로 남음
+  });
+
+  // 재오픈 fallback 깜빡임 개선: prefetch 로 청크를 미리 warm — 호출이 안전(void)·멱등하고
+  // 이후 SafeMarkdown 렌더가 정상 동작하는지. (실사용에선 App 마운트 유휴에 호출돼 Suspense
+  // fallback 이 안 뜨게 한다.)
+  it('prefetchMarkdownRenderer 는 안전·멱등하며 이후 렌더가 정상이다', async () => {
+    expect(prefetchMarkdownRenderer()).toBeUndefined();
+    expect(() => prefetchMarkdownRenderer()).not.toThrow(); // 중복 호출도 안전(import 캐시)
+    render(<SafeMarkdown content={'**미리로드** 확인'} />);
+    const strong = await screen.findByText('미리로드', {}, { timeout: 5000 });
+    expect(strong.tagName).toBe('STRONG');
   });
 
   it('인용 토큰 [p.N] 을 safeComponents 경유 CitationButton 으로 변환한다', async () => {
