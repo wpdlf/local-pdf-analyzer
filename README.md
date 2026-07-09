@@ -71,6 +71,7 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 | **Full Summary** | Summarizes the entire PDF in one pass |
 | **Chapter Summary** | Splits the document into chapters/sections and summarizes each |
 | **Keyword Extraction** | Extracts key terms with explanations in a table |
+| **Custom Templates** | Define your own summary prompts in **Settings**; they appear here alongside the built-in types. Each template runs as a **single pass** (fast) or **chunk & integrate** across the whole document (covers long files), with page citations preserved |
 
 ### 3. View & Save Results
 - The summary streams to the screen in real time
@@ -165,6 +166,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 
 **Usability**
 - Real-time streaming — summaries appear as they are generated, with auto-scroll (pauses when you scroll manually)
+- Custom summary templates — define your own named prompts in Settings alongside the built-in types; choose per template whether to process the document in a single pass (fast) or chunk-and-integrate (covers long documents), with page citations preserved
 - Every long-running task is cancellable — stop summarization/parsing/OCR, cancel Ollama setup midway and switch providers
 - File swap during parsing — dropping another file cancels the previous job and switches immediately
 - Export summaries — Markdown, formatted PDF (native, dependency-free), or clipboard; individual Q&A answers can be copied too
