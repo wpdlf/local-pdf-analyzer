@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT, translateMainProgress, translateMainError } from '../lib/i18n';
 import type { MainProgressEvent } from '../lib/i18n';
-import type { AppSettings, AiProviderType } from '../types';
-import { PROVIDER_MODELS, UI_LANGUAGES, DEFAULT_SETTINGS, PROVIDER_LABELS, matchesModel } from '../types';
+import type { AppSettings, AiProviderType, SummaryTemplate } from '../types';
+import { PROVIDER_MODELS, UI_LANGUAGES, DEFAULT_SETTINGS, PROVIDER_LABELS, matchesModel, MAX_CUSTOM_TEMPLATES, MAX_TEMPLATE_NAME_LEN, MAX_TEMPLATE_PROMPT_LEN } from '../types';
 import { applyTheme } from '../lib/theme';
 
 /** 바이트를 사람이 읽기 쉬운 단위로 (session-persistence 용량 표시) */
@@ -182,6 +182,19 @@ export function SettingsPanel() {
     setSaved(false);
     userEditedRef.current = true;
   };
+
+  // 커스텀 요약 템플릿 편집 — 함수형 setDraft 로 stale 방지, 저장 시 draft 전체가 updateSettings 됨.
+  // main settings:set 이 개수·길이·빈값을 다시 검증(sanitize)하므로 UI 는 최대치 힌트만 담당.
+  const mutateTemplates = (fn: (list: SummaryTemplate[]) => SummaryTemplate[]) => {
+    setDraft((prev) => ({ ...prev, customSummaryTemplates: fn(prev.customSummaryTemplates) }));
+    setSaved(false);
+    userEditedRef.current = true;
+  };
+  const addTemplate = () => mutateTemplates((list) =>
+    list.length >= MAX_CUSTOM_TEMPLATES ? list : [...list, { id: crypto.randomUUID(), name: '', prompt: '' }]);
+  const updateTemplate = (id: string, patch: Partial<SummaryTemplate>) => mutateTemplates((list) =>
+    list.map((tpl) => (tpl.id === id ? { ...tpl, ...patch } : tpl)));
+  const removeTemplate = (id: string) => mutateTemplates((list) => list.filter((tpl) => tpl.id !== id));
 
   const handleSaveApiKey = async (provider: 'claude' | 'openai' | 'gemini') => {
     const key = provider === 'claude' ? claudeKey : provider === 'openai' ? openaiKey : geminiKey;
@@ -711,6 +724,51 @@ export function SettingsPanel() {
         </div>
       </section>
       </fieldset>
+
+      {/* 커스텀 요약 템플릿 — 사용자 정의 프롬프트. 요약 유형 선택기에 기본 3종과 함께 노출된다. */}
+      <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <h3 className="font-medium mb-1 text-gray-700 dark:text-gray-200">{t('settings.customTemplates')}</h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">{t('settings.customTemplatesDesc')}</p>
+        <div className="flex flex-col gap-3">
+          {draft.customSummaryTemplates.map((tpl) => (
+            <div key={tpl.id} className="p-3 border rounded dark:border-gray-600 flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={tpl.name}
+                  onChange={(e) => updateTemplate(tpl.id, { name: e.target.value })}
+                  placeholder={t('settings.templateNamePlaceholder')}
+                  maxLength={MAX_TEMPLATE_NAME_LEN}
+                  aria-label={t('settings.templateName')}
+                  className="flex-1 px-3 py-1.5 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeTemplate(tpl.id)}
+                  aria-label={t('settings.templateDelete')}
+                  className="shrink-0 px-2 py-1.5 text-sm text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                >🗑</button>
+              </div>
+              <textarea
+                value={tpl.prompt}
+                onChange={(e) => updateTemplate(tpl.id, { prompt: e.target.value })}
+                placeholder={t('settings.templatePromptPlaceholder')}
+                maxLength={MAX_TEMPLATE_PROMPT_LEN}
+                rows={3}
+                aria-label={t('settings.templatePrompt')}
+                className="w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white resize-y"
+              />
+            </div>
+          ))}
+          {draft.customSummaryTemplates.length < MAX_CUSTOM_TEMPLATES && (
+            <button
+              type="button"
+              onClick={addTemplate}
+              className="self-start px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+            >+ {t('settings.templateAdd')}</button>
+          )}
+        </div>
+      </section>
 
       {/* 이미지 분석 */}
       <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">

@@ -35,8 +35,8 @@ describe('상수 화이트리스트 (단일 출처)', () => {
     expect([...VALID_PROVIDERS]).toEqual(['ollama', 'claude', 'openai', 'gemini']);
   });
 
-  it('VALID_GENERATE_TYPES 는 full/chapter/keywords/qa', () => {
-    expect([...VALID_GENERATE_TYPES]).toEqual(['full', 'chapter', 'keywords', 'qa']);
+  it('VALID_GENERATE_TYPES 는 full/chapter/keywords/qa/custom', () => {
+    expect([...VALID_GENERATE_TYPES]).toEqual(['full', 'chapter', 'keywords', 'qa', 'custom']);
   });
 
   it('VALID_LANGUAGES 는 settings:set summaryLanguage 집합과 동일', () => {
@@ -318,5 +318,23 @@ describe('validateGenerateRequest (전체 검증 순서·메시지)', () => {
       ok: false,
       error: 'Invalid ollamaBaseUrl',
     });
+  });
+
+  // 커스텀 요약 템플릿(QA10 후속): type 'custom' 은 비어있지 않은 customPrompt 필수, 길이 상한 적용.
+  it('통과: type custom + 유효 customPrompt', () => {
+    expect(validateGenerateRequest('req-1', { ...valid, type: 'custom', customPrompt: '액션 아이템 추출' })).toEqual({ ok: true });
+  });
+
+  it('통과: 비-custom 타입에 customPrompt 가 있어도 문자열·길이만 확인(관용)', () => {
+    expect(validateGenerateRequest('req-1', { ...valid, type: 'full', customPrompt: 'x' })).toEqual({ ok: true });
+  });
+
+  it.each([
+    ['custom 인데 customPrompt 없음', { ...valid, type: 'custom' }, 'Invalid customPrompt'],
+    ['custom 인데 customPrompt 공백', { ...valid, type: 'custom', customPrompt: '   ' }, 'Invalid customPrompt'],
+    ['customPrompt 비-string', { ...valid, type: 'custom', customPrompt: 123 }, 'Invalid customPrompt'],
+    ['customPrompt 4000자 초과', { ...valid, type: 'custom', customPrompt: 'a'.repeat(4001) }, 'Invalid customPrompt'],
+  ])('거부: %s → %s', (_label, req, err) => {
+    expect(validateGenerateRequest('req-1', req)).toEqual({ ok: false, error: err });
   });
 });

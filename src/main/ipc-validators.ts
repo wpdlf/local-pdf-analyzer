@@ -25,7 +25,9 @@ export const VALID_PROVIDERS = ['ollama', 'claude', 'openai', 'gemini'] as const
 export type ValidProvider = typeof VALID_PROVIDERS[number];
 
 /** ai:generate 가 허용하는 요약/QA 타입. */
-export const VALID_GENERATE_TYPES = ['full', 'chapter', 'keywords', 'qa'] as const;
+export const VALID_GENERATE_TYPES = ['full', 'chapter', 'keywords', 'qa', 'custom'] as const;
+// 커스텀 요약 템플릿 프롬프트 길이 상한 — renderer MAX_TEMPLATE_PROMPT_LEN 과 정합(과대 페이로드 방어).
+export const MAX_CUSTOM_PROMPT_LEN = 4000;
 
 /**
  * ai:generate 의 language 화이트리스트.
@@ -125,12 +127,13 @@ export function validateEmbeddings(embeddings: unknown): ValidationResult {
 
 export interface GenerateRequest {
   text: string;
-  type: 'full' | 'chapter' | 'keywords' | 'qa';
+  type: 'full' | 'chapter' | 'keywords' | 'qa' | 'custom';
   provider: 'ollama' | 'claude' | 'openai' | 'gemini';
   model: string;
   ollamaBaseUrl: string;
   temperature?: number;
   language?: string;
+  customPrompt?: string;
 }
 
 /**
@@ -183,6 +186,13 @@ export function validateGenerateRequest(requestId: unknown, request: unknown): V
   }
   if (r.language !== undefined && !(VALID_LANGUAGES as readonly string[]).includes(r.language as string)) {
     return { ok: false, error: 'Invalid language' };
+  }
+  // 커스텀 요약 프롬프트: 존재하면 문자열·길이 상한 검증, type==='custom' 이면 비어있지 않아야 함.
+  if (r.customPrompt !== undefined && (typeof r.customPrompt !== 'string' || r.customPrompt.length > MAX_CUSTOM_PROMPT_LEN)) {
+    return { ok: false, error: 'Invalid customPrompt' };
+  }
+  if (r.type === 'custom' && (typeof r.customPrompt !== 'string' || !r.customPrompt.trim())) {
+    return { ok: false, error: 'Invalid customPrompt' };
   }
   return { ok: true };
 }

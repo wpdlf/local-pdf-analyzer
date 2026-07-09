@@ -3,6 +3,7 @@ import { AiClient } from './ai-client';
 import { resolveMembers } from './collection';
 import { t } from './i18n';
 import { sanitizePromptInput } from './use-qa';
+import { isCustomSummaryType } from '../types';
 import type { PersistedSession, ResolvedMember, SummaryType, AppSettings } from '../types';
 
 /**
@@ -270,7 +271,9 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
 
     // client 를 gather 전에 생성 — 요약 부재 멤버의 인라인 생성에도 동일 인스턴스를 재사용.
     const client = new AiClient(st.settings);
-    const blocks = await gatherMemberBlocks(eligible, st.summaryType, client, st.settings, activeCtx, gatherController.signal);
+    // 컬렉션 교차 요약은 기본 유형만 지원 — 커스텀 템플릿 선택 시 'full' 로 폴백(멤버 요약 gather 기준).
+    const gatherType: SummaryType = isCustomSummaryType(st.summaryType) ? 'full' : st.summaryType;
+    const blocks = await gatherMemberBlocks(eligible, gatherType, client, st.settings, activeCtx, gatherController.signal);
     // C5-M5: 사용자 취소 — 안내 없이 조용히 종료(의도적 액션, finally 가 busy/notice 정리).
     if (gatherController.signal.aborted) {
       useAppStore.getState().setNotice(null);

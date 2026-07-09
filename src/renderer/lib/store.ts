@@ -3,6 +3,7 @@ import type {
   PdfDocument,
   Summary,
   DefaultSummaryType,
+  ActiveSummaryType,
   AppSettings,
   OllamaStatus,
   AppError,
@@ -206,7 +207,7 @@ interface AppState {
   // 요약
   summary: Summary | null;
   summaryStream: string;
-  summaryType: DefaultSummaryType;
+  summaryType: ActiveSummaryType;
   // 페이지 범위 요약 — null 이면 전체. {start,end} 는 1-based inclusive. 문서 전환 시 리셋.
   summaryPageRange: { start: number; end: number } | null;
   isGenerating: boolean;
@@ -223,7 +224,7 @@ interface AppState {
   clearStream: () => void;
   /** 후처리된 전체 내용으로 summaryStream을 교체. 호출 전에 반드시 flushStream() 수행. */
   replaceSummaryStream: (content: string) => void;
-  setSummaryType: (type: DefaultSummaryType) => void;
+  setSummaryType: (type: ActiveSummaryType) => void;
   setSummaryPageRange: (range: { start: number; end: number } | null) => void;
   setIsGenerating: (v: boolean) => void;
   setCurrentRequestId: (id: string | null) => void;

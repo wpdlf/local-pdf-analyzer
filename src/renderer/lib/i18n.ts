@@ -47,6 +47,7 @@ export const _translations = {
   'ai.imageAnalysisFail': { ko: '이미지 분석에 실패했습니다. Vision 모델을 확인해주세요.', en: 'Image analysis failed. Please check your Vision model.' },
   // QA6-D: 이미지 분석 OFF 로 파싱된 문서를 ON 전환 후 재요약 — 무음 no-op 대신 재오픈 안내
   'summary.imagesSkippedNotice': { ko: '이 문서는 이미지 분석이 꺼진 상태로 열려 이미지가 추출되지 않았습니다. 이미지 분석을 적용하려면 문서를 다시 열어주세요.', en: 'This document was opened with image analysis turned off, so no images were extracted. Reopen the document to apply image analysis.' },
+  'summary.templateNotFound': { ko: '선택한 커스텀 요약 템플릿을 찾을 수 없습니다. 설정에서 삭제되었을 수 있어요.', en: 'The selected custom summary template was not found. It may have been deleted in settings.' },
   // Vision 실패 시 전체 요약을 막지 않고 텍스트 전용으로 강등할 때의 비차단 안내.
   'ai.imageAnalysisSkipped': { ko: '이미지 분석을 건너뛰고 텍스트만 요약했습니다 (Vision 모델 없음/실패 — llava 등 설치 시 이미지 포함).', en: 'Skipped image analysis and summarized text only (no/failed Vision model — install e.g. llava to include images).' },
   'ai.summaryTimeout': { ko: '요약 시간이 초과되었습니다. 생성된 부분까지 표시됩니다. 청크 크기를 줄이거나 경량 모델을 사용해보세요.', en: 'Summary timed out. The portion generated so far is shown. Try reducing chunk size or using a lighter model.' },
@@ -285,6 +286,14 @@ export const _translations = {
   'settings.themeSystem': { ko: '시스템', en: 'System' },
   'settings.language': { ko: '언어', en: 'Language' },
   'settings.chunkSize': { ko: '청크 크기', en: 'Chunk size' },
+  'settings.customTemplates': { ko: '커스텀 요약 템플릿', en: 'Custom Summary Templates' },
+  'settings.customTemplatesDesc': { ko: '나만의 프롬프트로 요약 방식을 정의하세요. 요약 유형 선택에 기본 3종과 함께 표시됩니다.', en: 'Define your own summary prompts. They appear alongside the 3 built-in types in the summary type selector.' },
+  'settings.templateName': { ko: '템플릿 이름', en: 'Template name' },
+  'settings.templateNamePlaceholder': { ko: '예: 액션 아이템 추출', en: 'e.g. Extract action items' },
+  'settings.templatePrompt': { ko: '템플릿 프롬프트', en: 'Template prompt' },
+  'settings.templatePromptPlaceholder': { ko: '예: 다음 문서에서 실행해야 할 작업을 목록으로 뽑아줘.', en: 'e.g. List the action items that need to be done from the following document.' },
+  'settings.templateDelete': { ko: '템플릿 삭제', en: 'Delete template' },
+  'settings.templateAdd': { ko: '템플릿 추가', en: 'Add template' },
   'settings.imageAnalysis': { ko: '이미지 분석', en: 'Image Analysis' },
   'settings.imageAnalysisLabel': { ko: 'PDF 이미지 자동 분석', en: 'Auto-analyze PDF images' },
   'settings.imageAnalysisDesc': { ko: 'Vision 지원 모델 필요 (llava, Claude, GPT-4o, Gemini 등)', en: 'Requires Vision model (llava, Claude, GPT-4o, Gemini, etc.)' },

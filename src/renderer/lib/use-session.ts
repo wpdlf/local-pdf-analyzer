@@ -3,7 +3,7 @@ import { useAppStore } from './store';
 import { t } from './i18n';
 import { hashDocumentText } from './session-hash';
 import { VectorStore } from './vector-store';
-import type { PdfDocument, PersistedSession, Summary, DefaultSummaryType, SerializedIndex } from '../types';
+import type { PdfDocument, PersistedSession, Summary, ActiveSummaryType, SerializedIndex } from '../types';
 import { SESSION_SCHEMA_VERSION, type SessionSaveMeta } from '../../shared/session-types';
 
 /**
@@ -76,7 +76,7 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
     if (!persistedSummary) {
       const firstEntry = Object.entries(session.summaries ?? {})[0];
       if (firstEntry) {
-        restoredType = firstEntry[0] as DefaultSummaryType;
+        restoredType = firstEntry[0] as ActiveSummaryType;
         persistedSummary = firstEntry[1];
       }
     }

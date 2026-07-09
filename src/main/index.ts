@@ -512,6 +512,24 @@ export function registerIpcHandlers(): void {
           case 'summaryLanguage':
             if (['ko', 'en', 'ja', 'zh', 'auto'].includes(val as string)) filtered[key] = val;
             break;
+          case 'customSummaryTemplates':
+            // 커스텀 요약 템플릿 배열 — 각 항목 {id,name,prompt} 문자열 + 개수/길이 상한(renderer
+            // MAX_CUSTOM_TEMPLATES/NAME/PROMPT 와 정합). 잘못된/빈 항목은 버리고 유효 항목만 저장하며,
+            // id/name/prompt 를 슬라이스해 과대 페이로드·프로토타입 오염을 방어한다.
+            if (Array.isArray(val)) {
+              const clean = val
+                .filter((it): it is { id: string; name: string; prompt: string } => {
+                  if (!it || typeof it !== 'object') return false;
+                  const o = it as Record<string, unknown>;
+                  return typeof o.id === 'string' && o.id.length > 0 && o.id.length <= 64
+                    && typeof o.name === 'string' && o.name.trim().length > 0
+                    && typeof o.prompt === 'string' && o.prompt.trim().length > 0;
+                })
+                .slice(0, 20)
+                .map((it) => ({ id: it.id.slice(0, 64), name: it.name.slice(0, 60), prompt: it.prompt.slice(0, 4000) }));
+              filtered[key] = clean;
+            }
+            break;
           case 'enableAnswerVerification':
             if (typeof val === 'boolean') filtered[key] = val;
             break;
@@ -810,12 +828,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('ai:generate', async (event, requestId: string, request: {
     text: string;
-    type: 'full' | 'chapter' | 'keywords' | 'qa';
+    type: 'full' | 'chapter' | 'keywords' | 'qa' | 'custom';
     provider: 'ollama' | 'claude' | 'openai' | 'gemini';
     model: string;
     ollamaBaseUrl: string;
     temperature?: number;
     language?: string;
+    customPrompt?: string;
   }) => {
     // R38 P1: 입력 검증 전체를 ipc-validators 의 순수 함수로 위임 (행위 검증 가능).
     // 검증 순서·거부 메시지는 ipc-validators.test.ts 가 회귀로 가드한다. SSRF(localhost)

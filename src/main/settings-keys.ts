@@ -32,6 +32,7 @@ export const VALID_SETTINGS_KEYS = [
   'enableImageAnalysis',
   'enableOcrFallback',
   'summaryLanguage',
+  'customSummaryTemplates',
   'enableAnswerVerification',
   'persistSessions',
 ] as const;

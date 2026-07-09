@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore } from './store';
 import { t } from './i18n';
-import { PROVIDER_LABELS } from '../types';
+import { PROVIDER_LABELS, isCustomSummaryType } from '../types';
 import { AiClient } from './ai-client';
 import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
 import { normalizeCitationPlacement, CITATION_REGEX } from './citation';
@@ -84,7 +84,7 @@ export function truncateChunkSummariesForIntegration(
   );
   return parts.join(sep) + `\n\n${truncatedLabel}`;
 }
-import type { PdfDocument, DefaultSummaryType, AppSettings, ProgressInfo, AppError } from '../types';
+import type { PdfDocument, DefaultSummaryType, AppSettings, ProgressInfo, AppError, SummaryTemplate } from '../types';
 
 // TrackFn은 요약 파이프라인 내부에서만 사용되며 'qa' 타입은 호출되지 않음.
 // 'qa'는 use-qa.ts 의 handleAsk 에서 ai-client.summarize 를 직접 호출하는 별도 경로.
@@ -430,6 +430,40 @@ async function summarizeFull(
   }
 }
 
+// 커스텀 요약 템플릿 단일 패스 문자 예산 — 초과분은 앞부분으로 절단(단일 요청이라 chunk/통합 파이프라인을
+// 타지 않음). 커스텀 프롬프트("액션아이템 추출" 등)는 문서 전체 홀리스틱 처리가 의미상 맞기 때문.
+const CUSTOM_TEMPLATE_CHAR_BUDGET = 16000;
+
+// 커스텀 템플릿 요약: 페이지 라벨 텍스트를 사용자 프롬프트로 단일 패스 생성. 인용([p.N])은 유지되며,
+// 예산 초과 문서는 앞부분으로 절단한다. chunk/chapter/통합 로직을 타지 않아 기존 파이프라인과 격리.
+async function summarizeCustom(
+  doc: PdfDocument, template: SummaryTemplate,
+  runCustom: (text: string, prompt: string) => AsyncGenerator<string>,
+  checkTimeout: () => boolean, isTimedOut: () => boolean,
+  append: (s: string) => void, setProgress: (p: number) => void,
+  setProgressInfo: (info: ProgressInfo) => void, startTime: number, progressOffset: number,
+) {
+  const progressRange = 100 - progressOffset;
+  const hasPageTexts = Array.isArray(doc.pageTexts) && doc.pageTexts.length > 0;
+  let text = hasPageTexts ? labelParagraphsWithPages(doc.pageTexts) : doc.extractedText;
+  if (!text.trim()) {
+    throw Object.assign(new Error(t('ai.noText')), { code: 'PDF_NO_TEXT' });
+  }
+  if (text.length > CUSTOM_TEMPLATE_CHAR_BUDGET) {
+    text = text.slice(0, CUSTOM_TEMPLATE_CHAR_BUDGET) + '\n\n[...]';
+  }
+  setProgressInfo({
+    percent: progressOffset + 0.1 * progressRange,
+    phase: 'summarize', current: 1, total: 1,
+    elapsedMs: Date.now() - startTime,
+  });
+  for await (const token of runCustom(text, template.prompt)) {
+    if (checkTimeout()) break;
+    append(token);
+  }
+  if (!isTimedOut()) setProgress(100);
+}
+
 export function useSummarize() {
   const document = useAppStore((s) => s.document);
   const summaryType = useAppStore((s) => s.summaryType);
@@ -557,6 +591,14 @@ export function useSummarize() {
         const requestId = client.prepareSummarize();
         useAppStore.getState().setCurrentRequestId(requestId);
         return client.summarize(text, type, requestId);
+      };
+
+      // 커스텀 템플릿 track — type 'custom' + 사용자 프롬프트를 관통(trackSummarize 와 동일 stale 가드).
+      const trackCustom = (text: string, prompt: string) => {
+        if (clientRef.current !== client) return (async function*(): AsyncGenerator<string> {})();
+        const requestId = client.prepareSummarize();
+        useAppStore.getState().setCurrentRequestId(requestId);
+        return client.summarize(text, 'custom', requestId, prompt);
       };
 
       const available = await client.isAvailable();
@@ -702,7 +744,15 @@ export function useSummarize() {
       }
       // 이미지 분석이 진행된 경우 진행률 20%부터 이어서 시작 (역행 방지)
       const progressOffset = (doc.images.length > 0 && currentSettings.enableImageAnalysis) ? 20 : 0;
-      if (currentSummaryType === 'chapter' && docWithImages.chapters.length > 1) {
+      if (isCustomSummaryType(currentSummaryType)) {
+        // 커스텀 템플릿: settings 에서 id 로 해석 후 단일 패스 생성. 템플릿이 삭제된 경우 안내 후 종료.
+        const template = currentSettings.customSummaryTemplates.find((tpl) => `custom:${tpl.id}` === currentSummaryType);
+        if (!template) {
+          useAppStore.getState().setNotice({ message: t('summary.templateNotFound') });
+          return;
+        }
+        await summarizeCustom(docWithImages, template, trackCustom, checkTimeout, isCancelled, guardedAppend, setProgress, setProgressInfo, startTime, progressOffset);
+      } else if (currentSummaryType === 'chapter' && docWithImages.chapters.length > 1) {
         await summarizeByChapter(docWithImages, currentSettings, trackSummarize, checkTimeout, isCancelled, guardedAppend, setProgress, setProgressInfo, startTime, progressOffset);
       } else {
         await summarizeFull(docWithImages, currentSummaryType, currentSettings, trackSummarize, checkTimeout, isCancelled, guardedAppend, setProgress, setProgressInfo, startTime, progressOffset);

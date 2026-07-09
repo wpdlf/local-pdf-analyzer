@@ -1,6 +1,6 @@
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
-import type { DefaultSummaryType } from '../types';
+import type { ActiveSummaryType } from '../types';
 import { SUMMARY_LANGUAGES } from '../types';
 
 // 한국어 특화 모델 — 다른 언어 출력 시 품질이 낮을 수 있음
@@ -24,10 +24,13 @@ export function SummaryTypeSelector() {
     setPageRange({ start: clampPage(patch.start ?? base.start), end: clampPage(patch.end ?? base.end) });
   };
 
-  const options: { value: DefaultSummaryType; label: string }[] = [
+  // 커스텀 요약 템플릿을 기본 3종 뒤에 라디오 옵션으로 노출. value 는 `custom:<id>`(요약 실행·세션 키).
+  const customTemplates = settings.customSummaryTemplates ?? [];
+  const options: { value: ActiveSummaryType; label: string }[] = [
     { value: 'full', label: t('selector.full') },
     { value: 'chapter', label: t('selector.chapter') },
     { value: 'keywords', label: t('selector.keywords') },
+    ...customTemplates.map((tpl) => ({ value: `custom:${tpl.id}` as ActiveSummaryType, label: tpl.name })),
   ];
 
   const lang = settings.summaryLanguage || 'ko';

@@ -147,4 +147,21 @@ describe('buildPrompt', () => {
     expect(buildPrompt('x', 'qa', 'en')).toContain('Citation rule');
     expect(buildPrompt('x', 'chapter', 'en')).toContain('Citation rule');
   });
+
+  // 커스텀 요약 템플릿(QA10 후속 기능): 사용자 프롬프트를 system, 문서 텍스트를 user 섹션으로 구성하고
+  // 인용 규칙을 주입해 페이지 인용이 동작하며 splitPrompt 규약과 호환되는지.
+  it('custom 타입 — 사용자 프롬프트 + 인용 규칙 + 본문(system/user 분리)', () => {
+    const p = buildPrompt('문서본문', 'custom', 'ko', '액션 아이템을 뽑아줘');
+    expect(p).toContain('액션 아이템을 뽑아줘'); // 사용자 프롬프트(system)
+    expect(p).toContain('인용 규칙');            // CITATION_RULES.ko 주입
+    const { system, user } = splitPrompt(p);
+    expect(system).toContain('액션 아이템을 뽑아줘');
+    expect(user).toBe('문서본문');
+  });
+
+  it('custom 타입 — customPrompt 가 없거나 공백이면 throw', () => {
+    expect(() => buildPrompt('본문', 'custom', 'ko', '')).toThrow();
+    expect(() => buildPrompt('본문', 'custom', 'ko', '   ')).toThrow();
+    expect(() => buildPrompt('본문', 'custom', 'ko')).toThrow();
+  });
 });

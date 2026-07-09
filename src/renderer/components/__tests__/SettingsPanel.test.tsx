@@ -281,4 +281,30 @@ describe('SettingsPanel — a11y', () => {
     window.dispatchEvent(evt);
     expect(useAppStore.getState().view).toBe('settings'); // 닫히지 않음
   });
+
+  // 커스텀 요약 템플릿(QA10 후속): 추가→입력→저장 시 settings.customSummaryTemplates 에 반영.
+  it('커스텀 요약 템플릿 추가·입력 후 저장 시 settings 에 반영', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.click(screen.getByRole('button', { name: /템플릿 추가/ }));
+    await user.type(screen.getByLabelText(t('settings.templateName')), '액션아이템');
+    await user.type(screen.getByLabelText(t('settings.templatePrompt')), '작업 목록 추출');
+    await user.click(screen.getByRole('button', { name: t('settings.saveBtn') }));
+    const templates = useAppStore.getState().settings.customSummaryTemplates;
+    expect(templates).toHaveLength(1);
+    expect(templates[0]?.name).toBe('액션아이템');
+    expect(templates[0]?.prompt).toBe('작업 목록 추출');
+  });
+
+  it('커스텀 요약 템플릿 삭제 → 목록에서 제거', async () => {
+    const user = userEvent.setup();
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, customSummaryTemplates: [{ id: 'x1', name: '기존', prompt: 'p' }] },
+    });
+    render(<SettingsPanel />);
+    expect((screen.getByLabelText(t('settings.templateName')) as HTMLInputElement).value).toBe('기존');
+    await user.click(screen.getByRole('button', { name: t('settings.templateDelete') }));
+    await user.click(screen.getByRole('button', { name: t('settings.saveBtn') }));
+    expect(useAppStore.getState().settings.customSummaryTemplates).toHaveLength(0);
+  });
 });

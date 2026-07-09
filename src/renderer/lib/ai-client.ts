@@ -19,7 +19,7 @@ export class AiClient {
     return requestId;
   }
 
-  async *summarize(text: string, type: SummaryType, requestId?: string): AsyncGenerator<string> {
+  async *summarize(text: string, type: SummaryType, requestId?: string, customPrompt?: string): AsyncGenerator<string> {
     if (!requestId) {
       requestId = this.prepareSummarize();
     }
@@ -59,6 +59,8 @@ export class AiClient {
         ollamaBaseUrl: this.settings.ollamaBaseUrl,
         temperature: 0.3,
         language: this.settings.summaryLanguage || 'ko',
+        // 커스텀 템플릿(type==='custom')일 때만 사용자 프롬프트를 함께 전달.
+        ...(type === 'custom' && customPrompt ? { customPrompt } : {}),
       });
 
       // 에러 감지를 위해 비동기로 결과 확인.

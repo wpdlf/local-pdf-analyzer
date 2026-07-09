@@ -15,12 +15,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ai: {
     generate: (requestId: string, request: {
       text: string;
-      type: 'full' | 'chapter' | 'keywords' | 'qa';
+      type: 'full' | 'chapter' | 'keywords' | 'qa' | 'custom';
       provider: 'ollama' | 'claude' | 'openai' | 'gemini';
       model: string;
       ollamaBaseUrl: string;
       temperature?: number;
       language?: string;
+      customPrompt?: string;
     }) => ipcRenderer.invoke('ai:generate', requestId, request),
     abort: (requestId: string) => ipcRenderer.invoke('ai:abort', requestId),
     checkAvailable: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', ollamaBaseUrl: string) =>
@@ -137,12 +138,13 @@ export type ElectronAPI = {
   ai: {
     generate: (requestId: string, request: {
       text: string;
-      type: 'full' | 'chapter' | 'keywords' | 'qa';
+      type: 'full' | 'chapter' | 'keywords' | 'qa' | 'custom';
       provider: 'ollama' | 'claude' | 'openai' | 'gemini';
       model: string;
       ollamaBaseUrl: string;
       temperature?: number;
       language?: string;
+      customPrompt?: string;
     }) => Promise<{ success: boolean; error?: string; code?: string; errorKey?: string; errorParams?: Record<string, string> }>;
     abort: (requestId: string) => Promise<{ success: boolean; error?: string }>;
     analyzeImage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; description?: string; error?: string; code?: string }>;

@@ -58,11 +58,11 @@ export interface Chapter {
   text: string;
 }
 
-// 요약 결과 — Q&A는 대화 메시지에 저장되므로 Summary의 type은 DefaultSummaryType만 가능
+// 요약 결과 — Q&A는 대화 메시지에 저장되므로 Summary의 type은 요약 선택(ActiveSummaryType)만 가능
 export interface Summary {
   id: string;
   documentId: string;
-  type: DefaultSummaryType;
+  type: ActiveSummaryType;
   content: string;
   model: string;
   provider: AiProviderType;
@@ -81,11 +81,29 @@ export interface ProgressInfo {
   estimatedRemainingMs?: number; // 예상 남은 시간 (ms)
 }
 
-// 요약 유형 (런타임 요청 타입) — 'qa' 는 Q&A 채팅 전용이며 설정으로 저장되지 않음
-export type SummaryType = 'full' | 'chapter' | 'keywords' | 'qa';
+// 요약 유형 (런타임 요청 타입) — 'qa' 는 Q&A 채팅 전용, 'custom' 은 커스텀 템플릿(customPrompt 동반).
+// 둘 다 설정 기본값(defaultSummaryType)으로는 저장되지 않는다.
+export type SummaryType = 'full' | 'chapter' | 'keywords' | 'qa' | 'custom';
 
 // 설정에 저장 가능한 기본 요약 유형 — 'qa'는 대화형 요청이므로 기본값으로 지정 불가
 export type DefaultSummaryType = 'full' | 'chapter' | 'keywords';
+
+// 커스텀 요약 템플릿 — 사용자 정의 이름+프롬프트. summaries 캐시·세션에는 `custom:<id>` 키로 참조.
+export interface SummaryTemplate {
+  id: string;
+  name: string;
+  prompt: string;
+}
+// 활성 요약 선택 — 기본 3종 또는 커스텀 템플릿(`custom:<id>`). store.summaryType·summaries 캐시·
+// 세션 영속 키로 사용. 커스텀은 단일 패스(전체 문서)로 생성되며 chunk/chapter 파이프라인을 타지 않는다.
+export type ActiveSummaryType = DefaultSummaryType | `custom:${string}`;
+// 커스텀 템플릿 제약 — 프로토타입 오염/과대 페이로드 방지(설정 검증과 공유).
+export const MAX_CUSTOM_TEMPLATES = 20;
+export const MAX_TEMPLATE_NAME_LEN = 60;
+export const MAX_TEMPLATE_PROMPT_LEN = 4000;
+export function isCustomSummaryType(t: string): t is `custom:${string}` {
+  return t.startsWith('custom:');
+}
 
 // 앱 UI 언어
 export type UiLanguage = 'ko' | 'en';
@@ -137,6 +155,8 @@ export interface AppSettings {
   enableImageAnalysis: boolean;
   enableOcrFallback: boolean;
   summaryLanguage: SummaryLanguage;
+  // 커스텀 요약 템플릿 목록(사용자 정의 프롬프트). 요약 유형 선택기에 기본 3종과 함께 노출된다.
+  customSummaryTemplates: SummaryTemplate[];
   // Q&A 답변 검증 — 답변 초안을 RAG 인덱스와 대조해 환각 의심 문장이 있으면 refine 한 번 더.
   // 사용자에게는 여전히 단일 답변만 표시되며 배지/스코어는 노출하지 않음 — 내부적으로 정확성만 개선.
   // OFF 하면 기존 단일 pass 스트리밍 (빠르지만 환각 위험 높음).
@@ -310,9 +330,9 @@ export interface PersistedSession {
   pageTexts: string[];
   chapters: Chapter[];
   isOcr?: boolean;
-  // 분석 결과
-  summaries: Partial<Record<DefaultSummaryType, PersistedSummary>>;
-  summaryType: DefaultSummaryType;
+  // 분석 결과 — 커스텀 템플릿 요약은 `custom:<id>` 키로 캐시(기존 세션에 추가적·하위호환).
+  summaries: Partial<Record<ActiveSummaryType, PersistedSummary>>;
+  summaryType: ActiveSummaryType;
   qaMessages: QaMessage[];
   // 인덱스 메타 (벡터 본체는 index.bin)
   embedModel: string | null;
@@ -332,6 +352,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   enableImageAnalysis: true,
   enableOcrFallback: true,
   summaryLanguage: 'ko' as SummaryLanguage,
+  customSummaryTemplates: [],
   enableAnswerVerification: true,
   persistSessions: true,
 };

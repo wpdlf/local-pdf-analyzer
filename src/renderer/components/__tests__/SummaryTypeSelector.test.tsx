@@ -45,6 +45,19 @@ describe('SummaryTypeSelector', () => {
     expect(useAppStore.getState().summaryType).toBe('keywords');
   });
 
+  // 커스텀 요약 템플릿(QA10 후속): 기본 3종 뒤에 라디오로 노출, 선택 시 custom:<id> 로 설정.
+  it('커스텀 템플릿을 추가 라디오로 노출하고 선택 시 custom:<id> 설정', async () => {
+    const user = userEvent.setup();
+    useAppStore.setState({
+      settings: { ...DEFAULT_SETTINGS, customSummaryTemplates: [{ id: 'abc', name: '액션 아이템', prompt: 'p' }] },
+    });
+    render(<SummaryTypeSelector />);
+    const radios = screen.getAllByRole('radio') as HTMLInputElement[];
+    expect(radios).toHaveLength(4); // 기본 3 + 커스텀 1
+    await user.click(screen.getByRole('radio', { name: '액션 아이템' }));
+    expect(useAppStore.getState().summaryType).toBe('custom:abc');
+  });
+
   it('출력 언어 select 변경 → settings.summaryLanguage 갱신', async () => {
     const user = userEvent.setup();
     render(<SummaryTypeSelector />);
