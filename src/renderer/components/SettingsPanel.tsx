@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT, translateMainProgress, translateMainError } from '../lib/i18n';
 import type { MainProgressEvent } from '../lib/i18n';
-import type { AppSettings, AiProviderType, SummaryTemplate } from '../types';
+import type { AppSettings, AiProviderType, SummaryTemplate, SummaryStrategy } from '../types';
 import { PROVIDER_MODELS, UI_LANGUAGES, DEFAULT_SETTINGS, PROVIDER_LABELS, matchesModel, MAX_CUSTOM_TEMPLATES, MAX_TEMPLATE_NAME_LEN, MAX_TEMPLATE_PROMPT_LEN } from '../types';
 import { applyTheme } from '../lib/theme';
 
@@ -758,6 +758,18 @@ export function SettingsPanel() {
                 aria-label={t('settings.templatePrompt')}
                 className="w-full px-3 py-2 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white resize-y"
               />
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">{t('settings.templateStrategy')}</span>
+                <select
+                  value={tpl.strategy ?? 'single'}
+                  onChange={(e) => updateTemplate(tpl.id, { strategy: e.target.value as SummaryStrategy })}
+                  aria-label={t('settings.templateStrategy')}
+                  className="px-2 py-1 text-xs border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                >
+                  <option value="single">{t('settings.templateStrategySingle')}</option>
+                  <option value="chunked">{t('settings.templateStrategyChunked')}</option>
+                </select>
+              </div>
             </div>
           ))}
           {draft.customSummaryTemplates.length < MAX_CUSTOM_TEMPLATES && (

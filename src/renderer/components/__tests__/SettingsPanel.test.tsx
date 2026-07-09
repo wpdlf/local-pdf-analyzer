@@ -296,6 +296,21 @@ describe('SettingsPanel — a11y', () => {
     expect(templates[0]?.prompt).toBe('작업 목록 추출');
   });
 
+  // 전략 선택(chunk 전략): 새 템플릿 기본은 단일 패스, 청크+통합 선택 시 저장에 strategy='chunked' 반영.
+  it('커스텀 템플릿 전략을 청크+통합으로 선택하면 저장에 반영된다', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.click(screen.getByRole('button', { name: /템플릿 추가/ }));
+    await user.type(screen.getByLabelText(t('settings.templateName')), '전체추출');
+    await user.type(screen.getByLabelText(t('settings.templatePrompt')), '모두 뽑아줘');
+    const strategy = screen.getByLabelText(t('settings.templateStrategy')) as HTMLSelectElement;
+    expect(strategy.value).toBe('single'); // 신규 템플릿 기본
+    await user.selectOptions(strategy, 'chunked');
+    await user.click(screen.getByRole('button', { name: t('settings.saveBtn') }));
+    const templates = useAppStore.getState().settings.customSummaryTemplates;
+    expect(templates[0]?.strategy).toBe('chunked');
+  });
+
   it('커스텀 요약 템플릿 삭제 → 목록에서 제거', async () => {
     const user = userEvent.setup();
     useAppStore.setState({

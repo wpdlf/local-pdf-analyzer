@@ -518,7 +518,7 @@ export function registerIpcHandlers(): void {
             // id/name/prompt 를 슬라이스해 과대 페이로드·프로토타입 오염을 방어한다.
             if (Array.isArray(val)) {
               const clean = val
-                .filter((it): it is { id: string; name: string; prompt: string } => {
+                .filter((it): it is { id: string; name: string; prompt: string; strategy?: unknown } => {
                   if (!it || typeof it !== 'object') return false;
                   const o = it as Record<string, unknown>;
                   return typeof o.id === 'string' && o.id.length > 0 && o.id.length <= 64
@@ -526,7 +526,8 @@ export function registerIpcHandlers(): void {
                     && typeof o.prompt === 'string' && o.prompt.trim().length > 0;
                 })
                 .slice(0, 20)
-                .map((it) => ({ id: it.id.slice(0, 64), name: it.name.slice(0, 60), prompt: it.prompt.slice(0, 4000) }));
+                // strategy 는 'chunked' 만 유효, 그 외(미지정/오값)는 'single' 로 정규화(하위호환).
+                .map((it) => ({ id: it.id.slice(0, 64), name: it.name.slice(0, 60), prompt: it.prompt.slice(0, 4000), strategy: it.strategy === 'chunked' ? 'chunked' : 'single' }));
               filtered[key] = clean;
             }
             break;

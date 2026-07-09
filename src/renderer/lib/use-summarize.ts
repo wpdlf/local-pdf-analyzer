@@ -331,6 +331,17 @@ async function summarizeByChapter(
   }
 }
 
+// 청크 통합 단계 라벨(summarizeFull·summarizeCustomChunked 공유) — heading=결과 구분 헤딩,
+// instruction='full' 통합 지시(커스텀 청크 경로는 미사용, 커스텀 프롬프트 재적용), truncated=결합
+// 초과 시 비례절단 마커.
+const INTEGRATION_LABELS: Record<string, { heading: string; instruction: string; truncated: string }> = {
+  ko: { heading: '📋 통합 요약', instruction: '다음은 문서의 파트별 요약입니다. 이를 하나의 통합 요약으로 정리해주세요.', truncated: '[... 이하 생략 — 청크 수가 많아 일부만 포함]' },
+  en: { heading: 'Integrated Summary', instruction: 'The following are per-section summaries of the document. Please consolidate them into a single integrated summary.', truncated: '[... truncated — too many chunks to include all]' },
+  ja: { heading: '統合要約', instruction: '以下は文書のセクション別要約です。これらを一つの統合要約にまとめてください。', truncated: '[... 以下省略 — チャンク数が多いため一部のみ含む]' },
+  zh: { heading: '综合总结', instruction: '以下是文档各部分的摘要。请将它们整合为一个综合总结。', truncated: '[... 以下省略 — 分块过多仅包含部分]' },
+  auto: { heading: 'Integrated Summary', instruction: 'The following are per-section summaries of the document. Consolidate them into a single integrated summary.', truncated: '[... truncated]' },
+};
+
 async function summarizeFull(
   doc: PdfDocument, summaryType: DefaultSummaryType, settings: AppSettings, track: TrackFn,
   checkTimeout: () => boolean, isTimedOut: () => boolean,
@@ -394,15 +405,8 @@ async function summarizeFull(
       total: chunks.length,
       elapsedMs: Date.now() - startTime,
     });
-    const integrationLabels: Record<string, { heading: string; instruction: string; truncated: string }> = {
-      ko: { heading: '📋 통합 요약', instruction: '다음은 문서의 파트별 요약입니다. 이를 하나의 통합 요약으로 정리해주세요.', truncated: '[... 이하 생략 — 청크 수가 많아 일부만 포함]' },
-      en: { heading: 'Integrated Summary', instruction: 'The following are per-section summaries of the document. Please consolidate them into a single integrated summary.', truncated: '[... truncated — too many chunks to include all]' },
-      ja: { heading: '統合要約', instruction: '以下は文書のセクション別要約です。これらを一つの統合要約にまとめてください。', truncated: '[... 以下省略 — チャンク数が多いため一部のみ含む]' },
-      zh: { heading: '综合总结', instruction: '以下是文档各部分的摘要。请将它们整合为一个综合总结。', truncated: '[... 以下省略 — 分块过多仅包含部分]' },
-      auto: { heading: 'Integrated Summary', instruction: 'The following are per-section summaries of the document. Consolidate them into a single integrated summary.', truncated: '[... truncated]' },
-    };
     const lang = settings.summaryLanguage || 'ko';
-    const labels = integrationLabels[lang] || integrationLabels['ko'] || integrationLabels.ko;
+    const labels = INTEGRATION_LABELS[lang] || INTEGRATION_LABELS['ko'] || INTEGRATION_LABELS.ko;
     if (!labels) {
       setProgress(100);
       return;
@@ -465,6 +469,62 @@ async function summarizeCustom(
     append(token);
   }
   if (!isTimedOut()) setProgress(100);
+}
+
+// 청크+통합 전략 커스텀 요약: 문서 전체를 청크로 나눠 각 청크를 커스텀 프롬프트로 요약(길이 누락 없음),
+// 여러 청크면 결합 요약에 커스텀 프롬프트를 한 번 더 적용해 문서 전체 관점의 결과로 통합한다.
+// summarizeFull 과 동일한 청크/진행/통합-절단 인프라를 재사용하되, 'full' 통합 지시 대신 사용자 프롬프트를 쓴다.
+async function summarizeCustomChunked(
+  doc: PdfDocument, template: SummaryTemplate, settings: AppSettings,
+  runCustom: (text: string, prompt: string) => AsyncGenerator<string>,
+  checkTimeout: () => boolean, isTimedOut: () => boolean,
+  append: (s: string) => void, setProgress: (p: number) => void,
+  setProgressInfo: (info: ProgressInfo) => void, startTime: number, progressOffset: number,
+) {
+  const progressRange = 100 - progressOffset;
+  const hasPageTexts = Array.isArray(doc.pageTexts) && doc.pageTexts.length > 0;
+  const labeledText = hasPageTexts ? labelParagraphsWithPages(doc.pageTexts) : doc.extractedText;
+  const chunks = chunkText(labeledText, settings.maxChunkSize);
+  if (chunks.length === 0) {
+    throw Object.assign(new Error(t('ai.noText')), { code: 'PDF_NO_TEXT' });
+  }
+  const chunkSummaries: string[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    if (isTimedOut()) break;
+    const elapsedMs = Date.now() - startTime;
+    const percent = progressOffset + (i / chunks.length) * 0.9 * progressRange;
+    const estimatedRemainingMs = i > 0 ? Math.round((elapsedMs / i) * (chunks.length - i)) : undefined;
+    setProgressInfo({ percent, phase: 'summarize', current: i + 1, total: chunks.length, elapsedMs, estimatedRemainingMs });
+    let chunkResult = '';
+    const chunk = chunks[i];
+    if (chunk === undefined) continue;
+    for await (const token of runCustom(chunk, template.prompt)) {
+      if (checkTimeout()) break;
+      append(token);
+      chunkResult += token;
+    }
+    chunkSummaries.push(chunkResult);
+    setProgress(progressOffset + ((i + 1) / chunks.length) * 0.9 * progressRange);
+    if (i < chunks.length - 1) append('\n\n---\n\n');
+  }
+  // 통합: 청크가 여러 개면 결합 요약에 커스텀 프롬프트를 재적용해 문서 전체 관점의 커스텀 결과 생성.
+  if (!isTimedOut() && chunks.length > 1) {
+    setProgressInfo({ percent: progressOffset + 0.95 * progressRange, phase: 'integrate', current: chunks.length, total: chunks.length, elapsedMs: Date.now() - startTime });
+    const lang = settings.summaryLanguage || 'ko';
+    const labels = INTEGRATION_LABELS[lang] || INTEGRATION_LABELS['ko'] || INTEGRATION_LABELS.ko;
+    if (!labels) { setProgress(100); return; }
+    append(`\n\n---\n\n## ${labels.heading}\n\n`);
+    const charsPerToken = estimateCharsPerToken(chunkSummaries.join('\n\n'));
+    const maxCombinedChars = Math.floor(settings.maxChunkSize * charsPerToken);
+    const safeCombined = truncateChunkSummariesForIntegration(chunkSummaries, maxCombinedChars, labels.truncated);
+    for await (const token of runCustom(safeCombined, template.prompt)) {
+      if (checkTimeout()) break;
+      append(token);
+    }
+    setProgress(100);
+  } else {
+    setProgress(100);
+  }
 }
 
 export function useSummarize() {
@@ -754,7 +814,12 @@ export function useSummarize() {
           useAppStore.getState().setNotice({ message: t('summary.templateNotFound') });
           return;
         }
-        await summarizeCustom(docWithImages, template, trackCustom, checkTimeout, isCancelled, guardedAppend, setProgress, setProgressInfo, startTime, progressOffset);
+        // 전략 분기: 'chunked'=문서 전체 청크+통합(긴 문서 커버), 그 외(미지정 포함)=단일 패스.
+        if (template.strategy === 'chunked') {
+          await summarizeCustomChunked(docWithImages, template, currentSettings, trackCustom, checkTimeout, isCancelled, guardedAppend, setProgress, setProgressInfo, startTime, progressOffset);
+        } else {
+          await summarizeCustom(docWithImages, template, trackCustom, checkTimeout, isCancelled, guardedAppend, setProgress, setProgressInfo, startTime, progressOffset);
+        }
       } else if (currentSummaryType === 'chapter' && docWithImages.chapters.length > 1) {
         await summarizeByChapter(docWithImages, currentSettings, trackSummarize, checkTimeout, isCancelled, guardedAppend, setProgress, setProgressInfo, startTime, progressOffset);
       } else {

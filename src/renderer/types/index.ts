@@ -88,11 +88,19 @@ export type SummaryType = 'full' | 'chapter' | 'keywords' | 'qa' | 'custom';
 // 설정에 저장 가능한 기본 요약 유형 — 'qa'는 대화형 요청이므로 기본값으로 지정 불가
 export type DefaultSummaryType = 'full' | 'chapter' | 'keywords';
 
+// 커스텀 템플릿 요약 전략:
+//  - 'single' : 문서 앞부분을 단일 패스로 처리(빠름, 긴 문서는 예산 초과분 절단). 홀리스틱 지시에 적합.
+//  - 'chunked': 문서 전체를 청크로 나눠 각각 커스텀 프롬프트로 요약 후, 결합 요약에 프롬프트를 한 번 더
+//               적용해 통합(긴 문서 전부 커버·느림). "빠짐없이 추출" 류에 적합.
+// 미지정(기존 템플릿)은 'single' 로 간주(하위호환).
+export type SummaryStrategy = 'single' | 'chunked';
+
 // 커스텀 요약 템플릿 — 사용자 정의 이름+프롬프트. summaries 캐시·세션에는 `custom:<id>` 키로 참조.
 export interface SummaryTemplate {
   id: string;
   name: string;
   prompt: string;
+  strategy?: SummaryStrategy;
 }
 // 활성 요약 선택 — 기본 3종 또는 커스텀 템플릿(`custom:<id>`). store.summaryType·summaries 캐시·
 // 세션 영속 키로 사용. 커스텀은 단일 패스(전체 문서)로 생성되며 chunk/chapter 파이프라인을 타지 않는다.
