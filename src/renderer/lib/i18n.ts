@@ -48,6 +48,7 @@ export const _translations = {
   // QA6-D: 이미지 분석 OFF 로 파싱된 문서를 ON 전환 후 재요약 — 무음 no-op 대신 재오픈 안내
   'summary.imagesSkippedNotice': { ko: '이 문서는 이미지 분석이 꺼진 상태로 열려 이미지가 추출되지 않았습니다. 이미지 분석을 적용하려면 문서를 다시 열어주세요.', en: 'This document was opened with image analysis turned off, so no images were extracted. Reopen the document to apply image analysis.' },
   'summary.templateNotFound': { ko: '선택한 커스텀 요약 템플릿을 찾을 수 없습니다. 설정에서 삭제되었을 수 있어요.', en: 'The selected custom summary template was not found. It may have been deleted in settings.' },
+  'summary.customTruncated': { ko: '문서가 길어 앞부분만으로 커스텀 요약을 생성했습니다. 뒷부분 내용은 포함되지 않았을 수 있어요.', en: 'The document is long, so the custom summary was generated from the beginning only. Later content may not be included.' },
   // Vision 실패 시 전체 요약을 막지 않고 텍스트 전용으로 강등할 때의 비차단 안내.
   'ai.imageAnalysisSkipped': { ko: '이미지 분석을 건너뛰고 텍스트만 요약했습니다 (Vision 모델 없음/실패 — llava 등 설치 시 이미지 포함).', en: 'Skipped image analysis and summarized text only (no/failed Vision model — install e.g. llava to include images).' },
   'ai.summaryTimeout': { ko: '요약 시간이 초과되었습니다. 생성된 부분까지 표시됩니다. 청크 크기를 줄이거나 경량 모델을 사용해보세요.', en: 'Summary timed out. The portion generated so far is shown. Try reducing chunk size or using a lighter model.' },
@@ -176,6 +177,7 @@ export const _translations = {
   'qa.copyAnswer': { ko: '답변 복사', en: 'Copy answer' },
   'qa.copied': { ko: '복사됨', en: 'Copied' },
   // ─── 다중 문서 컬렉션 Q&A (multi-doc Phase 2) ───
+  'collection.customTemplateNotApplied': { ko: '커스텀 요약 템플릿은 컬렉션 통합 요약에는 적용되지 않아 전체 요약으로 진행합니다.', en: 'Custom summary templates are not applied to collection summaries; using Full summary instead.' },
   'collection.toggle': { ko: '여러 문서에 걸쳐 질문', en: 'Ask across documents' },
   'collection.toggleHint': { ko: '열어둔 문서들을 묶어 함께 검색합니다', en: 'Search the open documents together' },
   'collection.members': { ko: '검색 대상 문서', en: 'Documents to search' },

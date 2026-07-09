@@ -251,9 +251,10 @@ export async function generate(
   };
   activeRequests.set(requestId, placeholderEntry);
 
-  const prompt = buildPrompt(request.text, request.type, request.language, request.customPrompt);
-
   try {
+    // R34 P1 준수: buildPrompt 의 동기 throw(커스텀 빈 프롬프트 등)도 catch 의 placeholder 정리를
+    // 거치도록 try 안에서 호출한다(이전엔 try 밖이라 throw 시 placeholder 가 10분 TTL 까지 leak 가능).
+    const prompt = buildPrompt(request.text, request.type, request.language, request.customPrompt);
     switch (request.provider) {
       case 'ollama':
         return await generateOllama(requestId, prompt, request, win);

@@ -58,6 +58,34 @@ describe('SummaryTypeSelector', () => {
     expect(useAppStore.getState().summaryType).toBe('custom:abc');
   });
 
+  // QA(③MED-1): 이름/프롬프트가 빈 미완성 템플릿은 라디오로 노출하지 않는다(main sanitize 가 드롭 →
+  // 렌더러-디스크 divergence 로 빈 라디오가 뜨던 문제 차단).
+  it('이름/프롬프트가 빈 템플릿은 라디오 옵션에서 제외', () => {
+    useAppStore.setState({
+      settings: { ...DEFAULT_SETTINGS, customSummaryTemplates: [
+        { id: 'ok', name: '유효', prompt: 'p' },
+        { id: 'noName', name: '  ', prompt: 'p' },
+        { id: 'noPrompt', name: '이름만', prompt: '' },
+      ] },
+    });
+    render(<SummaryTypeSelector />);
+    const radios = screen.getAllByRole('radio') as HTMLInputElement[];
+    expect(radios).toHaveLength(4); // 기본 3 + 유효 커스텀 1 (빈 2개 제외)
+    expect(screen.getByRole('radio', { name: '유효' })).toBeTruthy();
+    expect(screen.queryByRole('radio', { name: '이름만' })).toBeNull();
+  });
+
+  // QA(②B/③LOW-1): 활성 커스텀 유형이 유효 템플릿을 안 가리키면(삭제·복원 고아) 'full' 로 폴백 —
+  // 선택기가 아무것도 선택 안 된 blank 상태로 남지 않게.
+  it('고아 custom summaryType 은 full 로 리셋된다', () => {
+    useAppStore.setState({
+      summaryType: 'custom:gone',
+      settings: { ...DEFAULT_SETTINGS, customSummaryTemplates: [{ id: 'other', name: '다른', prompt: 'p' }] },
+    });
+    render(<SummaryTypeSelector />);
+    expect(useAppStore.getState().summaryType).toBe('full');
+  });
+
   it('출력 언어 select 변경 → settings.summaryLanguage 갱신', async () => {
     const user = userEvent.setup();
     render(<SummaryTypeSelector />);

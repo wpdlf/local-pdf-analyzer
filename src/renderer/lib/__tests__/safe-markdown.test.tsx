@@ -254,4 +254,17 @@ describe('MarkdownErrorBoundary reset gating (R34 P1)', () => {
     });
     expect(nextState).toBeNull();
   });
+
+  // QA(③LOW-2): 파싱 실패 fallback 은 <pre> 가 아닌 <div> — 상위 prose 타이포그래피가 <pre> 를
+  // 다크 코드블록으로 스타일링하는 것을 피해, Suspense fallback 과 일관되게 원본을 plain text 로 표시.
+  it('hasError 시 fallback 은 <div>(pre 아님) 로 원본 텍스트를 표시', () => {
+    const boundary = new MarkdownErrorBoundary({
+      children: 'unused' as unknown as ReactElement,
+      fallbackText: '원본 텍스트',
+    });
+    boundary.state = { hasError: true };
+    const el = boundary.render() as ReactElement;
+    expect(el.type).toBe('div');
+    expect((el.props as { children: unknown }).children).toBe('원본 텍스트');
+  });
 });

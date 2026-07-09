@@ -1,7 +1,8 @@
+import { useEffect } from 'react';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import type { ActiveSummaryType } from '../types';
-import { SUMMARY_LANGUAGES } from '../types';
+import { SUMMARY_LANGUAGES, isCustomSummaryType } from '../types';
 
 // 한국어 특화 모델 — 다른 언어 출력 시 품질이 낮을 수 있음
 const KOREAN_ONLY_MODELS = ['exaone'];
@@ -25,13 +26,26 @@ export function SummaryTypeSelector() {
   };
 
   // 커스텀 요약 템플릿을 기본 3종 뒤에 라디오 옵션으로 노출. value 는 `custom:<id>`(요약 실행·세션 키).
+  // 이름/프롬프트가 빈 미완성 템플릿은 제외 — main sanitize 가 저장 시 드롭하므로(재시작 후 사라짐)
+  // 선택기에 빈 라벨/비동작 라디오가 뜨는 렌더러-디스크 divergence 를 원천 차단(③MED-1).
   const customTemplates = settings.customSummaryTemplates ?? [];
+  const validTemplates = customTemplates.filter((tpl) => tpl.name.trim() && tpl.prompt.trim());
   const options: { value: ActiveSummaryType; label: string }[] = [
     { value: 'full', label: t('selector.full') },
     { value: 'chapter', label: t('selector.chapter') },
     { value: 'keywords', label: t('selector.keywords') },
-    ...customTemplates.map((tpl) => ({ value: `custom:${tpl.id}` as ActiveSummaryType, label: tpl.name })),
+    ...validTemplates.map((tpl) => ({ value: `custom:${tpl.id}` as ActiveSummaryType, label: tpl.name })),
   ];
+
+  // 활성 커스텀 유형이 유효 템플릿을 가리키지 않으면(삭제·sanitize 드롭·복원 고아) 'full' 로 폴백 —
+  // 선택기가 아무것도 선택 안 된 blank 상태로 남는 것 방지(②B/③LOW-1). 선택기는 문서 로드 후
+  // 마운트돼 settings 로드 이후이므로 초기 [] 로 인한 오리셋 없음. customTemplates 는 store ref 로 안정.
+  useEffect(() => {
+    if (isCustomSummaryType(summaryType)
+      && !customTemplates.some((tpl) => tpl.name.trim() && tpl.prompt.trim() && `custom:${tpl.id}` === summaryType)) {
+      setSummaryType('full');
+    }
+  }, [summaryType, customTemplates, setSummaryType]);
 
   const lang = settings.summaryLanguage || 'ko';
   const modelBase = settings.model.split(':')[0] ?? '';

@@ -450,6 +450,9 @@ async function summarizeCustom(
     throw Object.assign(new Error(t('ai.noText')), { code: 'PDF_NO_TEXT' });
   }
   if (text.length > CUSTOM_TEMPLATE_CHAR_BUDGET) {
+    // QA(②A): 단일 패스라 예산 초과 문서는 앞부분만 요약된다 — 무음 절단은 "문서 전체"라는 기대와
+    // 어긋나므로 사용자에게 고지(summarizeFull 의 가시적 통합 절단 라벨과 대칭, imagesSkipped 패턴).
+    useAppStore.getState().setNotice({ message: t('summary.customTruncated') });
     text = text.slice(0, CUSTOM_TEMPLATE_CHAR_BUDGET) + '\n\n[...]';
   }
   setProgressInfo({
