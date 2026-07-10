@@ -152,7 +152,11 @@ describe('restoreSessionForDocument (module-3)', () => {
     expect(useAppStore.getState().sessionRestorePending).toBe(false);
   });
 
-  it('schemaVersion 불일치 → 복원 안 함', async () => {
+  // QA11 MED-2: 계약 변경. 이전엔 schemaVersion 불일치 시 통째로 early-return 했는데, 그러면
+  // 게이트가 열린 직후 자동저장이 빈 qaMessages 로 디스크 세션을 덮어써 **재계산 불가능한 Q&A
+  // 대화가 조용히 소실**된다(요약은 loadMeta 머지가 보존하지만 qaMessages 는 머지 대상이 아님).
+  // 이제 파생 필드(인덱스)만 버리고 사용자 데이터는 살린다 = read-old/write-new 마이그레이션.
+  it('schemaVersion 불일치 → 요약·Q&A 는 살리고 인덱스만 미채택(재빌드)', async () => {
     const doc = makeDoc();
     useAppStore.setState({ document: doc, sessionRestorePending: true });
     api.session.load.mockImplementation(async (hash: string) => {
@@ -163,7 +167,41 @@ describe('restoreSessionForDocument (module-3)', () => {
     });
     await restoreSessionForDocument(doc);
     const s = useAppStore.getState();
+    // 재계산 불가능한 사용자 데이터는 보존
+    expect(s.summary?.content).toBe('복원된 요약');
+    expect(s.qaMessages).toHaveLength(2);
+    // 포맷을 신뢰할 수 없는 파생 필드는 폐기 → useRagBuilder 가 재빌드
+    expect(s.ragState.isAvailable).toBe(false);
+    expect(s.ragIndex.size).toBe(0);
+    expect(s.restoredSession).toBeNull();
+    expect(s.sessionRestorePending).toBe(false);
+  });
+
+  it('schemaVersion 불일치라도 인덱스 복원 경로를 타지 않는다 (checkEmbedModel 미호출)', async () => {
+    const doc = makeDoc();
+    useAppStore.setState({ document: doc, sessionRestorePending: true });
+    api.session.load.mockImplementation(async (hash: string) => {
+      const f = persistedSession(doc, true);
+      f.session.docHash = hash;
+      f.session.schemaVersion = 2;
+      return f;
+    });
+    await restoreSessionForDocument(doc);
+    expect(api.ai.checkEmbedModel).not.toHaveBeenCalled();
+  });
+
+  it('docHash 불일치(다른 문서) → 아무것도 복원하지 않음', async () => {
+    const doc = makeDoc();
+    useAppStore.setState({ document: doc, sessionRestorePending: true });
+    api.session.load.mockImplementation(async () => {
+      const f = persistedSession(doc, true);
+      f.session.docHash = 'f'.repeat(64); // 요청 해시와 다름
+      return f;
+    });
+    await restoreSessionForDocument(doc);
+    const s = useAppStore.getState();
     expect(s.summary).toBeNull();
+    expect(s.qaMessages).toHaveLength(0);
     expect(s.sessionRestorePending).toBe(false);
   });
 

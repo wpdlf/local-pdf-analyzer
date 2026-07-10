@@ -50,11 +50,21 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
       return;
     }
     const session = res.session as PersistedSession;
-    // Plan SC: 콘텐츠/스키마 무효화 — 불일치 시 복원하지 않고 정상 재계산
-    if (session.schemaVersion !== SESSION_SCHEMA_VERSION || session.docHash !== docHash) {
+    // Plan SC: 콘텐츠 무효화 — 다른 문서의 세션이면 복원하지 않고 정상 재계산.
+    if (session.docHash !== docHash) {
       store.setSessionRestorePending(false);
       return;
     }
+    // 스키마 버전 불일치(= SESSION_SCHEMA_VERSION 을 올린 뒤 구버전 세션을 만난 경우):
+    // 파생 필드(인덱스 blob/chunkMeta)는 포맷이 바뀌었을 수 있으므로 신뢰하지 않고 재빌드하되,
+    // **재계산 불가능한 사용자 데이터**(요약 본문·Q&A 대화)는 아래 검증 경로로 최대한 살린다.
+    //
+    // 이전엔 여기서 통째로 early-return 했다. 그러면 게이트가 열린 직후 자동저장이 발화해
+    // 빈 s.qaMessages 로 디스크 session.json 을 덮어썼고(doPersistCurrentSession), 요약은
+    // loadMeta 머지가 보존하지만 qaMessages 는 머지 대상이 아니라 대화가 조용히 소실됐다.
+    // 살아남은 필드를 그대로 읽어 현재 버전으로 다시 쓰는 read-old/write-new 가 곧 마이그레이션이다.
+    // (필드가 통째로 개명되는 파괴적 변경은 여기서 방어할 수 없다 — 그때는 명시적 변환이 필요.)
+    const schemaMismatch = session.schemaVersion !== SESSION_SCHEMA_VERSION;
 
     // C5-M2(QA cycle5): 복원 결정(api.load) 이 in-flight 인 동안 사용자가 이미 생성을 시작했으면
     // 요약/Q&A 를 덮어쓰지 않는다. 이전엔 문서 정체성만 검사해, in-flight 요약 위로
@@ -114,7 +124,8 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
 
     // 인덱스 복원 — 현재 임베딩 모델과 일치할 때만(불일치 → useRagBuilder 가 재빌드).
     // Plan SC: 재오픈 시 재임베딩 0 (모델 일치 시).
-    if (res.blob && session.embedModel && session.embedDim) {
+    // schemaMismatch 면 chunkMeta/blob 포맷을 신뢰할 수 없으므로 채택하지 않고 재빌드에 맡긴다.
+    if (!schemaMismatch && res.blob && session.embedModel && session.embedDim) {
       try {
         const embedCheck = await window.electronAPI.ai.checkEmbedModel();
         if (useAppStore.getState().document?.id !== doc.id) return;

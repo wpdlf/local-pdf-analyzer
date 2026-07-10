@@ -89,6 +89,7 @@ const defaultSettings = {
   enableImageAnalysis: true,
   enableOcrFallback: true,
   summaryLanguage: 'ko',
+  customSummaryTemplates: [],
   enableAnswerVerification: true,
   persistSessions: true,
 } as const;

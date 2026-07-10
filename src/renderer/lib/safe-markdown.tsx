@@ -170,7 +170,10 @@ const MarkdownRenderer = lazy(importMarkdownRenderer);
  * cold-start 부담은 없다 — 호출 시점을 초기 렌더 이후로 미루기 때문(App 마운트 시 requestIdleCallback).
  */
 export function prefetchMarkdownRenderer(): void {
-  void importMarkdownRenderer();
+  // 실패는 무시 — prefetch 는 최적화일 뿐이고, 실제 렌더 시 React.lazy 가 같은 import 를 다시
+  // 시도해 Suspense/ErrorBoundary 로 처리한다. catch 가 없으면 청크 로드 실패가 아무도 잡지
+  // 않는 unhandledrejection 으로 표면화된다.
+  void importMarkdownRenderer().catch(() => {});
 }
 
 /**

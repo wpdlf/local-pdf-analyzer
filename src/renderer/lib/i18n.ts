@@ -399,6 +399,9 @@ export const _translations = {
   'mainerr.streamNoResponse': { ko: 'AI 서버 응답이 중단되었습니다 (60초 무응답).', en: 'The AI server stopped responding (no data for 60s).' },
   'mainerr.streamDisconnected': { ko: 'AI 스트림 연결이 끊어졌습니다.', en: 'The AI stream connection was lost.' },
   'mainerr.streamTimeout': { ko: 'AI 서버 응답 타임아웃 (5분).', en: 'The AI server response timed out (5 min).' },
+  'mainerr.streamConnectFailed': { ko: 'AI 서버에 연결할 수 없습니다. 서버가 실행 중인지, 주소와 네트워크가 올바른지 확인해주세요.', en: 'Could not connect to the AI server. Check that it is running and that the address and network are correct.' },
+  'mainerr.streamTooLarge': { ko: 'AI 응답이 너무 커서 중단했습니다 (50MB 초과). 문서 범위를 좁히거나 다른 모델을 시도해주세요.', en: 'The AI response was too large and was stopped (over 50MB). Narrow the document range or try a different model.' },
+  'mainerr.streamLineTooLarge': { ko: 'AI 응답이 손상되어 중단했습니다 (비정상적으로 큰 데이터). 잠시 후 다시 시도해주세요.', en: 'The AI response was malformed and was stopped (abnormally large data). Please try again in a moment.' },
   'mainerr.apiHttpError': { ko: 'API 요청 실패: HTTP {status}', en: 'API request failed: HTTP {status}' },
 
   // ─── 세션 영속화 (session-persistence) ───

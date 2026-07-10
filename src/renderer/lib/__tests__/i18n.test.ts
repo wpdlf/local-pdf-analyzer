@@ -183,3 +183,51 @@ describe('translateMainProgress / translateMainError', () => {
     useAppStore.setState((s) => ({ settings: { ...s.settings, uiLanguage: 'ko' as const } }));
   });
 });
+
+// QA11 D축: errorKey 는 타입 없는 `string` 이라, main 이 새 키를 실어 보내면서 i18n 사전에
+// 등록하지 않아도 컴파일이 통과한다. 그러면 translateMainError 가 t() 미스로 raw 키
+// (`mainerr.streamConnectFailed`) 를 그대로 화면에 노출한다. 손유지 목록 없이 main 소스에서
+// errorKey 리터럴을 추출해 사전과 대조한다 (ipc-channel-contract.test.ts 와 동일 패턴).
+describe('errorKey ↔ i18n 사전 계약 가드 (QA11)', () => {
+  const MAIN_SRC = ['ai-service.ts', 'ollama-manager.ts', 'index.ts']
+    .map((f) => {
+      try {
+        return readFileSync(resolve(import.meta.dirname, '../../../main', f), 'utf-8');
+      } catch {
+        return ''; // 파일 rename 시 아래 "최소 개수" 테스트가 잡는다
+      }
+    })
+    .join('\n');
+
+  /**
+   * `errorKey:` 우변 표현식에 등장하는 모든 문자열 리터럴을 추출.
+   * 단순 `errorKey: 'x'` 뿐 아니라 삼항(`cond ? 'a' : 'b'`) 의 양쪽 가지도 잡는다 —
+   * withTransportErrorKey 가 코드에 따라 두 키 중 하나를 고르기 때문.
+   */
+  const emittedKeys = [...MAIN_SRC.matchAll(/errorKey:\s*([^,\n}]+)/g)]
+    .flatMap((m) => [...m[1]!.matchAll(/['"]([A-Za-z0-9_]+)['"]/g)].map((q) => q[1]!));
+
+  it('main 소스에서 errorKey 리터럴을 추출한다 (최소 10개)', () => {
+    expect(new Set(emittedKeys).size).toBeGreaterThanOrEqual(10);
+  });
+
+  it('main 이 방출하는 모든 errorKey 가 ko/en 번역을 갖는다', async () => {
+    const { _translations } = await import('../i18n');
+    const dict = _translations as Record<string, { ko: string; en: string } | undefined>;
+    const missing: string[] = [];
+    for (const key of new Set(emittedKeys)) {
+      const entry = dict[`mainerr.${key}`];
+      if (!entry || !entry.ko.trim() || !entry.en.trim()) missing.push(key);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('회귀 가드: QA11 에서 추가한 전송/크기 에러 키가 방출·번역된다', async () => {
+    const { _translations } = await import('../i18n');
+    const dict = _translations as Record<string, unknown>;
+    for (const key of ['streamConnectFailed', 'streamTooLarge', 'streamLineTooLarge']) {
+      expect(emittedKeys).toContain(key);
+      expect(dict[`mainerr.${key}`]).toBeDefined();
+    }
+  });
+});

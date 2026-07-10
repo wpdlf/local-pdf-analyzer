@@ -248,3 +248,87 @@ describe('invalidate', () => {
     expect(mocks.readFileSync).toHaveBeenCalledTimes(2);
   });
 });
+
+// QA11 MED-1: 일시적 I/O 오류(EBUSY/EACCES — Windows 백신·인덱서 잠금)를 "빈 키셋"으로
+// 흡수하면, 그 위에 save() 가 merge 해 다른 provider 의 키가 디스크에서 영구 소실됐다.
+// session-store 의 isRealIoError 대칭 방어: ENOENT(첫 실행)만 빈 키셋, 그 외 fs 오류는
+// 읽기에선 캐시 금지 + 쓰기에선 중단.
+describe('일시적 I/O 오류 방어 (QA11 MED-1)', () => {
+  function ioError(code: string): NodeJS.ErrnoException {
+    return Object.assign(new Error(`mock ${code}`), { code });
+  }
+
+  it('save 는 EBUSY 로 기존 키셋을 못 읽으면 덮어쓰지 않고 throw (키 소실 차단)', () => {
+    mocks.readFileSync.mockImplementation(() => { throw ioError('EBUSY'); });
+    const store = new ApiKeyStore(PATH, makeCrypto());
+
+    expect(() => store.save('claude', 'sk-new')).toThrowError(
+      expect.objectContaining({ code: 'APIKEY_READ_FAILED' }),
+    );
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+    expect(mocks.renameSync).not.toHaveBeenCalled();
+  });
+
+  it('delete 도 EACCES 시 파괴적 재기록 대신 throw', () => {
+    mocks.readFileSync.mockImplementation(() => { throw ioError('EACCES'); });
+    const store = new ApiKeyStore(PATH, makeCrypto());
+
+    expect(() => store.delete('openai')).toThrowError(
+      expect.objectContaining({ code: 'APIKEY_READ_FAILED' }),
+    );
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('read 는 일시적 오류의 빈 결과를 캐시하지 않는다 (다음 읽기에서 회복)', () => {
+    mocks.readFileSync.mockImplementationOnce(() => { throw ioError('EBUSY'); });
+    const store = new ApiKeyStore(PATH, makeCrypto());
+
+    expect(store.load('claude')).toBeUndefined(); // 잠긴 동안은 키 없음으로 degrade
+
+    mocks.readFileSync.mockReturnValue(storedBuffer({ claude: 'sk-c' }));
+    expect(store.load('claude')).toBe('sk-c'); // 잠금 해제 후 자동 회복
+  });
+
+  it('EBUSY 이후 회복된 상태에서 save 는 기존 키를 보존한 채 merge', () => {
+    mocks.readFileSync.mockImplementationOnce(() => { throw ioError('EBUSY'); });
+    const store = new ApiKeyStore(PATH, makeCrypto());
+    expect(() => store.save('gemini', 'sk-g')).toThrow(); // 1차: 중단
+
+    mocks.readFileSync.mockReturnValue(storedBuffer({ claude: 'sk-c', openai: 'sk-o' }));
+    mocks.writeFileSync.mockReturnValue(undefined);
+    mocks.renameSync.mockReturnValue(undefined);
+    store.save('gemini', 'sk-g'); // 2차: 정상
+
+    const decrypted = (mocks.writeFileSync.mock.calls[0]![1] as Buffer).toString('utf-8').replace(/^enc:/, '');
+    expect(JSON.parse(decrypted)).toEqual({ claude: 'sk-c', openai: 'sk-o', gemini: 'sk-g' });
+  });
+
+  it('ENOENT(첫 실행)는 여전히 빈 키셋 — save 가 정상 진행', () => {
+    mocks.readFileSync.mockImplementation(() => { throw ioError('ENOENT'); });
+    mocks.writeFileSync.mockReturnValue(undefined);
+    mocks.renameSync.mockReturnValue(undefined);
+
+    const store = new ApiKeyStore(PATH, makeCrypto());
+    store.save('claude', 'sk-c');
+
+    const decrypted = (mocks.writeFileSync.mock.calls[0]![1] as Buffer).toString('utf-8').replace(/^enc:/, '');
+    expect(JSON.parse(decrypted)).toEqual({ claude: 'sk-c' });
+  });
+
+  it('복호화 실패(코드 없는 에러)는 빈 키셋으로 간주 — save 진행 (키체인 회전 등 복구 불가)', () => {
+    mocks.readFileSync.mockReturnValue(Buffer.from('garbage-not-enc', 'utf-8'));
+    mocks.writeFileSync.mockReturnValue(undefined);
+    mocks.renameSync.mockReturnValue(undefined);
+
+    const badCrypto: SafeStorageLike = {
+      isEncryptionAvailable: () => true,
+      encryptString: (s: string) => Buffer.from('enc:' + s, 'utf-8'),
+      decryptString: () => { throw new Error('decrypt failed'); },
+    };
+    const store = new ApiKeyStore(PATH, badCrypto);
+    store.save('claude', 'sk-c');
+
+    const decrypted = (mocks.writeFileSync.mock.calls[0]![1] as Buffer).toString('utf-8').replace(/^enc:/, '');
+    expect(JSON.parse(decrypted)).toEqual({ claude: 'sk-c' });
+  });
+});

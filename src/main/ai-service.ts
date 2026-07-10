@@ -556,6 +556,30 @@ interface StreamConfig {
   mapHttpError?: (statusCode: number, detail: string) => Error | null;
 }
 
+/**
+ * Node 전송 계층 오류 코드 — "서버에 닿지 못했다" 부류.
+ * 스트림 도중 끊긴 것(그 외 코드)과 구분해 서로 다른 안내를 준다.
+ */
+const CONNECT_ERROR_CODES = new Set([
+  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN',
+  'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT',
+]);
+
+/**
+ * req/res 의 raw Node 에러에 errorKey 를 부착한다.
+ *
+ * QA11 D-LOW: 이전엔 raw Error 를 그대로 safeReject 해서, translateMainError 가 errorKey 부재로
+ * `result.error` 원문을 표시했다 → 한국어 UI 에 "connect ECONNREFUSED 127.0.0.1:11434" 노출
+ * (Ollama 가 꺼진 상태에서 요약 시 가장 흔한 경로). 이미 errorKey 가 있는 에러는 건드리지 않는다.
+ */
+function withTransportErrorKey(err: Error): Error {
+  if ((err as { errorKey?: string }).errorKey) return err;
+  const code = (err as NodeJS.ErrnoException).code;
+  return Object.assign(err, {
+    errorKey: code && CONNECT_ERROR_CODES.has(code) ? 'streamConnectFailed' : 'streamDisconnected',
+  });
+}
+
 function streamRequest(
   requestId: string,
   config: StreamConfig,
@@ -726,7 +750,7 @@ function streamRequest(
             clearIdleTimer();
             safeDeleteRequest();
             res.destroy();
-            safeReject(new Error('AI 응답이 너무 큽니다 (50MB 초과).'));
+            safeReject(Object.assign(new Error('AI 응답이 너무 큽니다 (50MB 초과).'), { errorKey: 'streamTooLarge' }));
             return;
           }
           totalBytes += chunk.length;
@@ -741,13 +765,17 @@ function streamRequest(
             if (line.length > MAX_LINE_SIZE) {
               // v0.18.19 patch R32 P2: 1MB 초과 라인을 silent `continue` 로 건너뛰면, 손상된
               // 응답이 빈 답변으로 "성공" 보고되어 사용자가 빈 화면만 보게 된다. 명시적으로
-              // 스트림을 중단하고 에러를 surface 하여 ai-client 가 streamInterrupted 로
-              // 변환해 사용자에게 표시하도록 한다. (R32 Surface 2 P3)
+              // 스트림을 중단하고 에러를 surface 한다. (R32 Surface 2 P3)
+              // QA11 D-LOW: ai-client 는 이 에러를 변환하지 않고 result.error 를 그대로 쓰므로
+              // (구 주석의 "streamInterrupted 로 변환" 은 사실이 아니었다), errorKey 를 직접 싣는다.
               streamAborted = true;
               clearIdleTimer();
               safeDeleteRequest();
               res.destroy();
-              safeReject(new Error('AI 응답에서 비정상적으로 큰 라인이 감지되어 중단되었습니다 (>1MB).'));
+              safeReject(Object.assign(
+                new Error('AI 응답에서 비정상적으로 큰 라인이 감지되어 중단되었습니다 (>1MB).'),
+                { errorKey: 'streamLineTooLarge' },
+              ));
               return;
             }
 
@@ -837,7 +865,7 @@ function streamRequest(
         res.on('error', (err) => {
           clearIdleTimer();
           safeDeleteRequest();
-          safeReject(err);
+          safeReject(withTransportErrorKey(err));
         });
 
         // httpPost 와 동일한 패턴으로 'close' 리스너 추가.
@@ -858,7 +886,8 @@ function streamRequest(
 
     req.on('error', (err) => {
       safeDeleteRequest();
-      safeReject(err);
+      // 사용자 취소는 abort 콜백이 먼저 settle(code:ABORTED) 하므로 여기 도달해도 no-op.
+      safeReject(withTransportErrorKey(err));
     });
 
     // v0.18.19 patch R32 P3: 5분 전체 요청 타임아웃 (응답 헤더 도착 전 단계 보호).
