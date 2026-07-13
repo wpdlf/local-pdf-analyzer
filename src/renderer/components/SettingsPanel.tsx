@@ -106,6 +106,13 @@ export function SettingsPanel() {
       ...(Object.keys(settings) as (keyof AppSettings)[]),
     ]);
     for (const key of allKeys) {
+      // QA12(LOW): customSummaryTemplates 는 mutateTemplates 가 매번 새 배열을 할당해 참조비교로는
+      // 내용이 동일해도(추가→삭제, 이름 원복 등) 항상 변경으로 잡혀 Save 가 불필요하게 활성화됐다.
+      // 작고 상한(MAX_CUSTOM_TEMPLATES) 있는 배열이라 값 비교로 net-zero 편집을 정확히 판정.
+      if (key === 'customSummaryTemplates') {
+        if (JSON.stringify(draft.customSummaryTemplates) !== JSON.stringify(settings.customSummaryTemplates)) return true;
+        continue;
+      }
       if (draft[key] !== settings[key]) return true;
     }
     return false;
@@ -194,7 +201,16 @@ export function SettingsPanel() {
     list.length >= MAX_CUSTOM_TEMPLATES ? list : [...list, { id: crypto.randomUUID(), name: '', prompt: '' }]);
   const updateTemplate = (id: string, patch: Partial<SummaryTemplate>) => mutateTemplates((list) =>
     list.map((tpl) => (tpl.id === id ? { ...tpl, ...patch } : tpl)));
-  const removeTemplate = (id: string) => mutateTemplates((list) => list.filter((tpl) => tpl.id !== id));
+  const addTemplateBtnRef = useRef<HTMLButtonElement>(null);
+  const removeTemplate = (id: string) => {
+    mutateTemplates((list) => list.filter((tpl) => tpl.id !== id));
+    // QA12(LOW a11y): 삭제된 행의 🗑 버튼이 언마운트되며 포커스가 <body>로 유실 → 키보드/AT
+    // 사용자가 목록 내 위치를 잃는다. 재렌더 후 "+ 템플릿 추가" 버튼으로 포커스 이동(삭제 직후엔
+    // 항상 최대치 미만이라 해당 버튼이 노출됨). QA10 포커스-반환 백로그 라인과 정합.
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => addTemplateBtnRef.current?.focus());
+    }
+  };
 
   const handleSaveApiKey = async (provider: 'claude' | 'openai' | 'gemini') => {
     const key = provider === 'claude' ? claudeKey : provider === 'openai' ? openaiKey : geminiKey;
@@ -272,6 +288,19 @@ export function SettingsPanel() {
     }
     if (draft.provider === 'gemini' && !geminiKeyStored) {
       setKeyMessage(t('settings.saveKeyFirst', { provider: 'Gemini' }));
+      return;
+    }
+    // QA12(MED): 이름/프롬프트 중 한쪽만 채운 불완전 템플릿은 main sanitize 가 조용히 드롭하고
+    // draft 리싱크로 편집기에서도 사라져, "저장됨" 표시와 달리 입력이 소실됐다(A축·D축 수렴).
+    // API 키 공란(keyEmpty)과 대칭으로 저장 전 차단하고 명시적 안내. (양쪽 공란 행은 사용자가
+    // 채우지 않은 신규 행이므로 조용히 드롭 유지 — 소실될 입력이 없다.)
+    const hasIncompleteTemplate = draft.customSummaryTemplates.some((tpl) => {
+      const hasName = tpl.name.trim().length > 0;
+      const hasPrompt = tpl.prompt.trim().length > 0;
+      return hasName !== hasPrompt;
+    });
+    if (hasIncompleteTemplate) {
+      setKeyMessage(t('settings.templateIncomplete'));
       return;
     }
     updateSettings(draft);
@@ -774,6 +803,7 @@ export function SettingsPanel() {
           ))}
           {draft.customSummaryTemplates.length < MAX_CUSTOM_TEMPLATES && (
             <button
+              ref={addTemplateBtnRef}
               type="button"
               onClick={addTemplate}
               className="self-start px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"

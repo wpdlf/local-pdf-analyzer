@@ -147,6 +147,32 @@ describe('SettingsPanel — 저장 게이팅 / 전환', () => {
   });
 });
 
+// QA12(MED, A축·D축 수렴): 이름/프롬프트 중 한쪽만 채운 불완전 템플릿은 main sanitize 가 조용히
+// 드롭 + draft 리싱크로 편집기에서도 사라져 "저장됨" 표시와 달리 입력이 소실됐다. 저장 전 차단.
+describe('SettingsPanel — 커스텀 템플릿 검증', () => {
+  it('이름만 채운 불완전 템플릿 저장 시 차단(templateIncomplete) + 저장 성공 표시 안 뜸', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.click(screen.getByRole('button', { name: new RegExp(t('settings.templateAdd')) }));
+    await user.type(screen.getByLabelText(t('settings.templateName')), '액션 아이템');
+    // 프롬프트는 공란으로 둔 채 저장
+    await user.click(screen.getByText(t('settings.saveBtn')));
+    expect(screen.getByText(t('settings.templateIncomplete'))).toBeTruthy();
+    expect(screen.queryByText(t('settings.savedBtn'))).toBeNull();
+  });
+
+  it('이름+프롬프트 모두 채운 완전 템플릿은 저장 성공(savedBtn)', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.click(screen.getByRole('button', { name: new RegExp(t('settings.templateAdd')) }));
+    await user.type(screen.getByLabelText(t('settings.templateName')), '액션 아이템');
+    await user.type(screen.getByLabelText(t('settings.templatePrompt')), '작업을 목록으로 뽑아줘');
+    await user.click(screen.getByText(t('settings.saveBtn')));
+    expect(screen.getByText(t('settings.savedBtn'))).toBeTruthy();
+    expect(screen.queryByText(t('settings.templateIncomplete'))).toBeNull();
+  });
+});
+
 describe('SettingsPanel — 청크 크기 검증', () => {
   it('범위 밖 값 → aria-invalid + 범위 안내, blur 시 clamp', async () => {
     const user = userEvent.setup();

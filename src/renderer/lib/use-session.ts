@@ -190,8 +190,9 @@ async function getCachedDocHash(docId: string, extractedText: string): Promise<s
 }
 
 /** 현재 store 상태를 세션으로 저장 (best-effort, 직렬화). 생성 중/복원 대기 중에는 skip. */
-export function persistCurrentSession(): Promise<void> {
-  persistChain = persistChain.then(doPersistCurrentSession, doPersistCurrentSession);
+export function persistCurrentSession(flush = false): Promise<void> {
+  const run = () => doPersistCurrentSession(flush);
+  persistChain = persistChain.then(run, run);
   return persistChain;
 }
 
@@ -211,14 +212,33 @@ function recordSaveResult(ok: boolean): void {
   }
 }
 
-async function doPersistCurrentSession(): Promise<void> {
+async function doPersistCurrentSession(flush = false): Promise<void> {
   const s = useAppStore.getState();
   const doc = s.document;
   const api = window.electronAPI?.session;
   if (!doc || !s.settings.persistSessions || !api) return;
   // isCollectionBusy(컬렉션 gather) 중에는 활성 문서 자동저장을 보류 — 머지 read(mutex 밖)와
-  // 컬렉션 인라인 요약 cross-write 의 TOCTOU lost-update 방지. 명시적 flush(탭전환 등)도 가드.
-  if (s.isGenerating || s.isQaGenerating || s.sessionRestorePending || s.isCollectionBusy) return;
+  // 컬렉션 인라인 요약 cross-write 의 TOCTOU lost-update 방지. 복원 대기 중(문서 불일치)도 skip.
+  if (s.sessionRestorePending || s.isCollectionBusy) return;
+  // QA12(B-MED): 디바운스 경로는 생성 중 skip(부분 스트림 영속화 방지). 그러나 종료/새로고침
+  // flush(handshake/pagehide)까지 통째로 skip 하면, 요약 완료 직후 후속 질문(isQaGenerating)으로
+  // 디바운스가 취소·미재예약된 상태에서 종료 시 "완성 요약"이 디스크에 닿지 못해 소실됐다
+  // (QA10 handshake 가 no-op persist 를 기다리는 무의미 상태). flush 경로는 이미 커밋된 데이터만
+  // committed-only 로 정규화해 저장한다(아래 summaryContentToPersist / safeQaMessages).
+  if (!flush && (s.isGenerating || s.isQaGenerating)) return;
+  // flush 중 요약 생성(isGenerating)이면 summaryStream 은 새 타입의 부분 스트림이므로 s.summary
+  // (직전 완성본)를 대신 기록해 부분 요약이 완성본을 덮어쓰는 것을 막는다. 생성 중이 아니면
+  // summaryStream 이 곧 완성 요약이다(setSummary 는 완료 시 커밋되어 summary.type 과 일치).
+  const summaryContentToPersist = (flush && s.isGenerating)
+    ? (s.summary?.content ?? null)
+    : (s.summaryStream || null);
+  // flush 중 Q&A 생성이면 마지막 메시지가 짝 없는 user(스트리밍 답변 대기)일 수 있다 → 복원 시
+  // orphan-Q 불변식(formatHistory) 위반을 막기 위해 trailing lone-user 만 제거(완료 턴은 보존).
+  let safeQaMessages = s.qaMessages;
+  if (flush && s.isQaGenerating && safeQaMessages.length > 0
+      && safeQaMessages[safeQaMessages.length - 1]?.role === 'user') {
+    safeQaMessages = safeQaMessages.slice(0, -1);
+  }
   // R43 I-2: ragState.isIndexing 중 부분 인덱스(빌드 중간 청크) 영속화 금지는 유지하되,
   // 전체 skip 은 하지 않는다 — 탭 전환/새 탭(+)의 명시적 flush 가 인덱싱 타이밍에 조용히
   // skip 되면 방금 연 문서의 세션이 디스크에 없어, 경로가 없는 탭(드롭)의 세션 fallback
@@ -244,8 +264,8 @@ async function doPersistCurrentSession(): Promise<void> {
     // 불변 본문(extractedText/pageTexts/chunkMeta)·blob 재전송 없이 변하는 qa/summary delta 만
     // 보내고 main 이 디스크 session.json 을 패치한다(IPC ~5MB→~50KB, 렌더러측 loadMeta 읽기도 생략).
     if (idxUnchanged && typeof api.savePartial === 'function') {
-      const summaryPatch = (s.summaryStream && s.summary)
-        ? { type: s.summary.type, content: s.summaryStream, model: s.summary.model, provider: s.summary.provider }
+      const summaryPatch = (summaryContentToPersist && s.summary)
+        ? { type: s.summary.type, content: summaryContentToPersist, model: s.summary.model, provider: s.summary.provider }
         : null;
       let partialOk = false;
       try {
@@ -253,7 +273,7 @@ async function doPersistCurrentSession(): Promise<void> {
           docHash,
           summary: summaryPatch,
           summaryType: s.summaryType,
-          qaMessages: s.qaMessages,
+          qaMessages: safeQaMessages,
         });
         partialOk = r?.ok === true;
       } catch { partialOk = false; }
@@ -295,9 +315,9 @@ async function doPersistCurrentSession(): Promise<void> {
       recordSaveResult(false);
       return;
     }
-    if (s.summaryStream && s.summary) {
+    if (summaryContentToPersist && s.summary) {
       summaries[s.summary.type] = {
-        content: s.summaryStream,
+        content: summaryContentToPersist,
         model: s.summary.model,
         provider: s.summary.provider,
       };
@@ -343,7 +363,7 @@ async function doPersistCurrentSession(): Promise<void> {
       isOcr: doc.isOcr,
       summaries,
       summaryType: s.summaryType,
-      qaMessages: s.qaMessages,
+      qaMessages: safeQaMessages,
       embedModel,
       embedDim,
       chunkMeta,

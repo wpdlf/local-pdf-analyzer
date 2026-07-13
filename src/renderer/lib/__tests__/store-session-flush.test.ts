@@ -48,9 +48,10 @@ describe('flushPendingWrites → 세션 flush (QA8 MED)', () => {
     vi.mocked(persistCurrentSession).mockClear();
   });
 
-  it('flush 시 persistCurrentSession 을 best-effort 로 발화한다', () => {
+  it('flush 시 persistCurrentSession 을 flush=true 로 발화한다 (QA12 B-MED: committed-only 저장)', () => {
     flushPendingWrites();
     expect(persistCurrentSession).toHaveBeenCalledTimes(1);
+    expect(persistCurrentSession).toHaveBeenCalledWith(true);
   });
 
   it('persistCurrentSession 이 throw 해도 flush 는 전파하지 않는다(best-effort)', () => {
@@ -68,6 +69,7 @@ describe('flushPendingWrites → 세션 flush (QA8 MED)', () => {
     vi.mocked(persistCurrentSession).mockClear();
     H.holder.cb!();
     expect(persistCurrentSession).toHaveBeenCalledTimes(1);
+    expect(persistCurrentSession).toHaveBeenCalledWith(true); // QA12: 종료 handshake 도 flush 경로
     // persist promise 착지 후 정확히 1회 ack
     await new Promise((r) => setTimeout(r));
     expect(flushBeforeQuitDone).toHaveBeenCalledTimes(1);

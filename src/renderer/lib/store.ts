@@ -64,13 +64,16 @@ export function flushPendingWrites(): Promise<void> {
   // 타이머만 clear 하고 persist 없이 소멸 → 마지막 턴/요약/인덱스가 소실됐다(≤1.5s, 비파괴적).
   // 저가치 데이터(테마·폭)는 flush 하면서 고가치 세션은 누락된 비대칭 해소. best-effort 로
   // 즉시 발화 — persistCurrentSession 은 실행 시점 getState() 를 읽는 직렬화 체인이고, 내부에서
-  // 생성중/복원대기/컬렉션busy/persistSessions OFF 를 스스로 skip 하므로 여기서 무조건 호출해도 안전.
+  // 복원대기/컬렉션busy/persistSessions OFF 를 스스로 skip 하므로 여기서 무조건 호출해도 안전.
   // QA10(C-MED): persist 완료 promise 를 반환한다. 새로고침(pagehide)엔 이 반환이 무시되지만,
   // 종료 handshake(onFlushBeforeQuit)는 이 promise 착지를 기다린 뒤 ack 하여 main 이 persist 가
   // 디스크에 닿을 때까지 quit 을 보류한다(기존 pagehide 는 async 라 클라우드/외부 Ollama 사용자에서
   // ollamaManager.stop() 즉시리턴에 quit 이 persist 를 앞질러 마지막 델타를 소실했음).
+  // QA12(B-MED): flush=true 로 호출 — 디바운스 경로는 생성 중 skip 하지만, 종료/새로고침 flush 는
+  // 이미 커밋된 완성 요약·완료 Q&A턴을 committed-only 로 저장한다(요약 완료 직후 후속 질문 →
+  // 종료 시 완성 요약 소실 창 제거). partial 스트림·trailing lone-user 는 doPersist 가 정규화.
   let persisted: Promise<void> = Promise.resolve();
-  try { persisted = persistCurrentSession(); } catch { /* best-effort */ }
+  try { persisted = persistCurrentSession(true); } catch { /* best-effort */ }
   return persisted;
 }
 

@@ -357,6 +357,59 @@ describe('persistCurrentSession (module-3)', () => {
     expect(api.session.save).not.toHaveBeenCalled();
   });
 
+  // QA12(B-MED): 종료/새로고침 flush 경로는 생성 중이라도 이미 커밋된 데이터를 committed-only 로 저장.
+  // 요약 완료 직후 후속 질문(isQaGenerating) → 종료 시 완성 요약이 소실되던 창을 제거한다.
+  it('flush 경로: Q&A 생성 중에도 완성 요약 저장 + trailing lone-user 제거', async () => {
+    const doc = makeDoc('flush-qa-doc');
+    useAppStore.setState({
+      document: doc,
+      summary: { id: 's', documentId: doc.id, type: 'full', content: '완성 요약', model: 'gemma3', provider: 'ollama', createdAt: new Date(), durationMs: 1 },
+      summaryStream: '완성 요약',
+      qaMessages: [
+        { id: 'q1', role: 'user', content: '질문1' },
+        { id: 'a1', role: 'assistant', content: '답변1' },
+        { id: 'q2', role: 'user', content: '스트리밍 중 질문' }, // 짝 없는 trailing user
+      ],
+      isQaGenerating: true,
+      ragIndex: new VectorStore(),
+    });
+    api.session.load.mockResolvedValue(null);
+
+    await persistCurrentSession(true); // flush=true
+
+    expect(api.session.save).toHaveBeenCalledTimes(1);
+    const payload = api.session.save.mock.calls[0]![0] as { session: PersistedSession };
+    expect(payload.session.summaries.full?.content).toBe('완성 요약'); // 완성 요약 영속
+    expect(payload.session.qaMessages).toHaveLength(2); // trailing lone-user 제거
+    expect(payload.session.qaMessages.at(-1)?.role).toBe('assistant');
+  });
+
+  it('디바운스(non-flush) 경로는 Q&A 생성 중 여전히 skip', async () => {
+    useAppStore.setState({ document: makeDoc('debounce-qa-doc'), isQaGenerating: true });
+    await persistCurrentSession(); // flush 인자 없음
+    expect(api.session.save).not.toHaveBeenCalled();
+  });
+
+  it('flush 경로: 요약 재생성 중이면 부분 스트림이 아닌 직전 완성본(summary.content)을 저장', async () => {
+    const doc = makeDoc('flush-resummary-doc');
+    useAppStore.setState({
+      document: doc,
+      summary: { id: 's', documentId: doc.id, type: 'full', content: '이전 완성본', model: 'gemma3', provider: 'ollama', createdAt: new Date(), durationMs: 1 },
+      summaryStream: '새 부분 스트림', // 재요약 진행 중 성장하는 partial
+      qaMessages: [],
+      isGenerating: true,
+      ragIndex: new VectorStore(),
+    });
+    api.session.load.mockResolvedValue(null);
+
+    await persistCurrentSession(true); // flush=true
+
+    expect(api.session.save).toHaveBeenCalledTimes(1);
+    const payload = api.session.save.mock.calls[0]![0] as { session: PersistedSession };
+    // 부분 스트림이 완성본을 덮어쓰면 안 된다 — 커밋된 '이전 완성본' 보존
+    expect(payload.session.summaries.full?.content).toBe('이전 완성본');
+  });
+
   it('persistSessions=false 면 저장 skip', async () => {
     useAppStore.setState({ document: makeDoc(), settings: { ...useAppStore.getState().settings, persistSessions: false } });
     await persistCurrentSession();

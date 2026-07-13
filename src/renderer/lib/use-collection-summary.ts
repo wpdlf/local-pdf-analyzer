@@ -237,9 +237,14 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
 
   // 활성 문서 in-memory 표현(디스크 폴백용 — QA M1). summaryStream(후처리 전체 요약) 우선, 없으면
   // store.summary.content. 본문은 document.extractedText.
-  const activeSummary = st.summaryStream && st.summaryStream.trim()
-    ? st.summaryStream
-    : (st.summary?.content ?? null);
+  // QA12(LOW): 표시 요약은 st.summaryType 유형의 산출물이다. 커스텀 템플릿이면 gatherType 이 'full'
+  // 로 폴백(아래)되므로, 커스텀 산출물을 'full' 합성에 seed 하면 "커스텀 미적용" 고지와 모순된다 →
+  // 이 경우 메모리 폴백을 비워 활성 멤버가 디스크 'full' 요약 또는 인라인 'full' 생성 경로를 타게 한다.
+  const activeSummary = isCustomSummaryType(st.summaryType)
+    ? null
+    : (st.summaryStream && st.summaryStream.trim()
+        ? st.summaryStream
+        : (st.summary?.content ?? null));
   const activeCtx: ActiveDocContext = {
     docHash: activeDocHash,
     summary: activeSummary,

@@ -299,6 +299,7 @@ export const _translations = {
   'settings.templateStrategy': { ko: '처리 방식', en: 'Processing' },
   'settings.templateStrategySingle': { ko: '단일 패스 (빠름 · 긴 문서 일부 생략)', en: 'Single pass (fast; long docs partly skipped)' },
   'settings.templateStrategyChunked': { ko: '청크+통합 (긴 문서 전체 커버 · 느림)', en: 'Chunk & integrate (covers long docs; slower)' },
+  'settings.templateIncomplete': { ko: '템플릿의 이름과 프롬프트를 모두 입력하세요. (한쪽만 채운 항목은 저장되지 않습니다)', en: 'Enter both a name and a prompt for each template. (Entries with only one filled are not saved.)' },
   'settings.imageAnalysis': { ko: '이미지 분석', en: 'Image Analysis' },
   'settings.imageAnalysisLabel': { ko: 'PDF 이미지 자동 분석', en: 'Auto-analyze PDF images' },
   'settings.imageAnalysisDesc': { ko: 'Vision 지원 모델 필요 (llava, Claude, GPT-4o, Gemini 등)', en: 'Requires Vision model (llava, Claude, GPT-4o, Gemini, etc.)' },
