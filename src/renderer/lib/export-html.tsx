@@ -62,11 +62,14 @@ const PRINT_CSS = `
  * 요약 마크다운을 인쇄용 완전 HTML 문서로 변환한다. main 의 file:export-pdf 가 이 HTML 을
  * 잠금 오프스크린 창에 로드 후 printToPDF 한다.
  */
-export function summaryToHtml(markdown: string, title: string): string {
+export function summaryToHtml(markdown: string, title: string, lang?: string): string {
   const body = renderToStaticMarkup(
     <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={exportComponents}>{markdown}</ReactMarkdown>,
   );
-  return `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">`
+  // QA14(C-LOW): 이전엔 lang="ko" 하드코딩이라 영어 요약 PDF 도 SR 이 한국어 음가로 읽고 메타데이터가
+  // 틀렸다. 요약 언어(summaryLanguage)를 반영하되, 속성 주입 안전을 위해 2글자 코드만 허용(그 외 'ko').
+  const safeLang = lang && /^[a-z]{2}$/.test(lang) ? lang : 'ko';
+  return `<!DOCTYPE html><html lang="${safeLang}"><head><meta charset="utf-8">`
     + `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src 'self';">`
     + `<title>${escapeHtml(title)}</title><style>${PRINT_CSS}</style></head>`
     + `<body><main class="doc">${body}</main></body></html>`;

@@ -143,4 +143,38 @@ describe('collectionRagSearch', () => {
     await collectionRagSearch('질문', [member('a', 'Alpha.pdf', 'memory')], 'a');
     expect(mockSessionLoad).not.toHaveBeenCalled();
   });
+
+  // QA14(A-MED): 예산(8000) 초과 시 컨텍스트 packing 이 점수 순으로 선택돼야 최고점 교차문서 청크가
+  // 축출되지 않는다. 이전엔 (docHash,index) 정렬 후 hard-break 라, docHash 사전순 뒤에 있는 최고점
+  // 청크가 앞 문서의 큰 저점 청크에 예산이 소진돼 프롬프트에서 누락됐다(조용한 오답).
+  it('예산 초과 시 최고점 교차문서 청크를 유지(score-first packing)', async () => {
+    // 활성 'a'(docHash 앞): 큰 저점 청크 2개(각 ~5KB) — 예산을 먼저 소진시키던 원인
+    const active = new VectorStore();
+    active.setModel(MODEL);
+    active.addChunk('AAA ' + 'a'.repeat(5000), [0.9, 0.4359, 0], 0, { pageStart: 2, pageEnd: 2 });   // score≈0.90
+    active.addChunk('BBB ' + 'b'.repeat(5000), [0.85, 0.5268, 0], 1, { pageStart: 3, pageEnd: 3 });  // score≈0.85
+    useAppStore.getState().setRagIndex(active);
+    // 멤버 'z'(docHash 뒤): 최고점(1.0) 소형 청크 — 예산에서 밀려나면 안 됨
+    const zeta = new VectorStore();
+    zeta.setModel(MODEL);
+    zeta.addChunk('TOPEVIDENCE ' + 'z'.repeat(2000), [1, 0, 0], 0, { pageStart: 7, pageEnd: 7 });      // score=1.0
+    const zs = zeta.serialize();
+    mockSessionLoad.mockResolvedValue({
+      session: {
+        schemaVersion: 1, docHash: 'z'.repeat(64), fileName: 'Zeta.pdf', filePath: '/d/Zeta.pdf',
+        pageCount: 10, extractedText: 't', pageTexts: ['p'], chapters: [], summaries: {},
+        summaryType: 'full', qaMessages: [], embedModel: zs.model, embedDim: zs.dimension, chunkMeta: zs.chunkMeta,
+      },
+      blob: zs.buffer,
+    });
+
+    const out = await collectionRagSearch('질문', [
+      member('a', 'Alpha.pdf', 'memory'),
+      member('z', 'Zeta.pdf', 'session'),
+    ], 'a');
+
+    expect(out).not.toBeNull();
+    expect(out).toContain('TOPEVIDENCE');       // 최고점 청크 유지(이전 code 는 docHash 정렬+break 로 축출)
+    expect(out).toContain('[Zeta.pdf p.7]');     // 그 출처 라벨도 함께
+  });
 });

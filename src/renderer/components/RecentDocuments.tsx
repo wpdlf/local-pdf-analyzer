@@ -18,6 +18,7 @@ export function RecentDocuments() {
   // (App 의 `!document` 조건). 이후 finally setBusy / refresh setEntries 가 언마운트 상태에서
   // 실행되므로 가드한다 (SettingsPanel 의 mountedRef 패턴과 일치).
   const mountedRef = useRef(true);
+  const listRef = useRef<HTMLUListElement>(null);
   // StrictMode(dev) 더블 마운트 가드: 재마운트 시 true 리셋이 없으면 첫 언마운트가 false 로 만든 뒤
   // refresh 결과를 가드가 버려 최근 목록이 빈 채로 남는다(dev 한정).
   useEffect(() => {
@@ -66,7 +67,12 @@ export function RecentDocuments() {
     } catch {
       useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: tr('recent.deleteFail') });
     } finally {
-      void refresh();
+      // QA14(D-LOW): 삭제한 🗑 버튼이 언마운트되며 포커스가 <body> 로 유실 → 재조회 후 첫 남은
+      // 항목의 열기 버튼으로 포커스 반환(키보드/AT 사용자 위치 보존). 템플릿 삭제와 동일 패턴.
+      await refresh();
+      if (mountedRef.current && typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => listRef.current?.querySelector<HTMLButtonElement>('button')?.focus());
+      }
     }
   }, [refresh, tr]);
 
@@ -83,7 +89,7 @@ export function RecentDocuments() {
       {entries.length === 0 ? (
         <p className="text-xs text-gray-600 dark:text-gray-400 px-1 py-2">{tr('recent.empty')}</p>
       ) : (
-      <ul className="flex flex-col gap-2">
+      <ul ref={listRef} className="flex flex-col gap-2">
         {entries.map((e) => (
           <li
             key={e.docHash}

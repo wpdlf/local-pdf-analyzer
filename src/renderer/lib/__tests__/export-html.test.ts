@@ -15,6 +15,14 @@ describe('summaryToHtml — 인쇄용 HTML 변환', () => {
     expect(html).toContain('<strong>굵게</strong>');
   });
 
+  // QA14(C-LOW): lang 하드코딩('ko') → 요약 언어 반영. 2글자 코드만 허용(속성 주입 안전), 그 외 'ko'.
+  it('lang 인자를 html lang 속성에 반영 — en / 미지정(ko) / 부정입력(ko)', () => {
+    expect(summaryToHtml('x', 't', 'en')).toContain('<html lang="en">');
+    expect(summaryToHtml('x', 't')).toContain('<html lang="ko">');
+    expect(summaryToHtml('x', 't', 'auto')).toContain('<html lang="ko">');       // 2글자 아님 → ko
+    expect(summaryToHtml('x', 't', '"><script>')).toContain('<html lang="ko">'); // 주입 시도 차단
+  });
+
   it('인용 [p.N] 은 plain text 로 보존(인터랙티브 버튼 미사용)', () => {
     const html = summaryToHtml('근거 문장입니다 [p.3].', 'x');
     expect(html).toContain('[p.3]');

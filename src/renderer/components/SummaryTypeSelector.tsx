@@ -56,8 +56,9 @@ export function SummaryTypeSelector() {
   return (
     <div className="inline-flex flex-col items-start gap-3">
       <div className="flex items-center gap-4">
-        <span className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.summaryType')}</span>
-        <div className="flex gap-3">
+        {/* QA14(D-LOW): 가시 라벨을 radiogroup 접근명으로 연결 — SR 이 각 옵션의 그룹 맥락을 안내. */}
+        <span id="selector-summary-type-label" className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.summaryType')}</span>
+        <div className="flex gap-3" role="radiogroup" aria-labelledby="selector-summary-type-label">
           {options.map((opt) => (
             <label key={opt.value} className="flex items-center gap-1.5 cursor-pointer">
               <input
@@ -75,8 +76,8 @@ export function SummaryTypeSelector() {
       </div>
       {pageCount > 1 && (
         <div className="flex items-center gap-4">
-          <span className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.pageRange')}</span>
-          <div className="flex items-center gap-3 flex-wrap">
+          <span id="selector-page-range-label" className="shrink-0 whitespace-nowrap text-sm font-medium text-gray-600 dark:text-gray-300">{t('selector.pageRange')}</span>
+          <div className="flex items-center gap-3 flex-wrap" role="radiogroup" aria-labelledby="selector-page-range-label">
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input
                 type="radio"

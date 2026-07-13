@@ -3,6 +3,7 @@
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { clampCitationPage } from '../lib/citation';
+import { setCitationReturnFocus } from '../lib/citation-focus';
 import { switchToTab } from '../lib/tabs';
 
 interface CitationButtonProps {
@@ -66,6 +67,8 @@ export function CitationButton({ page, docName }: CitationButtonProps) {
       // 점프 방지). switchToTab 이 실패 시 자체적으로 에러 배너를 띄운다.
       if (useAppStore.getState().document?.filePath !== targetTab.filePath) return;
     }
+    // QA14(D-MED): 패널 닫힘 시 포커스를 이 버튼으로 반환하도록 트리거를 기록.
+    setCitationReturnFocus(e.currentTarget as HTMLElement);
     setCitationTarget({ page: validPage });
   };
 

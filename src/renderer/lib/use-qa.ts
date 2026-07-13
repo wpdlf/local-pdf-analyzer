@@ -392,24 +392,25 @@ async function ragSearch(question: string, signal?: AbortSignal): Promise<string
 
     if (results.length === 0) return null;
 
-    // 원본 순서로 정렬하여 문맥 흐름 유지
-    results.sort((a, b) => a.index - b.index);
-
-    // 키워드 경로와 동일한 컨텍스트 크기 제한 적용
-    const parts: string[] = [];
-    let totalLen = 0;
-    for (const r of results) {
-      // page-citation-viewer: page 메타데이터가 있으면 [p.N] 라벨을 앞에 붙여
-      // LLM 이 해당 페이지를 인용하도록 유도. 기존 청크도 label 없이 그대로 폴백.
-      // R35: 멀티페이지 청크라도 단일 라벨(body 시작 페이지)만 방출한다 — 범위 라벨은
-      // 최종 출력 파서가 인식하지 못해 인용이 소실되므로(formatPageLabel 주석 참조).
+    // page-citation-viewer: page 메타데이터가 있으면 [p.N] 라벨을 앞에 붙여 LLM 이 해당 페이지를
+    // 인용하도록 유도. 기존 청크도 label 없이 그대로 폴백. R35: 멀티페이지 청크라도 단일 라벨
+    // (body 시작 페이지)만 방출(범위 라벨은 파서 미인식).
+    const withLabel = results.map((r) => {
       const label = formatPageLabel(r.pageStart);
-      const segment = label ? `${label}\n${r.text}` : r.text;
-      if (totalLen + segment.length > MAX_QA_CONTEXT_CHARS) break;
-      parts.push(segment);
-      totalLen += segment.length;
+      return { index: r.index, segment: label ? `${label}\n${r.text}` : r.text };
+    });
+    // QA14(A): 점수 순(search 반환 순서)으로 예산까지 선택 — late-index 최고점 청크가 앞쪽 저점
+    // 청크에 밀려 축출되던 것 방지(이전엔 index 정렬 후 hard-break → 최고점 누락 시 조용한 오답).
+    // 선택분만 이후 원본 순서로 재정렬해 문맥 흐름 유지. 키워드 경로(selectRelevantChunks)와 정합.
+    const kept: { index: number; segment: string }[] = [];
+    let totalLen = 0;
+    for (const w of withLabel) {
+      if (totalLen + w.segment.length > MAX_QA_CONTEXT_CHARS) continue;
+      kept.push(w);
+      totalLen += w.segment.length;
     }
-    return parts.join('\n\n');
+    kept.sort((a, b) => a.index - b.index);
+    return kept.map((w) => w.segment).join('\n\n');
   } catch {
     return null;
   }
@@ -524,14 +525,7 @@ export async function collectionRagSearch(
     if (merged.length === 0) return null;
 
     // 컨텍스트: 출처(문서명+페이지)를 라벨로 명시해 LLM 이 교차 문서 인용을 하도록 유도.
-    // 같은 문서의 청크는 원본 순서(index)로 묶어 문맥 흐름 유지.
-    merged.sort((a, b) => {
-      if (a.docHash !== b.docHash) return a.docHash < b.docHash ? -1 : 1;
-      return a.index - b.index;
-    });
-    const parts: string[] = [];
-    let totalLen = 0;
-    for (const r of merged) {
+    const withSeg = merged.map((r) => {
       const pageLabel = formatPageLabel(r.pageStart); // "[p.N]" 또는 ''
       const page = pageLabel ? ` ${pageLabel.replace(/^\[|\]$/g, '')}` : ''; // "p.N"
       // QA9(B-LOW): 파일명에 예약문자([ ] | 개행)나 120자 초과가 있으면 CITATION_REGEX 의 doc 그룹
@@ -539,12 +533,24 @@ export async function collectionRagSearch(
       // 파서 문법에 맞게 예약문자를 공백치환하고 110자로 절단(뒤 " p.N" 여유). 전부 제거되면 페이지만.
       const safeName = r.fileName.replace(/[[\]|\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 110).trim();
       const label = safeName ? `[${safeName}${page}]` : (pageLabel || '');
-      const segment = `${label}\n${r.text}`;
-      if (totalLen + segment.length > MAX_QA_CONTEXT_CHARS) break;
-      parts.push(segment);
-      totalLen += segment.length;
+      return { r, segment: `${label}\n${r.text}` };
+    });
+    // QA14(A-MED): 예산 초과 시 점수 순(mergeSearchResults 의 global top-K 순서)으로 선택 —
+    // 최고점 교차문서 청크가 다른 문서의 저점 청크에 밀려 프롬프트에서 누락되던 것 방지(이전엔
+    // (docHash,index) 정렬 후 hard-break → RAG 배지 정상인데 조용한 오답). 선택분만 (docHash,index)
+    // 로 재정렬해 같은 문서 청크를 원본 순서로 묶는다(문맥 흐름). 키워드 fallback 과 정합.
+    const kept: typeof withSeg = [];
+    let totalLen = 0;
+    for (const ws of withSeg) {
+      if (totalLen + ws.segment.length > MAX_QA_CONTEXT_CHARS) continue;
+      kept.push(ws);
+      totalLen += ws.segment.length;
     }
-    return parts.length > 0 ? parts.join('\n\n') : null;
+    kept.sort((a, b) => {
+      if (a.r.docHash !== b.r.docHash) return a.r.docHash < b.r.docHash ? -1 : 1;
+      return a.r.index - b.r.index;
+    });
+    return kept.length > 0 ? kept.map((ws) => ws.segment).join('\n\n') : null;
   } catch {
     return null;
   }

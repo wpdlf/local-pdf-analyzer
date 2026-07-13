@@ -5,6 +5,7 @@ import type { PDFDocumentProxy, PDFDocumentLoadingTask } from 'pdfjs-dist';
 import { useAppStore } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { loadPdfjs, isReReadablePath } from '../lib/pdf-parser';
+import { restoreCitationFocus } from '../lib/citation-focus';
 import { extractOutline, type OutlineNode } from '../lib/pdf-outline';
 
 // pdfjs-dist 는 지연 로딩(성능): 정적 import 를 제거해 콜드스타트 eager 번들에서 제외하고,
@@ -685,6 +686,14 @@ export function PdfViewerPanel() {
   const setCitationTarget = useAppStore((s) => s.setCitationTarget);
   const [loadFailed, setLoadFailed] = useState(false);
 
+  // QA14(D-MED): 패널 닫힘 시 포커스를 트리거 CitationButton 으로 반환(패널 언마운트로 body 유실 방지).
+  // 재렌더로 트리거 버튼이 재부착된 뒤 포커스하도록 rAF 로 지연.
+  const handleClose = () => {
+    setCitationTarget(null);
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restoreCitationFocus);
+    else restoreCitationFocus();
+  };
+
   // 상주 바이트가 없고 재읽기 가능한 실경로면 디스크에서 1회 로드 → store 주입.
   const canLazyLoad = !pdfBytes && !!filePath && isReReadablePath(filePath) && !!docId;
   useEffect(() => {
@@ -715,7 +724,7 @@ export function PdfViewerPanel() {
         pdfBytes={pdfBytes}
         targetPage={citationTarget.page}
         jumpNonce={citationJumpNonce}
-        onClose={() => setCitationTarget(null)}
+        onClose={handleClose}
       />
     );
   }
@@ -728,7 +737,7 @@ export function PdfViewerPanel() {
         <span className="text-sm font-medium text-gray-700 dark:text-gray-200 truncate">{t('pdfviewer.title')}</span>
         <button
           type="button"
-          onClick={() => setCitationTarget(null)}
+          onClick={handleClose}
           className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm px-2 py-1 shrink-0"
           aria-label={t('pdfviewer.close')}
         >

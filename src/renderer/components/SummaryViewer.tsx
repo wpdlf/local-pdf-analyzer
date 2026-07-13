@@ -131,7 +131,7 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
       // 지연 로드: react-dom/server(renderToStaticMarkup) 를 시작 청크에서 분리 — PDF 내보내기는
       // 드문 on-demand 동작이라 앱 기동 시 ~130KB 서버 렌더러를 끌고 올 이유가 없다.
       const { summaryToHtml } = await import('../lib/export-html');
-      const html = summaryToHtml(summaryStream, baseName);
+      const html = summaryToHtml(summaryStream, baseName, useAppStore.getState().settings.summaryLanguage);
       await window.electronAPI.file.exportPdf(html, defaultName);
     } catch {
       setError({ code: 'EXPORT_FAIL', message: t('viewer.pdfFail') });

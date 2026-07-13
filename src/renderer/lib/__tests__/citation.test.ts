@@ -351,6 +351,22 @@ describe('ReDoS 회귀 가드 (R46)', () => {
     expect(Date.now() - t0).toBeLessThan(2000);
   });
 
+  // QA14(B-MED): 닫히지 않은 파이프 인용 다수 opener — quote-tail `[^\]]*` 무제한이던 시절
+  // O(n²)(192KB 22s). `{0,200}` 상한 후 선형. 32000 opener(≈192KB)도 즉시 끝나야 한다.
+  it('CITATION_REGEX: 닫히지 않은 파이프 인용(`[p.5| `) 다수 opener 도 즉시 처리(이차→선형)', () => {
+    const evil = '[p.5| '.repeat(32000);
+    const t0 = Date.now();
+    stripCitations(evil);
+    parseCitations(evil);
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+
+  it('CITATION_REGEX: 정상 `[p.5|quote text]` 는 여전히 매칭(상한 회귀 아님)', () => {
+    const hits = parseCitations('근거 [p.5|일부 인용문] 입니다').filter((s) => s.type === 'citation');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ type: 'citation', page: 5 });
+  });
+
   it('normalizeCitationPlacement: 한 줄 다수 인용 클러스터 + 비매칭 꼬리도 즉시 처리(선형 — 카타스트로픽이면 수 초+)', () => {
     const evil = '[p.5] '.repeat(2000) + 'x'; // 과거 standalone 정규식의 지수 백트래킹 트리거
     const t0 = Date.now();
