@@ -526,6 +526,33 @@ describe('persistCurrentSession serialize-skip + 부분저장 (Tier2/3)', () => 
     expect(partial).not.toHaveProperty('blob');
   });
 
+  // QA13(A-LOW): flush 경로 committed-only 정규화(summaryContentToPersist/safeQaMessages)는
+  // 전체저장뿐 아니라 savePartial fast-path 에서도 동일 적용된다. Q&A 생성 중 flush 부분저장이
+  // 완성요약을 유지하고 trailing lone-user 를 제거하는지 가드(QA12 코드가 두 경로에서 대칭).
+  it('flush 부분저장(fast-path): Q&A 생성 중에도 완성요약 유지 + trailing lone-user 제거', async () => {
+    const doc = makeDoc('flush-partial-doc');
+    const vs = VectorStore.restore(makeIndexFixture());
+    useAppStore.setState({ document: doc, ...summaryState(doc, '완성 요약'), qaMessages: [{ id: 'q', role: 'user', content: 'q' }, { id: 'a', role: 'assistant', content: 'a' }], ragIndex: vs });
+    api.session.load.mockResolvedValue(null);
+    api.session.loadMeta.mockResolvedValue(null);
+
+    // 1번째 전체 저장 → 인덱스 시그니처 등록(이후 무변경 인덱스는 fast-path)
+    await persistCurrentSession();
+    expect(api.session.save).toHaveBeenCalledTimes(1);
+
+    // Q&A 생성 시작 + 짝 없는 trailing user, 인덱스 무변경 → flush 부분저장 경로
+    useAppStore.setState({
+      isQaGenerating: true,
+      qaMessages: [{ id: 'q', role: 'user', content: 'q' }, { id: 'a', role: 'assistant', content: 'a' }, { id: 'q2', role: 'user', content: '스트리밍 중' }],
+    });
+    await persistCurrentSession(true); // flush=true
+
+    expect(api.session.savePartial).toHaveBeenCalledTimes(1);
+    const partial = api.session.savePartial.mock.calls[0]![0] as PartialPayload;
+    expect(partial.summary?.content).toBe('완성 요약'); // 완성 요약 유지
+    expect(partial.qaMessages).toHaveLength(2);          // trailing lone-user 제거
+  });
+
   it('인덱스가 바뀌면(revision↑) 부분저장이 아니라 전체 blob 전송', async () => {
     const doc = makeDoc('change-doc');
     const vs = VectorStore.restore(makeIndexFixture());

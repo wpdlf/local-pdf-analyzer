@@ -150,11 +150,16 @@ export default defineConfig({
       //   게이트가 6~8pp 뒤처져(-5pp 정책 위반) 약 3pp 어치 회귀가 무감지 통과 가능했다.
       //   측정(include 명시 + 사이클5 테스트 반영): Stmts 85.46 / Branch 77.58 / Funcs 85.95 /
       //   Lines 88.69 (-5pp 마진 적용).
+      // QA13(D-MED): 사이클 6~13 테스트 보강(session-store·api-keys·use-session flush·SettingsPanel
+      //   템플릿·pdf-parser 암호화/BOM·Gemini 403·analyzeImage 등)으로 베이스라인이 재상승했는데
+      //   게이트가 cycle5(80/72/80/83)에 고정돼 다시 6~7pp 뒤처져(-5pp 정책 위반) 약 2pp 회귀가
+      //   무감지 통과 가능했다. 정책대로 재정렬.
+      //   측정: Stmts 86.41 / Branch 78.52 / Funcs 86.53 / Lines 89.86 (-5pp 마진 적용 → 아래).
       thresholds: {
-        statements: 80,
-        branches: 72,
-        functions: 80,
-        lines: 83,
+        statements: 81,
+        branches: 73,
+        functions: 81,
+        lines: 84,
       },
     },
   },

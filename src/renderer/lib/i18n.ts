@@ -103,6 +103,7 @@ export const _translations = {
   'pdf.busyCollection': { ko: '컬렉션 요약 진행 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while summarizing a collection.' },
   'pdf.busyCollectionOpen': { ko: '컬렉션을 여는 중에는 새 파일을 열 수 없습니다.', en: 'Cannot open a new file while opening a collection.' },
   'pdf.invalidFile': { ko: '유효한 PDF 파일이 아닙니다.', en: 'Not a valid PDF file.' },
+  'pdf.encrypted': { ko: '암호로 보호된 PDF입니다. 암호를 해제한 후 다시 시도해주세요.', en: 'This PDF is password-protected. Please remove the password and try again.' },
   'uploader.tooManyPages': { ko: '페이지 수가 너무 많습니다 ({pages}p). 최대 {max}페이지까지 지원합니다. 문서를 분할해주세요.', en: 'Too many pages ({pages}p). Maximum {max} pages supported. Please split the document.' },
   // QA7(D-MED): 파싱 에러 3종 i18n 이행 — tooManyPages 와 동일 패턴(영어 UI 한국어 노출 해소)
   'uploader.emptyPdf': { ko: 'PDF에 페이지가 없습니다.', en: 'The PDF has no pages.' },

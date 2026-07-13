@@ -10,6 +10,7 @@ const mockElectronAPI = {
     checkAvailable: vi.fn(),
     onToken: vi.fn((_cb: (id: string, token: string) => void) => vi.fn()),
     onDone: vi.fn((_cb: (id: string) => void) => vi.fn()),
+    analyzeImage: vi.fn(),
   },
 };
 vi.stubGlobal('window', { electronAPI: mockElectronAPI });
@@ -114,6 +115,23 @@ describe('AiClient', () => {
     expect(thrown!.message).not.toContain('RAW_SHOULD_NOT_SHOW'); // errorKey 우선
     expect(thrown!.message).toContain('Claude');                  // provider 치환
     expect(thrown!.message).toContain('rate limit');              // cloudRateLimit 사전 문구
+  });
+
+  // QA13(D-LOW): analyzeImage 실패/빈설명 → null 강등은 요약 파이프라인의 텍스트 fallback 이
+  // 의존하는 계약이다(throw/undefined 로 새면 preflight 가 깨진다). 성공/실패 양쪽 가드.
+  it('analyzeImage() 성공 → description 반환', async () => {
+    mockElectronAPI.ai.analyzeImage.mockResolvedValueOnce({ success: true, description: '차트 설명' });
+    const client = new AiClient(DEFAULT_SETTINGS);
+    expect(await client.analyzeImage('imgdata', 'req-1')).toBe('차트 설명');
+    expect(mockElectronAPI.ai.analyzeImage).toHaveBeenCalledWith('imgdata', 'req-1');
+  });
+
+  it('analyzeImage() 실패/빈 설명 → null 로 강등(throw 아님)', async () => {
+    mockElectronAPI.ai.analyzeImage.mockResolvedValueOnce({ success: false, error: '429 소진' });
+    const client = new AiClient(DEFAULT_SETTINGS);
+    expect(await client.analyzeImage('imgdata')).toBeNull();
+    mockElectronAPI.ai.analyzeImage.mockResolvedValueOnce({ success: true, description: undefined });
+    expect(await client.analyzeImage('imgdata')).toBeNull();
   });
 
   it('abort()가 Main 프로세스에 위임한다', () => {

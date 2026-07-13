@@ -136,6 +136,17 @@ describe('handlePdfData — 가드', () => {
     expect(useAppStore.getState().error?.message).toMatch(/유효한 PDF/);
     expect(P.getDocument).not.toHaveBeenCalled();
   });
+
+  // QA13(C-LOW): pdfjs 는 %PDF- 앞의 선행 바이트(BOM 등)를 허용한다. 게이트가 오프셋0 정확매칭만
+  // 하면 그런 유효 PDF 를 오거부 → 앞쪽 1KB 창 스캔으로 완화. BOM 접두 PDF 가 파싱 시도되어야 한다.
+  it('선행 BOM 이 있는 유효 PDF 는 매직 게이트를 통과한다', async () => {
+    const body = new Uint8Array(3 + 5 + 200);
+    body.set([0xef, 0xbb, 0xbf], 0);            // UTF-8 BOM
+    body.set([0x25, 0x50, 0x44, 0x46, 0x2d], 3); // %PDF-
+    await handlePdfData(body.buffer, 'bom.pdf', '/d/bom.pdf');
+    expect(P.getDocument).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().error).toBeNull();
+  });
 });
 
 describe('handlePdfData — 성공 오케스트레이션', () => {
@@ -220,6 +231,20 @@ describe('handlePdfData — parsePdf 경로/에러 매핑', () => {
     await handlePdfData(pdfBuf(), 'x.pdf', '/d/x.pdf');
     expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL');
     expect(useAppStore.getState().error?.message).toMatch(/손상된 스트림/);
+  });
+
+  // QA13(C-MED): 암호화/손상 PDF 는 loadingTask.promise 가 try/finally 진입 전 reject 하므로
+  // destroy 가 누락돼 pdfjs 워커가 누수됐다. reject 경로에서도 파기하고, PasswordException 은
+  // 전용 로컬라이즈 코드(PDF_ENCRYPTED)로 매핑하는지 가드.
+  it('암호화 PDF(PasswordException) → PDF_ENCRYPTED + loadingTask.destroy 로 워커 파기', async () => {
+    const destroy = vi.fn(() => Promise.resolve());
+    P.getDocument.mockReturnValue({
+      promise: Promise.reject(Object.assign(new Error('No password given'), { name: 'PasswordException' })),
+      destroy,
+    });
+    await handlePdfData(pdfBuf(), 'locked.pdf', '/d/locked.pdf');
+    expect(useAppStore.getState().error?.code).toBe('PDF_ENCRYPTED');
+    expect(destroy).toHaveBeenCalledTimes(1);
   });
 });
 

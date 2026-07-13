@@ -479,10 +479,13 @@ async function generateGemini(
       const text = parts.map((p) => p?.text || '').join('');
       return text || null;
     },
-    // Gemini 는 만료/권한 없는 키에 401/403 을 반환. 형식이 잘못된 키는 400(INVALID_ARGUMENT)
+    // Gemini 는 만료/권한 없는 키에 401 을 반환. 형식이 잘못된 키는 400(INVALID_ARGUMENT)
     // 이지만 400 은 입력 초과 등 일반 오류와 겹치므로 상태코드만으로는 auth 매핑하지 않고,
     // 아래 mapHttpError 가 에러 바디의 'API key' 문구로 구분한다 (R43 I-1).
-    checkAuthError: (statusCode) => statusCode === 401 || statusCode === 403,
+    // QA13(B-LOW): 403 을 auth 로 포괄하던 것 제거 — Gemini 403 은 대개 PERMISSION_DENIED
+    // (Generative Language API 미활성화·지역 차단)로 키는 멀쩡한데 "키 무효" 로 오진돼 사용자가
+    // 키만 재발급하며 헤맸다. 403 은 mapHttpError→generic(HTTP 403)으로 위임해 Claude/OpenAI 와 정합.
+    checkAuthError: (statusCode) => statusCode === 401,
     // R43 H-1: safety block (`promptFeedback.blockReason` — candidates 자체가 없음) 또는
     // 비정상 finishReason(SAFETY/RECITATION/MAX_TOKENS 등, 정상 종료는 'STOP')을 추적.
     detectBlockReason: (parsed) => {

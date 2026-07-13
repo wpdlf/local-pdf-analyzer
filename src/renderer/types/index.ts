@@ -215,6 +215,7 @@ export type AppErrorCode =
   | 'PDF_PARSE_FAIL'
   | 'PDF_NO_TEXT'
   | 'PDF_TOO_MANY_PAGES'
+  | 'PDF_ENCRYPTED'
   | 'OLLAMA_NOT_FOUND'
   | 'OLLAMA_NOT_RUNNING'
   | 'OLLAMA_INSTALL_FAIL'

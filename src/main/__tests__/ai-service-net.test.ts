@@ -727,6 +727,15 @@ describe('generate → streamRequest (스트리밍)', () => {
     ).rejects.toThrow(/API 요청 실패: HTTP 400/);
   });
 
+  // QA13(B-LOW): Gemini 403 은 대개 PERMISSION_DENIED(API 미활성화·지역 차단)로 키는 멀쩡한데
+  // "키 무효" 로 오진하던 것 제거 — 401 만 auth, 403 은 generic 으로 위임(Claude/OpenAI 정합).
+  it('gemini 403(PERMISSION_DENIED) → generic HTTP 에러 (키 무효 오진 방지)', async () => {
+    respond(M.httpsRequest, 403, { error: { message: 'Generative Language API has not been used in project', status: 'PERMISSION_DENIED' } });
+    await expect(
+      generate('g403', { text: 'x', type: 'qa', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', makeWin() as never),
+    ).rejects.toThrow(/API 요청 실패: HTTP 403/);
+  });
+
   it('gemini provider + apiKey 없음 → API_KEY_MISSING', async () => {
     await expect(
       generate('g7', { text: 'x', type: 'qa', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never),

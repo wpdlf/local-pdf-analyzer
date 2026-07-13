@@ -95,7 +95,21 @@ export async function parsePdf(
     cMapUrl: './cmaps/',
     cMapPacked: true,
   });
-  const pdf = await loadingTask.promise;
+  // QA13(C-MED): loadingTask.promise 가 reject(암호화·손상 PDF)하면 아래 try/finally 진입 전에
+  // throw 되어 loadingTask.destroy() 가 호출되지 않아 pdfjs 워커 스레드/문서가 세션 내내 누수됐다
+  // (encrypted/corrupt 파일을 반복 열면 워커 누적). reject 시 명시적으로 파기하고 재던진다.
+  // 또한 PasswordException 은 사용자에게 "암호 보호" 를 알리는 전용 로컬라이즈 코드로 매핑한다
+  // (기존엔 generic PDF_PARSE_FAIL + pdfjs 영어 원문 노출).
+  let pdf: Awaited<typeof loadingTask.promise>;
+  try {
+    pdf = await loadingTask.promise;
+  } catch (err) {
+    await loadingTask.destroy().catch(() => { /* ignore */ });
+    if ((err as { name?: string })?.name === 'PasswordException') {
+      throw Object.assign(new Error(t('pdf.encrypted')), { code: 'PDF_ENCRYPTED' });
+    }
+    throw err;
+  }
   throwIfAborted(signal);
   const pageCount = pdf.numPages;
 
@@ -743,11 +757,18 @@ export async function handlePdfData(
   // 의 공통 게이트. zero-copy 뷰로 5바이트만 읽어 pdfjs 로딩 전에 위장 바이너리를 조기 거부.
   // DOM 경로(App.tsx, PdfUploader)는 이미 materialize 전에 Blob.slice(0,5) 로 차단하지만,
   // IPC 경로는 main 에서 fs-level 검증만 하므로 여기서 content-type 검증을 통일한다.
-  const magic = data.byteLength >= 5 ? new Uint8Array(data, 0, 5) : null;
-  const isPdfMagic = magic !== null
-    && magic[0] === 0x25 && magic[1] === 0x50
-    && magic[2] === 0x44 && magic[3] === 0x46
-    && magic[4] === 0x2D;
+  // QA13(C-LOW): pdfjs 는 %PDF- 헤더 앞의 선행 바이트(UTF-8 BOM·공백·잘못 덧붙은 헤더)를 허용해
+  // 파싱하는데, 오프셋 0 정확 매칭만 하면 그런 유효 PDF 를 조기 오거부했다. 파서와 관용도를 맞춰
+  // 앞쪽 1KB 창에서 %PDF- 시그니처를 스캔한다(위장 바이너리 조기 거부 목적은 그대로 달성).
+  const PDF_SIG = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-"
+  const scanLen = Math.min(data.byteLength, 1024);
+  const head = scanLen >= PDF_SIG.length ? new Uint8Array(data, 0, scanLen) : null;
+  let isPdfMagic = false;
+  if (head) {
+    for (let i = 0; i <= head.length - PDF_SIG.length; i++) {
+      if (PDF_SIG.every((b, j) => head[i + j] === b)) { isPdfMagic = true; break; }
+    }
+  }
   if (!isPdfMagic) {
     store.setError({
       code: 'PDF_PARSE_FAIL',
@@ -838,7 +859,7 @@ export async function handlePdfData(
     }
     // abort-replace 로 우리를 덮어쓴 새 파싱이 있는 경우, 에러 배너도 띄우지 않음.
     if (activeParseController !== controller) return;
-    const validCodes = new Set(['PDF_PARSE_FAIL', 'PDF_NO_TEXT', 'PDF_TOO_MANY_PAGES', 'OCR_FAIL']);
+    const validCodes = new Set(['PDF_PARSE_FAIL', 'PDF_NO_TEXT', 'PDF_TOO_MANY_PAGES', 'PDF_ENCRYPTED', 'OCR_FAIL']);
     const code = (error.code && validCodes.has(error.code) ? error.code : 'PDF_PARSE_FAIL') as AppError['code'];
     store.setError({
       code,
