@@ -164,7 +164,6 @@ export const _translations = {
   'mindmap.expand': { ko: '펼치기', en: 'Expand' },
   'mindmap.collapse': { ko: '접기', en: 'Collapse' },
   'mindmap.untitled': { ko: '(제목 없음)', en: '(untitled)' },
-  'mindmap.jumpAria': { ko: '{page} 페이지로 이동', en: 'Go to page {page}' },
   'viewer.pdfFail': { ko: 'PDF 내보내기에 실패했습니다. 다른 경로를 선택해주세요.', en: 'Failed to export PDF. Please choose a different path.' },
 
   // ─── QaChat ───

@@ -5,6 +5,7 @@ import { abortCollectionGather } from '../lib/use-collection-summary';
 import { useT } from '../lib/i18n';
 import { SafeMarkdown } from '../lib/safe-markdown';
 import { SummaryMindMap } from './SummaryMindMap';
+import { setCitationReturnFocus } from '../lib/citation-focus';
 import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
 import { PdfViewerPanel } from './PdfViewer';
@@ -32,6 +33,12 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   // 요약 마인드맵: 텍스트 / 마인드맵 뷰 전환.
   const [viewMode, setViewMode] = useState<'text' | 'mindmap'>('text');
+  // QA15(D-LOW): 뷰 전환 시 citation-focus 홀더를 클리어 — 인용 패널이 열린 채 뷰를 바꾸면
+  // 홀더가 가리키던(언마운트될) 요소가 무효화돼 패널 닫을 때 포커스가 body 로 유실됐다.
+  const switchView = (mode: 'text' | 'mindmap') => {
+    setCitationReturnFocus(null);
+    setViewMode(mode);
+  };
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -164,17 +171,17 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
             <div role="group" aria-label={t('viewer.viewToggleAria')} className="inline-flex rounded overflow-hidden border border-gray-300 dark:border-gray-600 text-xs">
               <button
                 type="button"
-                onClick={() => setViewMode('text')}
+                onClick={() => switchView('text')}
                 aria-pressed={viewMode === 'text'}
-                className={`px-2 py-1 transition-colors ${viewMode === 'text' ? 'bg-blue-500 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                className={`px-2 py-1 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 ${viewMode === 'text' ? 'bg-blue-500 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
               >
                 {t('viewer.viewText')}
               </button>
               <button
                 type="button"
-                onClick={() => setViewMode('mindmap')}
+                onClick={() => switchView('mindmap')}
                 aria-pressed={viewMode === 'mindmap'}
-                className={`px-2 py-1 transition-colors ${viewMode === 'mindmap' ? 'bg-blue-500 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                className={`px-2 py-1 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 ${viewMode === 'mindmap' ? 'bg-blue-500 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
               >
                 {t('viewer.viewMindMap')}
               </button>

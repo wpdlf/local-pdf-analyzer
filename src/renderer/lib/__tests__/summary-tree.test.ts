@@ -28,9 +28,30 @@ describe('parseSummaryToTree — 요약 마인드맵 파서', () => {
     expect(t[0]?.page).toBeNull();
   });
 
-  it('제목에서 인용 토큰·강조 마커를 제거', () => {
+  it('제목에서 인용 토큰·짝 강조 마커를 제거', () => {
     const t = parseSummaryToTree('# **중요** 개요 [p.1]\n\n본문');
     expect(t[0]?.title).toBe('중요 개요');
+  });
+
+  it('QA15(A-LOW): 단일 _/~ 는 보존(snake_case·범위 훼손 방지), 짝만 제거', () => {
+    expect(parseSummaryToTree('# my_doc.pdf 분석')[0]?.title).toBe('my_doc.pdf 분석');
+    expect(parseSummaryToTree('# 기간 2020~2024 요약')[0]?.title).toBe('기간 2020~2024 요약');
+    expect(parseSummaryToTree('# __굵게__ 와 ~~취소~~')[0]?.title).toBe('굵게 와 취소');
+  });
+
+  it('QA15: 교차 문서 인용의 docName 추출(단일 문서는 null)', () => {
+    const t = parseSummaryToTree('# 요약\n\n근거 [Beta.pdf p.5] 참조.\n\n## 로컬\n\n[p.2] 만.');
+    expect(t[0]?.docName).toBe('Beta.pdf');
+    expect(t[0]?.page).toBe(5);
+    expect(t[0]?.children[0]?.docName).toBeNull();
+    expect(t[0]?.children[0]?.page).toBe(2);
+  });
+
+  it('QA15(A/B-MED): 미닫힌 코드펜스가 이후 heading 을 삼키지 않음(펜스 무시 재수집)', () => {
+    const md = '# 앞\n\n```\ncode\n\n## 뒤1\n\n## 뒤2';  // 닫는 펜스 없음
+    const t = parseSummaryToTree(md);
+    expect(t).toHaveLength(1);
+    expect(t[0]?.children.map((c) => c.title)).toEqual(['뒤1', '뒤2']); // 삼켜지지 않음
   });
 
   it('코드펜스 안의 # 은 heading 으로 오인하지 않음', () => {
