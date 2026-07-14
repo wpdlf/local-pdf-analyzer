@@ -17,10 +17,14 @@ const M = vi.hoisted(() => ({
   reset: vi.fn(),
   setCollapsed: vi.fn(),
   abortGather: vi.fn(),
+  setReturnFocus: vi.fn(),
 }));
 
 // QA9(D-MED): 뷰어 접기 시 gather abort 호출을 검증하기 위해 스파이로 대체.
 vi.mock('../../lib/use-collection-summary', () => ({ abortCollectionGather: M.abortGather }));
+// QA16(D-LOW): 뷰 전환 시 citation-focus 홀더 클리어 검증용 스파이. CitationButton(마인드맵 배지)도
+// 이 모듈을 쓰므로 restoreCitationFocus 도 함께 목킹.
+vi.mock('../../lib/citation-focus', () => ({ setCitationReturnFocus: M.setReturnFocus, restoreCitationFocus: vi.fn() }));
 vi.mock('../QaChat', () => ({ QaChat: () => <div data-testid="qachat" /> }));
 vi.mock('../PdfViewer', () => ({ PdfViewerPanel: () => <div data-testid="pdfviewer" /> }));
 vi.mock('../ResizeHandle', () => ({ ResizeHandle: () => <div data-testid="resize" /> }));
@@ -200,5 +204,50 @@ describe('SummaryViewer', () => {
     render(<SummaryViewer />);
     expect(screen.getByTestId('pdfviewer')).toBeTruthy();
     expect(screen.getByTestId('resize')).toBeTruthy();
+  });
+});
+
+// QA16(D-MED): 헤더 구조 변경으로 도입된 텍스트/마인드맵 뷰 토글은 그간 무커버리지였다.
+// 잘못된 setter·swap 실패·aria-pressed 누락·빈 상태 토글노출 회귀를 가드. SummaryMindMap 은
+// 목킹하지 않으므로 통합(토글→실제 마인드맵 렌더)까지 검증.
+describe('SummaryViewer — 뷰 토글 (마인드맵)', () => {
+  const MD = '# 요약\n\n## 개요\n\n본문 [p.2].';
+
+  it('요약 없으면 뷰 토글 미표시', () => {
+    setState({ stream: '' });
+    render(<SummaryViewer />);
+    expect(screen.queryByRole('group', { name: '요약 보기 방식 전환' })).toBeNull();
+  });
+
+  it('요약 있으면 토글 표시 + 초기 aria-pressed(텍스트=true, 마인드맵=false)', () => {
+    setState({ stream: MD });
+    render(<SummaryViewer />);
+    expect(screen.getByRole('group', { name: '요약 보기 방식 전환' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: '📝 텍스트' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: '🗺 마인드맵' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByTestId('md')).toBeTruthy(); // 기본은 텍스트 뷰(SafeMarkdown)
+  });
+
+  it('마인드맵 클릭 → SummaryMindMap 렌더 + SafeMarkdown 숨김 + aria-pressed 반전, 텍스트 복귀', async () => {
+    setState({ stream: MD });
+    const user = userEvent.setup();
+    render(<SummaryViewer />);
+    await user.click(screen.getByRole('button', { name: '🗺 마인드맵' }));
+    expect(screen.getByRole('navigation', { name: '요약 마인드맵' })).toBeTruthy();
+    expect(screen.queryByTestId('md')).toBeNull();
+    expect(screen.getByRole('button', { name: '🗺 마인드맵' }).getAttribute('aria-pressed')).toBe('true');
+    // 텍스트 복귀
+    await user.click(screen.getByRole('button', { name: '📝 텍스트' }));
+    expect(screen.getByTestId('md')).toBeTruthy();
+    expect(screen.queryByRole('navigation', { name: '요약 마인드맵' })).toBeNull();
+  });
+
+  it('뷰 전환 시 citation-focus 홀더 클리어(setCitationReturnFocus(null))', async () => {
+    setState({ stream: MD, citation: true });
+    const user = userEvent.setup();
+    render(<SummaryViewer />);
+    M.setReturnFocus.mockClear();
+    await user.click(screen.getByRole('button', { name: '🗺 마인드맵' }));
+    expect(M.setReturnFocus).toHaveBeenCalledWith(null);
   });
 });

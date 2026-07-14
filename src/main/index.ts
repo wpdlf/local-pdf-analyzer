@@ -201,9 +201,17 @@ function createWindow(): BrowserWindow {
   // main 의 generate/embed/vision HTTP 가 끝까지 진행돼 클라우드 토큰이 낭비되고(safeSend 는
   // win.isDestroyed() 만 보는데 새로고침 시 win 은 유지됨), activeRequests 가 10분 TTL 까지 잔존한다.
   // 새 렌더러는 fresh store 라 이 요청들을 재개할 수 없는 orphan 이므로 전량 취소가 정확.
-  win.webContents.on('render-process-gone', () => {
+  let renderCrashReloads = 0;
+  win.webContents.on('render-process-gone', (_event, details) => {
     const n = abortAllRequests();
     if (n > 0) console.log(`[ai] render-process-gone → aborted ${n} in-flight request(s)`);
+    // QA16(C-LOW): 크래시(OOM·GPU 결함 등)는 abort 만 하면 빈 화면 dead-end 라 사용자가 앱을
+    // 강제종료해야 했다. clean-exit(정상 teardown)이 아니면 창을 리로드해 복구하되, 크래시 루프
+    // 폭주는 창당 상한(3회)으로 차단.
+    if (details.reason !== 'clean-exit' && !win.isDestroyed() && renderCrashReloads < 3) {
+      renderCrashReloads++;
+      win.webContents.reload();
+    }
   });
   // 메인 프레임 네비게이션(새로고침 포함) 시작 시 abort. 최초 로드도 발화하나 그 시점엔
   // activeRequests 가 비어 no-op — did-start-navigation 은 same-document(앵커 등)에선 안 끊도록 가드.
@@ -284,6 +292,19 @@ function createWindow(): BrowserWindow {
     }
   });
 
+  // QA16(C-MED, 데이터손실): 창 X 닫기(Windows 주 종료 제스처)는 window-all-closed→app.quit()
+  // →before-quit 순서라, before-quit 시점엔 창이 이미 파괴돼 flushRenderersBeforeQuit 가 살아있는
+  // 창 0개로 no-op 이 된다 → QA10 종료 flush handshake 가 우회되고 마지막 델타(요약·Q&A·인덱스)가
+  // 렌더러 pagehide(async, teardown 에 잘릴 수 있음)에만 의존해 소실됐다. 창이 살아있는 close 시점에
+  // 1회 가로채 flush 를 완주시킨 뒤 파괴한다. before-quit 경로(macOS Cmd+Q·프로그램적 quit,
+  // isQuitting)에서는 이미 flush 되므로 재flush 하지 않는다(flushedWindows + isQuitting 가드).
+  win.on('close', (e) => {
+    if (isQuitting || flushedWindows.has(win) || win.isDestroyed()) return;
+    e.preventDefault();
+    flushedWindows.add(win);
+    void flushOneWindow(win).finally(() => { if (!win.isDestroyed()) win.destroy(); });
+  });
+
   // 창 닫힐 때 진행 중인 파일 읽기 취소
   win.on('closed', () => {
     dropAbortController?.abort();
@@ -346,10 +367,12 @@ app.on('window-all-closed', () => {
 // app.quit() 이 진행돼 마지막 델타(답변/요약/인덱스)가 소실됐다. 렌더러 ack 또는 하드 타임아웃
 // (렌더러 무응답·크래시 방어) 중 먼저 오는 쪽까지만 보류하므로 앱이 종료에서 멈추지 않는다.
 const FLUSH_BEFORE_QUIT_TIMEOUT_MS = 2000;
-function flushRenderersBeforeQuit(): Promise<void> {
-  const wins = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
-  if (wins.length === 0) return Promise.resolve();
-  return Promise.all(wins.map((win) => new Promise<void>((resolve) => {
+// QA16(C-MED): 한 창당 flush 는 1회만(창닫기 인터셉트와 before-quit 경로의 이중 flush 방지).
+const flushedWindows = new WeakSet<BrowserWindow>();
+
+// 단일 창에 app:flush-before-quit 를 보내고 ack 또는 하드 타임아웃까지 대기.
+function flushOneWindow(win: BrowserWindow): Promise<void> {
+  return new Promise<void>((resolve) => {
     let settled = false;
     const finish = () => {
       if (settled) return;
@@ -364,7 +387,13 @@ function flushRenderersBeforeQuit(): Promise<void> {
     const timer = setTimeout(finish, FLUSH_BEFORE_QUIT_TIMEOUT_MS);
     ipcMain.on('app:flush-done', onDone);
     try { win.webContents.send('app:flush-before-quit'); } catch { finish(); }
-  }))).then(() => undefined);
+  });
+}
+
+function flushRenderersBeforeQuit(): Promise<void> {
+  const wins = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && !flushedWindows.has(w));
+  if (wins.length === 0) return Promise.resolve();
+  return Promise.all(wins.map((win) => { flushedWindows.add(win); return flushOneWindow(win); })).then(() => undefined);
 }
 
 let isQuitting = false;

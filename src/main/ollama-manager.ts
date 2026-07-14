@@ -63,7 +63,10 @@ export class OllamaManager {
   async isInstalled(): Promise<boolean> {
     const ollamaPath = this.getOllamaPath();
     return new Promise((resolve) => {
-      execFile(ollamaPath, ['--version'], (error) => {
+      // QA16(C-LOW): 타임아웃 없이 두면 손상/AV격리된 ollama.exe 가 --version 에서 블록될 때
+      // getStatus() 가 영영 미해결 → 기동 상태 정체 + 포커스마다 재프로브로 좀비 프로세스 누적.
+      // 타 spawn(서명 30s·healthCheck 5s)과 대칭으로 5s 타임아웃(초과 시 error→미설치 취급, 자식 kill).
+      execFile(ollamaPath, ['--version'], { timeout: 5000 }, (error) => {
         resolve(!error);
       });
     });
@@ -72,7 +75,7 @@ export class OllamaManager {
   private async getVersion(): Promise<string | undefined> {
     const ollamaPath = this.getOllamaPath();
     return new Promise((resolve) => {
-      execFile(ollamaPath, ['--version'], (error, stdout) => {
+      execFile(ollamaPath, ['--version'], { timeout: 5000 }, (error, stdout) => {
         if (error) {
           resolve(undefined);
         } else {

@@ -37,6 +37,8 @@ function MindMapNode({ node, isRoot }: { node: SummaryTreeNode; isRoot?: boolean
   const t = useT();
   const hasChildren = node.children.length > 0;
   const [expanded, setExpanded] = useState(true);
+  // QA16(A-LOW): 토글이 제어하는 하위 목록을 aria-controls 로 연결(디스클로저 시맨틱 명확화).
+  const childListId = `mm-children-${node.id}`;
 
   return (
     <li>
@@ -46,7 +48,8 @@ function MindMapNode({ node, isRoot }: { node: SummaryTreeNode; isRoot?: boolean
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            aria-label={expanded ? t('mindmap.collapse') : t('mindmap.expand')}
+            aria-controls={childListId}
+            aria-label={`${node.title || t('mindmap.untitled')} — ${expanded ? t('mindmap.collapse') : t('mindmap.expand')}`}
             className="shrink-0 w-4 h-4 inline-flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
           >
             {expanded ? '▾' : '▸'}
@@ -68,7 +71,7 @@ function MindMapNode({ node, isRoot }: { node: SummaryTreeNode; isRoot?: boolean
         )}
       </div>
       {hasChildren && expanded && (
-        <ul className="ml-3 pl-3 border-l border-gray-200 dark:border-gray-700">
+        <ul id={childListId} className="ml-3 pl-3 border-l border-gray-200 dark:border-gray-700">
           {node.children.map((c) => (
             <MindMapNode key={c.id} node={c} />
           ))}

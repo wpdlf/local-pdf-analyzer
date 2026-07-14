@@ -70,15 +70,31 @@ describe('SummaryMindMap', () => {
     const user = userEvent.setup();
     render(<SummaryMindMap markdown={MD} />);
     expect(screen.getByText('개요')).toBeTruthy();
-    const collapseBtns = screen.getAllByRole('button', { name: t('mindmap.collapse') });
+    // QA16(A-LOW): 토글 aria-label 은 "{제목} — 접기/펼치기" 형태 → 정규식 부분매칭.
+    const collapseBtns = screen.getAllByRole('button', { name: new RegExp(t('mindmap.collapse')) });
     await user.click(collapseBtns[0]!); // '문서' 루트 접기
     expect(screen.queryByText('개요')).toBeNull();
-    await user.click(screen.getByRole('button', { name: t('mindmap.expand') }));
+    await user.click(screen.getByRole('button', { name: new RegExp(t('mindmap.expand')) }));
     expect(screen.getByText('개요')).toBeTruthy();
   });
 
   it('page 없는 노드는 인용 배지 미표시', () => {
     render(<SummaryMindMap markdown={'# 인용없음\n\n본문만.'} />);
     expect(screen.queryByText('[p.', { exact: false })).toBeNull();
+  });
+
+  // QA16(D-LOW): 파서 docName → CitationButton 교차문서 포워딩(SummaryMindMap.tsx:67)이 통합 레벨 미검증이었다.
+  it('교차 문서 인용 노드 → 열린 탭이면 교차문서 CitationButton(활성 버튼)', () => {
+    useAppStore.setState({ openTabs: [{ fileName: 'Beta.pdf', filePath: '/d/Beta.pdf', pageCount: 10 }] as never });
+    render(<SummaryMindMap markdown={'# 요약\n\n근거 [Beta.pdf p.5] 참조.'} />);
+    const badge = screen.getByText('[Beta.pdf p.5]');
+    expect(badge.tagName).toBe('BUTTON'); // 대상 탭 열림 + 범위내 → 클릭 가능
+  });
+
+  it('교차 문서 인용인데 대상 탭이 닫혀 있으면 비활성(오점프 방지)', () => {
+    useAppStore.setState({ openTabs: [] });
+    render(<SummaryMindMap markdown={'# 요약\n\n[Gamma.pdf p.3] 만.'} />);
+    const badge = screen.getByText('[Gamma.pdf p.3]');
+    expect(badge.getAttribute('aria-disabled')).toBe('true'); // 버튼 아닌 비활성 span
   });
 });
