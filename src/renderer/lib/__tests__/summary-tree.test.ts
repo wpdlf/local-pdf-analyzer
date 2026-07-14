@@ -1,0 +1,61 @@
+import { describe, it, expect } from 'vitest';
+import { parseSummaryToTree } from '../summary-tree';
+
+describe('parseSummaryToTree — 요약 마인드맵 파서', () => {
+  it('heading 계층을 트리로 구성(레벨 기반 중첩)', () => {
+    const md = '# 문서\n\n본문\n\n## 개요\n\n내용\n\n### 배경\n\n### 목표\n\n## 결론\n';
+    const t = parseSummaryToTree(md);
+    expect(t).toHaveLength(1);
+    expect(t[0]?.title).toBe('문서');
+    expect(t[0]?.children.map((c) => c.title)).toEqual(['개요', '결론']);
+    expect(t[0]?.children[0]?.children.map((c) => c.title)).toEqual(['배경', '목표']);
+  });
+
+  it('heading 이 없으면 빈 배열(호출측이 빈 상태 렌더)', () => {
+    expect(parseSummaryToTree('제목 없는 평문 요약입니다.\n\n두 번째 문단.')).toEqual([]);
+    expect(parseSummaryToTree('')).toEqual([]);
+  });
+
+  it('섹션 내 첫 [p.N] 인용을 page 로 추출(heading 라인 + 본문)', () => {
+    const md = '# 개요\n\n핵심 근거는 [p.3] 에 있다. 이후 [p.7] 도 참조.\n\n## 방법 [p.12]\n\n세부.';
+    const t = parseSummaryToTree(md);
+    expect(t[0]?.page).toBe(3);            // 섹션 첫 인용
+    expect(t[0]?.children[0]?.page).toBe(12); // heading 라인 자체의 인용
+  });
+
+  it('인용 없는 섹션은 page=null', () => {
+    const t = parseSummaryToTree('# 결론\n\n인용 없는 마무리.');
+    expect(t[0]?.page).toBeNull();
+  });
+
+  it('제목에서 인용 토큰·강조 마커를 제거', () => {
+    const t = parseSummaryToTree('# **중요** 개요 [p.1]\n\n본문');
+    expect(t[0]?.title).toBe('중요 개요');
+  });
+
+  it('코드펜스 안의 # 은 heading 으로 오인하지 않음', () => {
+    const md = '# 진짜제목\n\n```\n# 이건 주석\n## 코드 안 heading\n```\n\n## 진짜하위';
+    const t = parseSummaryToTree(md);
+    expect(t).toHaveLength(1);
+    expect(t[0]?.children.map((c) => c.title)).toEqual(['진짜하위']);
+  });
+
+  it('레벨 점프(#→###)도 가장 가까운 상위에 부착', () => {
+    const t = parseSummaryToTree('# A\n\n### C\n');
+    expect(t).toHaveLength(1);
+    expect(t[0]?.children[0]?.title).toBe('C');
+    expect(t[0]?.children[0]?.level).toBe(3);
+  });
+
+  it('닫는 # 시퀀스(## 제목 ##)도 제목만 캡처', () => {
+    const t = parseSummaryToTree('## 제목 ##\n');
+    expect(t[0]?.title).toBe('제목');
+    expect(t[0]?.level).toBe(2);
+  });
+
+  it('여러 최상위 heading 은 각각 root', () => {
+    const t = parseSummaryToTree('# 첫째\n\n## a\n\n# 둘째\n\n## b');
+    expect(t.map((n) => n.title)).toEqual(['첫째', '둘째']);
+    expect(t[1]?.children.map((c) => c.title)).toEqual(['b']);
+  });
+});

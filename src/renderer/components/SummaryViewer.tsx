@@ -4,6 +4,7 @@ import { abortQaPreservingThread } from '../lib/use-qa';
 import { abortCollectionGather } from '../lib/use-collection-summary';
 import { useT } from '../lib/i18n';
 import { SafeMarkdown } from '../lib/safe-markdown';
+import { SummaryMindMap } from './SummaryMindMap';
 import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
 import { PdfViewerPanel } from './PdfViewer';
@@ -29,6 +30,8 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
 
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  // 요약 마인드맵: 텍스트 / 마인드맵 뷰 전환.
+  const [viewMode, setViewMode] = useState<'text' | 'mindmap'>('text');
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -152,16 +155,39 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
         style={{ flexBasis: leftFlexBasis, flexGrow: 0, flexShrink: 1 }}
       >
       <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-t-lg">
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-200 min-w-0 truncate">
           {document ? `📎 ${document.fileName} (${document.pageCount}p)` : t('viewer.result')}
         </span>
-        <button
-          onClick={handleClose}
-          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-          aria-label={t('common.close')}
-        >
-          ✕ {t('common.close')}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* 요약 마인드맵: 텍스트/마인드맵 뷰 토글 (요약이 있을 때만) */}
+          {debouncedContent && (
+            <div role="group" aria-label={t('viewer.viewToggleAria')} className="inline-flex rounded overflow-hidden border border-gray-300 dark:border-gray-600 text-xs">
+              <button
+                type="button"
+                onClick={() => setViewMode('text')}
+                aria-pressed={viewMode === 'text'}
+                className={`px-2 py-1 transition-colors ${viewMode === 'text' ? 'bg-blue-500 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+              >
+                {t('viewer.viewText')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('mindmap')}
+                aria-pressed={viewMode === 'mindmap'}
+                className={`px-2 py-1 transition-colors ${viewMode === 'mindmap' ? 'bg-blue-500 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+              >
+                {t('viewer.viewMindMap')}
+              </button>
+            </div>
+          )}
+          <button
+            onClick={handleClose}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+            aria-label={t('common.close')}
+          >
+            ✕ {t('common.close')}
+          </button>
+        </div>
       </div>
 
       {/* aria-live="polite": 스트리밍 중 스크린 리더에 내용 업데이트를 알림.
@@ -188,7 +214,9 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
             </p>
           </div>
         ) : debouncedContent ? (
-          <SafeMarkdown content={debouncedContent} />
+          viewMode === 'mindmap'
+            ? <SummaryMindMap markdown={debouncedContent} />
+            : <SafeMarkdown content={debouncedContent} />
         ) : null}
       </div>
 

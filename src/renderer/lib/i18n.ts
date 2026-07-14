@@ -155,6 +155,16 @@ export const _translations = {
   'viewer.copyAria': { ko: '클립보드에 복사', en: 'Copy to clipboard' },
   'viewer.exportPdf': { ko: '📄 PDF', en: '📄 PDF' },
   'viewer.exportPdfAria': { ko: 'PDF 파일로 내보내기', en: 'Export as PDF file' },
+  // 요약 마인드맵 — 텍스트/마인드맵 뷰 토글 + 마인드맵 UI
+  'viewer.viewText': { ko: '📝 텍스트', en: '📝 Text' },
+  'viewer.viewMindMap': { ko: '🗺 마인드맵', en: '🗺 Mind map' },
+  'viewer.viewToggleAria': { ko: '요약 보기 방식 전환', en: 'Switch summary view' },
+  'mindmap.title': { ko: '요약 마인드맵', en: 'Summary mind map' },
+  'mindmap.empty': { ko: '제목(heading)이 없어 마인드맵을 만들 수 없습니다. 텍스트 보기를 사용하세요.', en: 'No headings found to build a mind map. Use the text view.' },
+  'mindmap.expand': { ko: '펼치기', en: 'Expand' },
+  'mindmap.collapse': { ko: '접기', en: 'Collapse' },
+  'mindmap.untitled': { ko: '(제목 없음)', en: '(untitled)' },
+  'mindmap.jumpAria': { ko: '{page} 페이지로 이동', en: 'Go to page {page}' },
   'viewer.pdfFail': { ko: 'PDF 내보내기에 실패했습니다. 다른 경로를 선택해주세요.', en: 'Failed to export PDF. Please choose a different path.' },
 
   // ─── QaChat ───
