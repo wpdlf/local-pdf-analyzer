@@ -299,7 +299,14 @@ function createWindow(): BrowserWindow {
   // 1회 가로채 flush 를 완주시킨 뒤 파괴한다. before-quit 경로(macOS Cmd+Q·프로그램적 quit,
   // isQuitting)에서는 이미 flush 되므로 재flush 하지 않는다(flushedWindows + isQuitting 가드).
   win.on('close', (e) => {
-    if (isQuitting || flushedWindows.has(win) || win.isDestroyed()) return;
+    if (win.isDestroyed()) return;
+    // QA17(A-MED/B-LOW 수렴, 데이터손실): flush 진행 중인 창에 close 가 재진입하면(창 X 빠른
+    // 이중 클릭, 또는 before-quit flush 도중 수동 X) 네이티브 close 가 flush 를 도중에 끊어
+    // 마지막 델타를 잃는다 — v0.31.27 이 막으려던 손실이 인터셉션 자체로 재현됐다. 진행 중이면
+    // 재차 가로채 무시하고, flush 완주 후 소유자(단일: flushOneWindow.finally / 종료:
+    // before-quit→app.quit)가 파괴한다(destroy 는 'close' 를 발화하지 않아 재가로채기 없음).
+    if (flushingWindows.has(win)) { e.preventDefault(); return; }
+    if (isQuitting || flushedWindows.has(win)) return;
     e.preventDefault();
     flushedWindows.add(win);
     void flushOneWindow(win).finally(() => { if (!win.isDestroyed()) win.destroy(); });
@@ -358,6 +365,12 @@ app.on('window-all-closed', () => {
   // 의도였으나 실제로 before-quit 이 생략되는 경로가 없어 불필요.
   if (process.platform !== 'darwin') {
     app.quit();
+  } else {
+    // QA17(A-MED): darwin 은 창이 모두 닫혀도 앱이 살아있어 before-quit 이 발화하지 않는다.
+    // main 프로세스에서 도는 in-flight 클라우드 요청(요약·Q&A·임베딩·Vision)은 렌더러가
+    // 사라져도 계속 실행돼 과금되며 10분 TTL 까지 방치된다. cleanupAiService 는 TTL 스윕
+    // 인터벌까지 파괴하므로 부적절 — 진행 중 요청만 abort 한다(다시 창을 열면 새 요청은 정상 등록).
+    abortAllRequests();
   }
 });
 
@@ -369,9 +382,14 @@ app.on('window-all-closed', () => {
 const FLUSH_BEFORE_QUIT_TIMEOUT_MS = 2000;
 // QA16(C-MED): 한 창당 flush 는 1회만(창닫기 인터셉트와 before-quit 경로의 이중 flush 방지).
 const flushedWindows = new WeakSet<BrowserWindow>();
+// QA17(A-MED/B-LOW): flush 가 실제로 진행 중인 창. 이 동안 close 재진입을 가로채 네이티브
+// 파괴가 flush 를 끊지 못하게 한다(flushedWindows 는 "flush 개시됨"이라 완료·파괴 후에도 남아
+// 종료 경로의 재close 를 구분 못 함 → 진행 중 여부는 이 집합으로 판별).
+const flushingWindows = new WeakSet<BrowserWindow>();
 
 // 단일 창에 app:flush-before-quit 를 보내고 ack 또는 하드 타임아웃까지 대기.
 function flushOneWindow(win: BrowserWindow): Promise<void> {
+  flushingWindows.add(win);
   return new Promise<void>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -379,6 +397,7 @@ function flushOneWindow(win: BrowserWindow): Promise<void> {
       settled = true;
       clearTimeout(timer);
       ipcMain.removeListener('app:flush-done', onDone);
+      flushingWindows.delete(win);
       resolve();
     };
     const onDone = (event: Electron.IpcMainEvent) => {

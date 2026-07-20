@@ -44,6 +44,13 @@ const onChannels = extract(PRELOAD_SRC, /ipcRenderer\.on\(\s*['"]([^'"]+)['"]/g)
 // (`webContents.send(channel, …)`)는 리터럴이 아니라 매칭되지 않음 — 의도된 동작.
 const sendChannels = extract(MAIN_SRC, /(?:webContents\.send|safeSend)\(\s*['"]([^'"]+)['"]/g);
 
+// QA17(D-LOW): renderer→main 단방향 채널(ipcRenderer.send ↔ ipcMain.on). 위 invoke/handle·
+// on/send 두 방향은 잡았으나 이 카테고리(현재 'app:flush-done' 종료 flush ack)는 가드 밖이었다.
+// 편측 rename 시 두 테스트 모두 green 인데 런타임에 ack 가 영영 안 와 매 창닫기·종료마다
+// FLUSH_BEFORE_QUIT_TIMEOUT_MS(2s) 하드 타임아웃까지 대기하는 조용한 UX 회귀가 났다.
+const rendererSendChannels = extract(PRELOAD_SRC, /ipcRenderer\.send\(\s*['"]([^'"]+)['"]/g);
+const mainOnChannels = extract(MAIN_SRC, /ipcMain\.on\(\s*['"]([^'"]+)['"]/g);
+
 // 의도적 비대칭이 생기면 여기에 명시(현재 없음). 예: 외부/테스트가 직접 호출하는 핸들러,
 // 아직 renderer 가 구독하지 않는 신규 emit 등. 비워두면 완전 set-equality 를 강제한다.
 const HANDLER_WITHOUT_INVOKE = new Set<string>();
@@ -58,6 +65,8 @@ describe('IPC 채널 cross-side 계약 (자가유지)', () => {
     expect(handleChannels.size).toBeGreaterThan(20);
     expect(onChannels.size).toBeGreaterThanOrEqual(4);
     expect(sendChannels.size).toBeGreaterThanOrEqual(4);
+    expect(rendererSendChannels.size).toBeGreaterThanOrEqual(1);
+    expect(mainOnChannels.size).toBeGreaterThanOrEqual(1);
   });
 
   it('preload invoke ⊆ main handle — 모든 renderer 호출에 핸들러 존재', () => {
@@ -78,5 +87,15 @@ describe('IPC 채널 cross-side 계약 (자가유지)', () => {
   it('main send/safeSend ⊆ preload on — 죽은 emit 없음', () => {
     const dead = diff(sendChannels, onChannels).filter((c) => !SEND_WITHOUT_LISTENER.has(c));
     expect(dead, `리스너 없는 emit 채널: ${dead.join(', ')}`).toEqual([]);
+  });
+
+  it('preload ipcRenderer.send ⊆ main ipcMain.on — 모든 renderer→main emit 에 핸들러 존재', () => {
+    const orphans = diff(rendererSendChannels, mainOnChannels);
+    expect(orphans, `ipcMain.on 없는 ipcRenderer.send 채널(런타임 ack 유실 → 종료 flush 2s 행): ${orphans.join(', ')}`).toEqual([]);
+  });
+
+  it('main ipcMain.on ⊆ preload ipcRenderer.send — 죽은 리스너 없음', () => {
+    const dead = diff(mainOnChannels, rendererSendChannels);
+    expect(dead, `ipcRenderer.send 없는 ipcMain.on 채널: ${dead.join(', ')}`).toEqual([]);
   });
 });
