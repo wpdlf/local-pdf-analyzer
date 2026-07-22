@@ -528,9 +528,10 @@ async function summarizeCustomChunked(
 }
 
 export function useSummarize() {
-  const document = useAppStore((s) => s.document);
-  const summaryType = useAppStore((s) => s.summaryType);
-  const isGenerating = useAppStore((s) => s.isGenerating);
+  // QA18(D-LOW): document/summaryType/isGenerating/settings 를 구독하지 않는다 — 훅 본문은
+  // 전부 useAppStore.getState() 로 읽으므로 값이 쓰이지 않는데, 이 훅은 App 루트에서 호출돼
+  // settings/summaryType 전체 구독이 App.tsx 의 "설정 전체 구독 금지"(무관한 설정 변경에
+  // 루트 전체 리렌더) 최적화를 그대로 되돌리고 있었다.
   const setIsGenerating = useAppStore((s) => s.setIsGenerating);
   const setProgress = useAppStore((s) => s.setProgress);
   const setProgressInfo = useAppStore((s) => s.setProgressInfo);
@@ -538,7 +539,6 @@ export function useSummarize() {
   const clearStream = useAppStore((s) => s.clearStream);
   const flushStream = useAppStore((s) => s.flushStream);
   const setSummary = useAppStore((s) => s.setSummary);
-  const settings = useAppStore((s) => s.settings);
   const setError = useAppStore((s) => s.setError);
   const clientRef = useRef<AiClient | null>(null);
   const timeoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -607,7 +607,9 @@ export function useSummarize() {
     }
 
     setIsGenerating(true);
-    clearStream();
+    // QA18(A-MED): 이 run 이 만들 스트림의 소유 타입을 등록 — 중단·실패로 setSummary 가
+    // 호출되지 않아도 영속 경로가 올바른 타입 키로 저장한다.
+    clearStream(currentSummaryType);
     setProgress(0);
     setProgressInfo(null);
     setError(null);

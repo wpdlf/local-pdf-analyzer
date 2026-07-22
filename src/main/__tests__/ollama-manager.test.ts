@@ -171,6 +171,8 @@ describe('getStatus (합성)', () => {
     });
     expect(await mgr.getStatus()).toEqual({
       installed: true, running: true, version: 'ollama version 0.5.0', models: ['gemma3'],
+      // QA18(C-MED): 앱이 spawn 하지 않았으므로 managed=false — 외부에서 실행 중인 Ollama 다.
+      managed: false,
     });
   });
 
@@ -182,7 +184,7 @@ describe('getStatus (합성)', () => {
     });
     const hc = vi.spyOn(mgr, 'healthCheck');
     const lm = vi.spyOn(mgr, 'listModels');
-    expect(await mgr.getStatus()).toEqual({ installed: false, running: false, models: [] });
+    expect(await mgr.getStatus()).toEqual({ installed: false, running: false, models: [], managed: false });
     expect(hc).not.toHaveBeenCalled();
     expect(lm).not.toHaveBeenCalled();
   });
@@ -344,6 +346,8 @@ describe('stop / killPullProcess — win32 taskkill 실패 시 SIGKILL fallback 
     expect(M.execFile).toHaveBeenCalledWith(
       'taskkill',
       expect.arrayContaining(['/F', '/T', '/PID', String(proc.pid)]),
+      // QA18(C-LOW): 종료 경로 무제한 await 방지용 타임아웃
+      { timeout: 5000 },
       expect.any(Function),
     );
     // 실패 → SIGKILL fallback
@@ -377,6 +381,8 @@ describe('stop / killPullProcess — win32 taskkill 실패 시 SIGKILL fallback 
     expect(M.execFile).toHaveBeenCalledWith(
       'taskkill',
       expect.arrayContaining(['/F', '/T', '/PID', String(proc.pid)]),
+      // QA18(C-LOW): 종료 경로 무제한 await 방지용 타임아웃
+      { timeout: 5000 },
       expect.any(Function),
     );
     expect(proc.kill).toHaveBeenCalledWith('SIGKILL');

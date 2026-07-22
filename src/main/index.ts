@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import fsp from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { OllamaManager } from './ollama-manager';
+import { decideCloseAction, selectFlushTargets } from './window-flush-policy';
 import { generate, abortGenerate, abortAllRequests, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
 import { MAX_PDF_SIZE_BYTES, isLocalhostHost } from '../shared/constants';
 // v0.18.19 patch R34 P2: settings 키 단일 출처. 이전엔 본 파일 두 곳에 별도 리터럴이 있었고
@@ -305,8 +306,15 @@ function createWindow(): BrowserWindow {
     // 마지막 델타를 잃는다 — v0.31.27 이 막으려던 손실이 인터셉션 자체로 재현됐다. 진행 중이면
     // 재차 가로채 무시하고, flush 완주 후 소유자(단일: flushOneWindow.finally / 종료:
     // before-quit→app.quit)가 파괴한다(destroy 는 'close' 를 발화하지 않아 재가로채기 없음).
-    if (flushingWindows.has(win)) { e.preventDefault(); return; }
-    if (isQuitting || flushedWindows.has(win)) return;
+    // QA18: 결정 로직은 window-flush-policy.ts 로 분리(단위 테스트 가능). 여기서는 부작용만.
+    const action = decideCloseAction({
+      isDestroyed: false, // 위에서 이미 걸러짐
+      isFlushing: flushingWindows.has(win),
+      hasFlushed: flushedWindows.has(win),
+      isQuitting,
+    });
+    if (action === 'intercept-wait') { e.preventDefault(); return; }
+    if (action === 'allow') return;
     e.preventDefault();
     flushedWindows.add(win);
     void flushOneWindow(win).finally(() => { if (!win.isDestroyed()) win.destroy(); });
@@ -385,13 +393,14 @@ const flushedWindows = new WeakSet<BrowserWindow>();
 // QA17(A-MED/B-LOW): flush 가 실제로 진행 중인 창. 이 동안 close 재진입을 가로채 네이티브
 // 파괴가 flush 를 끊지 못하게 한다(flushedWindows 는 "flush 개시됨"이라 완료·파괴 후에도 남아
 // 종료 경로의 재close 를 구분 못 함 → 진행 중 여부는 이 집합으로 판별).
-const flushingWindows = new WeakSet<BrowserWindow>();
+// QA18(B-MED): WeakSet→Map 으로 승격. 종료 경로가 in-flight flush 를 "건너뛰는" 대신 그
+// promise 를 await 해야 하기 때문(flushRenderersBeforeQuit 주석 참조).
+const flushingWindows = new Map<BrowserWindow, Promise<void>>();
 
 // 단일 창에 app:flush-before-quit 를 보내고 ack 또는 하드 타임아웃까지 대기.
 function flushOneWindow(win: BrowserWindow): Promise<void> {
-  flushingWindows.add(win);
-  return new Promise<void>((resolve) => {
-    let settled = false;
+  let settled = false;
+  const p = new Promise<void>((resolve) => {
     const finish = () => {
       if (settled) return;
       settled = true;
@@ -407,12 +416,38 @@ function flushOneWindow(win: BrowserWindow): Promise<void> {
     ipcMain.on('app:flush-done', onDone);
     try { win.webContents.send('app:flush-before-quit'); } catch { finish(); }
   });
+  // send 가 동기 throw 해 이미 완료된 경우엔 등록하지 않는다(지워지지 않는 고아 엔트리 방지).
+  if (!settled) flushingWindows.set(win, p);
+  return p;
 }
 
 function flushRenderersBeforeQuit(): Promise<void> {
-  const wins = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && !flushedWindows.has(w));
-  if (wins.length === 0) return Promise.resolve();
-  return Promise.all(wins.map((win) => { flushedWindows.add(win); return flushOneWindow(win); })).then(() => undefined);
+  // QA18(B-MED, 데이터손실 회귀): 창 X 인터셉트로 이미 flush 중인 창을 여기서 필터링해 버리면
+  // (v0.31.28) 종료 경로가 즉시 resolve → app.quit() → 그 창의 close 가 다시 발화 → 'flush
+  // 진행 중' 가드의 preventDefault 가 **종료 자체를 취소**한다. darwin 은 window-all-closed 가
+  // app.quit() 을 하지 않으므로 창 없는 좀비 프로세스로 남고, isQuitting 이 true 로 고착돼
+  // 이후 새로 연 창의 X 닫기가 flush 인터셉트를 건너뛴다(QA16 이 고친 데이터손실 부활).
+  // → 진행 중인 flush 는 건너뛰지 말고 그 promise 를 await 한다.
+  const wins = BrowserWindow.getAllWindows();
+  const targets = selectFlushTargets(wins.map((w) => ({
+    isDestroyed: w.isDestroyed(),
+    isFlushing: flushingWindows.has(w),
+    hasFlushed: flushedWindows.has(w),
+  })));
+  const pending: Promise<void>[] = [];
+  wins.forEach((w, i) => {
+    const target = targets[i];
+    if (target === 'await-inflight') {
+      const inFlight = flushingWindows.get(w);
+      if (inFlight) pending.push(inFlight);
+      return;
+    }
+    if (target !== 'start') return;
+    flushedWindows.add(w);
+    pending.push(flushOneWindow(w));
+  });
+  if (pending.length === 0) return Promise.resolve();
+  return Promise.all(pending).then(() => undefined);
 }
 
 let isQuitting = false;
@@ -808,7 +843,7 @@ export function registerIpcHandlers(): void {
       return await ollamaManager.getStatus();
     } catch (err) {
       console.error('[ollama:status] failed:', err);
-      return { installed: false, running: false, models: [] };
+      return { installed: false, running: false, models: [], managed: false };
     }
   });
 

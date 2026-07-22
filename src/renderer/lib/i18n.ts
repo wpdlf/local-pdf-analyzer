@@ -292,6 +292,10 @@ export const _translations = {
   'settings.restarting': { ko: 'Ollama 재시작 중...', en: 'Restarting Ollama...' },
   'settings.restartOk': { ko: 'Ollama를 재시작했습니다.', en: 'Ollama restarted.' },
   'settings.restartFail': { ko: 'Ollama 재시작에 실패했습니다. 수동으로 시작해주세요.', en: 'Failed to restart Ollama. Please start it manually.' },
+  'settings.restartUnmanaged': {
+    ko: '외부에서 실행 중인 Ollama 라 앱이 재시작할 수 없습니다. Ollama 앱을 직접 종료 후 다시 실행해주세요.',
+    en: 'Ollama is running outside this app, so it cannot be restarted from here. Please quit and relaunch the Ollama app yourself.',
+  },
   'settings.theme': { ko: '테마', en: 'Theme' },
   'settings.themeLight': { ko: '라이트', en: 'Light' },
   'settings.themeDark': { ko: '다크', en: 'Dark' },

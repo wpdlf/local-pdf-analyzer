@@ -199,6 +199,11 @@ export interface OllamaStatus {
   version?: string;
   models: string[];
   selectedModel?: string;
+  /**
+   * QA18(C-MED): 앱이 직접 spawn 해 관리 중인 프로세스인지. false 면 외부(로그인 시 자동 실행된
+   * `ollama app.exe` 등)에서 돌고 있어 앱의 stop/start 가 no-op 이다 — "재시작" 성공 오보고 방지.
+   */
+  managed?: boolean;
 }
 
 // RAG 인덱싱 상태

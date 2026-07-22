@@ -230,4 +230,32 @@ describe('AiClient', () => {
       }
     }).rejects.toThrow();
   });
+
+  // QA18(C-MED, 클라우드 과금): IPC 타임아웃(120s = "연결 해제 감지")으로 종료되면 main 의
+  // 스트림도 abort 해야 한다. 타임아웃 콜백이 done=true 를 먼저 세팅하는 탓에 finally 의
+  // `!done` 가드가 스스로를 무력화해, 정작 이 경로에서만 abort 가 나가지 않았다 — 렌더러는
+  // streamInterrupted 로 실패 처리하고 손을 떼는데 main 은 계속 스트리밍하며 토큰을 소진하고
+  // activeRequests 엔트리도 남았다(main 의 60초 idle 타이머는 데이터가 흐르는 한 계속 리셋됨).
+  it('summarize() IPC 타임아웃으로 끊겨도 서버 측 abort 를 보낸다', async () => {
+    vi.useFakeTimers();
+    try {
+      mockElectronAPI.ai.onToken.mockImplementation(() => vi.fn());
+      mockElectronAPI.ai.onDone.mockImplementation(() => vi.fn());
+      // main 이 영원히 응답하지 않는 상황(토큰도 done 도 없음).
+      mockElectronAPI.ai.generate.mockImplementation(() => new Promise(() => {}));
+
+      const client = new AiClient(DEFAULT_SETTINGS);
+      const consume = (async () => {
+        for await (const _ of client.summarize('text', 'full')) { /* 도달하지 않음 */ }
+      })();
+      const assertion = expect(consume).rejects.toThrow();
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      await assertion;
+
+      expect(mockElectronAPI.ai.abort).toHaveBeenCalledWith('test-uuid');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

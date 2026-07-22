@@ -127,6 +127,8 @@ export type ElectronAPI = {
       running: boolean;
       version?: string;
       models: string[];
+      /** QA18(C-MED): 앱이 spawn 한 프로세스인지(= 재시작이 실제로 가능한지). */
+      managed: boolean;
     }>;
     install: () => Promise<{ success: boolean; error?: string; errorKey?: string; errorParams?: Record<string, string> }>;
     start: () => Promise<boolean>;

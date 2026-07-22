@@ -210,6 +210,8 @@ interface AppState {
   // 요약
   summary: Summary | null;
   summaryStream: string;
+  /** QA18(A-MED): summaryStream 을 생성한 요약 타입(영속 저장 키의 단일 출처). */
+  summaryStreamType: ActiveSummaryType | null;
   summaryType: ActiveSummaryType;
   // 페이지 범위 요약 — null 이면 전체. {start,end} 는 1-based inclusive. 문서 전환 시 리셋.
   summaryPageRange: { start: number; end: number } | null;
@@ -224,7 +226,11 @@ interface AppState {
   setSummary: (summary: Summary | null) => void;
   appendStream: (token: string) => void;
   flushStream: () => void;
-  clearStream: () => void;
+  /**
+   * QA18(A-MED): 현재 summaryStream 을 생성한 요약 타입. 영속화 시 저장 키의 단일 출처다.
+   * 인자를 주면 스트림을 비우면서 소유 타입을 함께 등록한다(요약 run 시작 시).
+   */
+  clearStream: (ownerType?: ActiveSummaryType | null) => void;
   /** 후처리된 전체 내용으로 summaryStream을 교체. 호출 전에 반드시 flushStream() 수행. */
   replaceSummaryStream: (content: string) => void;
   setSummaryType: (type: ActiveSummaryType) => void;
@@ -401,6 +407,9 @@ export const useAppStore = create<AppState>((set) => ({
   // 요약
   summary: null,
   summaryStream: '',
+  // QA18(A-MED): summaryStream 을 만든 요약 타입. setSummary 는 성공 완주 시에만 호출되므로
+  // s.summary(마지막 성공 커밋)를 스트림의 타입 키로 쓰면 중단·실패 run 에서 영구히 어긋난다.
+  summaryStreamType: null,
   summaryCollapsed: false,
   setSummaryCollapsed: (summaryCollapsed) => set({ summaryCollapsed }),
   summaryType: 'full',
@@ -440,7 +449,7 @@ export const useAppStore = create<AppState>((set) => ({
       set((s) => ({ summaryStream: s.summaryStream + buffered }));
     }
   },
-  clearStream: () => {
+  clearStream: (ownerType) => {
     // cleared 플래그로 이미 dequeue된 flush 타이머 콜백의 실행 방지 (ghost text 방지)
     streamState.cleared = true;
     streamState.buffer = '';
@@ -448,7 +457,7 @@ export const useAppStore = create<AppState>((set) => ({
       clearTimeout(streamState.flushTimer);
       streamState.flushTimer = null;
     }
-    set({ summaryStream: '' });
+    set({ summaryStream: '', summaryStreamType: ownerType ?? null });
   },
   replaceSummaryStream: (content) => {
     // 후처리된 전체 내용으로 교체. 이미 flushStream 호출 이후이므로 버퍼 정리만 수행.
@@ -487,6 +496,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({
       document: null,
       summaryStream: '',
+      summaryStreamType: null,
       summaryCollapsed: false,
       summaryPageRange: null, // 페이지 범위는 문서별이므로 전환 시 전체로 리셋
       isGenerating: false,

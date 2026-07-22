@@ -217,9 +217,20 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
   const doc = s.document;
   const api = window.electronAPI?.session;
   if (!doc || !s.settings.persistSessions || !api) return;
+  // 복원 대기 중(문서 불일치)은 어떤 경로에서도 skip — 아직 이 문서의 진실이 메모리에 없다.
+  if (s.sessionRestorePending) return;
   // isCollectionBusy(컬렉션 gather) 중에는 활성 문서 자동저장을 보류 — 머지 read(mutex 밖)와
-  // 컬렉션 인라인 요약 cross-write 의 TOCTOU lost-update 방지. 복원 대기 중(문서 불일치)도 skip.
-  if (s.sessionRestorePending || s.isCollectionBusy) return;
+  // 컬렉션 인라인 요약 cross-write 의 TOCTOU lost-update 방지.
+  // QA18(B-MED, 데이터손실): 단 종료/새로고침 flush 까지 통째로 skip 하면, 컬렉션 통합요약
+  // (로컬 모델이면 분 단위 gather) 도중 종료 시 직전에 완료된 Q&A 턴·요약이 디스크에 닿지
+  // 못한 채 사라진다 — QA10 handshake 가 no-op persist 를 기다리는 무의미 상태(QA12 는
+  // isGenerating/isQaGenerating 만 flush-aware 로 바꾸고 이 줄은 남겨뒀다).
+  // flush 경로는 아래 savePartial(patchSession) 만 허용한다: main 의 write mutex 안에서
+  // read-modify-write 하며 summaries[type] 한 칸만 교체하므로 컬렉션 인라인 요약과의
+  // lost-update 가 구조적으로 발생하지 않는다. 부분저장이 불가/실패면 전체저장으로
+  // 폴백하지 않고 보류한다(전체저장은 타 타입 요약을 덮어쓸 수 있다).
+  const partialOnly = flush && s.isCollectionBusy;
+  if (!flush && s.isCollectionBusy) return;
   // QA12(B-MED): 디바운스 경로는 생성 중 skip(부분 스트림 영속화 방지). 그러나 종료/새로고침
   // flush(handshake/pagehide)까지 통째로 skip 하면, 요약 완료 직후 후속 질문(isQaGenerating)으로
   // 디바운스가 취소·미재예약된 상태에서 종료 시 "완성 요약"이 디스크에 닿지 못해 소실됐다
@@ -229,9 +240,26 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
   // flush 중 요약 생성(isGenerating)이면 summaryStream 은 새 타입의 부분 스트림이므로 s.summary
   // (직전 완성본)를 대신 기록해 부분 요약이 완성본을 덮어쓰는 것을 막는다. 생성 중이 아니면
   // summaryStream 이 곧 완성 요약이다(setSummary 는 완료 시 커밋되어 summary.type 과 일치).
-  const summaryContentToPersist = (flush && s.isGenerating)
+  const persistCommitted = flush && s.isGenerating;
+  const summaryContentToPersist = persistCommitted
     ? (s.summary?.content ?? null)
     : (s.summaryStream || null);
+  // QA18(A-MED, 데이터손실 2건): 저장 키는 "이 콘텐츠를 만든 요약 타입"이어야 한다. 기존엔
+  // 콘텐츠는 summaryStream, 키·메타는 s.summary(마지막 성공 커밋)에서 가져와 이원화돼 있었다.
+  // setSummary 는 성공 완주 시에만 호출되므로 중단·실패로 끝난 run 은 둘이 영구히 어긋난다:
+  //  (1) 'full' 완성 후 'keywords' 요약을 Stop → summaries['full'] 에 잘린 키워드표가 덮어써져
+  //      원본 완성 요약이 파괴됐다.
+  //  (2) 첫 요약이 마지막 통합 단계에서만 실패하면 s.summary===null → `&& s.summary` 게이트에
+  //      걸려 완주한 청크 요약 전체가 한 글자도 저장되지 않았다(화면엔 보이므로 사용자는 인지 못함).
+  // summaryStreamType 은 run 시작 시 clearStream(type) 으로 등록되는 단일 출처다. 복원 세션
+  // (run 없이 디스크에서 채운 경우)은 null 이므로 s.summary.type 으로 폴백한다.
+  const persistType = persistCommitted
+    ? (s.summary?.type ?? null)
+    : (s.summaryStreamType ?? s.summary?.type ?? null);
+  // 메타(model/provider)는 커밋본이 같은 타입일 때만 그것을 쓰고, 아니면 현재 설정을 기록한다.
+  const persistMeta = (s.summary && s.summary.type === persistType)
+    ? { model: s.summary.model, provider: s.summary.provider }
+    : { model: s.settings.model, provider: s.settings.provider };
   // flush 중 Q&A 생성이면 마지막 메시지가 짝 없는 user(스트리밍 답변 대기)일 수 있다 → 복원 시
   // orphan-Q 불변식(formatHistory) 위반을 막기 위해 trailing lone-user 만 제거(완료 턴은 보존).
   let safeQaMessages = s.qaMessages;
@@ -264,8 +292,8 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
     // 불변 본문(extractedText/pageTexts/chunkMeta)·blob 재전송 없이 변하는 qa/summary delta 만
     // 보내고 main 이 디스크 session.json 을 패치한다(IPC ~5MB→~50KB, 렌더러측 loadMeta 읽기도 생략).
     if (idxUnchanged && typeof api.savePartial === 'function') {
-      const summaryPatch = (summaryContentToPersist && s.summary)
-        ? { type: s.summary.type, content: summaryContentToPersist, model: s.summary.model, provider: s.summary.provider }
+      const summaryPatch = (summaryContentToPersist && persistType)
+        ? { type: persistType, content: summaryContentToPersist, ...persistMeta }
         : null;
       let partialOk = false;
       try {
@@ -282,6 +310,10 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
       persistedIndexSig = null;
       idxUnchanged = false;
     }
+    // QA18(B-MED): 컬렉션 gather 중 flush 는 부분저장까지만 허용 — 전체저장은 mutex 밖 머지
+    // read 를 거치므로 컬렉션 인라인 요약과 lost-update 를 일으킬 수 있다. 여기 도달했다는 건
+    // 부분저장이 불가(인덱스 변경)하거나 실패했다는 뜻이므로 이번 저장은 보류한다.
+    if (partialOnly) return;
 
     // 기존 세션의 타입별 요약을 머지(다른 요약 타입 보존) + 인덱싱 중이면 기존 인덱스 보존
     let summaries: PersistedSession['summaries'] = {};
@@ -315,11 +347,10 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
       recordSaveResult(false);
       return;
     }
-    if (summaryContentToPersist && s.summary) {
-      summaries[s.summary.type] = {
+    if (summaryContentToPersist && persistType) {
+      summaries[persistType] = {
         content: summaryContentToPersist,
-        model: s.summary.model,
-        provider: s.summary.provider,
+        ...persistMeta,
       };
     }
 

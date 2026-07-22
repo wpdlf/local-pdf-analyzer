@@ -79,4 +79,26 @@ describe('parseSummaryToTree — 요약 마인드맵 파서', () => {
     expect(t.map((n) => n.title)).toEqual(['첫째', '둘째']);
     expect(t[1]?.children.map((c) => c.title)).toEqual(['b']);
   });
+  // QA18(A-LOW): CommonMark 은 선행 공백 3칸까지 heading 으로 인정한다. 불허하면 텍스트뷰엔
+  // 제목으로 렌더되는 줄이 마인드맵에서만 노드로 누락되고, 그 본문이 앞 노드 섹션에 흡수돼
+  // 페이지 배지까지 어긋난다(4칸 이상은 들여쓴 코드블록이므로 계속 제외).
+  it('선행 공백 1~3칸 heading 도 노드로 인식(4칸 이상은 코드블록이라 제외)', () => {
+    const t = parseSummaryToTree('# 문서\n\n ## 한칸\n\n   ### 세칸\n\n    #### 네칸\n');
+    expect(t).toHaveLength(1);
+    expect(t[0]?.children.map((c) => c.title)).toEqual(['한칸']);
+    expect(t[0]?.children[0]?.children.map((c) => c.title)).toEqual(['세칸']);
+    // 4칸 들여쓰기는 heading 이 아니다 → 어떤 노드로도 등장하지 않음
+    expect(JSON.stringify(t)).not.toContain('네칸');
+  });
+
+  // QA18(A-LOW): `*` 제거에 flanking 규칙 미적용 시 `## 2 * 3 * 4 계산` 의 곱셈 기호가 통째로
+  // 사라져(`2 3 4 계산`) 마인드맵 제목이 텍스트뷰와 달라졌다.
+  it('공백으로 둘러싼 * 는 강조가 아니므로 보존(곱셈 기호)', () => {
+    expect(parseSummaryToTree('## 2 * 3 * 4 계산\n')[0]?.title).toBe('2 * 3 * 4 계산');
+  });
+
+  it('정상 *강조* 는 계속 제거', () => {
+    expect(parseSummaryToTree('## *핵심* 요약\n')[0]?.title).toBe('핵심 요약');
+    expect(parseSummaryToTree('## **굵게** 와 *기울임*\n')[0]?.title).toBe('굵게 와 기울임');
+  });
 });

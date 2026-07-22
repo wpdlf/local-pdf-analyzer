@@ -20,6 +20,13 @@ interface OllamaStatusResult {
   running: boolean;
   version?: string;
   models: string[];
+  /**
+   * QA18(C-MED): 실행 중인 Ollama 를 이 앱이 spawn 했는지(= stop/start 로 재시작 가능한지).
+   * Windows 표준 설치는 로그인 시 `ollama app.exe` 가 자동 실행되므로 부팅 healthCheck 가
+   * true → start() 미호출 → process===null 이 흔하다. 이때 "재시작"은 stop/start 모두
+   * 즉시 no-op 이라, 이 플래그 없이는 UI 가 거짓 성공을 보고한다.
+   */
+  managed: boolean;
 }
 
 export class OllamaManager {
@@ -57,7 +64,7 @@ export class OllamaManager {
     const installed = version !== undefined;
     const running = installed ? await this.healthCheck() : false;
     const models = running ? await this.listModels() : [];
-    return { installed, running, version, models };
+    return { installed, running, version, models, managed: this.process !== null };
   }
 
   async isInstalled(): Promise<boolean> {
@@ -527,7 +534,12 @@ export class OllamaManager {
       // 변경 효익 < 종료 경로 회귀 위험 → 현 상태(taskkill + SIGKILL + console.warn) 유지.
       try {
         await new Promise<void>((resolve) => {
-          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], (err) => {
+          // QA18(C-LOW): 타임아웃 필수 — before-quit 이 `await ollamaManager.stop()` 을 무제한
+          // 대기하므로, taskkill 이 (AV 간섭/핸들 wedge 로) 반환하지 않으면 app.quit() 에 영영
+          // 도달하지 못하고 창 없는 좀비가 남는다(isQuitting 가드 때문에 재시도도 불가).
+          // 뒤따르는 waitForExit 5초 캡은 taskkill 이후 단계라 이 구간을 못 덮는다.
+          // 이 파일의 다른 모든 execFile 은 이미 타임아웃을 갖는다(--version 5s·서명 30s·인스톨러 300s).
+          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { timeout: 5000 }, (err) => {
             if (err) console.warn(`[Ollama] taskkill failed for pid ${proc.pid}: ${err.message} — fallback SIGKILL`);
             resolve();
           });
@@ -666,7 +678,9 @@ export class OllamaManager {
       // v0.18.19 patch R32 P3: 위 stop() 과 동일 패턴 — taskkill 실패 시 SIGKILL fallback.
       try {
         await new Promise<void>((resolve) => {
-          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], (err) => {
+          // QA18(C-LOW): stop() 과 동일 사유로 타임아웃 — killPullProcess 는 stop() 의 첫 줄이라
+          // 종료 경로에서 무제한 await 가 된다.
+          execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { timeout: 5000 }, (err) => {
             if (err) console.warn(`[Ollama pull] taskkill failed for pid ${proc.pid}: ${err.message} — fallback SIGKILL`);
             resolve();
           });

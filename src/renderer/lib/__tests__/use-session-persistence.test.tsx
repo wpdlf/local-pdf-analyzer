@@ -15,7 +15,12 @@ vi.stubGlobal('localStorage', {
   removeItem: (k: string) => { delete lsStore[k]; },
 });
 const api = {
-  session: { load: vi.fn(), save: vi.fn(() => Promise.resolve({ ok: true })) },
+  session: {
+    load: vi.fn(),
+    save: vi.fn(() => Promise.resolve({ ok: true })),
+    // QA18(B-MED): 컬렉션 gather 중 종료 flush 는 부분저장으로만 착지해야 한다.
+    savePartial: vi.fn(() => Promise.resolve({ ok: true })),
+  },
   ai: { checkEmbedModel: vi.fn((): Promise<{ available: boolean; model: string | null }> => Promise.resolve({ available: true, model: 'nomic-embed-text' })), abort: vi.fn(() => Promise.resolve()) },
   settings: { set: vi.fn(() => Promise.resolve()), get: vi.fn(() => Promise.resolve({})) },
 };
@@ -28,7 +33,7 @@ vi.mock('../session-hash', () => ({ hashDocumentText: vi.fn(() => Promise.resolv
 
 import { useAppStore } from '../store';
 import { VectorStore } from '../vector-store';
-import { restoreSessionForDocument, useSessionPersistence } from '../use-session';
+import { restoreSessionForDocument, useSessionPersistence, persistCurrentSession } from '../use-session';
 
 function makeDoc(id = 'doc-1'): PdfDocument {
   return {
@@ -226,5 +231,97 @@ describe('useSessionPersistence — 디바운스 자동저장 게이트', () => 
     renderHook(() => useSessionPersistence());
     await settle(1600);
     expect(api.session.save).toHaveBeenCalledTimes(1);
+  });
+});
+
+// QA18(A-MED, 실데이터 손실 2건): 영속 저장 키는 "이 콘텐츠를 만든 요약 타입"이어야 한다.
+// 이전엔 콘텐츠는 summaryStream, 키·메타는 s.summary(마지막 성공 커밋)에서 가져와 이원화돼
+// 있었고, setSummary 는 성공 완주 시에만 호출되므로 중단·실패 run 에서 둘이 영구히 어긋났다.
+describe('doPersistCurrentSession — 요약 저장 키 소유권(summaryStreamType)', () => {
+  beforeEach(() => { api.session.save.mockClear(); api.session.load.mockReset(); });
+
+  /** 마지막 save 호출의 session.summaries. */
+  function savedSummaries(): Record<string, { content: string }> {
+    const arg = (api.session.save.mock.calls.at(-1) as unknown[])[0] as { session: { summaries: Record<string, { content: string }> } };
+    return arg.session.summaries;
+  }
+
+  it('중단된 새 타입 run 의 부분 스트림이 직전 타입의 완성 요약을 덮어쓰지 않는다', async () => {
+    // 'full' 완성 → 'keywords' 요약 시작 → Stop. handleAbort 는 flushStream + setIsGenerating(false)
+    // 만 하므로 summaryStream 에는 잘린 키워드표가, s.summary 에는 직전 full 완성본이 남는다.
+    resetStore({
+      document: makeDoc(),
+      summary: { id: 's1', documentId: 'doc-1', type: 'full', content: '완성된 전체 요약', model: 'gemma3', provider: 'ollama', createdAt: new Date(), durationMs: 1 },
+      summaryStream: '| 키워드 | 설​명 |\n|---|', // 중단된 부분 표
+      summaryStreamType: 'keywords',
+      summaryType: 'keywords',
+    });
+    await persistCurrentSession();
+    const s = savedSummaries();
+    // 회귀 전: summaries['full'] 이 잘린 키워드표로 덮어써져 완성 요약이 파괴됐다.
+    expect(Object.keys(s)).toEqual(['keywords']);
+    expect(s['keywords']?.content).toContain('키워드');
+    expect(s['full']).toBeUndefined();
+  });
+
+  it('첫 요약이 통합 단계에서 실패해도(s.summary=null) 완주한 청크 요약이 저장된다', async () => {
+    // 마지막 통합 호출이 429/0토큰으로 throw → setSummary 미호출 → s.summary 는 null 인 채
+    // summaryStream 에만 청크 요약들이 누적돼 있다(화면엔 보이므로 사용자는 저장됐다고 믿는다).
+    resetStore({
+      document: makeDoc(),
+      summary: null,
+      summaryStream: '1장 요약 ...\n2장 요약 ...',
+      summaryStreamType: 'full',
+      summaryType: 'full',
+    });
+    await persistCurrentSession();
+    // 회귀 전: `summaryContentToPersist && s.summary` 게이트에 걸려 한 글자도 저장되지 않았다.
+    expect(api.session.save).toHaveBeenCalledTimes(1);
+    expect(savedSummaries()['full']?.content).toContain('2장 요약');
+  });
+
+  it('복원 세션(run 없음 → summaryStreamType=null)은 s.summary.type 으로 폴백한다', async () => {
+    resetStore({
+      document: makeDoc(),
+      summary: { id: 's1', documentId: 'doc-1', type: 'keywords', content: '복원된 키워드', model: 'gemma3', provider: 'ollama', createdAt: new Date(), durationMs: 0 },
+      summaryStream: '복원된 키워드',
+      summaryStreamType: null,
+      summaryType: 'keywords',
+    });
+    await persistCurrentSession();
+    expect(Object.keys(savedSummaries())).toEqual(['keywords']);
+  });
+
+  // QA18(B-MED, 실데이터 손실): isCollectionBusy 는 디바운스만 막아야 한다. 종료 flush 까지
+  // 통째로 skip 하면 컬렉션 통합요약(분 단위 gather) 중 종료 시 직전에 완료된 Q&A 턴·요약이
+  // 사라진다 — QA10 handshake 가 no-op persist 를 기다리는 무의미 상태였다.
+  it('컬렉션 gather 중: 디바운스는 보류하되 종료 flush 는 부분저장으로 착지한다', async () => {
+    // 1단계: 인덱스를 가진 문서를 정상 전체저장해 부분저장 fast-path 의 전제(시그니처)를 만든다.
+    const vs = new VectorStore();
+    vs.setModel('nomic-embed-text');
+    vs.addChunk('청크', [1, 0, 0], 0, { pageStart: 1, pageEnd: 1 });
+    resetStore({ document: makeDoc(), summaryStream: '완료된 요약', summaryStreamType: 'full', ragIndex: vs });
+    await persistCurrentSession();
+    expect(api.session.save).toHaveBeenCalledTimes(1);
+
+    // 2단계: 컬렉션 통합요약(gather) 진행 중 + 방금 완료된 Q&A 턴.
+    api.session.save.mockClear();
+    api.session.savePartial.mockClear();
+    useAppStore.setState({
+      isCollectionBusy: true,
+      qaMessages: [{ id: 'q', role: 'user', content: '질문' }, { id: 'a', role: 'assistant', content: '답변' }],
+    });
+
+    await persistCurrentSession(false);
+    expect(api.session.savePartial).not.toHaveBeenCalled(); // 디바운스 경로는 기존대로 보류
+    expect(api.session.save).not.toHaveBeenCalled();
+
+    // 회귀 전: 게이트에서 즉시 return 해 종료 flush 가 no-op → 방금 완료된 Q&A 턴이 소실됐다.
+    await persistCurrentSession(true);
+    expect(api.session.savePartial).toHaveBeenCalledTimes(1);
+    const patch = (api.session.savePartial.mock.calls[0] as unknown[])[0] as { qaMessages: unknown[] };
+    expect(patch.qaMessages).toHaveLength(2);
+    // 전체저장으로는 폴백하지 않는다(mutex 밖 머지 read → 컬렉션 인라인 요약 lost-update 위험).
+    expect(api.session.save).not.toHaveBeenCalled();
   });
 });

@@ -32,7 +32,10 @@ function cleanTitle(raw: string): string {
   return raw
     .replace(freshCitationRe(), '')
     .replace(/\*\*([^*]+?)\*\*/g, '$1')  // **bold**
-    .replace(/\*([^*\n]+?)\*/g, '$1')    // *italic* (CommonMark 은 intraword * 허용 → 텍스트뷰와 일관)
+    // *italic* — QA18(A-LOW): flanking 규칙 적용. 여는 `*` 뒤와 닫는 `*` 앞에 공백이 오면
+    // CommonMark 은 강조로 보지 않는다. 미적용 시 `## 2 * 3 * 4 계산` 의 곱셈 기호가 통째로
+    // 사라져(`2 3 4 계산`) 텍스트뷰와 제목이 달라졌다.
+    .replace(/\*(?!\s)([^*\n]*[^*\s])\*/g, '$1')
     .replace(/__([^_]+?)__/g, '$1')      // __bold__ (단일 _ 는 미제거 → snake_case 보존)
     .replace(/`([^`]+?)`/g, '$1')        // `code`
     .replace(/~~([^~]+?)~~/g, '$1')      // ~~strike~~ (단일 ~ 는 미제거 → 범위 보존)
@@ -68,7 +71,10 @@ function collectHeadings(lines: string[], respectFences: boolean): { heads: RawH
     if (respectFences && /^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
     if (inFence) continue;
     // 닫는 `#` 시퀀스(예: `## 제목 ##`)도 허용, 제목만 캡처.
-    const h = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    // QA18(A-LOW): 선행 공백 0~3칸 허용 — CommonMark 이 3칸까지 heading 으로 인정하므로,
+    // 불허하면 텍스트뷰엔 제목으로 렌더되는 줄이 마인드맵에서만 노드로 누락되고 그 본문이
+    // 앞 노드 섹션에 흡수돼 페이지 배지까지 어긋난다(4칸 이상은 코드블록이라 계속 제외).
+    const h = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
     if (h && h[1] && h[2]) heads.push({ level: h[1].length, title: h[2], line: i });
   }
   return { heads, danglingFence: inFence };

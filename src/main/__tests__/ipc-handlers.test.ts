@@ -405,7 +405,9 @@ describe('ollama:status / pull-model', () => {
 
   it('status: getStatus throw → 안전 fallback', async () => {
     H.ollama.getStatus.mockRejectedValue(new Error('boom'));
-    expect(await invoke('ollama:status')).toEqual({ installed: false, running: false, models: [] });
+    // QA18(C-MED): fallback 도 managed 를 포함해야 렌더러가 "외부 관리라 재시작 불가" 와
+    // "상태 조회 실패" 를 구분하지 않고 안전측(재시작 시도 허용)으로 수렴한다.
+    expect(await invoke('ollama:status')).toEqual({ installed: false, running: false, models: [], managed: false });
   });
 
   it('pull-model: 유효하지 않은 model 거부 (pullModel 미호출)', async () => {

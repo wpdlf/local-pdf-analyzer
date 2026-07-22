@@ -388,10 +388,21 @@ export function SettingsPanel() {
   };
 
   const handleRestartOllama = async () => {
-    if (isRestarting) return; // 연타 가드 — stop/start 진행 중 재진입 차단
+    if (isRestarting || isPulling) return; // 연타 가드 + QA18(C-MED): pull 중 재시작 차단
     setIsRestarting(true);
     setRestartMessage(null);
     try {
+      // QA18(C-MED): 앱이 spawn 하지 않은(=외부에서 실행 중인) Ollama 는 stop/start 가 둘 다
+      // 즉시 no-op 이라 아무것도 재시작되지 않는다. Windows 표준 설치는 로그인 시 `ollama
+      // app.exe` 가 자동 실행되므로 이 경우가 오히려 흔하고, 기존엔 그때도 "재시작했습니다"
+      // 성공 배너가 떠서 버튼의 존재 이유(먹통 Ollama 복구)가 조용히 무효였다.
+      const before = await window.electronAPI.ollama.getStatus();
+      if (!mountedRef.current) return;
+      if (before.running && before.managed === false) {
+        setOllamaStatus(before);
+        setRestartMessage({ text: t('settings.restartUnmanaged'), ok: false });
+        return;
+      }
       await window.electronAPI.ollama.stop();
       if (!mountedRef.current) return;
       await window.electronAPI.ollama.start();
@@ -399,6 +410,13 @@ export function SettingsPanel() {
       const status = await window.electronAPI.ollama.getStatus();
       if (!mountedRef.current) return;
       setOllamaStatus(status);
+      // QA18(C-MED): start() 는 실패를 throw 하지 않고 false 를 반환한다 — 반환값을 무시하면
+      // Ollama 가 삭제·손상돼 기동에 실패해도 성공 배너가 떴다(바로 위 상태표시는 "중지됨"인데
+      // 배너는 "재시작했습니다"인 자기모순). 실제 running 으로 판정한다.
+      if (!status.running) {
+        setRestartMessage({ text: t('settings.restartFail'), ok: false });
+        return;
+      }
       // QA9(D-MED): 패널-로컬 피드백 — 설정 화면에서 바로 보이는 sticky 헤더 배너로.
       setRestartMessage({ text: t('settings.restartOk'), ok: true });
     } catch {
@@ -670,7 +688,7 @@ export function SettingsPanel() {
             );
           })()}
           <div className="flex gap-2">
-            <button onClick={handleRestartOllama} disabled={isRestarting} className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+            <button onClick={handleRestartOllama} disabled={isRestarting || isPulling} className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
               {isRestarting ? t('settings.restarting') : t('settings.restartOllama')}
             </button>
           </div>

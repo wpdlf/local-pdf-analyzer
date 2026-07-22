@@ -36,6 +36,9 @@ export class AiClient {
     let unsubDone: (() => void) | null = null;
     const IPC_TIMEOUT_MS = 120000; // 2분 — IPC 연결 해제 감지
     let ipcTimer: ReturnType<typeof setTimeout> | null = null;
+    // QA18(C-MED): IPC 타임아웃으로 종료됐는지. done 과 별개로 추적해야 finally 의 abort 가
+    // 도달한다(타임아웃 콜백이 done=true 를 세팅하므로 `!done` 만으로는 영원히 거짓).
+    let ipcTimedOut = false;
 
     try {
       unsubToken = window.electronAPI.ai.onToken((id, token) => {
@@ -93,6 +96,7 @@ export class AiClient {
         if (ipcTimer) clearTimeout(ipcTimer);
         ipcTimer = setTimeout(() => {
           if (!done) {
+            ipcTimedOut = true;
             error = new Error(t('ai.streamInterrupted'));
             done = true;
             resolver?.();
@@ -121,7 +125,15 @@ export class AiClient {
       // 도착하는 경우가 있어 throw 전에 명시적으로 재확인. 이미 captureRejection 이
       // 처리한 거절은 여기서 await 가 같은 값으로 한 번 더 거절되지만, 동일 변수에
       // 덮어쓰는 것이라 idempotent.
-      await resultPromise.then(captureResult, captureRejection);
+      // QA18(C-MED): 단 IPC 타임아웃으로 끊긴 경우는 await 하지 않는다. resultPromise 는
+      // main 의 invoke 응답이라, 애초에 "main 이 응답하지 않는다"가 이 타임아웃의 전제다 →
+      // 여기서 await 하면 제너레이터가 영구 정지해 streamInterrupted 조차 표면화되지 않고
+      // finally 의 abort 도 실행되지 않는다(타임아웃의 목적이 통째로 무효화되던 경로).
+      // 거절은 line 90 의 .then(captureResult, captureRejection) 이 이미 처리하므로
+      // unhandled rejection 도 생기지 않는다.
+      if (!ipcTimedOut) {
+        await resultPromise.then(captureResult, captureRejection);
+      }
 
       if (error) throw error;
     } finally {
@@ -129,7 +141,12 @@ export class AiClient {
       unsubToken?.();
       unsubDone?.();
       // break/return으로 중단 시 서버 측 요청도 abort
-      if (!done && requestId) {
+      // QA18(C-MED, 과금): IPC 타임아웃도 abort 대상이다. 타임아웃 콜백이 done=true 를 먼저
+      // 세팅하는 탓에 `!done` 가드가 스스로를 무력화해, "연결 끊김 감지" 경로가 정작 abort 를
+      // 보내지 않았다 — 렌더러는 streamInterrupted 로 실패 처리하고 손을 떼는데 main 의
+      // 스트림은 계속 돌며 클라우드 토큰을 소진하고 activeRequests 엔트리도 남았다.
+      // (main 의 60초 idle 타이머는 데이터가 흐르는 한 계속 리셋되므로 상한이 되지 못한다.)
+      if ((!done || ipcTimedOut) && requestId) {
         window.electronAPI.ai.abort(requestId);
       }
     }

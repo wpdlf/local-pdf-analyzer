@@ -13,7 +13,7 @@ import { SummaryTypeSelector } from './components/SummaryTypeSelector';
 import { StatusBar } from './components/StatusBar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { OllamaSetupWizard } from './components/OllamaSetupWizard';
-import { handlePdfData } from './lib/pdf-parser';
+import { handlePdfData, cancelPdfParse } from './lib/pdf-parser';
 import { applyTheme } from './lib/theme';
 import { useSummarize } from './lib/use-summarize';
 import { useRagBuilder } from './lib/use-qa';
@@ -47,6 +47,8 @@ export default function App() {
   const notice = useAppStore((s) => s.notice);
   const setNotice = useAppStore((s) => s.setNotice);
   const isParsing = useAppStore((s) => s.isParsing);
+  // QA18(D-MED): 문서가 열린 상태의 재파싱 진행 배너용(PdfUploader 는 이때 마운트되지 않음).
+  const ocrProgress = useAppStore((s) => s.ocrProgress);
   const isQaGenerating = useAppStore((s) => s.isQaGenerating);
   const ollamaStatus = useAppStore((s) => s.ollamaStatus);
   const summaryCollapsed = useAppStore((s) => s.summaryCollapsed);
@@ -57,6 +59,8 @@ export default function App() {
   // a11y M5: 뷰 전환 포커스 관리용 refs.
   const settingsBtnRef = useRef<HTMLButtonElement>(null);
   const altViewRef = useRef<HTMLElement>(null);
+  // QA18(D-LOW): main 뷰의 <main> — 포커스를 넘길 버튼이 없을 때의 최종 폴백.
+  const mainViewRef = useRef<HTMLElement>(null);
   const prevViewRef = useRef(useAppStore.getState().view);
   // QA10(A-LOW): 요약 뷰어 접기(✕) 시 포커스가 사라진 ✕ 버튼에서 body 로 표류하지 않도록,
   // 재진입("요약 보기") 버튼으로 이동시키기 위한 ref/전이 추적.
@@ -86,6 +90,9 @@ export default function App() {
         return;
       }
       await handlePdfData(result.data, result.name, result.path);
+      // QA18(D-LOW): 설정/설치 화면에서 열어도 문서가 보이지 않아 "먹통"으로 오인됐다
+      // (파싱은 수행되지만 화면은 그대로 → 사용자가 재드롭 → abort-replace 재파싱).
+      useAppStore.getState().setView('main');
     } catch (err) {
       // async 핸들러 내 throw 는 unhandledrejection 이 되어 ErrorBoundary 도 못 잡으므로 setError 로 수렴.
       useAppStore.getState().setError({
@@ -233,6 +240,9 @@ export default function App() {
       // 글로벌 drop / Ctrl+O 와 동일하게 setError 로 수렴.
       try {
         await handlePdfData(file.data, file.name, file.path);
+        // QA18(D-LOW): 설정/설치 화면에서 열어도 문서가 보이지 않아 "먹통"으로 오인됐다
+        // (파싱은 수행되지만 화면은 그대로 → 사용자가 재드롭 → abort-replace 재파싱).
+        useAppStore.getState().setView('main');
       } catch (err) {
         useAppStore.getState().setError({
           code: 'PDF_PARSE_FAIL',
@@ -312,6 +322,9 @@ export default function App() {
           console.warn('[tabs] 드롭 파일의 실경로 획득 실패 — 파일명 fallback (전환 시 세션 복원 의존)', file.name);
         }
         await handlePdfData(buffer, file.name, realPath);
+        // QA18(D-LOW): 설정/설치 화면에서 열어도 문서가 보이지 않아 "먹통"으로 오인됐다
+        // (파싱은 수행되지만 화면은 그대로 → 사용자가 재드롭 → abort-replace 재파싱).
+        useAppStore.getState().setView('main');
       } catch (err) {
         useAppStore.getState().setError({
           code: 'PDF_PARSE_FAIL',
@@ -412,7 +425,11 @@ export default function App() {
     const prev = prevCollapsedRef.current;
     prevCollapsedRef.current = summaryCollapsed;
     if (!prev && summaryCollapsed && document) {
-      (viewSummaryBtnRef.current ?? altViewRef.current)?.focus();
+      // QA18(D-LOW): altViewRef 는 setup/settings 의 <main> 에만 붙어 main 뷰에서는 항상
+      // null 이라 폴백이 죽어 있었다 — 첫 토큰 도착 전 ✕ 로 접으면(hasSummary=false 라
+      // "요약 보기" 버튼 미렌더) 두 ref 모두 null 이 되어 포커스가 body 로 유실됐다.
+      // 실제 메인 컨테이너를 최종 폴백으로 사용한다.
+      (viewSummaryBtnRef.current ?? altViewRef.current ?? mainViewRef.current)?.focus();
     }
   }, [summaryCollapsed, document]);
 
@@ -489,8 +506,35 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-auto p-4">
+      {/* QA18(D-MED): 문서가 이미 열린 상태에서 새 PDF 를 열면(헤더 📂 / Ctrl+O / 드래그드롭,
+          또는 세션 없는 탭 전환의 재파싱) PdfUploader 가 마운트돼 있지 않아 진행 표시도 취소
+          버튼도 전혀 없었다. 화면은 이전 문서 그대로인데 ⚙️·탭·＋ 가 모두 비활성이라 "앱이
+          멈춘 것"처럼 보였고, 스캔 PDF 의 OCR 이면 수 분간 취소조차 불가능했다.
+          role="status" — 진행 상황을 SR 에 polite 통지(bgModelSync 배너와 동형). */}
+      {isParsing && (document || hasSummary) && (
+        <div role="status" className="flex items-center gap-3 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-400">
+          <svg aria-hidden="true" className="animate-spin h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="flex-1 min-w-0 truncate">
+            {ocrProgress
+              ? `${t('uploader.ocrProgress')} (${ocrProgress.current} / ${ocrProgress.total})`
+              : t('uploader.reading')}
+          </span>
+          <button
+            type="button"
+            onClick={() => cancelPdfParse()}
+            className="shrink-0 px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
+            aria-label={t('uploader.cancelParse')}
+          >
+            {t('uploader.cancelBtn')}
+          </button>
+        </div>
+      )}
+
+      {/* Main Content — tabIndex={-1}: 프로그램적 포커스 폴백 대상(QA18 D-LOW), 탭 순서엔 미포함 */}
+      <main ref={mainViewRef} tabIndex={-1} className="flex-1 overflow-y-auto p-4 focus:outline-none">
         {/* 에러 표시 — role="alert"(assertive): 모든 작업 실패의 단일 채널이므로 SR 즉시 통지(a11y H1) */}
         {error && (
           <div role="alert" className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start justify-between">
