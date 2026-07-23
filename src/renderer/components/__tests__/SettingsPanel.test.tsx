@@ -27,6 +27,17 @@ const sessionMock = {
   stats: vi.fn(() => Promise.resolve({ count: 3, totalBytes: 2048, dir: 'C:/sessions' })),
   clear: vi.fn(() => Promise.resolve()),
 };
+// 자동 업데이트 — 기본은 unsupported(개발 실행과 동일)라 조작 UI 없이 안내만 렌더된다.
+// 상태별 UI 는 SettingsPanel-update.test.tsx 가 별도 커버.
+const updateMock = {
+  getState: vi.fn(() => Promise.resolve({
+    status: 'unsupported' as const, currentVersion: '9.9.9', newVersion: null, percent: 0, errorKey: null,
+  })),
+  check: vi.fn(),
+  download: vi.fn(),
+  install: vi.fn(),
+  onStatus: vi.fn(() => () => {}),
+};
 
 vi.stubGlobal('window', Object.assign(window, {
   electronAPI: {
@@ -35,6 +46,7 @@ vi.stubGlobal('window', Object.assign(window, {
     ollama: ollamaMock,
     apiKey: api,
     session: sessionMock,
+    update: updateMock,
     onSetupProgress: vi.fn(() => () => {}),
     openExternal: vi.fn(),
   },

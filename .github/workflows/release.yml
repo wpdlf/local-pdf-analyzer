@@ -167,12 +167,30 @@ jobs:
       # QA(post-v0.24.4): 이전 v2.6.2 는 deprecated Node20 기반이라 GitHub 의 Node20 shim
       # 제거 시 자산 업로드 스텝이 깨질 위험이 있었다. v3.0.0 은 node24 + files/append_body/body
       # 입력 동일(검증 완료)이라 호환 범프.
+      # 자동 업데이트 자산 검증 — electron-updater 는 릴리즈에 latest.yml 이 있어야 새 버전을
+      # 감지하고, .blockmap 이 있어야 차등(delta) 다운로드를 한다. package.json 의 build.publish
+      # (github provider)가 설정돼 있어야 electron-builder 가 이 둘을 생성하는데, 그 설정이
+      # 지워지면 빌드는 그대로 성공하고 릴리즈도 정상으로 보이지만 **모든 사용자의 자동 업데이트가
+      # 조용히 멈춘다**(앱은 "최신 버전"으로 계속 표시). 자산 업로드 전에 존재를 강제한다.
+      - name: Verify auto-update metadata exists
+        shell: bash
+        run: |
+          for f in dist/latest.yml dist/*Setup*.exe.blockmap; do
+            if [ ! -f "$f" ]; then
+              echo "::error::auto-update 자산 누락: $f — package.json build.publish(github) 설정을 확인하세요"
+              exit 1
+            fi
+          done
+          echo "latest.yml + blockmap OK"
+
       - name: Upload installer to release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         with:
           files: |
             dist/*Setup*.exe
             dist/SHA256SUMS-windows.txt
+            dist/latest.yml
+            dist/*Setup*.exe.blockmap
           append_body: true
           body: |
             ### Windows installer SHA-256

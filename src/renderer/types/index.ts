@@ -172,6 +172,9 @@ export interface AppSettings {
   // session-persistence: 문서별 요약·Q&A·RAG 인덱스를 콘텐츠 해시 기준으로 영속화.
   // OFF 시 저장/복원 전체 skip(프라이버시/디스크 민감 사용자용). 기본 ON.
   persistSessions: boolean;
+  // 자동 업데이트: 앱 기동 시 새 버전 존재 여부만 확인한다(다운로드는 항상 사용자 승인 후).
+  // OFF 시 설정의 "지금 확인" 수동 버튼만 동작. 패키징 빌드 + Windows 에서만 의미가 있다.
+  autoCheckUpdates: boolean;
 }
 
 // Provider별 대표 모델
@@ -369,4 +372,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customSummaryTemplates: [],
   enableAnswerVerification: true,
   persistSessions: true,
+  autoCheckUpdates: true,
 };

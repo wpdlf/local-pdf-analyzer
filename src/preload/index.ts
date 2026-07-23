@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { SessionManifestEntry, SessionStats, SessionSaveMeta, GlobalSearchResult, SemanticSearchResponse } from '../shared/session-types';
 import type { SavedCollection } from '../shared/collection-types';
+import type { UpdateState } from '../shared/update-types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   ollama: {
@@ -83,6 +84,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     save: (input: { id?: string; name: string; docHashes: string[] }) =>
       ipcRenderer.invoke('collections:save', input),
     delete: (id: string) => ipcRenderer.invoke('collections:delete', id),
+  },
+  // 자동 업데이트(electron-updater). 모든 조작은 main 이 상태 머신으로 게이트하므로 preload 는
+  // 순수 전달만 한다. onStatus 는 check/download 진행을 push 로 받는 채널.
+  update: {
+    getState: () => ipcRenderer.invoke('update:get-state'),
+    check: () => ipcRenderer.invoke('update:check'),
+    download: () => ipcRenderer.invoke('update:download'),
+    install: () => ipcRenderer.invoke('update:install'),
+    onStatus: (callback: (state: UpdateState) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: UpdateState) => callback(state);
+      ipcRenderer.on('update:status', handler);
+      return () => ipcRenderer.removeListener('update:status', handler);
+    },
   },
   openExternal: (url: string) => {
     if (typeof url !== 'string' || !url.startsWith('https://')) return Promise.resolve();
@@ -191,6 +205,15 @@ export type ElectronAPI = {
     list: () => Promise<SavedCollection[]>;
     save: (input: { id?: string; name: string; docHashes: string[] }) => Promise<{ ok: boolean; id?: string }>;
     delete: (id: string) => Promise<{ ok: boolean }>;
+  };
+  update: {
+    getState: () => Promise<UpdateState>;
+    /** 수동 확인. main 이 진행 중이면 현재 상태를 그대로 돌려준다(재진입 무해). */
+    check: () => Promise<UpdateState>;
+    download: () => Promise<UpdateState>;
+    /** 렌더러 flush 완주 후 앱을 종료하고 인스톨러를 실행 — 반환 전에 앱이 닫힐 수 있다. */
+    install: () => Promise<UpdateState>;
+    onStatus: (callback: (state: UpdateState) => void) => () => void;
   };
   openExternal: (url: string) => Promise<void>;
   getPathForFile: (file: File) => string;

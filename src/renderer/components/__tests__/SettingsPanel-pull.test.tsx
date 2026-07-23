@@ -24,6 +24,11 @@ vi.stubGlobal('window', Object.assign(window, {
     ollama: ollamaMock,
     apiKey: { has: vi.fn(() => Promise.resolve(false)) },
     session: { stats: vi.fn(() => Promise.resolve({ count: 0, totalBytes: 0, dir: 'C:/x' })), clear: vi.fn() },
+    update: {
+      getState: vi.fn(() => Promise.resolve({ status: 'unsupported', currentVersion: '9.9.9', newVersion: null, percent: 0, errorKey: null })),
+      check: vi.fn(), download: vi.fn(), install: vi.fn(),
+      onStatus: vi.fn(() => () => {}),
+    },
     onSetupProgress: vi.fn(() => () => {}),
     openExternal: vi.fn(),
   },

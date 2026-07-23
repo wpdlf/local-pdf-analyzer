@@ -1,4 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron';
+// 자동 업데이트: electron-updater 는 main 전용(production dependency 로 asar 에 동봉된다 —
+// electron-builder 는 files 패턴과 무관하게 production 의존성을 수집한다).
+import { autoUpdater } from 'electron-updater';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 // R38 P1-2: sync `fs` 는 API 키 저장 로직과 함께 api-keys-store.ts 로 이동. 본 파일은 fsp 만 사용.
@@ -6,6 +9,9 @@ import fsp from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { OllamaManager } from './ollama-manager';
 import { decideCloseAction, selectFlushTargets } from './window-flush-policy';
+import { createUpdaterService, type UpdaterService } from './updater';
+import { AUTO_CHECK_STARTUP_DELAY_MS } from './update-policy';
+import type { UpdateState } from '../shared/update-types';
 import { generate, abortGenerate, abortAllRequests, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
 import { MAX_PDF_SIZE_BYTES, isLocalhostHost } from '../shared/constants';
 // v0.18.19 patch R34 P2: settings 키 단일 출처. 이전엔 본 파일 두 곳에 별도 리터럴이 있었고
@@ -93,6 +99,7 @@ const defaultSettings = {
   customSummaryTemplates: [],
   enableAnswerVerification: true,
   persistSessions: true,
+  autoCheckUpdates: true,
 } as const;
 
 // R34 P2: VALID_SETTINGS_KEYS_SET 은 settings-keys.ts 에서 import (단일 출처).
@@ -362,6 +369,14 @@ app.whenReady().then(async () => {
       createWindow();
     }
   });
+
+  // 자동 업데이트 확인 — 부팅 경합을 피해 지연 실행. 설정 OFF / 비패키징 / 비-Windows 는
+  // 서비스 내부 게이트에서 즉시 no-op 이 된다(네트워크 호출 없음).
+  const autoCheckTimer = setTimeout(() => {
+    void getUpdaterService().check('auto');
+  }, AUTO_CHECK_STARTUP_DELAY_MS);
+  // 지연 구간에 사용자가 앱을 닫으면 타이머가 종료 시퀀스 뒤로 남지 않도록 정리.
+  app.once('before-quit', () => clearTimeout(autoCheckTimer));
 });
 
 app.on('window-all-closed', () => {
@@ -464,6 +479,40 @@ app.on('before-quit', (e) => {
   }
 });
 
+// ─── 자동 업데이트 (electron-updater) ───
+// 결정 로직/상태 전이는 update-policy.ts, 배선·IPC 는 updater.ts. 여기서는 electron 의존
+// 주입만 한다. 설치 경로가 flushRenderersBeforeQuit 를 재사용하는 것이 핵심 — 그러지 않으면
+// quitAndInstall 의 즉시 종료가 QA10/16/17/18 이 반복해서 막아온 마지막 델타 소실을 재현한다.
+let updaterService: UpdaterService | null = null;
+
+function broadcastUpdateState(state: UpdateState): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    win.webContents.send('update:status', state);
+  }
+}
+
+function getUpdaterService(): UpdaterService {
+  if (!updaterService) {
+    updaterService = createUpdaterService({
+      autoUpdater,
+      ipcMain,
+      currentVersion: app.getVersion(),
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      broadcast: broadcastUpdateState,
+      flushBeforeInstall: flushRenderersBeforeQuit,
+      isAutoCheckEnabled: async () => {
+        const settings = await loadSettings();
+        // 미저장(구버전에서 올라온 settings.json)은 기본값 ON.
+        return settings.autoCheckUpdates !== false;
+      },
+    });
+    updaterService.wire();
+  }
+  return updaterService;
+}
+
 const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');
 
 // ─── API 키 암호화 저장소 ───
@@ -481,6 +530,10 @@ let activeEmbedRequests = 0;
 // 본 함수를 직접 호출해 ipcMain.handle 로 등록된 핸들러를 캡처·invoke 한다. 프로덕션 경로는
 // 변함없이 app.whenReady().then 에서 1회 호출된다.
 export function registerIpcHandlers(): void {
+  // 자동 업데이트 update:get-state / check / download / install.
+  // 서비스 생성 시 autoUpdater 이벤트도 함께 wire 된다(지원 환경이 아니면 no-op).
+  getUpdaterService().registerHandlers();
+
   ipcMain.handle('settings:get', () => {
     // API 키는 Renderer에 전달하지 않음 — Main 프로세스에서만 사용
     return loadSettings();
@@ -619,6 +672,9 @@ export function registerIpcHandlers(): void {
             if (typeof val === 'boolean') filtered[key] = val;
             break;
           case 'persistSessions':
+            if (typeof val === 'boolean') filtered[key] = val;
+            break;
+          case 'autoCheckUpdates':
             if (typeof val === 'boolean') filtered[key] = val;
             break;
         }

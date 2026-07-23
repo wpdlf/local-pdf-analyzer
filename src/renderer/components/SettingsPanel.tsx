@@ -3,6 +3,7 @@ import { useAppStore } from '../lib/store';
 import { useT, translateMainProgress, translateMainError } from '../lib/i18n';
 import type { MainProgressEvent } from '../lib/i18n';
 import type { AppSettings, AiProviderType, SummaryTemplate, SummaryStrategy } from '../types';
+import type { UpdateState } from '../../shared/update-types';
 import { PROVIDER_MODELS, UI_LANGUAGES, DEFAULT_SETTINGS, PROVIDER_LABELS, matchesModel, MAX_CUSTOM_TEMPLATES, MAX_TEMPLATE_NAME_LEN, MAX_TEMPLATE_PROMPT_LEN } from '../types';
 import { applyTheme } from '../lib/theme';
 
@@ -77,6 +78,35 @@ export function SettingsPanel() {
     // eslint-disable-next-line no-alert
     if (!window.confirm(t('settings.clearConfirm'))) return;
     try { await window.electronAPI.session.clear(); } finally { void refreshSessionStats(); }
+  };
+
+  // ─── 자동 업데이트 ───
+  // main 이 상태 머신을 소유하므로 패널은 (1) 진입 시 현재 상태 조회 (2) 이후 push 구독만 한다.
+  // 조작 가능 여부도 main 의 status 로만 판정 — 로컬 낙관적 상태를 두면 두 상태가 어긋난다.
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null);
+  useEffect(() => {
+    window.electronAPI.update.getState()
+      .then((s) => { if (mountedRef.current) setUpdateState(s); })
+      .catch(() => {});
+    // 구독 해제는 언마운트 시 — check/download 는 수 초~수 분 걸리므로 패널을 닫았다 다시 열어도
+    // main 의 상태가 진실 원천이라 진행 상황이 그대로 이어진다.
+    const unsub = window.electronAPI.update.onStatus((s) => {
+      if (mountedRef.current) setUpdateState(s);
+    });
+    return unsub;
+  }, []);
+
+  const handleUpdateCheck = async () => {
+    try { const s = await window.electronAPI.update.check(); if (mountedRef.current) setUpdateState(s); }
+    catch { /* 실패는 main 이 errorKey 상태로 push 한다 */ }
+  };
+  const handleUpdateDownload = async () => {
+    try { const s = await window.electronAPI.update.download(); if (mountedRef.current) setUpdateState(s); }
+    catch { /* 상동 */ }
+  };
+  const handleUpdateInstall = async () => {
+    // 반환 전에 앱이 종료될 수 있다(quitAndInstall) — 결과를 기다려 setState 하지 않는다.
+    try { await window.electronAPI.update.install(); } catch { /* 상동 */ }
   };
 
   useEffect(() => {
@@ -899,6 +929,91 @@ export function SettingsPanel() {
           </div>
         )}
         </fieldset>
+      </section>
+
+      {/* 앱 업데이트 (electron-updater) — 상태/조작 가능 여부는 전적으로 main 의 status 를 따른다.
+          unsupported(개발 실행/비-Windows)면 조작 없이 안내만 표시. */}
+      <section className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <h3 className="font-medium mb-1 text-gray-700 dark:text-gray-200">{t('update.section')}</h3>
+        {updateState && (
+          <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+            {t('update.currentVersion', { version: updateState.currentVersion })}
+          </p>
+        )}
+
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={draft.autoCheckUpdates}
+            onChange={(e) => updateDraft({ autoCheckUpdates: e.target.checked })}
+            className="w-4 h-4 rounded"
+          />
+          <div>
+            <span className="text-sm text-gray-700 dark:text-gray-200">{t('update.autoCheckLabel')}</span>
+            <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">{t('update.autoCheckDesc')}</p>
+          </div>
+        </label>
+
+        {updateState?.status === 'unsupported' ? (
+          <p className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
+            {t('update.unsupported')}
+          </p>
+        ) : updateState && (
+          <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+            {/* role="status" — 확인/다운로드 진행과 결과를 SR 에 polite 통지(앱 배너들과 동형) */}
+            <p role="status" className="text-sm text-gray-700 dark:text-gray-200 min-h-5">
+              {updateState.status === 'checking' && t('update.checking')}
+              {updateState.status === 'not-available' && t('update.upToDate')}
+              {updateState.status === 'available' && t('update.available', { version: updateState.newVersion ?? '' })}
+              {updateState.status === 'downloading' && t('update.downloading', { percent: updateState.percent })}
+              {updateState.status === 'downloaded' && t('update.downloaded', { version: updateState.newVersion ?? '' })}
+              {updateState.status === 'error' && translateMainError({ errorKey: updateState.errorKey ?? undefined }, t('mainerr.updateUnknown'))}
+            </p>
+
+            {updateState.status === 'downloading' && (
+              <div
+                role="progressbar"
+                aria-label={t('update.downloadProgressAria')}
+                aria-valuenow={updateState.percent}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                className="mt-2 h-2 w-full bg-gray-200 dark:bg-gray-700 rounded overflow-hidden"
+              >
+                <div className="h-full bg-blue-500 transition-all" style={{ width: `${updateState.percent}%` }} />
+              </div>
+            )}
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleUpdateCheck}
+                disabled={updateState.status === 'checking' || updateState.status === 'downloading'}
+                className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {t('update.checkBtn')}
+              </button>
+              {updateState.status === 'available' && (
+                <button
+                  onClick={handleUpdateDownload}
+                  className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                >
+                  {t('update.downloadBtn')}
+                </button>
+              )}
+              {updateState.status === 'downloaded' && (
+                <button
+                  onClick={handleUpdateInstall}
+                  className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                >
+                  {t('update.installBtn')}
+                </button>
+              )}
+            </div>
+
+            {updateState.status === 'downloaded' && (
+              <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">{t('update.installNotice')}</p>
+            )}
+          </div>
+        )}
       </section>
 
     </div>

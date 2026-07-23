@@ -1,6 +1,6 @@
 {
   "name": "summary-lecture-material",
-  "version": "0.31.29",
+  "version": "0.31.30",
   "description": "PDF 자료 분석 데스크톱 앱",
   "license": "MIT",
   "main": "./out/main/index.js",
@@ -19,6 +19,7 @@
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "pdfjs-dist": "^6.1.200",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -78,6 +79,13 @@
       "shortcutName": "PDF 자료 분석기"
     },
     "forceCodeSigning": false,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "wpdlf",
+        "repo": "local-pdf-analyzer"
+      }
+    ],
     "mac": {
       "target": "dmg",
       "icon": "resources/icon.png",

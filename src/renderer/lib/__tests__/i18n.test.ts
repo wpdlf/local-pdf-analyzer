@@ -222,6 +222,24 @@ describe('errorKey ↔ i18n 사전 계약 가드 (QA11)', () => {
     expect(missing).toEqual([]);
   });
 
+  // 자동 업데이트의 errorKey 는 `errorKey: 'x'` 리터럴이 아니라 classifyUpdateError 의 반환값이라
+  // 위 소스 스캔에 걸리지 않는다. update-policy 가 export 하는 집합을 런타임으로 대조한다.
+  it('업데이트 errorKey 전체가 ko/en 번역을 갖는다', async () => {
+    const { _translations } = await import('../i18n');
+    const { UPDATE_ERROR_KEYS, classifyUpdateError } = await import('../../../main/update-policy');
+    const dict = _translations as Record<string, { ko: string; en: string } | undefined>;
+    const missing = [...UPDATE_ERROR_KEYS].filter((k) => {
+      const entry = dict[`mainerr.${k}`];
+      return !entry || !entry.ko.trim() || !entry.en.trim();
+    });
+    expect(missing).toEqual([]);
+    // 분류기가 집합 밖의 키를 만들어내지 않는지도 함께 고정(미번역 키 방출 차단).
+    const samples = ['ENOTFOUND', '404 not found', 'sha512 mismatch', 'weird failure', ''];
+    for (const s of samples) {
+      expect(UPDATE_ERROR_KEYS as readonly string[]).toContain(classifyUpdateError(new Error(s)));
+    }
+  });
+
   it('회귀 가드: QA11 에서 추가한 전송/크기 에러 키가 방출·번역된다', async () => {
     const { _translations } = await import('../i18n');
     const dict = _translations as Record<string, unknown>;

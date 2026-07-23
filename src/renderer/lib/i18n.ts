@@ -454,6 +454,47 @@ export const _translations = {
   'settings.storageLocation': { ko: '위치: {dir}', en: 'Location: {dir}' },
   'settings.clearSessions': { ko: '전체 비우기', en: 'Clear all' },
   'settings.clearConfirm': { ko: '저장된 모든 세션을 삭제할까요? 되돌릴 수 없습니다.', en: 'Delete all saved sessions? This cannot be undone.' },
+  // ─── 자동 업데이트 (electron-updater) ───
+  'update.section': { ko: '앱 업데이트', en: 'App Updates' },
+  'update.currentVersion': { ko: '현재 버전 {version}', en: 'Current version {version}' },
+  'update.autoCheckLabel': { ko: '시작할 때 새 버전 확인', en: 'Check for updates on startup' },
+  'update.autoCheckDesc': {
+    ko: '확인만 자동으로 하고, 다운로드는 항상 사용자가 승인한 뒤에 시작합니다.',
+    en: 'Only the check is automatic — downloads always start after you approve them.',
+  },
+  'update.checkBtn': { ko: '지금 확인', en: 'Check now' },
+  'update.checking': { ko: '업데이트 확인 중...', en: 'Checking for updates...' },
+  'update.upToDate': { ko: '최신 버전을 사용 중입니다.', en: 'You are on the latest version.' },
+  'update.available': { ko: '새 버전 {version} 을 사용할 수 있습니다.', en: 'Version {version} is available.' },
+  'update.downloadBtn': { ko: '다운로드', en: 'Download' },
+  'update.downloading': { ko: '다운로드 중... {percent}%', en: 'Downloading... {percent}%' },
+  'update.downloadProgressAria': { ko: '업데이트 다운로드 진행률', en: 'Update download progress' },
+  'update.downloaded': { ko: '{version} 설치 준비 완료 — 재시작하면 적용됩니다.', en: 'Version {version} is ready — restart to apply.' },
+  'update.installBtn': { ko: '재시작하여 설치', en: 'Restart and install' },
+  'update.installNotice': {
+    ko: '설치 중 앱이 종료됩니다. 작업 중인 요약·Q&A 는 종료 전에 저장됩니다.',
+    en: 'The app will close to install. Summaries and Q&A in progress are saved before it closes.',
+  },
+  'update.unsupported': {
+    ko: '자동 업데이트는 설치된 Windows 앱에서만 동작합니다 (개발 실행 중에는 비활성).',
+    en: 'Auto-update works only in the installed Windows app (disabled while running from source).',
+  },
+  'update.bannerReady': { ko: '새 버전 {version} 이 준비되었습니다.', en: 'Version {version} is ready to install.' },
+  'update.bannerDismiss': { ko: '업데이트 알림 닫기', en: 'Dismiss update notice' },
+  // main updater errorKey (mainerr.* 규약) — classifyUpdateError 가 반환하는 4종
+  'mainerr.updateNetwork': {
+    ko: '업데이트 서버에 연결할 수 없습니다. 네트워크를 확인한 뒤 다시 시도해주세요.',
+    en: 'Could not reach the update server. Check your network and try again.',
+  },
+  'mainerr.updateNoFeed': {
+    ko: '업데이트 정보를 찾을 수 없습니다. 잠시 후 다시 시도하거나 GitHub 릴리즈에서 직접 내려받아주세요.',
+    en: 'No update information was found. Try again later or download it directly from the GitHub releases page.',
+  },
+  'mainerr.updateChecksum': {
+    ko: '다운로드한 파일의 무결성 검증에 실패했습니다. 다시 시도해주세요.',
+    en: 'The downloaded file failed its integrity check. Please try again.',
+  },
+  'mainerr.updateUnknown': { ko: '업데이트에 실패했습니다.', en: 'The update failed.' },
   'session.saveFailedNotice': { ko: '세션 저장에 반복 실패했습니다. 저장 공간·권한을 확인해주세요 — 요약·Q&A·검색 인덱스가 디스크에 보존되지 않아 다시 열면 사라집니다.', en: 'Session saving keeps failing. Check disk space/permissions — summaries, Q&A, and the search index are not being persisted and will be lost on reopen.' },
 } as const;
 

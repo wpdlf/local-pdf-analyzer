@@ -66,8 +66,11 @@ vi.mock('electron', () => ({
     // 않게 하여 테스트가 직접 registerIpcHandlers() 를 호출해 1회만 등록하도록 한다.
     whenReady: () => new Promise(() => {}),
     requestSingleInstanceLock: () => true,
+    once: vi.fn(),
     quit: vi.fn(),
     isPackaged: false,
+    // 자동 업데이트 서비스가 초기 상태(currentVersion)를 만들 때 사용.
+    getVersion: () => '0.0.0-test',
     getLocale: H.appLocale,
   },
   BrowserWindow: class {
@@ -84,6 +87,18 @@ vi.mock('electron', () => ({
   shell: H.shell,
 }));
 
+// index.ts 가 정적 import 하는 electron-updater — 실물은 electron 런타임을 요구한다.
+// isPackaged:false 라 updater 서비스는 wire 하지 않지만(no-op), 모듈 로드 자체는 발생한다.
+vi.mock('electron-updater', () => ({
+  autoUpdater: {
+    autoDownload: true,
+    autoInstallOnAppQuit: true,
+    on: vi.fn(),
+    checkForUpdates: vi.fn(),
+    downloadUpdate: vi.fn(),
+    quitAndInstall: vi.fn(),
+  },
+}));
 vi.mock('../ai-service', () => H.ai);
 vi.mock('../ollama-manager', () => ({
   OllamaManager: class {

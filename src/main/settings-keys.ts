@@ -35,6 +35,7 @@ export const VALID_SETTINGS_KEYS = [
   'customSummaryTemplates',
   'enableAnswerVerification',
   'persistSessions',
+  'autoCheckUpdates',
 ] as const;
 
 export type ValidSettingsKey = typeof VALID_SETTINGS_KEYS[number];

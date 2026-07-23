@@ -45,6 +45,15 @@
 
 > **참고**: AI 모델 다운로드에 기본 구성 약 3.6GB(한국어 특화 모델 포함 시 약 8.4GB)의 디스크 공간과 수 분의 시간이 필요합니다.
 
+### 자동 업데이트
+
+설치 후에는 앱이 시작할 때 GitHub 릴리즈에서 새 버전을 확인하고, 준비되면 알려줍니다 — 릴리즈마다 이 페이지를 다시 방문할 필요가 없습니다.
+
+- **확인은 자동, 다운로드는 수동** — 새 버전이 있다는 사실만 알려주고, 실제 다운로드(약 115MB)는 **다운로드** 버튼을 누른 뒤에 시작합니다. 종량제·테더링 환경에서 동의 없이 데이터를 쓰지 않습니다
+- **설치 시점도 사용자 선택** — 다운로드가 끝나면 **재시작하여 설치** 안내가 표시됩니다. 작업 중이던 요약·Q&A·검색 인덱스는 앱이 닫히기 전에 디스크에 저장됩니다
+- 시작 시 확인은 **설정 → 앱 업데이트**에서 끌 수 있으며, 그 화면의 **지금 확인** 버튼은 설정과 무관하게 언제나 동작합니다
+- 자동 업데이트는 설치된 Windows 앱에서만 동작합니다 — 소스 실행(`npm run dev`) 시에는 비활성으로 표시됩니다
+
 ### 인스톨러 무결성 검증
 
 각 릴리즈에는 인스톨러의 **SHA-256 해시**(`SHA256SUMS-windows.txt`)가 자산으로 첨부되며, GitHub Actions가 발급하는 **Sigstore build provenance attestation**으로 빌드 출처를 검증할 수 있습니다.
@@ -183,9 +192,10 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - 세션 자동 저장·복원 — 문서 해시 기준 복원, 최대 30개/200MB LRU 자동 정리 (설정에서 끄기/비우기 가능)
 - 페이지 단위 손상 복원력 — 깨진 페이지가 있어도 나머지 페이지는 계속 처리
 - 렌더 오류 복구 — 예기치 못한 UI 오류 시 "다시 시도" 버튼으로 재시작 없이 복구
+- 자동 업데이트 — 시작 시 새 버전을 감지해 클릭 한 번으로 설치. 동의 없이 다운로드하지 않으며, 재시작 전에 작업 중이던 내용을 저장합니다
 
 **품질 보증**
-- 단위 테스트 1515건 + Playwright E2E + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
+- 단위 테스트 1582건 + Playwright E2E + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
 - 빌드 무결성 — 인스톨러 SHA-256 해시 + Sigstore attestation 자동 게시
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 
@@ -220,6 +230,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 저장된 세션이 디스크를 너무 많이 차지함 | 최대 30개/200MB까지만 보관하고 초과 시 오래된 것부터 자동 삭제됩니다. 설정 → "세션 데이터"에서 용량 확인 및 "전체 비우기" 가능 |
 | 화면 오류로 앱이 멈춤 | 오류 화면의 "다시 시도" 버튼으로 재시작 없이 복구를 시도할 수 있습니다 |
 | 인스톨러가 변조됐는지 확인하고 싶음 | 릴리즈 페이지의 `SHA256SUMS-windows.txt` 해시와 비교하거나, `gh attestation verify`로 Sigstore provenance를 검증하세요 ([무결성 검증](#인스톨러-무결성-검증) 참고) |
+| 업데이트 확인이 실패하거나 새 버전이 안 뜸 | 설정 → 앱 업데이트에서 **지금 확인**을 눌러보세요. 네트워크 오류면 방화벽/프록시가 `github.com` 을 막고 있을 수 있습니다. 계속 실패하면 릴리즈 페이지에서 최신 버전을 직접 설치하세요. 자동 업데이트 도입 이전 버전은 최초 1회 수동 업데이트가 필요합니다 |
 | macOS 다운로드가 보이지 않음 | 코드사인/공증 자격이 갖춰질 때까지 dmg 출시를 일시 중단했습니다. 그동안은 소스에서 `npm run package`로 직접 빌드해 사용하실 수 있습니다 |
 
 > 과거 버전에서 수정된 문제들의 상세 이력은 [docs/HISTORY.md](docs/HISTORY.md)와 [GitHub Releases](https://github.com/wpdlf/local-pdf-analyzer/releases)를 참고하세요.
@@ -240,7 +251,8 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 상태 관리 | Zustand |
 | 스타일링 | Tailwind CSS v4 + @tailwindcss/typography |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG는 공증 자격 확보 시까지 일시 중단) |
-| 테스트 | Vitest 단위 테스트 1515건/88파일 (renderer·shared 1004 + main 511) + Playwright E2E (CI-결정적 9건) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (81/73/81/84) |
+| 자동 업데이트 | electron-updater (GitHub Releases 피드) — 시작 시 확인, 다운로드·설치는 사용자 승인 후, 설치 직전 렌더러 flush |
+| 테스트 | Vitest 단위 테스트 1582건/91파일 (renderer·shared 1017 + main 565) + Playwright E2E (CI-결정적 9건) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (81/73/81/84) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 290+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -291,7 +303,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (1515건, 88 파일)
+    │   └── __tests__/         # 단위 테스트 (1582건, 91 파일)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -486,7 +498,7 @@ PDF 파일
 
 ## 품질 보증
 
-- **단위 테스트 1515건 / 88파일** — renderer·shared 1004 + main 511. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service·전체 문서 검색까지 행위 테스트, 렌더러/preload 레이어(컴포넌트 16종 전수 + use-summarize/use-session/pdf-parser/safe-markdown 등 핵심 라이브러리 + preload 브리지)는 happy-dom 으로 행위 테스트
+- **단위 테스트 1582건 / 91파일** — renderer·shared 1017 + main 565. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service·전체 문서 검색까지 행위 테스트, 렌더러/preload 레이어(컴포넌트 16종 전수 + use-summarize/use-session/pdf-parser/safe-markdown 등 핵심 라이브러리 + preload 브리지)는 happy-dom 으로 행위 테스트
 - **Playwright E2E** — 실제 Electron 빌드를 구동하는 CI-결정적 테스트 9건(콜드 스타트 위자드·PDF 파싱·세션/설정 재시작 복원·업로드 에러 경로), 전부 AI 비의존, 멀티탭 복원과 요약/Q&A/컬렉션은 로컬-전용 Ollama 스펙으로 커버
 - **CI 게이트** — `tsc --noEmit`(strict, e2e 전용 타입체크 프로젝트 포함), 커버리지 임계(81/73/81/84) 강제, lockfile 버전 동기화 검증, `npm audit` advisory, Node 22/24 매트릭스 + Windows 유닛 테스트 레그
 - **4-에이전트 병렬 QA** — 릴리즈마다 전체 코드베이스 QA 라운드 수행, 50+ 라운드 연속 Critical 0건 (검출된 High/Important 는 릴리즈 전 즉시 수정 — 예: R41 이 v0.19.0 의 세션 손상 High 를 사전 차단; 최근 라운드는 Low~Medium 검출(여전히 Critical 0) — 최근 라운드들은 성능 딥다이브(지연 로딩·PDF 뷰어 메모리 윈도잉·자동저장/IPC 절감)와 안정성·데이터무결성 하드닝(종료 시점 세션 flush 조율·프로바이더 4-way 파리티 포함)을 뒷받침해 v0.31.20 까지 출시)

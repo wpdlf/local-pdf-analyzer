@@ -28,9 +28,9 @@ describe('preload contextBridge shape (R34 P2)', () => {
     expect(PRELOAD_SRC).toMatch(/exposeInMainWorld\(['"]electronAPI['"]/);
   });
 
-  it('top-level 키 집합 — ollama / ai / file / settings / apiKey / openExternal / onSetupProgress / onFileDropped', () => {
+  it('top-level 키 집합 — ollama / ai / file / settings / apiKey / update / openExternal / onSetupProgress / onFileDropped', () => {
     const expectedTopKeys = [
-      'ollama:', 'ai:', 'file:', 'settings:', 'apiKey:',
+      'ollama:', 'ai:', 'file:', 'settings:', 'apiKey:', 'update:',
       'openExternal:', 'onSetupProgress:', 'onFileDropped:', 'getPathForFile:',
     ];
     for (const key of expectedTopKeys) {
@@ -74,8 +74,8 @@ describe('preload contextBridge shape (R34 P2)', () => {
   });
 
   it('on* listeners 모두 unsubscribe 함수 반환 (memory leak 가드)', () => {
-    // ai.onToken, ai.onDone, onSetupProgress, onFileDropped 모두 removeListener 반환
-    const onPatterns = ['onToken', 'onDone', 'onSetupProgress', 'onFileDropped'];
+    // ai.onToken, ai.onDone, onSetupProgress, onFileDropped, update.onStatus 모두 removeListener 반환
+    const onPatterns = ['onToken', 'onDone', 'onSetupProgress', 'onFileDropped', 'onStatus'];
     for (const name of onPatterns) {
       // 각 listener 가 ipcRenderer.removeListener 를 반환하는지 source 에서 패턴 매칭
       const escaped = name.replace(/\$/g, '\\$');

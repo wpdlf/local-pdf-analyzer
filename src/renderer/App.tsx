@@ -68,6 +68,10 @@ export default function App() {
   const prevCollapsedRef = useRef(useAppStore.getState().summaryCollapsed);
   const [bgModelSync, setBgModelSync] = useState<string | null>(null);
   const [bgModelLoading, setBgModelLoading] = useState(false);
+  // 자동 업데이트: 다운로드가 끝난 뒤에만 배너를 띄운다. 확인/다운로드 진행은 설정 패널에만
+  // 표시 — 사용자가 요청하지 않은 백그라운드 작업으로 메인 화면을 어지럽히지 않기 위함.
+  const [updateReadyVersion, setUpdateReadyVersion] = useState<string | null>(null);
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
   // Ctrl+O / 파일 다이얼로그 재진입 가드. 진행 중이면 연타 Ctrl+O 를 무시한다.
   // 기존의 "setIsParsing(true) 만 올리는" 힌트 방식은 실제 재진입을 막지 못했음.
   const dialogOpenRef = useRef(false);
@@ -250,6 +254,26 @@ export default function App() {
         });
       }
     });
+    return unsubscribe;
+  }, []);
+
+  // 자동 업데이트 상태 수신 — 다운로드 완료 시에만 배너를 띄운다(그 외 상태는 설정 패널 소관).
+  // main 이 상태 머신을 소유하므로 여기서는 표시용 최소 정보만 보관한다.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.update.onStatus((state) => {
+      if (state.status === 'downloaded') {
+        setUpdateReadyVersion(state.newVersion);
+        // 새 버전이 준비될 때마다 dismiss 를 해제 — 이전 버전에서 닫아둔 상태가 다음 버전
+        // 알림까지 삼키지 않도록.
+        setUpdateBannerDismissed(false);
+      } else {
+        setUpdateReadyVersion(null);
+      }
+    });
+    // 설정 패널을 거치지 않고 첫 렌더에서도 준비 상태를 반영(예: 창을 다시 연 경우).
+    window.electronAPI.update.getState()
+      .then((state) => { if (state.status === 'downloaded') setUpdateReadyVersion(state.newVersion); })
+      .catch(() => {});
     return unsubscribe;
   }, []);
 
@@ -492,6 +516,29 @@ export default function App() {
 
       {/* multi-doc Phase 1: 열린 문서 탭바 (열린 문서 없으면 자체적으로 숨김) */}
       <TabBar />
+
+      {/* 자동 업데이트 준비 완료 알림 — 설정 패널에 들어가지 않아도 새 버전을 인지할 수 있게.
+          role="status": 사용자가 요청하지 않은 알림이므로 polite(다른 배너들과 동형). */}
+      {updateReadyVersion && !updateBannerDismissed && (
+        <div role="status" className="flex items-center gap-3 px-4 py-2 bg-green-50 dark:bg-green-900/20 border-b border-green-200 dark:border-green-800 text-sm text-green-700 dark:text-green-400">
+          <span className="flex-1 min-w-0 truncate">{tr('update.bannerReady', { version: updateReadyVersion })}</span>
+          <button
+            type="button"
+            onClick={() => { void window.electronAPI.update.install(); }}
+            className="shrink-0 px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+          >
+            {tr('update.installBtn')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setUpdateBannerDismissed(true)}
+            aria-label={tr('update.bannerDismiss')}
+            className="shrink-0 text-green-500 hover:text-green-700 dark:hover:text-green-300"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* 백그라운드 모델 다운로드 알림 — role="status": 진행/완료를 SR 에 polite 통지(a11y M1) */}
       {bgModelSync && (
