@@ -72,6 +72,9 @@ export default function App() {
   // 표시 — 사용자가 요청하지 않은 백그라운드 작업으로 메인 화면을 어지럽히지 않기 위함.
   const [updateReadyVersion, setUpdateReadyVersion] = useState<string | null>(null);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
+  // 설치는 앱을 종료시키므로 생성 중에는 막는다(SettingsPanel 의 aiBusy 게이트와 동일 기준).
+  const isCollectionBusy = useAppStore((s) => s.isCollectionBusy);
+  const updateInstallBusy = isGenerating || isQaGenerating || isCollectionBusy;
   // Ctrl+O / 파일 다이얼로그 재진입 가드. 진행 중이면 연타 Ctrl+O 를 무시한다.
   // 기존의 "setIsParsing(true) 만 올리는" 힌트 방식은 실제 재진입을 막지 못했음.
   const dialogOpenRef = useRef(false);
@@ -519,21 +522,39 @@ export default function App() {
 
       {/* 자동 업데이트 준비 완료 알림 — 설정 패널에 들어가지 않아도 새 버전을 인지할 수 있게.
           role="status": 사용자가 요청하지 않은 알림이므로 polite(다른 배너들과 동형). */}
-      {updateReadyVersion && !updateBannerDismissed && (
+      {/* QA19(D-LOW): 조건을 !== null 로 — 버전 문자열이 비어도(피드 이상) 알림 자체는 떠야 한다.
+          빈 버전이면 버전 미포함 문구로 폴백한다. */}
+      {updateReadyVersion !== null && !updateBannerDismissed && (
         <div role="status" className="flex items-center gap-3 px-4 py-2 bg-green-50 dark:bg-green-900/20 border-b border-green-200 dark:border-green-800 text-sm text-green-700 dark:text-green-400">
-          <span className="flex-1 min-w-0 truncate">{tr('update.bannerReady', { version: updateReadyVersion })}</span>
+          <span className="flex-1 min-w-0 truncate">
+            {updateReadyVersion
+              ? tr('update.bannerReady', { version: updateReadyVersion })
+              : tr('update.bannerReadyNoVersion')}
+          </span>
           <button
             type="button"
             onClick={() => { void window.electronAPI.update.install(); }}
-            className="shrink-0 px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+            // QA19(A-MED): 설치는 앱을 종료시켜 진행 중인 요약·Q&A 를 폐기한다. 설정의 세션
+            // 삭제와 동일 등급의 파괴적 조작이므로 생성 중에는 막는다(이전엔 무게이트라
+            // 요약 도중 클릭 한 번으로 무경고 소실됐다).
+            disabled={updateInstallBusy}
+            title={updateInstallBusy ? tr('update.installBlockedBusy') : undefined}
+            className="shrink-0 px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {tr('update.installBtn')}
           </button>
           <button
             type="button"
-            onClick={() => setUpdateBannerDismissed(true)}
+            onClick={() => {
+              setUpdateBannerDismissed(true);
+              // 배너가 사라지면 포커스가 body 로 표류한다 — 헤더의 설정 버튼으로 되돌린다.
+              if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(() => settingsBtnRef.current?.focus());
+              }
+            }}
             aria-label={tr('update.bannerDismiss')}
-            className="shrink-0 text-green-500 hover:text-green-700 dark:hover:text-green-300"
+            // QA19(D-LOW): green-500 on green-50 은 2.2:1 로 대비 미달 — 본문과 같은 green-700 로.
+            className="shrink-0 text-green-700 dark:text-green-400 hover:text-green-900 dark:hover:text-green-200"
           >
             ✕
           </button>

@@ -49,6 +49,20 @@ describe('main defaultSettings — settings 키 drift 가드 (QA11)', () => {
     expect(extractDefaultSettingsKeys(MAIN_INDEX_SRC)).toContain('customSummaryTemplates');
   });
 
+  // QA19(A-LOW): 5단계 절차 중 4단계(`settings:set` 의 switch validator)만 가드가 없었다.
+  // case 를 빠뜨리면 두 drift 가드는 green 인데 `filtered` 에 키가 안 담겨 **사용자가 토글을
+  // 켜고 저장해도 값이 저장되지 않는다**(패널 재진입 시 원복). 소스 스캔으로 대조한다.
+  it('settings:set switch 의 case 집합 == VALID_SETTINGS_KEYS (4단계 drift 가드)', () => {
+    const block = /for \(const key of VALID_SETTINGS_KEYS\)([\s\S]*?)\n      const updated =/.exec(MAIN_INDEX_SRC);
+    expect(block, 'settings:set 의 검증 루프를 찾지 못했습니다 — 구조가 바뀌었다면 정규식을 갱신하세요').not.toBeNull();
+    const cases = [...block![1]!.matchAll(/case '(\w+)':/g)].map((m) => m[1]!).sort();
+    expect(cases).toEqual([...VALID_SETTINGS_KEYS].sort());
+  });
+
+  it('회귀 가드: autoCheckUpdates 가 switch validator 에 존재 (v0.31.30 신규 키)', () => {
+    expect(MAIN_INDEX_SRC).toContain("case 'autoCheckUpdates':");
+  });
+
   it('추출기가 중첩 키를 top-level 로 오인하지 않는다', () => {
     const fake = [
       'const defaultSettings = {',

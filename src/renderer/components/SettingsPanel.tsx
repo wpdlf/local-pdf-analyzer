@@ -84,6 +84,9 @@ export function SettingsPanel() {
   // main 이 상태 머신을 소유하므로 패널은 (1) 진입 시 현재 상태 조회 (2) 이후 push 구독만 한다.
   // 조작 가능 여부도 main 의 status 로만 판정 — 로컬 낙관적 상태를 두면 두 상태가 어긋난다.
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
+  const updateUnsupported = updateState?.status === 'unsupported';
+  // 상태 전이로 언마운트되는 다운로드/설치 버튼에서 포커스를 되돌릴 앵커(QA19 D-MED).
+  const updateCheckBtnRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     window.electronAPI.update.getState()
       .then((s) => { if (mountedRef.current) setUpdateState(s); })
@@ -101,11 +104,17 @@ export function SettingsPanel() {
     catch { /* 실패는 main 이 errorKey 상태로 push 한다 */ }
   };
   const handleUpdateDownload = async () => {
+    // 이 버튼은 다운로드 시작과 동시에 언마운트된다 — 클릭 직후 포커스를 확인 버튼으로 옮겨
+    // body 표류를 막는다(포커스가 사라지면 키보드 사용자는 패널 맨 위부터 다시 Tab 해야 한다).
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => updateCheckBtnRef.current?.focus());
+    }
     try { const s = await window.electronAPI.update.download(); if (mountedRef.current) setUpdateState(s); }
     catch { /* 상동 */ }
   };
   const handleUpdateInstall = async () => {
     // 반환 전에 앱이 종료될 수 있다(quitAndInstall) — 결과를 기다려 setState 하지 않는다.
+    // 설치가 무산되면 main 이 errorKey 를 실은 상태를 push 하므로 여기서 처리할 것은 없다.
     try { await window.electronAPI.update.install(); } catch { /* 상동 */ }
   };
 
@@ -941,11 +950,14 @@ export function SettingsPanel() {
           </p>
         )}
 
-        <label className="flex items-center gap-3 cursor-pointer">
+        <label className={`flex items-center gap-3 ${updateUnsupported ? 'opacity-60' : 'cursor-pointer'}`}>
           <input
             type="checkbox"
             checked={draft.autoCheckUpdates}
             onChange={(e) => updateDraft({ autoCheckUpdates: e.target.checked })}
+            // QA19(A-LOW): 미지원 환경(dev/비-Windows)에서는 켜도 shouldAutoCheck 이 무조건
+            // false 라 아무 효과가 없다 — 동작하는 것처럼 보이지 않도록 비활성화한다.
+            disabled={updateUnsupported}
             className="w-4 h-4 rounded"
           />
           <div>
@@ -954,44 +966,69 @@ export function SettingsPanel() {
           </div>
         </label>
 
-        {updateState?.status === 'unsupported' ? (
+        {updateUnsupported ? (
           <p className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-600 dark:text-gray-400">
             {t('update.unsupported')}
           </p>
         ) : updateState && (
           <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-            {/* role="status" — 확인/다운로드 진행과 결과를 SR 에 polite 통지(앱 배너들과 동형) */}
+            {/* QA19(D-MED): 진행/결과는 polite(status), 실패는 assertive(alert)+빨강으로 분리.
+                이전엔 실패까지 같은 회색 status 라 사용자가 실패를 인지하지 못했다 — 앱 전반의
+                관례(Ollama 재시작 배너·pullError)와 정합. 다운로드 퍼센트는 라이브 영역에서
+                제외한다(정수 1단위 갱신 → SR 이 최대 100회 낭독). */}
             <p role="status" className="text-sm text-gray-700 dark:text-gray-200 min-h-5">
               {updateState.status === 'checking' && t('update.checking')}
               {updateState.status === 'not-available' && t('update.upToDate')}
-              {updateState.status === 'available' && t('update.available', { version: updateState.newVersion ?? '' })}
-              {updateState.status === 'downloading' && t('update.downloading', { percent: updateState.percent })}
-              {updateState.status === 'downloaded' && t('update.downloaded', { version: updateState.newVersion ?? '' })}
-              {updateState.status === 'error' && translateMainError({ errorKey: updateState.errorKey ?? undefined }, t('mainerr.updateUnknown'))}
+              {updateState.status === 'available' && (updateState.newVersion
+                ? t('update.available', { version: updateState.newVersion })
+                : t('update.availableNoVersion'))}
+              {updateState.status === 'downloading' && t('update.downloadingLive')}
+              {updateState.status === 'downloaded' && (updateState.newVersion
+                ? t('update.downloaded', { version: updateState.newVersion })
+                : t('update.bannerReadyNoVersion'))}
             </p>
 
+            {/* 설치 대기 중에도 직전 실패(설치 시작 실패 등)를 함께 보여준다 — main 이 downloaded
+                상태를 유지한 채 errorKey 만 실어 보내므로 설치 자격은 유지된다. */}
+            {(updateState.status === 'error' || updateState.errorKey)
+              && updateState.status !== 'checking' && updateState.status !== 'downloading' && (
+              <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">
+                {translateMainError({ errorKey: updateState.errorKey ?? undefined }, t('mainerr.updateUnknown'))}
+              </p>
+            )}
+
             {updateState.status === 'downloading' && (
-              <div
-                role="progressbar"
-                aria-label={t('update.downloadProgressAria')}
-                aria-valuenow={updateState.percent}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                className="mt-2 h-2 w-full bg-gray-200 dark:bg-gray-700 rounded overflow-hidden"
-              >
-                <div className="h-full bg-blue-500 transition-all" style={{ width: `${updateState.percent}%` }} />
-              </div>
+              <>
+                <p aria-hidden="true" className="mt-1 text-sm text-gray-700 dark:text-gray-200">
+                  {t('update.downloading', { percent: updateState.percent })}
+                </p>
+                <div
+                  role="progressbar"
+                  aria-label={t('update.downloadProgressAria')}
+                  aria-valuenow={updateState.percent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  className="mt-2 h-2 w-full bg-gray-200 dark:bg-gray-700 rounded overflow-hidden"
+                >
+                  <div className="h-full bg-blue-500 transition-all" style={{ width: `${updateState.percent}%` }} />
+                </div>
+              </>
             )}
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              {/* QA19(D-MED, 포커스): 확인 버튼은 항상 렌더하고 ref 를 유지한다 — 다운로드/설치
+                  버튼은 상태 전이로 언마운트되므로, 클릭 후 포커스를 이 버튼으로 되돌려
+                  body 표류를 막는다(RecentDocuments 삭제 후 포커스 반환과 동형). */}
               <button
+                ref={updateCheckBtnRef}
                 onClick={handleUpdateCheck}
-                disabled={updateState.status === 'checking' || updateState.status === 'downloading'}
+                disabled={updateState.status === 'checking' || updateState.status === 'downloading' || updateState.status === 'downloaded'}
                 className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {t('update.checkBtn')}
               </button>
-              {updateState.status === 'available' && (
+              {/* error 에서도 확인된 버전이 남아 있으면 재다운로드를 허용(canDownload 와 정합) */}
+              {(updateState.status === 'available' || (updateState.status === 'error' && updateState.newVersion)) && (
                 <button
                   onClick={handleUpdateDownload}
                   className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
@@ -1002,7 +1039,11 @@ export function SettingsPanel() {
               {updateState.status === 'downloaded' && (
                 <button
                   onClick={handleUpdateInstall}
-                  className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                  // QA19(A-MED): 설치는 앱을 종료시킨다 — 생성 중이면 진행분이 폐기되므로
+                  // 세션 삭제와 동일하게 aiBusy 로 막는다(이전엔 이 조작만 게이트 밖이었다).
+                  disabled={aiBusy}
+                  title={aiBusy ? t('update.installBlockedBusy') : undefined}
+                  className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   {t('update.installBtn')}
                 </button>
@@ -1010,7 +1051,9 @@ export function SettingsPanel() {
             </div>
 
             {updateState.status === 'downloaded' && (
-              <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">{t('update.installNotice')}</p>
+              <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                {aiBusy ? t('update.installBlockedBusy') : t('update.installNotice')}
+              </p>
             )}
           </div>
         )}

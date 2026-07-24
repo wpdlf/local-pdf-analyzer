@@ -37,6 +37,7 @@ vi.stubGlobal('window', Object.assign(window, {
 
 import { SettingsPanel } from '../SettingsPanel';
 import { t } from '../../lib/i18n';
+import { useAppStore } from '../../lib/store';
 
 const state = (over: Partial<UpdateState> = {}): UpdateState => ({
   status: 'idle', currentVersion: '1.0.0', newVersion: null, percent: 0, errorKey: null, ...over,
@@ -74,12 +75,60 @@ describe('SettingsPanel — 앱 업데이트 섹션', () => {
     expect(updateMock.check).toHaveBeenCalledTimes(1);
   });
 
-  it('checking/downloading 중에는 "지금 확인"이 비활성 (중복 요청 차단)', async () => {
+  it('checking/downloading/downloaded 중에는 "지금 확인"이 비활성', async () => {
     await renderWith(state({ status: 'checking' }));
     expect(screen.getByRole('button', { name: t('update.checkBtn') }).hasAttribute('disabled')).toBe(true);
     cleanup();
     await renderWith(state({ status: 'downloading', newVersion: '1.1.0', percent: 30 }));
     expect(screen.getByRole('button', { name: t('update.checkBtn') }).hasAttribute('disabled')).toBe(true);
+    cleanup();
+    // QA19(A·C 수렴): 설치 대기 중 재확인은 그 상태를 파괴했었다 — 버튼 자체를 막는다.
+    await renderWith(state({ status: 'downloaded', newVersion: '1.1.0', percent: 100 }));
+    expect(screen.getByRole('button', { name: t('update.checkBtn') }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('QA19(D-MED): 실패는 role="alert" 로 통지 (성공 메시지와 같은 등급이 아님)', async () => {
+    await renderWith(state({ status: 'error', errorKey: 'updateNetwork' }));
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toBe(t('mainerr.updateNetwork'));
+  });
+
+  it('QA19(D-MED): 다운로드 중 라이브 영역에는 퍼센트를 넣지 않는다 (SR 과알림 방지)', async () => {
+    await renderWith(state({ status: 'downloading', newVersion: '1.1.0', percent: 42 }));
+    const live = screen.getByRole('status');
+    expect(live.textContent).toBe(t('update.downloadingLive'));
+    expect(live.textContent).not.toContain('42');
+    // 숫자는 progressbar 와 시각 전용(aria-hidden) 텍스트에만 존재
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('42');
+    expect(screen.getByText(t('update.downloading', { percent: 42 }))).toBeTruthy();
+  });
+
+  it('QA19(A-MED): 생성 중에는 설치 버튼이 비활성 (앱 종료로 진행분 폐기 방지)', async () => {
+    useAppStore.setState({ isGenerating: true });
+    try {
+      await renderWith(state({ status: 'downloaded', newVersion: '1.1.0', percent: 100 }));
+      expect(screen.getByRole('button', { name: t('update.installBtn') }).hasAttribute('disabled')).toBe(true);
+      expect(screen.getByText(t('update.installBlockedBusy'))).toBeTruthy();
+    } finally {
+      useAppStore.setState({ isGenerating: false });
+    }
+  });
+
+  it('QA19(C-LOW): 다운로드 실패 후에도 버전이 남아 있으면 재다운로드 버튼 제공', async () => {
+    const user = await renderWith(state({ status: 'error', errorKey: 'updateNetwork', newVersion: '1.1.0' }));
+    await user.click(screen.getByRole('button', { name: t('update.downloadBtn') }));
+    expect(updateMock.download).toHaveBeenCalledTimes(1);
+  });
+
+  it('QA19(D-LOW): 버전 문자열이 비어도 문장이 깨지지 않는다', async () => {
+    await renderWith(state({ status: 'available', newVersion: '' }));
+    expect(screen.getByText(t('update.availableNoVersion'))).toBeTruthy();
+  });
+
+  it('QA19(A-LOW): unsupported 에서는 자동확인 토글도 비활성', async () => {
+    await renderWith(state({ status: 'unsupported' }));
+    const toggle = screen.getByRole('checkbox', { name: new RegExp(t('update.autoCheckLabel')) });
+    expect(toggle.hasAttribute('disabled')).toBe(true);
   });
 
   it('not-available — 최신 안내, 다운로드/설치 버튼 없음', async () => {

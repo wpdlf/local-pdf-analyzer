@@ -56,14 +56,29 @@ export function isUpdateSupported(isPackaged: boolean, platform: string): boolea
   return isPackaged && platform === 'win32';
 }
 
-/** 확인을 새로 시작할 수 있는가 — 진행 중(확인/다운로드)이면 재진입 금지. */
+/**
+ * 확인을 새로 시작할 수 있는가 — 진행 중(확인/다운로드)이면 재진입 금지.
+ *
+ * QA19(A·C 수렴): `downloaded` 도 제외한다. 이미 받아둔 설치 대기분이 있는데 재확인하면
+ * `check-started` 가 상태를 `checking` 으로 밀어 설치 자격(canInstall)이 사라지고, 오프라인
+ * 이면 `error` 로 착지해 **디스크에 인스톨러가 있는데도 설치할 방법이 없어진다**. 설치 대기
+ * 중에 재확인해서 얻을 것도 없다(설치하면 그만이고, 더 새 버전은 설치 후 확인된다).
+ */
 export function canCheck(status: UpdateStatus): boolean {
-  return status !== 'unsupported' && status !== 'checking' && status !== 'downloading';
+  return status !== 'unsupported'
+    && status !== 'checking'
+    && status !== 'downloading'
+    && status !== 'downloaded';
 }
 
-/** 다운로드를 시작할 수 있는가 — 확인 결과 새 버전이 있는 상태에서만. */
-export function canDownload(status: UpdateStatus): boolean {
-  return status === 'available';
+/**
+ * 다운로드를 시작할 수 있는가.
+ * QA19(C-LOW): 다운로드 실패(error) 후에도 확인된 버전이 남아 있으면 재시도를 허용한다 —
+ * 리듀서가 newVersion 을 보존하는 이유가 "재확인 없이 재시도"인데 게이트가 그것을 막고 있었다.
+ */
+export function canDownload(status: UpdateStatus, newVersion: string | null = null): boolean {
+  if (status === 'available') return true;
+  return status === 'error' && newVersion !== null;
 }
 
 /** 재시작+설치가 가능한가 — 다운로드가 끝난 상태에서만. */
@@ -97,7 +112,14 @@ export function shouldAutoCheck({ isPackaged, platform, enabled, lastCheckedAt, 
  * 걸리지 않는다. 배열로 export 해 테스트가 런타임으로 대조하게 한다(번역 누락 시 사용자는
  * `mainerr.updateNetwork` 같은 raw 키를 보게 되므로 가드가 필요).
  */
-export const UPDATE_ERROR_KEYS = ['updateNetwork', 'updateNoFeed', 'updateChecksum', 'updateUnknown'] as const;
+export const UPDATE_ERROR_KEYS = [
+  'updateNetwork',
+  'updateNoFeed',
+  'updateChecksum',
+  'updateUnknown',
+  /** QA19(A-MED): quitAndInstall 이 앱을 종료시키지 못했다 — 인스톨러 유실/차단 추정. */
+  'updateInstallFailed',
+] as const;
 export type UpdateErrorKey = typeof UPDATE_ERROR_KEYS[number];
 
 /**
@@ -140,6 +162,12 @@ export function nextUpdateState(prev: UpdateState, event: UpdateEvent): UpdateSt
   switch (event.type) {
     case 'check-started':
       if (prev.status === 'checking') return prev;
+      // QA19(A·C 수렴, 설치 어포던스 상실): 다운로드 완료 상태는 확인이 시작돼도 유지한다.
+      // 이 가드가 없으면 상태가 먼저 'checking' 으로 밀려, 아래 'available' 케이스의
+      // "downloaded 유지" 방어가 prev 를 이미 'checking' 으로 보게 되어 **도달 불가능**해진다
+      // (실제 이벤트 순서가 check-started → available 이기 때문). canCheck 가 downloaded 를
+      // 막으므로 정상 경로로는 도달하지 않지만, 외부 트리거(자동 확인 경쟁 등) 대비 이중 방어.
+      if (prev.status === 'downloaded') return prev;
       return { ...prev, status: 'checking', percent: 0, errorKey: null };
 
     case 'available':
@@ -171,6 +199,14 @@ export function nextUpdateState(prev: UpdateState, event: UpdateEvent): UpdateSt
 
     case 'error':
       if (prev.status === 'error' && prev.errorKey === event.errorKey) return prev;
+      // QA19: 설치 대기분은 에러로도 잃지 않는다. 백그라운드 확인 실패나 설치 시작 실패가
+      // 이미 받아둔 인스톨러의 설치 자격까지 회수하면 사용자는 재다운로드 외에 길이 없다.
+      // status 는 downloaded 로 유지하되 errorKey 는 실어 보내, UI 가 "설치 가능 + 직전 실패
+      // 사유"를 함께 보여줄 수 있게 한다(설치 시작 실패를 무음으로 삼키지 않기 위함).
+      if (prev.status === 'downloaded') {
+        if (prev.errorKey === event.errorKey) return prev;
+        return { ...prev, errorKey: event.errorKey };
+      }
       // newVersion 은 보존 — 다운로드 실패 후 사용자가 어떤 버전을 시도했는지 표시하고,
       // 재확인 없이 재시도할 수 있게 한다.
       return { ...prev, status: 'error', percent: 0, errorKey: event.errorKey };

@@ -465,9 +465,16 @@ export const _translations = {
   'update.checkBtn': { ko: '지금 확인', en: 'Check now' },
   'update.checking': { ko: '업데이트 확인 중...', en: 'Checking for updates...' },
   'update.upToDate': { ko: '최신 버전을 사용 중입니다.', en: 'You are on the latest version.' },
-  'update.available': { ko: '새 버전 {version} 을 사용할 수 있습니다.', en: 'Version {version} is available.' },
+  // QA19(D-LOW): 보간 파라미터 뒤에 조사를 붙이면 항상 비문이 된다("… 0.31.32 을") — 버전
+  // 끝자리 발음의 받침 유무로 을/를이 갈리는데 사전에는 조사 처리기가 없다. 조사를 쓰지 않는
+  // 어순(괄호 부기)으로 통일하고, 버전 미상일 때를 위한 무-버전 변형을 함께 둔다.
+  'update.available': { ko: '새 버전을 사용할 수 있습니다 ({version})', en: 'A new version is available ({version})' },
+  'update.availableNoVersion': { ko: '새 버전을 사용할 수 있습니다.', en: 'A new version is available.' },
   'update.downloadBtn': { ko: '다운로드', en: 'Download' },
   'update.downloading': { ko: '다운로드 중... {percent}%', en: 'Downloading... {percent}%' },
+  // QA19(D-MED): 라이브 영역(role="status")에는 퍼센트를 넣지 않는다 — 정수 1단위로 갱신돼
+  // 스크린리더가 최대 100회 낭독한다. 숫자는 progressbar 의 aria-valuenow 와 시각 텍스트에만.
+  'update.downloadingLive': { ko: '업데이트를 다운로드하고 있습니다.', en: 'Downloading the update…' },
   'update.downloadProgressAria': { ko: '업데이트 다운로드 진행률', en: 'Update download progress' },
   'update.downloaded': { ko: '{version} 설치 준비 완료 — 재시작하면 적용됩니다.', en: 'Version {version} is ready — restart to apply.' },
   'update.installBtn': { ko: '재시작하여 설치', en: 'Restart and install' },
@@ -479,7 +486,10 @@ export const _translations = {
     ko: '자동 업데이트는 설치된 Windows 앱에서만 동작합니다 (개발 실행 중에는 비활성).',
     en: 'Auto-update works only in the installed Windows app (disabled while running from source).',
   },
-  'update.bannerReady': { ko: '새 버전 {version} 이 준비되었습니다.', en: 'Version {version} is ready to install.' },
+  'update.bannerReady': { ko: '새 버전이 설치 준비되었습니다 ({version})', en: 'A new version is ready to install ({version})' },
+  'update.bannerReadyNoVersion': { ko: '새 버전이 설치 준비되었습니다.', en: 'A new version is ready to install.' },
+  // QA19(A-MED): 설치는 앱을 종료시키므로 생성 중에는 막는다(세션 삭제와 동일 등급의 파괴적 조작).
+  'update.installBlockedBusy': { ko: '요약·답변 생성이 끝난 뒤 설치할 수 있습니다.', en: 'You can install once the summary/answer finishes.' },
   'update.bannerDismiss': { ko: '업데이트 알림 닫기', en: 'Dismiss update notice' },
   // main updater errorKey (mainerr.* 규약) — classifyUpdateError 가 반환하는 4종
   'mainerr.updateNetwork': {
@@ -495,6 +505,10 @@ export const _translations = {
     en: 'The downloaded file failed its integrity check. Please try again.',
   },
   'mainerr.updateUnknown': { ko: '업데이트에 실패했습니다.', en: 'The update failed.' },
+  'mainerr.updateInstallFailed': {
+    ko: '설치를 시작하지 못했습니다. 내려받은 설치 파일이 백신에 격리되었거나 삭제되었을 수 있습니다 — 다시 다운로드하거나 릴리즈 페이지에서 직접 설치해주세요.',
+    en: 'The installer could not be started. The downloaded file may have been quarantined by antivirus or removed — download it again, or install manually from the releases page.',
+  },
   'session.saveFailedNotice': { ko: '세션 저장에 반복 실패했습니다. 저장 공간·권한을 확인해주세요 — 요약·Q&A·검색 인덱스가 디스크에 보존되지 않아 다시 열면 사라집니다.', en: 'Session saving keeps failing. Check disk space/permissions — summaries, Q&A, and the search index are not being persisted and will be lost on reopen.' },
 } as const;
 

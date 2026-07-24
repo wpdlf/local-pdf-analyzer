@@ -507,6 +507,14 @@ function getUpdaterService(): UpdaterService {
         // 미저장(구버전에서 올라온 settings.json)은 기본값 ON.
         return settings.autoCheckUpdates !== false;
       },
+      // QA19(A-MED, 실데이터 손실): 설치가 무산되면 flushBeforeInstall 이 남긴 "flush 완료"
+      // 표식을 되돌린다. 표식이 남으면 decideCloseAction 이 창 X 닫기를 'allow' 로 판정해
+      // 종료 flush 인터셉트를 건너뛰고 마지막 델타(요약·Q&A·인덱스)가 소실된다 —
+      // QA16 이 고친 바로 그 경로가 부활한다. 앱은 계속 살아있으므로 다음 종료를 위해
+      // 창들을 "아직 flush 안 됨" 상태로 되돌려야 한다.
+      onInstallAborted: () => {
+        for (const win of BrowserWindow.getAllWindows()) flushedWindows.delete(win);
+      },
     });
     updaterService.wire();
   }

@@ -51,17 +51,24 @@ describe('조작 게이트', () => {
     expect(canCheck('idle')).toBe(true);
     expect(canCheck('not-available')).toBe(true);
     expect(canCheck('available')).toBe(true);
-    expect(canCheck('downloaded')).toBe(true);
     expect(canCheck('error')).toBe(true);
     expect(canCheck('checking')).toBe(false);
     expect(canCheck('downloading')).toBe(false);
     expect(canCheck('unsupported')).toBe(false);
+    // downloaded 는 아래 QA19 케이스에서 별도 고정(설치 대기 보호).
   });
 
-  it('canDownload — available 에서만 true (재진입/중복 다운로드 차단)', () => {
+  it('canCheck — downloaded 제외 (QA19: 재확인이 설치 대기 상태를 파괴하던 회귀)', () => {
+    expect(canCheck('downloaded')).toBe(false);
+  });
+
+  it('canDownload — available, 그리고 버전이 남은 error(재시도)에서 true', () => {
     expect(canDownload('available')).toBe(true);
-    for (const s of ['idle', 'checking', 'not-available', 'downloading', 'downloaded', 'error', 'unsupported'] as const) {
-      expect(canDownload(s), s).toBe(false);
+    expect(canDownload('error', '1.1.0')).toBe(true);
+    // 확인된 버전이 없는 error 는 무엇을 받을지 모르므로 불가 — 재확인이 선행돼야 한다.
+    expect(canDownload('error', null)).toBe(false);
+    for (const s of ['idle', 'checking', 'not-available', 'downloading', 'downloaded', 'unsupported'] as const) {
+      expect(canDownload(s, '1.1.0'), s).toBe(false);
     }
   });
 
@@ -192,6 +199,28 @@ describe('nextUpdateState — 순서가 뒤바뀐 이벤트 방어', () => {
   it('다운로드 완료 후 같은 버전의 available(수동 재확인)은 downloaded 를 유지', () => {
     const prev = base({ status: 'downloaded', newVersion: '1.1.0', percent: 100 });
     expect(nextUpdateState(prev, { type: 'available', version: '1.1.0' })).toBe(prev);
+  });
+
+  // QA19(A·C 수렴): 실제 이벤트 순서는 check-started → available 이다. 이전 테스트는 두
+  // 상태를 직접 넣어 검증해 중간의 check-started 를 건너뛰었고, 그래서 "downloaded 유지"
+  // 방어가 실전에서 도달 불가능한 것을 놓쳤다. 3단 시퀀스로 고정한다.
+  it('downloaded → check-started → available 3단 시퀀스에서 설치 자격이 유지된다', () => {
+    const downloaded = base({ status: 'downloaded', newVersion: '1.1.0', percent: 100 });
+    const checking = nextUpdateState(downloaded, { type: 'check-started' });
+    expect(checking.status, 'check-started 가 downloaded 를 덮어쓰면 설치 버튼이 사라진다').toBe('downloaded');
+    const afterAvailable = nextUpdateState(checking, { type: 'available', version: '1.1.0' });
+    expect(afterAvailable.status).toBe('downloaded');
+    expect(canInstall(afterAvailable.status)).toBe(true);
+  });
+
+  it('downloaded 상태에서 error 가 와도 설치 자격은 유지하고 사유만 싣는다', () => {
+    const prev = base({ status: 'downloaded', newVersion: '1.1.0', percent: 100 });
+    const next = nextUpdateState(prev, { type: 'error', errorKey: 'updateInstallFailed' });
+    expect(next.status).toBe('downloaded');
+    expect(next.errorKey).toBe('updateInstallFailed');
+    expect(canInstall(next.status)).toBe(true);
+    // 같은 사유의 반복은 브로드캐스트를 유발하지 않는다.
+    expect(nextUpdateState(next, { type: 'error', errorKey: 'updateInstallFailed' })).toBe(next);
   });
 
   it('다운로드 완료 후 더 새로운 버전이 나오면 available 로 전이', () => {

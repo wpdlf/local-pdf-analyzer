@@ -70,6 +70,21 @@ jobs:
             exit 1
           fi
 
+      # QA19(A-LOW): 태그 ↔ package.json 버전 일치 게이트.
+      # 범프를 빠뜨리거나 태그를 잘못 밀면(v0.31.31 태그 + package.json 0.31.30) 전 게이트가
+      # 통과하고 릴리즈도 정상으로 보이는데, 첨부되는 latest.yml 의 version 이 구버전이라
+      # **기존 사용자 전원의 자동 업데이트가 조용히 멈춘다**("최신 버전입니다"로 영구 표시).
+      # lockfile sync 게이트는 package.json↔lock 만 보므로 이 축은 무방비였다.
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          pkg_ver=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME}"
+          if [ "v$pkg_ver" != "$tag" ]; then
+            echo "::error::태그($tag) 와 package.json 버전(v$pkg_ver) 불일치 — 자동 업데이트 피드가 구버전을 가리키게 됩니다"
+            exit 1
+          fi
+
       # R28: noUncheckedIndexedAccess 등 tsconfig strict 게이트가 CI에서 항상 검증되도록 함.
       - run: npx tsc --noEmit
 

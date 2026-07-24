@@ -75,8 +75,28 @@ export interface UpdaterDeps {
   flushBeforeInstall: () => Promise<void>;
   /** 설정의 autoCheckUpdates 조회 (settings.json 은 비동기 로드) */
   isAutoCheckEnabled: () => Promise<boolean>;
+  /**
+   * 설치가 시작되지 못했을 때(앱이 종료되지 않음) 호출된다.
+   *
+   * QA19(A-MED, 실데이터 손실): `flushBeforeInstall` 은 종료를 전제로 창을 "flush 완료"로
+   * 표시하는데(index.ts flushedWindows), 설치가 무산되면 그 표식만 남는다. 이후 창 X 닫기가
+   * `decideCloseAction` 에서 `hasFlushed → 'allow'` 로 판정돼 **종료 flush 인터셉트를 통째로
+   * 건너뛰고** 마지막 델타가 소실된다(QA16 이 고친 경로의 부활). 소유자가 표식을 되돌린다.
+   */
+  onInstallAborted?: () => void;
   now?: () => number;
 }
+
+/**
+ * `quitAndInstall` 호출 후 앱 종료를 기다리는 유예 시간.
+ *
+ * electron-updater 의 `quitAndInstall` 은 실패해도 **throw 하지 않는다** — `BaseUpdater.install`
+ * 이 인스톨러 경로/다운로드 정보 부재 시 `dispatchError` 후 `false` 를 반환하고, quitAndInstall
+ * 은 `app.quit()` 을 호출하지 않은 채 조용히 리턴한다. 따라서 try/catch 로는 실패를 알 수 없어,
+ * "이 시간 안에 종료되지 않았으면 실패"로 판정한다. 정상 경로에서는 before-quit 의 flush(이미
+ * 완료라 skip)+ollama stop 뒤 곧바로 종료되므로 이 타이머는 발화하지 않는다.
+ */
+export const INSTALL_QUIT_GRACE_MS = 15000;
 
 export interface UpdaterService {
   getState(): UpdateState;
@@ -97,6 +117,8 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
   let lastCheckedAt: number | null = null;
   // quitAndInstall 은 되돌릴 수 없다 — 연타/중복 호출로 인스톨러가 두 번 spawn 되지 않도록 가드.
   let installing = false;
+  // 설치 무산 감지 타이머(INSTALL_QUIT_GRACE_MS). 정상 경로에서는 앱이 먼저 죽어 발화하지 않는다.
+  let installAbortTimer: ReturnType<typeof setTimeout> | null = null;
 
   function apply(event: UpdateEvent): void {
     const next = nextUpdateState(state, event);
@@ -202,8 +224,29 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
       // isSilent=false: NSIS oneClick:false 빌드라 설치 UI 가 필요하다.
       // isForceRunAfter=true: 설치 후 앱을 다시 띄운다("재시작하여 설치"의 멘탈 모델).
       deps.autoUpdater.quitAndInstall(false, true);
+      // 실패는 throw 가 아니라 "종료되지 않음"으로 나타난다(INSTALL_QUIT_GRACE_MS 주석 참조).
+      // 유예 시간 뒤에도 이 프로세스가 살아있다면 설치가 시작되지 못한 것 — 잠금을 풀어
+      // 재시도를 허용하고, flush 표식을 되돌리고, 사용자에게 실패를 표면화한다.
+      installAbortTimer = setTimeout(() => {
+        installAbortTimer = null;
+        installing = false;
+        try {
+          deps.onInstallAborted?.();
+        } catch (err) {
+          console.error('[update] onInstallAborted failed:', err);
+        }
+        apply({ type: 'error', errorKey: 'updateInstallFailed' });
+      }, INSTALL_QUIT_GRACE_MS);
+      // 종료를 막지 않도록 unref (Electron 종료 시퀀스가 타이머를 기다리지 않게).
+      installAbortTimer.unref?.();
     } catch (err) {
+      // 방어적 — 현행 electron-updater 는 여기로 오지 않지만 구현이 바뀔 수 있다.
       installing = false;
+      try {
+        deps.onInstallAborted?.();
+      } catch (cbErr) {
+        console.error('[update] onInstallAborted failed:', cbErr);
+      }
       apply({ type: 'error', errorKey: classifyUpdateError(err) });
     }
     return state;

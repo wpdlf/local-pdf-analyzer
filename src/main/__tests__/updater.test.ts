@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createUpdaterService, type AutoUpdaterLike, type IpcMainLike, type UpdaterDeps } from '../updater';
+import { createUpdaterService, INSTALL_QUIT_GRACE_MS, type AutoUpdaterLike, type IpcMainLike, type UpdaterDeps } from '../updater';
 import type { UpdateState } from '../../shared/update-types';
 
 // updater.ts 행위 검증 — electron / electron-updater 를 주입받으므로 node 환경에서 직접 구동한다.
@@ -244,6 +244,74 @@ describe('install — 데이터 손실 방어', () => {
     await toDownloaded(ctx);
     await Promise.all([ctx.service.install(), ctx.service.install(), ctx.service.install()]);
     expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  // QA19(A-MED, 실데이터 손실): electron-updater 의 quitAndInstall 은 실패해도 throw 하지
+  // 않는다(BaseUpdater.install 이 dispatchError 후 false 반환 → app.quit() 미호출). 그래서
+  // "유예 시간 내 미종료 = 실패"로 판정해 ①설치 잠금 해제 ②flush 표식 롤백 ③사용자 표면화를
+  // 해야 한다. ②가 없으면 이후 창 X 닫기가 종료 flush 를 건너뛰어 마지막 델타가 소실된다.
+  describe('설치 무산(앱이 종료되지 않음) 처리', () => {
+    it('유예 시간 뒤 잠금이 풀려 재시도할 수 있다', async () => {
+      vi.useFakeTimers();
+      try {
+        const ctx = setup();
+        await toDownloaded(ctx);
+        await ctx.service.install();
+        expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
+        // 종료되지 않은 채 유예 시간 경과
+        vi.advanceTimersByTime(INSTALL_QUIT_GRACE_MS + 1);
+        await ctx.service.install();
+        expect(ctx.au.quitAndInstall, '잠금이 영구 고착되면 재시도가 조용히 무시된다').toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('flush 표식 롤백 콜백을 호출한다 (창닫기 flush 우회 방지)', async () => {
+      vi.useFakeTimers();
+      try {
+        const onInstallAborted = vi.fn();
+        const ctx = setup({ onInstallAborted });
+        await toDownloaded(ctx);
+        await ctx.service.install();
+        expect(onInstallAborted).not.toHaveBeenCalled(); // 아직 종료 대기 중
+        vi.advanceTimersByTime(INSTALL_QUIT_GRACE_MS + 1);
+        expect(onInstallAborted).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('실패를 errorKey 로 표면화하되 설치 자격(downloaded)은 유지한다', async () => {
+      vi.useFakeTimers();
+      try {
+        const ctx = setup();
+        await toDownloaded(ctx);
+        await ctx.service.install();
+        vi.advanceTimersByTime(INSTALL_QUIT_GRACE_MS + 1);
+        const state = ctx.service.getState();
+        expect(state.errorKey).toBe('updateInstallFailed');
+        expect(state.status, '설치 자격까지 잃으면 재다운로드 외에 길이 없다').toBe('downloaded');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('정상 설치(앱 종료)에서는 롤백 콜백이 호출되지 않는다', async () => {
+      vi.useFakeTimers();
+      try {
+        const onInstallAborted = vi.fn();
+        const ctx = setup({ onInstallAborted });
+        await toDownloaded(ctx);
+        await ctx.service.install();
+        // 유예 시간 이전 = 앱이 정상 종료되는 구간
+        vi.advanceTimersByTime(INSTALL_QUIT_GRACE_MS - 1);
+        expect(onInstallAborted).not.toHaveBeenCalled();
+        expect(ctx.service.getState().errorKey).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
 
