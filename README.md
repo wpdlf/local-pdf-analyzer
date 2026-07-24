@@ -195,7 +195,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Self-updating — new versions are detected on startup and installed with one click; downloads never start without consent, and in-progress work is saved before the app restarts
 
 **Quality assurance**
-- 1582 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
+- 1604 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -252,7 +252,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
 | Auto-update | electron-updater (GitHub Releases feed) — check on startup, download and install only on user consent, renderer flush before install |
-| Testing | Vitest, 1582 unit tests / 91 files (renderer·shared 1017 + main 565) + Playwright E2E (9 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (81/73/81/84) |
+| Testing | Vitest, 1604 unit tests / 92 files (renderer·shared 1030 + main 574) + Playwright E2E (9 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (81/73/81/84) |
 | i18n | In-house (i18n.ts) — 290+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -303,7 +303,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (1582, 91 files)
+    │   └── __tests__/         # Unit tests (1604, 92 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -498,7 +498,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **1582 unit tests / 91 files** — renderer·shared 1017 + main 565. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 16 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
+- **1604 unit tests / 92 files** — renderer·shared 1030 + main 574. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 16 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
 - **Playwright E2E** — 9 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, session/settings persistence across restart, upload-error paths), all AI-independent; multi-tab restore and summarize/Q&A/collection flows are covered by local-only Ollama specs
 - **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (81/73/81/84), lockfile version sync check, `npm audit` advisory, Node 22/24 matrix plus a Windows unit-test leg
 - **4-agent parallel QA** — a full-codebase QA round on every release; zero Critical findings across 50+ consecutive rounds (detected High/Important issues are fixed before release — e.g. R41 caught a High session-corruption path in v0.19.0; recent rounds surface Low-to-Medium items (still zero Critical) — the latest rounds backed a performance deep-dive (lazy loading, PDF-viewer memory windowing, autosave/IPC reduction) and reliability/data-integrity hardening — including quit-time session-flush coordination and 4-way provider parity — shipped through v0.31.20)
