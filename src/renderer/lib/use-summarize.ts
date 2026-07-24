@@ -8,6 +8,21 @@ import { normalizeCitationPlacement, CITATION_REGEX } from './citation';
 import { enrichDocumentWithImages } from './enrich-doc';
 import { slicePdfDocumentByPageRange, isFullRange } from './page-range';
 
+// QA19(B-MED): 요약 완주 타임아웃 판정(순수). 무진전(마지막 진전 이후 idleMs) 또는 절대 백스톱
+// (총 maxTotalMs) 중 하나라도 넘으면 중단한다. 인라인이 아니라 순수 함수로 둬 감시견(setTimeout
+// self-reschedule)과 루프 내 폴링(checkTimeout)이 **정확히 같은 기준**을 공유하고 단위 테스트로
+// 고정된다(window-flush-policy 와 동일한 분리 원칙). 핵심 회귀 방어: 진전이 있는 한 총 경과가
+// 아무리 커도(옛 5분 총상한을 넘어도) 중단하지 않는다 — 정상 대형 문서가 완주하도록.
+export function isSummaryTimedOut(
+  now: number,
+  startTime: number,
+  lastProgressAt: number,
+  idleMs: number,
+  maxTotalMs: number,
+): boolean {
+  return (now - lastProgressAt > idleMs) || (now - startTime > maxTotalMs);
+}
+
 /**
  * 페이지별 텍스트 배열을 받아, 각 단락 앞에 `[p.N] ` inline 마커를 붙여 단일 문자열로 반환.
  * LLM 이 각 문장의 정확한 페이지를 알 수 있게 하는 page-citation-viewer 기능의 핵심.
@@ -615,15 +630,27 @@ export function useSummarize() {
     setError(null);
 
     const startTime = Date.now();
-    const TIMEOUT_MS = 300000;
+    // QA19(B-MED): 무진전(idle) 기준 + 넉넉한 백스톱으로 전환. 기존 5분 단일 총상한은 정상
+    // 진행을 죽였다 — 500p 한국어 문서는 ≈125청크 ≈31분인데 상한이 5분이라, 문서 상한(500p)
+    // 안의 정상 요약이 앞 15~20%만 남고 잘렸다. 개별 청크의 응답 정지는 main 의 스트림 idle
+    // (ai-service.ts IDLE_TIMEOUT_MS=60초)이 이미 res.destroy() 로 끊으므로, renderer 는 그보다
+    // 넉넉한 "마지막 토큰 이후 무진전" 상한 + 폭주(무한 루프)만 막는 절대 백스톱만 둔다.
+    // 토큰이 흐르는 한 요약은 규모와 무관하게 완주한다(사용자는 언제든 중지 가능).
+    const IDLE_TIMEOUT_MS = 120000;            // 마지막 진전 이후 2분 — main 60초의 renderer 백업
+    const MAX_TOTAL_MS = 3 * 60 * 60 * 1000;   // 절대 백스톱 3시간 — 정상은 사용자 취소, 이건 폭주 방어
     let timedOut = false;
+    // 무진전 판정의 기준 — guardedAppend(토큰 수신)마다 갱신된다.
+    let lastProgressAt = startTime;
     // 이 run 의 소유권 토큰. clientRef.current 와 비교해 Stop→재요약 race 에서 stale run 이
     // 새 run 의 timeoutTimer/isGenerating/progressInfo 를 클로버링하는 것을 막는다(use-qa 의
     // finallyStillOurs 패턴을 요약 쌍둥이에 적용). try 블록의 `client` 는 finally 에서 보이지
     // 않으므로(블록 스코프) try 밖에 캡처. QA post-v0.31.14.
     let runClient: AiClient | null = null;
 
-    timeoutTimerRef.current = setTimeout(() => {
+    // 무진전 감시견 — 매 토큰 리셋(빈번) 대신 self-reschedule 로 구현한다: 데드라인에 깨어나
+    // 마지막 진전을 확인하고, 아직 진전이 있었으면 남은 무진전 시간만큼 재예약한다. clearTimeout
+    // 호환이라 handleAbort/cleanup 의 기존 정리 코드를 그대로 쓴다(단일 timeoutTimerRef).
+    const fireTimeout = () => {
       timedOut = true;
       timeoutTimerRef.current = null;
       handleAbort();
@@ -631,7 +658,23 @@ export function useSummarize() {
         code: 'GENERATE_TIMEOUT',
         message: t('ai.summaryTimeout'),
       });
-    }, TIMEOUT_MS);
+    };
+    const scheduleWatchdog = (delay: number) => {
+      timeoutTimerRef.current = setTimeout(function watchdog() {
+        const now = Date.now();
+        if (isSummaryTimedOut(now, startTime, lastProgressAt, IDLE_TIMEOUT_MS, MAX_TOTAL_MS)) {
+          fireTimeout();
+          return;
+        }
+        // 진전이 있었다 — 다음 무진전 데드라인(또는 백스톱, 먼저 오는 쪽)까지 재예약.
+        const nextDelay = Math.max(1000, Math.min(
+          IDLE_TIMEOUT_MS - (now - lastProgressAt),
+          MAX_TOTAL_MS - (now - startTime),
+        ));
+        timeoutTimerRef.current = setTimeout(watchdog, nextDelay);
+      }, delay);
+    };
+    scheduleWatchdog(IDLE_TIMEOUT_MS);
 
     try {
       const client = new AiClient(currentSettings);
@@ -646,7 +689,9 @@ export function useSummarize() {
       const isRunAborted = () => timedOut || !stillOwns() || !useAppStore.getState().isGenerating;
       // 스트림 append 도 소유권 게이트 — store.appendStream 의 입구 게이트(isGenerating)는
       // 새 run 이 다시 켜 두므로 stale run 의 구분선(`\n\n---\n\n`)/통합 헤딩 주입을 막지 못한다.
-      const guardedAppend = (s: string) => { if (stillOwns()) appendStream(s); };
+      // QA19(B-MED): 토큰 수신은 무진전 감시견의 진전 신호다 — 여기서 lastProgressAt 를 갱신해야
+      // 정상 진행 중인 요약이 무진전으로 오판돼 중단되지 않는다.
+      const guardedAppend = (s: string) => { if (stillOwns()) { lastProgressAt = Date.now(); appendStream(s); } };
 
       const trackSummarize = (text: string, type: DefaultSummaryType) => {
         // clientRef 비교로 stale closure 방지: abort 후 재요약 시 이전 client 토큰 무시.
@@ -774,11 +819,14 @@ export function useSummarize() {
         }
       }
 
+      // 토큰 루프 내 즉시 감지 — 감시견(scheduleWatchdog)과 동일한 무진전+백스톱 기준.
+      // 루프가 도는 동안에는 이쪽이 먼저 break 시키고, track await 로 루프가 멈춘 동안에는
+      // 감시견이 능동 발화한다(두 경로 모두 lastProgressAt/startTime 을 공유).
       const checkTimeout = () => {
         if (timedOut) return true;
-        if (Date.now() - startTime > TIMEOUT_MS) {
+        if (isSummaryTimedOut(Date.now(), startTime, lastProgressAt, IDLE_TIMEOUT_MS, MAX_TOTAL_MS)) {
           timedOut = true;
-          if (timeoutTimerRef.current) { clearTimeout(timeoutTimerRef.current); timeoutTimerRef.current = null; };
+          if (timeoutTimerRef.current) { clearTimeout(timeoutTimerRef.current); timeoutTimerRef.current = null; }
           return true;
         }
         return false;
