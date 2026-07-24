@@ -510,7 +510,7 @@ export const useAppStore = create<AppState>((set) => ({
       qaRequestId: null,
       qaVerifying: false,
       ocrProgress: null,
-      ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+      ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0, error: null },
       // 문서 전환 시 PdfViewer 패널도 닫히고 원본 바이트도 해제
       citationTarget: null,
       pdfBytes: null,
@@ -594,7 +594,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   // RAG
   ragIndex: new VectorStore(),
-  ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+  ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0, error: null },
   setRagState: (partial) => set((s) => ({ ragState: { ...s.ragState, ...partial } })),
   setRagIndex: (ragIndex) => set({ ragIndex }),
   sessionRestorePending: false,

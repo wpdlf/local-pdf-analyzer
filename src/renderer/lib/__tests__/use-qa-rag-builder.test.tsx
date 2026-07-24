@@ -47,7 +47,7 @@ afterEach(() => {
     restoredSession: null,
     sessionRestorePending: false,
     enrichedPageTexts: null,
-    ragState: { isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, model: null },
+    ragState: { isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, model: null, error: null },
     settings: { ...s.settings, provider: 'ollama' as const },
   }));
 });

@@ -216,6 +216,11 @@ export interface RagIndexState {
   isAvailable: boolean;  // 임베딩 모델 사용 가능 여부
   model: string | null;  // 사용 중인 임베딩 모델
   chunkCount: number;     // 인덱싱된 청크 수
+  // QA19(C-MED): RAG 빌드 실패 사유(예: 'embedFailed'). null=정상.
+  // 이 플래그가 켜져 있으면 자동저장이 "인덱스 없음"으로 오판해 디스크의 이전(정상) index.bin 을
+  // 삭제하는 것을 막는다(use-session 의 preserveDiskIndex). 실패는 대개 네트워크 단절이라,
+  // 디스크 인덱스를 보존하면 문서 재오픈 시 재임베딩 없이 복원된다.
+  error: string | null;
 }
 
 // 에러 코드

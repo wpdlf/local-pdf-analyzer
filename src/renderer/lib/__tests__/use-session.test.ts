@@ -73,7 +73,7 @@ beforeEach(() => {
     document: null, summary: null, summaryStream: '', qaMessages: [],
     isGenerating: false, isQaGenerating: false, sessionRestorePending: false,
     restoredSession: null, ragIndex: new VectorStore(),
-    ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+    ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0, error: null },
     settings: { ...useAppStore.getState().settings, persistSessions: true, provider: 'ollama' },
   });
 });
@@ -427,7 +427,7 @@ describe('persistCurrentSession (module-3)', () => {
       summaryStream: '',
       qaMessages: [{ id: 'q', role: 'user', content: 'q' }],
       ragIndex: partial,
-      ragState: { isIndexing: true, progress: null, isAvailable: false, model: 'nomic-embed-text', chunkCount: 1 },
+      ragState: { isIndexing: true, progress: null, isAvailable: false, model: 'nomic-embed-text', chunkCount: 1, error: null },
     });
     api.session.load.mockResolvedValue(null);
 
@@ -450,7 +450,7 @@ describe('persistCurrentSession (module-3)', () => {
       summaryStream: '',
       qaMessages: [{ id: 'q', role: 'user', content: 'q' }],
       ragIndex: new VectorStore(), // 재빌드 시작 직후 — 메모리 인덱스는 비어 있음
-      ragState: { isIndexing: true, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+      ragState: { isIndexing: true, progress: null, isAvailable: false, model: null, chunkCount: 0, error: null },
     });
     api.session.load.mockResolvedValue(existing);
 
@@ -460,6 +460,31 @@ describe('persistCurrentSession (module-3)', () => {
     expect(payload.session.embedModel).toBe('nomic-embed-text'); // 기존 인덱스 유지
     expect(payload.session.chunkMeta).toHaveLength(2);
     expect(payload.blob).toBe(existing.blob); // 기존 블롭 그대로
+  });
+
+  // QA19(C-MED, 데이터손실): RAG 빌드가 네트워크 단절로 실패하면 use-qa 가 메모리 인덱스를
+  // clear(부분 저장 방지)하고 ragState.error 를 세운다. 이때 자동저장이 "인덱스 없음"으로
+  // blob=null 저장하면 main 이 디스크의 이전 정상 index.bin 을 unlink 해 재임베딩을 강제했다.
+  // error 상태에서도 인덱싱 중과 동일하게 디스크 인덱스를 보존해야 한다.
+  it('빌드 실패(ragState.error) flush → 디스크 인덱스 보존(unlink 방지)', async () => {
+    const doc = makeDoc();
+    const existing = persistedSession(doc, true); // 디스크의 완전한 세션(인덱스 포함)
+    useAppStore.setState({
+      document: doc,
+      summaryStream: '',
+      qaMessages: [{ id: 'q', role: 'user', content: 'q' }],
+      ragIndex: new VectorStore(), // 실패 후 clear 되어 비어 있음
+      // isIndexing:false + error 세팅 = 빌드 실패로 끝난 상태
+      ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0, error: 'embedFailed' },
+    });
+    api.session.load.mockResolvedValue(existing);
+
+    await persistCurrentSession();
+
+    const payload = api.session.save.mock.calls[0]![0] as { session: PersistedSession; blob: ArrayBuffer | null };
+    expect(payload.session.embedModel).toBe('nomic-embed-text'); // 기존 인덱스 유지
+    expect(payload.session.chunkMeta).toHaveLength(2);
+    expect(payload.blob).toBe(existing.blob); // 기존 블롭 그대로 — unlink 방지
   });
 
   it('인덱스 없으면 blob=null 로 저장', async () => {
@@ -589,7 +614,7 @@ describe('persistCurrentSession serialize-skip + 부분저장 (Tier2/3)', () => 
     useAppStore.setState({
       document: doc, summaryStream: '', qaMessages: [{ id: 'q', role: 'user', content: 'q' }],
       ragIndex: new VectorStore(),
-      ragState: { isIndexing: true, progress: null, isAvailable: false, model: 'nomic-embed-text', chunkCount: 1 },
+      ragState: { isIndexing: true, progress: null, isAvailable: false, model: 'nomic-embed-text', chunkCount: 1, error: null },
     });
     api.session.load.mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
 

@@ -273,12 +273,18 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
   // 전환이 실패한다(multi-doc Phase 1 사용자 버그). 인덱싱 중에는 텍스트·요약·Q&A 만
   // 저장하고 인덱스 필드/블롭은 기존 디스크 세션의 것을 보존한다.
   const indexing = s.ragState.isIndexing;
+  // QA19(C-MED, 데이터손실): 빌드 실패(ragState.error, 대개 네트워크 단절) 상태도 "디스크 인덱스
+  // 보존" 대상에 포함한다. 실패 시 use-qa 가 메모리 인덱스를 clear(부분 저장 방지)하는데, 이걸
+  // "인덱스 없음(blob:null)"으로 저장하면 main 이 디스크의 이전 정상 index.bin 을 unlink 해버려
+  // 재오픈 시 재임베딩을 강제한다. indexing 과 동일하게 디스크 blob 을 보존하면, 재오픈 시
+  // 마지막 정상 인덱스가 복원된다(실패 이전의 완전한 인덱스).
+  const preserveDiskIndex = indexing || !!s.ragState.error;
   try {
     const docHash = await getCachedDocHash(doc.id, doc.extractedText);
     if (useAppStore.getState().document?.id !== doc.id) return; // 레이스
 
     const ragIndex = s.ragIndex;
-    const hasIndex = !indexing && ragIndex.size > 0;
+    const hasIndex = !preserveDiskIndex && ragIndex.size > 0;
     // serialize-skip: 인덱스가 직전 영속화 이후 무변경이고 디스크에 이미 있으면(시그니처 일치)
     // blob 재직렬화/재전송/index.bin 재기록을 생략한다. 불변 인덱스 재처리가 자동저장 비용의
     // 대부분(Q&A 턴마다 멀티MB 벡터 버퍼 재작성)이었다.
@@ -319,8 +325,8 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
     let summaries: PersistedSession['summaries'] = {};
     let prevIndex: { embedModel: string; embedDim: number; chunkMeta: PersistedSession['chunkMeta']; blob: ArrayBuffer } | null = null;
     try {
-      if (indexing) {
-        // 인덱싱 중 flush: 기존 인덱스(blob) 보존이 필요하므로 full load.
+      if (preserveDiskIndex) {
+        // 인덱싱 중 또는 빌드 실패(QA19) flush: 기존 인덱스(blob) 보존이 필요하므로 full load.
         const existing = await api.load(docHash);
         const existSession = existing?.session as PersistedSession | undefined;
         if (existSession?.summaries) summaries = { ...existSession.summaries };
@@ -357,7 +363,7 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
     // 인덱스 필드/blob/keepIndex 결정 — 4-상태:
     //  ①idxUnchanged → keepIndex(blob 미전송, 메타만 경량 추출, main 이 index.bin 보존)
     //  ②hasIndex(변경/최초) → 전체 serialize 후 blob 기록
-    //  ③indexing → 디스크의 기존 인덱스 보존(prevIndex.blob)
+    //  ③preserveDiskIndex(인덱싱 중 or 빌드 실패) → 디스크의 기존 인덱스 보존(prevIndex.blob)
     //  ④그 외(인덱스 없음) → blob:null(main 이 stale index.bin 제거)
     let embedModel: string | null;
     let embedDim: number | null;
@@ -373,7 +379,7 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
       fullSerialized = ragIndex.serialize();
       embedModel = fullSerialized.model; embedDim = fullSerialized.dimension; chunkMeta = fullSerialized.chunkMeta;
       blob = fullSerialized.buffer;
-    } else if (indexing) {
+    } else if (preserveDiskIndex) {
       embedModel = prevIndex?.embedModel ?? null;
       embedDim = prevIndex?.embedDim ?? null;
       chunkMeta = prevIndex?.chunkMeta ?? [];

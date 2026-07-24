@@ -74,7 +74,7 @@ function setStore(memberHashes: string[]): void {
     ],
     collection: { enabled: true, memberHashes },
     qaMessages: [], qaStream: '', isGenerating: false, isQaGenerating: false, qaRequestId: null,
-    ragState: { isIndexing: false, progress: null, isAvailable: true, model: MODEL, chunkCount: 1 },
+    ragState: { isIndexing: false, progress: null, isAvailable: true, model: MODEL, chunkCount: 1, error: null },
     notice: null, error: null,
     settings: { ...useAppStore.getState().settings, summaryLanguage: 'ko' },
   });
@@ -351,7 +351,7 @@ describe('generateCollectionSummary (L2)', () => {
       ],
       collection: { enabled: true, memberHashes: [hA, hB, hC, hD, hE] },
       qaMessages: [], qaStream: '', isGenerating: false, isQaGenerating: false, qaRequestId: null,
-      ragState: { isIndexing: false, progress: null, isAvailable: true, model: MODEL, chunkCount: 1 },
+      ragState: { isIndexing: false, progress: null, isAvailable: true, model: MODEL, chunkCount: 1, error: null },
       notice: null, error: null,
       settings: { ...useAppStore.getState().settings, summaryLanguage: 'ko' },
     });

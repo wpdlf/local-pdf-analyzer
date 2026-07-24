@@ -169,6 +169,12 @@ export const _translations = {
   // ─── QaChat ───
   'qa.header': { ko: '문서에 대해 질문하세요', en: 'Ask about the document' },
   'qa.indexing': { ko: 'RAG 인덱싱', en: 'RAG indexing' },
+  // QA19(C-MED): RAG 빌드 실패(대개 네트워크 단절) 시 헤더 배지 — 키워드 강등을 사용자에게 알린다.
+  'qa.indexFailed': { ko: '인덱싱 실패', en: 'Indexing failed' },
+  'qa.indexFailedTooltip': {
+    ko: '임베딩에 실패해 키워드 검색으로 동작합니다. 네트워크를 확인한 뒤 문서를 다시 열면 재인덱싱합니다. (이전 인덱스는 보존되어 있습니다)',
+    en: 'Embedding failed, so keyword search is used. Check your network and reopen the document to re-index. (Your previous index is preserved.)',
+  },
   'qa.chunkTooltip': { ko: '임베딩 모델: {model} | {count}개 청크', en: 'Embedding model: {model} | {count} chunks' },
   'qa.ragActive': { ko: 'RAG 시맨틱 검색이 활성화되었습니다. 문서에 대해 질문해보세요.', en: 'RAG semantic search is active. Ask a question about the document.' },
   'qa.emptyHint': { ko: '요약된 내용이나 원문에 대해 궁금한 점을 질문해보세요', en: 'Ask questions about the summary or original document' },

@@ -134,6 +134,12 @@ export function QaChat() {
             <svg aria-hidden="true" className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
             {t('qa.indexing')}<span aria-hidden="true">{ragState.progress ? ` ${ragState.progress.current}/${ragState.progress.total}` : '...'}</span>
           </span>
+        ) : ragState.error ? (
+          // QA19(C-MED): 빌드 실패 → 키워드 강등을 헤더에서 고지(role="status"). 실패 시 메모리
+          // 인덱스는 비워지지만(chunkCount 0) 디스크 인덱스는 보존되어 재오픈 시 복원된다.
+          <span role="status" className="text-xs text-red-500" title={t('qa.indexFailedTooltip')}>
+            {t('qa.indexFailed')}
+          </span>
         ) : ragState.chunkCount > 0 ? (
           <span className="text-xs text-green-500" title={t('qa.chunkTooltip', { model: ragState.model || '?', count: ragState.chunkCount })}>
             RAG

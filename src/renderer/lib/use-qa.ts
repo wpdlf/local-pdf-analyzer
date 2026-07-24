@@ -30,6 +30,11 @@ const VERIFY_AVG_SCORE = 0.65;
 const VERIFY_MIN_SENTENCE_CHARS = 15;
 /** 답변당 검증할 최대 문장 수 — 매우 긴 답변의 비용/지연 상한 */
 const VERIFY_MAX_SENTENCES = 100;
+// QA19(B-MED): 문장별 최대 점수 계산은 컬렉션에서 문장×멤버×청크×dim 의 동기 내적이라
+// (100문장×10멤버×2000청크×768 ≈ 15억 회) 렌더러를 초 단위로 프리즈시킨다. N문장마다 매크로태스크
+// 경계에서 이벤트루프에 양보해 스피너 애니메이션·멈춤 버튼이 반응하게 하고, 그 지점에서 abort 를
+// 재확인해 취소를 실효화한다(동기 루프 안의 signal.aborted 는 원리상 관측 불가한 dead code 였다).
+const VERIFY_YIELD_EVERY = 8;
 
 /**
  * 프롬프트 구분자 인젝션 방어: 사용자 입력에서 splitPrompt 구분자(---\n\n)와
@@ -296,6 +301,7 @@ export async function buildRagIndex(
     model: embedCheck.model || null,
     progress: { current: 0, total },
     chunkCount: 0,
+    error: null, // 새 빌드 시작 — 이전 실패 사유 클리어
   });
 
   const ragIndex = store.ragIndex;
@@ -320,15 +326,19 @@ export async function buildRagIndex(
       if (signal.aborted || useAppStore.getState().document?.id !== docId) return false;
 
       if (!result.success || !result.embeddings) {
+        // QA19(C-MED, 데이터손실): 실패(대개 네트워크 단절)를 error 로 표식한다. 이게 없으면
+        // 자동저장이 isIndexing:false + size 0 을 "인덱스 없음"으로 오판해 디스크의 이전(정상)
+        // index.bin 을 삭제한다(use-session preserveDiskIndex). 메모리 인덱스는 부분 저장을
+        // 막기 위해 clear 하되, 디스크 인덱스는 error 플래그로 보존된다.
         ragIndex.clear();
-        store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null });
+        store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, error: 'embedFailed' });
         return false;
       }
 
       // 임베딩 개수 검증 — API가 부분 결과를 반환한 경우 방어
       if (result.embeddings.length !== batch.length) {
         ragIndex.clear();
-        store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null });
+        store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, error: 'embedFailed' });
         return false;
       }
 
@@ -355,13 +365,15 @@ export async function buildRagIndex(
       isIndexing: false,
       chunkCount: ragIndex.size,
       progress: null,
+      error: null, // 성공 완주 — 이전 실패 표식 클리어
     });
     return true;
   } catch {
     // 자신이 아직 active한 경우에만 정리 — 새 build의 상태를 덮어쓰지 않음
     if (!signal.aborted) {
+      // QA19(C-MED): 위 배치 실패와 동일 — error 표식으로 디스크 인덱스를 보존한다.
       ragIndex.clear();
-      store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null });
+      store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, error: 'embedFailed' });
     }
     return false;
   }
@@ -738,6 +750,12 @@ export async function verifyAnswerSentences(
   let weakCount = 0;
   for (let i = 0; i < result.embeddings.length; i++) {
     if (signal?.aborted) break;
+    // QA19(B-MED): N문장마다 이벤트루프에 양보 — 없으면 컬렉션 검증의 수억 회 동기 내적이
+    // 렌더러를 프리즈시키고 abort 도 관측되지 않는다. 양보 직후 abort 를 재확인해 취소 실효화.
+    if (i > 0 && i % VERIFY_YIELD_EVERY === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (signal?.aborted) break;
+    }
     const emb = result.embeddings[i];
     if (!emb) continue;
     // 문장의 최대 근거 점수 (단일 인덱스 top-1, 또는 컬렉션 멤버 전역 최대).

@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-type RagState = { isIndexing: boolean; progress: { current: number; total: number } | null; isAvailable: boolean; model: string | null; chunkCount: number };
+type RagState = { isIndexing: boolean; progress: { current: number; total: number } | null; isAvailable: boolean; model: string | null; chunkCount: number; error: string | null };
 type QaMsg = { id: string; role: 'user' | 'assistant'; content: string; degraded?: boolean };
 
 const Q = vi.hoisted(() => ({
@@ -19,7 +19,7 @@ const Q = vi.hoisted(() => ({
     qaStream: '',
     isQaGenerating: false,
     qaVerifying: false,
-    ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 } as RagState,
+    ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0, error: null } as RagState,
   },
 }));
 vi.mock('../../lib/use-qa', () => ({
@@ -38,7 +38,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   Q.state = {
     qaMessages: [], qaStream: '', isQaGenerating: false, qaVerifying: false,
-    ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+    ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0, error: null },
   };
 });
 afterEach(() => cleanup());
@@ -50,14 +50,14 @@ describe('QaChat', () => {
   });
 
   it('빈 상태 + chunkCount>0 → ragActive 안내 + RAG 배지', () => {
-    Q.state.ragState = { isIndexing: false, progress: null, isAvailable: true, model: 'nomic', chunkCount: 50 };
+    Q.state.ragState = { isIndexing: false, progress: null, isAvailable: true, model: 'nomic', chunkCount: 50, error: null };
     render(<QaChat />);
     expect(screen.getByText(/RAG 시맨틱 검색이 활성화/)).toBeTruthy();
     expect(screen.getByText('RAG')).toBeTruthy();
   });
 
   it('a11y L5: 인덱싱 인디케이터가 role="status" + 진행숫자는 aria-hidden(과통지 방지)', () => {
-    Q.state.ragState = { isIndexing: true, progress: { current: 2, total: 5 }, isAvailable: false, model: null, chunkCount: 0 };
+    Q.state.ragState = { isIndexing: true, progress: { current: 2, total: 5 }, isAvailable: false, model: null, chunkCount: 0, error: null };
     render(<QaChat />);
     const status = screen.getByRole('status');
     expect(status).toBeTruthy();
@@ -138,7 +138,7 @@ describe('QaChat', () => {
   });
 
   it('RAG 인덱싱 중 → 전송 차단 + 안내 + 입력 비활성', () => {
-    Q.state.ragState = { isIndexing: true, progress: { current: 2, total: 10 }, isAvailable: false, model: null, chunkCount: 0 };
+    Q.state.ragState = { isIndexing: true, progress: { current: 2, total: 10 }, isAvailable: false, model: null, chunkCount: 0, error: null };
     render(<QaChat />);
     const input = screen.getByLabelText('질문 입력') as HTMLTextAreaElement;
     expect(input.disabled).toBe(true);

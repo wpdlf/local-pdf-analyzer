@@ -83,7 +83,7 @@ function seed(collectionEnabled: boolean): void {
       { filePath: '/d/Beta.pdf', fileName: 'Beta.pdf', pageCount: 10, docHash: 'b'.repeat(64) },
     ],
     ragIndex: activeIndex(),
-    ragState: { isIndexing: false, progress: null, isAvailable: true, model: MODEL, chunkCount: 1 },
+    ragState: { isIndexing: false, progress: null, isAvailable: true, model: MODEL, chunkCount: 1, error: null },
     collection: { enabled: collectionEnabled, memberHashes: ['a'.repeat(64), 'b'.repeat(64)] },
     qaMessages: [], qaStream: '', isGenerating: false, isQaGenerating: false, qaRequestId: null,
     notice: null, error: null,

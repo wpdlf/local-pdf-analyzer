@@ -37,7 +37,7 @@ function seedActive(): void {
   vs.addChunk('x', [1, 0, 0], 0);
   useAppStore.setState({
     ragIndex: vs,
-    ragState: { isIndexing: false, progress: null, isAvailable: true, model: 'm', chunkCount: 1 },
+    ragState: { isIndexing: false, progress: null, isAvailable: true, model: 'm', chunkCount: 1, error: null },
   });
 }
 

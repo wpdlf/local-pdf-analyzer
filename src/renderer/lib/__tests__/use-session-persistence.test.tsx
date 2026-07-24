@@ -69,7 +69,7 @@ function resetStore(over: Record<string, unknown> = {}) {
     document: null, summary: null, summaryStream: '', qaMessages: [],
     isGenerating: false, isQaGenerating: false, sessionRestorePending: false,
     restoredSession: null, ragIndex: new VectorStore(),
-    ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+    ragState: { isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0, error: null },
     settings: { ...useAppStore.getState().settings, persistSessions: true, provider: 'ollama' },
     ...over,
   });
@@ -203,7 +203,7 @@ describe('useSessionPersistence — 디바운스 자동저장 게이트', () => 
   it('인덱싱 중이면 저장 보류', async () => {
     resetStore({
       document: makeDoc(), summaryStream: '요약',
-      ragState: { isIndexing: true, progress: null, isAvailable: false, model: null, chunkCount: 0 },
+      ragState: { isIndexing: true, progress: null, isAvailable: false, model: null, chunkCount: 0, error: null },
     });
     renderHook(() => useSessionPersistence());
     await settle(1600);
