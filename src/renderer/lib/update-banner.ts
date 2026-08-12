@@ -31,7 +31,7 @@ export type UpdateBanner =
  *
  * - checking: 사용자가 요청하지 않은 백그라운드 확인이라 매 기동 깜빡이면 소음이다.
  * - not-available: "최신입니다" 는 수동 확인의 응답이므로 설정 패널 소관.
- * - error: 자동 확인 실패로 메인 화면을 어지럽히지 않는다(설정 패널에 사유가 남는다).
+ * - error: **회복 수단이 있을 때만** 띄운다(아래 QA24 주석). 사유는 항상 설정 패널에 남는다.
  *
  * 버전 문자열이 비어 있어도(피드 이상) 배너 자체는 띄운다 — QA19(D-LOW) 와 동일 정책.
  * 표시 문구만 버전 미포함으로 폴백하도록 null 로 정규화한다.
@@ -54,11 +54,20 @@ export function selectUpdateBanner(state: UpdateState | null | undefined): Updat
       // QA23(A-MED): 이전에는 여기서 null 을 반환해 **배너가 사유 없이 사라졌다**. 사용자는
       // 다운로드가 끝난 것인지 실패한 것인지 알 수 없고, 재시도의 유일한 메인 화면 진입점까지
       // 사라져 다시 설정을 열어야 했다 — 이 배너가 없애려던 바로 그 문제다.
+      //
+      // QA24(B-I3): 단, 그 수정이 **배경 확인 실패까지** 배너로 끌어올렸다. 오프라인·사내망
+      // 사용자는 기동 8초 뒤 자동 확인이 실패해 매 기동 "네트워크 오류" 배너를 보는데,
+      // newVersion 이 없으므로 재시도 버튼도 없다 — 닫기밖에 할 게 없고 dismiss 는 컴포넌트
+      // state 라 다음 실행에서 다시 뜬다. 사유는 보이지만 **회복 동작이 없는 배너**다.
+      // newVersion 유무가 곧 "사용자가 시작한 조작의 실패인가"의 대리 지표다: 다운로드·설치
+      // 실패는 확인된 버전을 보존하고(installer-missing 포함), 배경 확인 실패만 null 이다.
+      // 회복 수단이 없는 실패는 배너를 띄우지 않는다(설정 패널의 사유 표시는 그대로 유지).
+      if (!state.newVersion) return null;
       return {
         kind: 'error',
         errorKey: state.errorKey || null,
         // 확인된 버전이 남아 있으면 재확인 없이 다운로드를 다시 시도할 수 있다(canDownload 와 동일 규칙).
-        canRetryDownload: !!state.newVersion,
+        canRetryDownload: true,
       };
     default:
       return null;

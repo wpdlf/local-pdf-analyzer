@@ -309,6 +309,14 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
       // flush 실패로 업데이트를 막지는 않는다(best-effort) — 종료 경로와 동일 정책.
       console.error('[update] flush before install failed:', err);
     }
+    // QA24(B-I2): 위 await 는 창당 최대 2초 열려 있는 구간이다. 그 사이 autoUpdater 의 error 가
+    // 도착하면 on('error') 가 finishAbortedInstall() 로 **installing 을 이미 false 로 되돌린다**.
+    // 종전에는 그 뒤로도 그대로 quitAndInstall 을 호출했고, 이어서 만드는 백스톱 타이머는
+    // `if (!installing) return` 에 걸려 무력화됐다 — 설치 무산을 감지할 주체가 사라진다.
+    // 게다가 상태는 downloaded 로 돌아가 있어 canInstall 이 다시 열리므로 사용자가 한 번 더
+    // 누르면 install() 재진입 + 두 번째 quitAndInstall 이 된다.
+    // 설치가 이미 취소됐다면 여기서 멈춘다(error 핸들러가 상태·표식 롤백을 마쳤다).
+    if (!installing) return state;
     try {
       // isSilent=false: NSIS oneClick:false 빌드라 설치 UI 가 필요하다.
       // isForceRunAfter=true: 설치 후 앱을 다시 띄운다("재시작하여 설치"의 멘탈 모델).

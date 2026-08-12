@@ -1,6 +1,7 @@
 import { useAppStore } from './store';
 import { handlePdfData, notifyEmptyPages } from './pdf-parser';
 import { persistCurrentSession, restoreSessionForDocument } from './use-session';
+import { confirmDiscardIfNotPersisted } from './discard-policy';
 import { t } from './i18n';
 import type { OpenTab, PdfDocument, PersistedSession } from '../types';
 
@@ -82,29 +83,6 @@ function safeId(): string {
  * 재사용해 즉시 전환한다. 뷰어용 원본 바이트는 상주시키지 않고(pdfBytes 비상주, 메모리 M1)
  * 인용 클릭 시 PdfViewerPanel 이 디스크에서 lazy 로드한다.
  */
-/**
- * 세션 영속화가 꺼져 있으면 탭 전환이 **현재 문서의 요약·Q&A 를 되돌릴 수 없이 파기**한다 —
- * 저장할 곳이 없으므로 persistCurrentSession 은 no-op 이고, 전환 대상은 세션이 없어 재파싱
- * 경로로 가면서 store 를 초기화한다.
- *
- * QA23(D-MED): 이 손실이 **경고 없이** 일어났다. 사용자가 "디스크에 안 쓴다"로 이해한 설정이
- * "탭을 바꾸면 작업이 사라진다"를 뜻하지는 않는다. 세션 전체 삭제(설정)와 같은 등급의 파괴적
- * 조작이므로 같은 방식(확인 대화상자)으로 묻는다. 잃을 것이 없으면(요약·대화 모두 없음) 묻지 않는다.
- *
- * @returns 계속 진행해도 되면 true.
- */
-function confirmDiscardIfNotPersisted(): boolean {
-  const s = useAppStore.getState();
-  if (s.settings.persistSessions) return true;
-  const hasWork = !!s.summary || s.summaryStream.trim().length > 0 || s.qaMessages.length > 0;
-  if (!hasWork) return true;
-  try {
-    return window.confirm(t('tabs.discardOnSwitchConfirm'));
-  } catch {
-    return true; // confirm 이 없는 환경(테스트 등) — 차단하지 않는다
-  }
-}
-
 async function openTabTarget(tab: OpenTab): Promise<boolean> {
   // ① 세션 우선: 콘텐츠 해시로 저장된 분석 상태(텍스트/요약/Q&A/인덱스)를 즉시 복원
   if (tab.docHash) {
@@ -115,7 +93,8 @@ async function openTabTarget(tab: OpenTab): Promise<boolean> {
   // ② 세션 미생성(요약/인덱스 전 + persist off 등) — 파일에서 전체 파싱 (보안 가드 동일 적용)
   const result = await window.electronAPI.file.openPath(tab.filePath).catch(() => ({ error: 'ipc' as const }));
   if (!('error' in result)) {
-    await handlePdfData(result.data, result.name, result.path);
+    // 파기 확인은 이 함수의 호출자(switchToTab·closeTab)가 이미 마쳤다 — 중복 질문 방지.
+    await handlePdfData(result.data, result.name, result.path, { skipDiscardConfirm: true });
     return true;
   }
   console.warn('[tabs] 전환 실패: 세션 없음 + 파일 재읽기 불가', tab.filePath, result.error);
@@ -214,6 +193,12 @@ export async function closeTab(filePath: string): Promise<void> {
   // 탭을 upsert 로 되살린다.
   if (!isActive && (store.isCollectionBusy || store.collectionOpenInFlight || store.isTabSwitching)) return;
 
+  // QA24(A-I1): 활성 탭을 닫으면 이웃 문서로 교체되므로 전환과 **동일한 손실**이다(영속화 OFF
+  // 에서 요약·Q&A 파기). 종전 주석의 "영속화된 세션은 디스크에 유지" 는 persist ON 전제의
+  // 안심 문구였고, OFF 사용자에게는 해당되지 않는다. removeOpenTab **전에** 묻는다 — 뒤에서
+  // 물으면 취소해도 탭은 이미 목록에서 사라진 뒤다.
+  if (isActive && !confirmDiscardIfNotPersisted()) return;
+
   const tabs = store.openTabs;
   const idx = tabs.findIndex((tb) => tb.filePath === filePath);
   store.removeOpenTab(filePath);
@@ -258,6 +243,8 @@ export async function openNewTabView(): Promise<void> {
   const store = useAppStore.getState();
   if (!store.document) return; // 이미 업로드 화면
   if (isTabSwitchBlocked()) return;
+  // QA24(A-I1): "+" 도 활성 문서를 업로드 화면으로 교체하므로 같은 손실이다.
+  if (!confirmDiscardIfNotPersisted()) return;
   // QA6-C M2: flush 중 전환/닫기 인터리브 차단(switchToTab 과 대칭)
   setTabSwitching(true);
   try {

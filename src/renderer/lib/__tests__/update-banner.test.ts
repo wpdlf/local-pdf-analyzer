@@ -56,9 +56,19 @@ describe('selectUpdateBanner — 어떤 상태에서 배너를 띄우는가', ()
       .toEqual({ kind: 'error', errorKey: 'updateNetwork', canRetryDownload: true });
   });
 
-  it('error + 확인된 버전 없음: 재시도 불가로 표시(재확인이 먼저다)', () => {
+  // QA24(B-I3): 위 QA23 수정이 **배경 확인 실패까지** 배너로 끌어올렸다. 오프라인/사내망
+  // 사용자는 기동 8초 뒤 자동 확인이 실패해 매 기동 배너를 보는데, newVersion 이 없으니
+  // 재시도 버튼도 없다 — 닫기밖에 없고 dismiss 는 컴포넌트 state 라 다음 실행에 또 뜬다.
+  // 사유는 보이지만 회복 동작이 없는 배너이므로 띄우지 않는다(설정 패널 표시는 유지).
+  it('error + 확인된 버전 없음(배경 확인 실패): 배너를 띄우지 않는다', () => {
     expect(selectUpdateBanner(state('error', { errorKey: 'updateNetwork', newVersion: null })))
-      .toEqual({ kind: 'error', errorKey: 'updateNetwork', canRetryDownload: false });
+      .toBeNull();
+  });
+
+  // 회복 수단이 있는 실패는 계속 띄운다 — QA23 이 닫은 "사유 없이 사라짐" 이 되살아나지 않도록.
+  it('installer-missing 처럼 버전이 보존된 실패는 재시도와 함께 계속 띄운다', () => {
+    expect(selectUpdateBanner(state('error', { errorKey: 'updateInstallerMissing', newVersion: '1.0.2' })))
+      .toEqual({ kind: 'error', errorKey: 'updateInstallerMissing', canRetryDownload: true });
   });
 
   // 아래 상태들에서 배너가 뜨면 매 기동 깜빡이거나(checking) 요청하지 않은 소음이 된다.

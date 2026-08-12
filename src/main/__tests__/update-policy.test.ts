@@ -196,6 +196,35 @@ describe('nextUpdateState — 순서가 뒤바뀐 이벤트 방어', () => {
     expect(nextUpdateState(prev, { type: 'progress', percent: 88 })).toBe(prev);
   });
 
+  // QA24(B-I1): 종전에는 downloaded 만 역행 방어했다. downloading 은 canCheck·canDownload·
+  // canInstall 이 **전부 닫힌** 상태인데 그 시점엔 진행 중인 다운로드가 없어 완료 이벤트도
+  // 오지 않는다 → 앱 재시작 전까지 업데이트 기능 전체가 사망한다.
+  it('다운로드 실패(error) 후 지각 progress 는 downloading 으로 역행시키지 않는다', () => {
+    const prev = base({ status: 'error', newVersion: '1.1.0', percent: 0, errorKey: 'updateNetwork' });
+    const next = nextUpdateState(prev, { type: 'progress', percent: 42 });
+    expect(next, '역행하면 세 게이트가 전부 닫힌 채 고착된다').toBe(prev);
+    // 고착되지 않았음을 게이트로 확증 — 재시도 경로가 열려 있어야 한다.
+    expect(canDownload(next.status, next.newVersion)).toBe(true);
+  });
+
+  it('설치 중 지각 progress·downloaded 는 installing 을 되돌리지 않는다', () => {
+    const prev = base({ status: 'installing', newVersion: '1.1.0', percent: 100 });
+    expect(nextUpdateState(prev, { type: 'progress', percent: 50 })).toBe(prev);
+    // downloaded 로 되돌아가면 설치 버튼이 되살아나고, 그 클릭은 내부 잠금에 조용히 폐기된다.
+    expect(nextUpdateState(prev, { type: 'downloaded', version: '1.1.0' })).toBe(prev);
+    expect(nextUpdateState(prev, { type: 'check-started' })).toBe(prev);
+    expect(nextUpdateState(prev, { type: 'available', version: '1.2.0' })).toBe(prev);
+    expect(nextUpdateState(prev, { type: 'not-available' })).toBe(prev);
+  });
+
+  it('설치 중 error 는 유일하게 통과한다 — 설치 무산은 downloaded 복귀로 회복되어야 한다', () => {
+    const prev = base({ status: 'installing', newVersion: '1.1.0', percent: 100 });
+    const next = nextUpdateState(prev, { type: 'error', errorKey: 'updateInstallFailed' });
+    expect(next.status).toBe('downloaded');
+    expect(next.errorKey).toBe('updateInstallFailed');
+    expect(canInstall(next.status)).toBe(true);
+  });
+
   it('다운로드 완료 후 같은 버전의 available(수동 재확인)은 downloaded 를 유지', () => {
     const prev = base({ status: 'downloaded', newVersion: '1.1.0', percent: 100 });
     expect(nextUpdateState(prev, { type: 'available', version: '1.1.0' })).toBe(prev);

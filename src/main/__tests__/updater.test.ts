@@ -313,6 +313,29 @@ describe('install — 데이터 손실 방어', () => {
     expect(order).toEqual(['flush-start', 'flush-done', 'quitAndInstall']);
   });
 
+  // QA24(B-I2): flush await 는 창당 최대 2초 열려 있는 구간이다. 그 사이 autoUpdater 의
+  // error 가 도착하면 on('error') 가 finishAbortedInstall() 로 installing 을 이미 false 로
+  // 되돌린다. 종전에는 그대로 quitAndInstall 을 호출했고, 이어 만드는 백스톱 타이머는
+  // `if (!installing) return` 에 걸려 무력화됐다 — 설치 무산을 감지할 주체가 사라진다.
+  it('flush 대기 중 error 가 도착하면 설치를 시작하지 않는다 (백스톱 무력화 차단)', async () => {
+    // flush 가 진행되는 동안 설치 무산 신호가 도착하는 상황 — flush 콜백 안에서 emit 해
+    // 타이밍을 결정적으로 고정한다(실제로는 창당 최대 2초 열려 있는 구간).
+    let emitError: (() => void) | null = null;
+    const ctx = setup({ flushBeforeInstall: async () => { emitError?.(); } });
+    emitError = () => ctx.emit('error', new Error('NSIS spawn failed'));
+    await toDownloaded(ctx);
+
+    await ctx.service.install();
+
+    expect(ctx.au.quitAndInstall, '취소된 설치를 그대로 진행하면 백스톱이 사라진다').not.toHaveBeenCalled();
+    // 상태는 downloaded 로 복귀해 재시도가 가능해야 한다(설치 자격 보존).
+    expect(ctx.service.getState().status).toBe('downloaded');
+    // 그리고 그 재시도는 실제로 동작해야 한다 — 잠금이 고착되지 않았음의 확증.
+    emitError = null; // 이번 flush 에서는 무산 신호가 오지 않는다
+    await ctx.service.install();
+    expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
   it('flush 가 실패해도 설치는 진행한다 (best-effort — 종료 경로와 동일 정책)', async () => {
     const ctx = setup({ flushBeforeInstall: () => Promise.reject(new Error('renderer gone')) });
     await toDownloaded(ctx);

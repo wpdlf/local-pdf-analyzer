@@ -177,6 +177,12 @@ export function nextUpdateState(prev: UpdateState, event: UpdateEvent): UpdateSt
   // autoUpdater 를 wire 하지 않으므로 도달하지 않아야 한다).
   if (prev.status === 'unsupported') return prev;
 
+  // QA24(B-I1): 'installing' 은 종착지다 — 이 구간에 도착하는 확인·다운로드 계열 이벤트는
+  // 모두 무시한다. 개별 case 마다 가드를 흩어 놓으면 새 이벤트 타입이 생길 때 형제 누락이
+  // 반복되므로(이 프로젝트의 최다 결함 클래스) 진입부에서 한 번에 막는다. 설치 구간을 빠져나오는
+  // 길은 'error'(설치 무산 → downloaded 복귀)와 프로세스 종료 둘뿐이다.
+  if (prev.status === 'installing' && event.type !== 'error') return prev;
+
   switch (event.type) {
     case 'check-started':
       if (prev.status === 'checking') return prev;
@@ -188,13 +194,21 @@ export function nextUpdateState(prev: UpdateState, event: UpdateEvent): UpdateSt
       if (prev.status === 'downloaded') return prev;
       return { ...prev, status: 'checking', percent: 0, errorKey: null };
 
-    case 'available':
+    case 'available': {
+      // QA24(B-M1): 빈 버전 문자열은 null 로 정규화한다. 종전에는 `newVersion: ''` 가 저장돼
+      // 재시도 자격 판정이 층마다 갈렸다 — canDownload 는 `!== null` 이라 열리는데, 배너와
+      // 설정 패널은 진리값(`!!version`)이라 닫혀서 **정책은 동작하는데 버튼이 없는** 상태가
+      // 됐다(ec7fe9a[1] 이 고친 "정책은 열려 있고 배선이 닫힘" 과 같은 클래스). 저장 시점에
+      // 한 번만 정규화해 세 층이 같은 값을 보게 한다. 배너 자체는 버전이 없어도 뜨고 문구만
+      // 폴백한다(QA19 D-LOW 정책 유지).
+      const version = event.version || null;
       // 이미 받아둔 버전과 같은 버전의 재확인(수동 확인 등)은 다운로드 완료 상태를 유지한다.
       // 그러지 않으면 "재시작하여 설치" 버튼이 사라지고 사용자가 같은 파일을 다시 받게 된다.
-      if (prev.status === 'downloaded' && prev.newVersion === event.version) return prev;
+      if (prev.status === 'downloaded' && prev.newVersion === version) return prev;
       // 다운로드 중 같은 버전의 available 이 다시 오면(연속 확인) 진행 중인 다운로드를 유지.
-      if (prev.status === 'downloading' && prev.newVersion === event.version) return prev;
-      return { ...prev, status: 'available', newVersion: event.version, percent: 0, errorKey: null };
+      if (prev.status === 'downloading' && prev.newVersion === version) return prev;
+      return { ...prev, status: 'available', newVersion: version, percent: 0, errorKey: null };
+    }
 
     case 'not-available':
       return { ...prev, status: 'not-available', newVersion: null, percent: 0, errorKey: null };
@@ -206,14 +220,28 @@ export function nextUpdateState(prev: UpdateState, event: UpdateEvent): UpdateSt
     case 'progress': {
       // 완료 후 도착한 지각 progress 는 무시 — 'downloaded' 를 되돌리면 설치 버튼이 사라진다.
       if (prev.status === 'downloaded') return prev;
+      // QA24(B-I1): error·installing 도 같은 이유로 역행시키지 않는다. 종전에는 downloaded 만
+      // 방어해, 다운로드 실패(reject) 직후 지각 progress 가 도착하면 status 가 'downloading' 으로
+      // 되돌아갔다. 그런데 downloading 은 canCheck·canDownload·canInstall **세 게이트가 전부
+      // 닫힌** 상태이고, 이 시점엔 진행 중인 다운로드가 없어 완료 이벤트도 오지 않는다
+      // → 앱 재시작 전까지 업데이트 기능 전체가 사망한다(QA18 의 "IPC 타임아웃 자멸" 과 동형).
+      // check/download 에는 고착 방어 폴백이 있는데 progress 역행에만 대응이 없었다.
+      // 재시도는 반드시 download-started 를 먼저 거치므로 정상 경로는 막히지 않는다.
+      if (prev.status === 'error' || prev.status === 'installing') return prev;
       const percent = normalizePercent(event.percent, prev.percent);
       if (prev.status === 'downloading' && percent === prev.percent) return prev;
       return { ...prev, status: 'downloading', percent, errorKey: null };
     }
 
-    case 'downloaded':
-      if (prev.status === 'downloaded' && prev.newVersion === event.version) return prev;
-      return { ...prev, status: 'downloaded', newVersion: event.version, percent: 100, errorKey: null };
+    case 'downloaded': {
+      // QA24(B-I1): 설치 구간은 종착지다. 설치 중 지각 downloaded 가 오면 설치 버튼이 되살아나고,
+      // 그 클릭은 updater 의 installing 불리언에 조용히 폐기된다(QA23 B-MED 가 없앤 클래스의 부활).
+      // (진입부 가드가 이미 막지만, 이 케이스만 따로 읽는 사람을 위해 남긴다.)
+      if (prev.status === 'installing') return prev;
+      const version = event.version || null; // QA24(B-M1): available 과 동일 정규화
+      if (prev.status === 'downloaded' && prev.newVersion === version) return prev;
+      return { ...prev, status: 'downloaded', newVersion: version, percent: 100, errorKey: null };
+    }
 
     case 'install-started':
       // 설치 요청 ~ 실제 종료 사이의 구간을 상태로 표현한다(QA23 B-MED). 이게 없으면 UI 가

@@ -274,6 +274,69 @@ describe('switchToTab', () => {
         vi.unstubAllGlobals();
       }
     });
+
+    // QA24(A-I1): 근인은 "전환" 이 아니라 **문서 교체**다. 종전 테스트가 switchToTab 만
+    // 구동해, 같은 손실을 내는 형제 경로(탭 닫기·"+"·직행 로드)가 무경고로 남은 것을 놓쳤다.
+    it('활성 탭 닫기도 이웃으로 교체되므로 묻는다 — 취소하면 탭이 남는다', async () => {
+      seedTabs(['/docs/a.pdf', '/docs/b.pdf'], '/docs/a.pdf');
+      withPersistOff();
+      const confirmSpy = vi.fn(() => false);
+      vi.stubGlobal('confirm', confirmSpy);
+      try {
+        await closeTab('/docs/a.pdf');
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        // removeOpenTab 뒤에 물으면 취소해도 탭이 이미 사라진 뒤다.
+        expect(useAppStore.getState().openTabs.map((t) => t.filePath), '취소했는데 탭이 사라지면 안 된다')
+          .toEqual(['/docs/a.pdf', '/docs/b.pdf']);
+        expect(useAppStore.getState().summary?.content).toBe('요약본');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('"+"(새 탭)도 활성 문서를 교체하므로 묻는다 — 취소하면 문서가 남는다', async () => {
+      seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+      withPersistOff();
+      const confirmSpy = vi.fn(() => false);
+      vi.stubGlobal('confirm', confirmSpy);
+      try {
+        await openNewTabView();
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(useAppStore.getState().document, '취소했는데 업로드 화면으로 가면 안 된다').not.toBeNull();
+        expect(useAppStore.getState().summary?.content).toBe('요약본');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('비활성 탭 닫기는 문서를 교체하지 않으므로 묻지 않는다 (과잉 확인 방지)', async () => {
+      seedTabs(['/docs/a.pdf', '/docs/b.pdf'], '/docs/a.pdf');
+      withPersistOff();
+      const confirmSpy = vi.fn(() => true);
+      vi.stubGlobal('confirm', confirmSpy);
+      try {
+        await closeTab('/docs/b.pdf');
+        expect(confirmSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    // 탭 전환의 파일 재파싱 fallback 은 handlePdfData 를 경유한다. 그 안에도 같은 게이트가
+    // 생겼으므로, 옵션으로 끄지 않으면 한 번의 전환에 확인이 두 번 뜬다.
+    it('전환의 재파싱 fallback 에서 확인이 두 번 뜨지 않는다', async () => {
+      seedTabs(['/docs/a.pdf', '/docs/b.pdf'], '/docs/a.pdf');
+      withPersistOff();
+      const confirmSpy = vi.fn(() => true);
+      vi.stubGlobal('confirm', confirmSpy);
+      try {
+        await switchToTab('/docs/b.pdf');
+        expect(M.openPath).toHaveBeenCalled();
+        expect(confirmSpy, '이중 질문은 사용자를 훈련시켜 확인을 무의미하게 만든다').toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 
   it('생성 중 전환 차단', async () => {

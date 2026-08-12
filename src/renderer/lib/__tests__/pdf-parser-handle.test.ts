@@ -233,6 +233,74 @@ describe('handlePdfData — 성공 오케스트레이션', () => {
     expect(useAppStore.getState().document?.images).toEqual([]); // 전량 거절은 종전대로
   });
 
+  // QA24(A-I1): 드롭·Ctrl+O·최근 문서·전역 검색은 전부 이 함수로 직행한다. 영속화 OFF 면
+  // 새 문서 로드가 현재 요약·Q&A 를 되돌릴 수 없이 파기하는데, 종전에는 탭 전환에만 확인이
+  // 있었고 이 경로들은 무경고였다.
+  describe('영속화 OFF 파기 확인 (직행 로드 경로)', () => {
+    const seedWorkWithPersistOff = () => {
+      useAppStore.setState({
+        settings: { ...useAppStore.getState().settings, persistSessions: false },
+        document: { id: 'old', fileName: 'old.pdf', filePath: '/d/old.pdf', pageCount: 1, extractedText: 'x', pageTexts: ['x'], chapters: [], images: [], createdAt: new Date() },
+        qaMessages: [{ id: 'q1', role: 'user', content: '질문' }],
+      });
+    };
+
+    it('취소하면 파싱조차 시작하지 않는다 (수십 초 파싱 뒤 묻는 확인은 의미가 없다)', async () => {
+      seedWorkWithPersistOff();
+      P.getDocument.mockClear();
+      const confirmSpy = vi.fn(() => false);
+      vi.stubGlobal('confirm', confirmSpy);
+      try {
+        await handlePdfData(pdfBuf(), 'new.pdf', '/d/new.pdf');
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(P.getDocument, '취소했는데 파싱이 돌면 안 된다').not.toHaveBeenCalled();
+        expect(useAppStore.getState().document?.fileName, '기존 문서가 유지돼야 한다').toBe('old.pdf');
+        expect(useAppStore.getState().qaMessages).toHaveLength(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('확인하면 종전대로 진행한다', async () => {
+      seedWorkWithPersistOff();
+      vi.stubGlobal('confirm', vi.fn(() => true));
+      try {
+        await handlePdfData(pdfBuf(), 'new.pdf', '/d/new.pdf');
+        expect(useAppStore.getState().document?.fileName).toBe('new.pdf');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('열린 문서가 없으면(첫 로드) 묻지 않는다 — 파기할 것이 없다', async () => {
+      useAppStore.setState({
+        settings: { ...useAppStore.getState().settings, persistSessions: false },
+        document: null,
+        qaMessages: [],
+      });
+      const confirmSpy = vi.fn(() => true);
+      vi.stubGlobal('confirm', confirmSpy);
+      try {
+        await handlePdfData(pdfBuf(), 'first.pdf', '/d/first.pdf');
+        expect(confirmSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('skipDiscardConfirm=true 면 묻지 않는다 (탭 전환 fallback 의 이중 질문 방지)', async () => {
+      seedWorkWithPersistOff();
+      const confirmSpy = vi.fn(() => true);
+      vi.stubGlobal('confirm', confirmSpy);
+      try {
+        await handlePdfData(pdfBuf(), 'new.pdf', '/d/new.pdf', { skipDiscardConfirm: true });
+        expect(confirmSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
   it('기존 문서가 있으면 새 문서 반영 전에 persist flush', async () => {
     useAppStore.setState({ document: { id: 'old', fileName: 'old.pdf', filePath: '/d/old.pdf', pageCount: 1, extractedText: 'x', pageTexts: ['x'], chapters: [], images: [], createdAt: new Date() } });
     await handlePdfData(pdfBuf(), 'new.pdf', '/d/new.pdf');

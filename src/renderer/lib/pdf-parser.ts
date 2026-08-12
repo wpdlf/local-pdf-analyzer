@@ -3,6 +3,7 @@ import type { PdfDocument, Chapter, PageImage, AppError } from '../types';
 import { useAppStore } from './store';
 import { t } from './i18n';
 import { restoreSessionForDocument, persistCurrentSession } from './use-session';
+import { confirmDiscardIfNotPersisted } from './discard-policy';
 import { MAX_PDF_SIZE_BYTES } from '../../shared/constants';
 // Vite의 ?url 쿼리를 사용해 worker 파일을 정적 에셋으로 번들링.
 // bare specifier + import.meta.url 패턴은 Vite에서 dev/build 동작이 다를 수 있어
@@ -935,6 +936,13 @@ export async function handlePdfData(
   data: ArrayBuffer,
   name: string,
   filePath: string,
+  opts: {
+    /**
+     * QA24(A-I1): 파기 확인을 건너뛴다. 탭 전환·탭 닫기 경로는 진입부에서 이미 물었고,
+     * 그쪽의 파일 재파싱 fallback 이 이 함수를 호출하므로 여기서 또 물으면 이중 질문이 된다.
+     */
+    skipDiscardConfirm?: boolean;
+  } = {},
 ): Promise<void> {
   const store = useAppStore.getState();
   if (store.isGenerating) {
@@ -960,6 +968,12 @@ export async function handlePdfData(
       code: 'PDF_PARSE_FAIL',
       message: t('pdf.busyCollection'),
     } as AppError);
+    return;
+  }
+  // QA24(A-I1): 영속화 OFF 면 새 문서 로드가 현재 요약·Q&A 를 되돌릴 수 없이 파기한다.
+  // 드롭·Ctrl+O·최근 문서·전역 검색이 전부 이 함수로 직행하므로 여기가 그 경로들의 단일
+  // 게이트다. **파싱 전에** 묻는다 — 수십 초 파싱이 끝난 뒤 묻는 확인은 의미가 없다.
+  if (!opts.skipDiscardConfirm && useAppStore.getState().document && !confirmDiscardIfNotPersisted()) {
     return;
   }
   // C5-M4(QA cycle5): openCollection(탭 세트 재구성) 진행 중에도 새 파일 열기 차단. 드롭/최근
