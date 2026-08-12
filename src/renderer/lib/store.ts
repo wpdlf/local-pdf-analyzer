@@ -49,11 +49,23 @@ export function flushPendingWrites(): Promise<void> {
       pendingPanelWidth = null;
     }
   }
+  // QA24(I5): 설정 IPC 착지를 기다린다. 종전에는 `void` 로 던지고 끝냈는데, 종료 handshake 는
+  // 세션 persist promise 만 기다리므로 — 문서를 열지 않은 상태에서는 doPersistCurrentSession 이
+  // 즉시 return 해 ack 가 곧바로 나가고 app.quit() 이 진행된다. 그 결과 "설정 화면에서 커스텀
+  // 템플릿을 저장하고 곧바로 종료" 하면 300ms 디바운스분이 디스크에 닿지 못한 채 사라졌다.
+  // QA10 이 세션에 대해 정확히 이 문제를 해결했는데 설정만 best-effort 로 남아 있었다.
+  let settingsFlushed: Promise<void> = Promise.resolve();
   if (settingsSaveTimer !== null) {
     clearTimeout(settingsSaveTimer);
     settingsSaveTimer = null;
-    if (pendingSettingsPayload !== null && typeof window !== 'undefined' && window.electronAPI?.settings?.set) {
-      try { void window.electronAPI.settings.set(pendingSettingsPayload); } catch { /* best-effort */ }
+    // QA24(C-H1): 로드 실패로 봉인된 상태면 flush 도 하지 않는다 — 종료 경로가 게이트를
+    // 우회하면 updateSettings 에서 막은 덮어쓰기가 그대로 성사된다(형제 누락 차단).
+    const sealed = useAppStore.getState().settingsLoadFailed;
+    if (!sealed && pendingSettingsPayload !== null && typeof window !== 'undefined' && window.electronAPI?.settings?.set) {
+      try {
+        settingsFlushed = Promise.resolve(window.electronAPI.settings.set(pendingSettingsPayload))
+          .then(() => undefined, () => undefined);
+      } catch { /* best-effort */ }
     }
     pendingSettingsPayload = null;
     // 대기자 settle — flush 로 타이머가 사라진 promise 를 영원히 대기하는 소비자 방지
@@ -74,7 +86,8 @@ export function flushPendingWrites(): Promise<void> {
   // 종료 시 완성 요약 소실 창 제거). partial 스트림·trailing lone-user 는 doPersist 가 정규화.
   let persisted: Promise<void> = Promise.resolve();
   try { persisted = persistCurrentSession(true); } catch { /* best-effort */ }
-  return persisted;
+  // QA24(I5): 세션과 설정 **둘 다** 착지한 뒤 ack — 어느 한쪽만 기다리면 나머지가 종료에 잘린다.
+  return Promise.all([persisted, settingsFlushed]).then(() => undefined);
 }
 
 // QA10(C-MED): 종료 handshake 리스너. main 의 before-quit 이 app:flush-before-quit 를 보내면
@@ -385,6 +398,15 @@ interface AppState {
   settings: AppSettings;
   updateSettings: (settings: AppSettings) => void;
   loadSettings: () => Promise<void>;
+  /**
+   * QA24(C-H1): settings:get 이 **일시 I/O 오류**로 실패했음을 표시. true 인 동안 저장을 막는다.
+   *
+   * 왜 필요한가 — main 의 settings:set 도 read 실패 시 쓰기를 중단하지만, 그 가드는 오류가
+   * **지속되는 동안만** 유효하다. EBUSY 가 1초 뒤 풀리면 read 는 성공하고, 그때 렌더러가 들고
+   * 있는 것은 "로드 실패로 기본값이 된 스토어" 전량이므로 그대로 디스크를 덮어쓴다. 즉 실제
+   * 방어선은 렌더러 쪽이다(부재/손상으로 인한 정상 기본값과 구분해야 하므로 플래그가 필요).
+   */
+  settingsLoadFailed: boolean;
 
   // OCR
   ocrProgress: { current: number; total: number } | null;
@@ -747,8 +769,24 @@ export const useAppStore = create<AppState>((set) => ({
 
   // 설정
   settings: DEFAULT_SETTINGS,
+  settingsLoadFailed: false,
   updateSettings: (newSettings) => {
     set({ settings: newSettings as AppSettings });
+    // QA24(C-H1): 로드가 일시 I/O 오류로 실패했다면 지금 스토어에 있는 값은 사용자의 설정이
+    // 아니라 기본값이다. 이걸 저장하면 디스크의 진짜 설정(커스텀 요약 템플릿 포함, 유일 사본)이
+    // 영구 교체된다. 화면 변경은 남기되 **디스크 쓰기만 막고** 사유를 표시한다.
+    if (useAppStore.getState().settingsLoadFailed) {
+      const lang = useAppStore.getState().settings.uiLanguage;
+      set({
+        error: {
+          code: 'SETTINGS_LOAD_FAIL' as const,
+          message: lang === 'en'
+            ? 'Settings could not be read, so saving is paused to avoid overwriting them. Restart the app and try again.'
+            : '설정을 읽지 못해, 기존 설정을 덮어쓰지 않도록 저장을 중단했습니다. 앱을 다시 시작한 뒤 시도해주세요.',
+        },
+      });
+      return;
+    }
     // 디바운스: 빠른 연속 변경 시 마지막 1건만 IPC 전송 (TOCTOU 경쟁 방지)
     if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
     // C5-M3: 커밋 대기자 arm — whenSettingsCommitted() 소비자(RAG 재빌드)가 main settings.json
@@ -792,7 +830,7 @@ export const useAppStore = create<AppState>((set) => ({
       const saved = await window.electronAPI.settings.get();
       set((s) => {
         const merged = { ...s.settings, ...saved } as AppSettings;
-        const update: Partial<AppState> = { settings: merged };
+        const update: Partial<AppState> = { settings: merged, settingsLoadFailed: false };
         // defaultSummaryType 설정을 summaryType에 반영
         if (merged.defaultSummaryType) {
           update.summaryType = merged.defaultSummaryType;
@@ -800,7 +838,11 @@ export const useAppStore = create<AppState>((set) => ({
         return update;
       });
     } catch {
-      // 저장된 설정 없으면 기본값 유지
+      // QA24(C-H1): main 의 loadSettings 는 이제 **일시 I/O 오류에서만** reject 한다(파일 부재·
+      // 손상 JSON 은 종전대로 defaults 를 반환하며 성공한다). 따라서 여기 도달했다는 것은
+      // "디스크에 사용자의 설정이 있는데 지금 읽지 못했다"는 뜻이고, 스토어의 기본값은 사용자
+      // 설정이 아니다. 저장을 봉인해 덮어쓰기를 막는다(updateSettings 의 게이트).
+      set({ settingsLoadFailed: true });
     }
   },
 

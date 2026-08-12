@@ -89,9 +89,32 @@ describe('loadSettings (Top5 #3)', () => {
     expect(result).toEqual(DEFAULTS);
   });
 
-  it('권한 오류(EACCES) 등 ENOENT 이외도 defaults fallback + 로그', async () => {
-    const eacces: NodeJS.ErrnoException = Object.assign(new Error('EACCES'), { code: 'EACCES' });
-    mocks.readFile.mockRejectedValue(eacces);
+  // QA24(C-H1): 종전 이 테스트는 "EACCES 도 defaults fallback" 을 **정답으로 못박고** 있었다.
+  // 그 동작이 곧 결함이다 — defaults 가 렌더러로 흘러가면 사용자가 무엇이든 하나 바꾸는 순간
+  // 전량 페이로드가 디스크를 덮어써 저장된 설정(커스텀 요약 템플릿 = 유일 사본)이 소실된다.
+  // 형제 3종(session/collections/api-keys)과 동일하게 "부재/손상 ≠ 일시 I/O 오류" 로 바꾼다.
+  it.each([
+    ['EACCES', '권한'],
+    ['EBUSY', '잠금'],
+    ['EPERM', '권한'],
+    ['EMFILE', 'fd 고갈'],
+  ])('일시 I/O 오류(%s, %s)는 삼키지 않고 throw — defaults 로 흡수하면 덮어쓰기로 이어진다', async (code) => {
+    const err: NodeJS.ErrnoException = Object.assign(new Error(code), { code });
+    mocks.readFile.mockRejectedValue(err);
+
+    await expect(loadSettings(TEST_PATH, DEFAULTS, VALID_KEYS)).rejects.toThrow(code);
+  });
+
+  it('부재(ENOENT)는 종전대로 defaults — 최초 실행은 정상 경로다', async () => {
+    const enoent: NodeJS.ErrnoException = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    mocks.readFile.mockRejectedValue(enoent);
+
+    const result = await loadSettings(TEST_PATH, DEFAULTS, VALID_KEYS);
+    expect(result).toEqual(DEFAULTS);
+  });
+
+  it('손상 JSON 은 종전대로 defaults + 로그 — code 가 없으므로 일시 오류와 구분된다', async () => {
+    mocks.readFile.mockResolvedValue('{ 이건 JSON 이 아니다');
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const result = await loadSettings(TEST_PATH, DEFAULTS, VALID_KEYS);

@@ -241,6 +241,9 @@ export type AppErrorCode =
   | 'API_KEY_MISSING'
   | 'API_KEY_INVALID'
   | 'SETTINGS_SAVE_FAIL'
+  // QA24(C-H1): 저장 실패와 구분한다 — 이쪽은 "읽지 못해서 덮어쓰지 않으려고 저장을 막았다"는
+  // 뜻이고, 사용자 조치(앱 재시작)도 다르다.
+  | 'SETTINGS_LOAD_FAIL'
   // 컬렉션 전용 코드(R48 LOW): PDF_PARSE_FAIL/GENERATE_FAIL 재사용은 메시지는 맞아도 code 가
   // 의미와 어긋나 텔레메트리/분기를 오도한다. 실패 출처를 명확히 하도록 전용 코드 분리.
   | 'COLLECTION_OPEN_FAIL'

@@ -10,8 +10,19 @@ import fsp from 'fs/promises';
  * 책임:
  * - load: 파일 부재(ENOENT) → defaults 반환, 손상 JSON → defaults 로 안전 fallback,
  *   `validKeys` 에 포함된 키만 허용해 임의 속성 주입 차단.
+ *   **일시 I/O 오류(EBUSY/EACCES/…)는 삼키지 않고 throw** — QA24(C-H1) 참조.
  * - save: `.tmp` 경유 + `rename` 으로 원자적 교체, 중간 실패 시 `.tmp` 정리.
  */
+
+/**
+ * 실제 I/O 오류(EBUSY/EACCES/EPERM/EMFILE 등)와 "부재(ENOENT)"·"손상(JSON 파싱 실패)"를 구분.
+ * session-store.ts / collections-store.ts / api-keys-store.ts 와 동일 정의 — 네 스토어가 같은
+ * 원칙을 공유한다.
+ */
+function isRealIoError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' && code !== 'ENOENT';
+}
 
 export async function loadSettings(
   filePath: string,
@@ -41,8 +52,13 @@ export async function loadSettings(
     }
     return { ...defaults, ...filtered };
   } catch (err) {
-    // ENOENT(최초 실행 시 파일 없음)는 정상이므로 로그 제외. 그 외(손상된 JSON, 권한 오류 등)는
-    // 사용자 리포트 시 진단에 필요 — 한 줄 경고로 가시성 확보.
+    // QA24(C-H1): 일시 I/O 오류를 defaults 로 흡수하면 **설정 전량이 영구 소실**된다.
+    // settings:get 이 defaults 를 반환 → 렌더러 스토어가 통째로 기본값 → 사용자가 무엇이든
+    // 하나 바꾸는 순간 updateSettings 가 **전체 설정 객체**를 보내고 settings:set 이 그것을
+    // 원자적으로 확정한다. 커스텀 요약 템플릿은 유일 사본이라 회수 경로가 없다.
+    // 형제 3종(session/collections/api-keys)은 이미 같은 구분을 갖고 있었고 settings 만
+    // 네 번째 형제로 남아 있었다. 부재(ENOENT)·손상(JSON 파싱)만 defaults 로 자가치유한다.
+    if (isRealIoError(err)) throw err;
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
       console.error('[settings] load failed, using defaults:', err);
     }

@@ -559,9 +559,16 @@ function getUpdaterService(): UpdaterService {
       broadcast: broadcastUpdateState,
       flushBeforeInstall: flushRenderersBeforeQuit,
       isAutoCheckEnabled: async () => {
-        const settings = await loadSettings();
-        // 미저장(구버전에서 올라온 settings.json)은 기본값 ON.
-        return settings.autoCheckUpdates !== false;
+        // QA24(C-H1): loadSettings 가 일시 I/O 오류를 throw 하게 됐다. 이 경로는 정책 조회일
+        // 뿐이고 실패해도 파괴적 결과가 없으므로 종전 동작(기본값 ON)을 유지한다 — 여기서
+        // 예외를 그대로 올리면 업데이트 확인 자체가 무산된다.
+        try {
+          const settings = await loadSettings();
+          // 미저장(구버전에서 올라온 settings.json)은 기본값 ON.
+          return settings.autoCheckUpdates !== false;
+        } catch {
+          return true;
+        }
       },
       // QA19(A-MED, 실데이터 손실): 설치가 무산되면 flushBeforeInstall 이 남긴 "flush 완료"
       // 표식을 되돌린다. 표식이 남으면 decideCloseAction 이 창 X 닫기를 'allow' 로 판정해
@@ -672,6 +679,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('settings:set', async (_event, partial: Record<string, unknown>) => {
     const task = async (): Promise<Record<string, unknown>> => {
+      // QA24(C-H1): read-modify-write 의 read 가 실패하면 **저장하지 않는다**. loadSettings 가
+      // 일시 I/O 오류에 defaults 를 반환하던 시절에는 여기서 `{...defaults, ...partial}` 이
+      // 디스크를 덮어써 저장된 설정 전량(커스텀 요약 템플릿 포함, 유일 사본)이 소실됐다.
+      // api-keys-store 의 readForWrite 가 이미 코드화해 둔 계약을 같은 구조인 이곳에 이식한다.
+      // throw 는 IPC 를 통해 렌더러의 settings.set().catch 로 전달되어 저장 실패 배너가 뜬다.
       const current = await loadSettings();
       const filtered: Record<string, unknown> = {};
       for (const key of VALID_SETTINGS_KEYS) {

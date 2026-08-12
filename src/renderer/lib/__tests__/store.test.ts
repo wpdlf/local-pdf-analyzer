@@ -693,6 +693,41 @@ describe('updateSettings — 디바운스 저장 실패 처리', () => {
     expect(useAppStore.getState().error?.code).toBe('SETTINGS_SAVE_FAIL');
   });
 
+  // ─── QA24(C-H1): settings:get 실패 후 덮어쓰기 봉인 ───
+  // main 의 settings:set 도 read 실패 시 중단하지만 그 가드는 오류가 **지속되는 동안만** 유효하다.
+  // EBUSY 가 풀린 뒤에는 read 가 성공하므로, 렌더러가 든 기본값 전량이 그대로 확정된다.
+  it('settings:get 이 일시 I/O 오류로 실패 → 이후 저장이 봉인되고 IPC 가 나가지 않는다', async () => {
+    const setMock = vi.mocked(window.electronAPI.settings.set);
+    setMock.mockClear();
+    vi.mocked(window.electronAPI.settings.get).mockRejectedValueOnce(
+      Object.assign(new Error('EBUSY'), { code: 'EBUSY' }),
+    );
+
+    await useAppStore.getState().loadSettings();
+    expect(useAppStore.getState().settingsLoadFailed).toBe(true);
+
+    // 로드 실패 상태에서 사용자가 테마를 토글 — 스토어의 값은 사용자 설정이 아니라 기본값이다
+    useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, theme: 'dark' });
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(setMock).not.toHaveBeenCalled();
+    expect(useAppStore.getState().error?.code).toBe('SETTINGS_LOAD_FAIL');
+  });
+
+  it('settings:get 이 성공하면 봉인이 풀린다(부재/손상은 main 이 defaults 로 성공 반환)', async () => {
+    const setMock = vi.mocked(window.electronAPI.settings.set);
+    useAppStore.setState({ settingsLoadFailed: true });
+    vi.mocked(window.electronAPI.settings.get).mockResolvedValueOnce({ theme: 'dark' });
+
+    await useAppStore.getState().loadSettings();
+    expect(useAppStore.getState().settingsLoadFailed).toBe(false);
+
+    setMock.mockClear();
+    useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, theme: 'light' });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setMock).toHaveBeenCalledTimes(1);
+  });
+
   it('성공하면 에러를 설정하지 않는다', async () => {
     // 기본 stub(set: () => Promise.resolve())이 성공 경로 — 별도 override 불필요.
     useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, theme: 'light' });
