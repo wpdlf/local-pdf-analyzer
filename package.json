@@ -22,7 +22,17 @@
   "dependencies": {
     "electron-updater": "^6.8.9"
   },
-  "//testingPinPolicy": "R37 P3 (v0.18.23): 테스트 인프라 6종(@testing-library/* 3개, happy-dom, vitest, @vitest/coverage-v8)은 정확 핀. 사유: 테스팅 도구의 patch/minor 업데이트가 assertion 동작·매처·DOM 시뮬레이션 세부를 조용히 바꿔 CI 가 그린인 채로 false negative(또는 false positive) 가 발생한 전례가 다수. 본 repo 는 dependabot 미사용으로 수동 bump 라운드에서만 갱신하므로 핀 비용 0. 그 외 deps(electron/vite/react 등)는 SemVer 신뢰가 충분히 검증되어 캐럿 유지.",
+  "//shippedDevDependencies": "QA24(D-I1): 위 dependenciesPolicy 의 부작용 — renderer 라이브러리를 devDependencies 로 옮긴 결과 `npm audit --omit=dev` 가 **정확히 반대**를 본다. 실제로 사용자에게 배포되는 pdfjs/react 는 감시 밖으로 나가고, 배포되지 않는 빌드툴(tar/undici/postcss/esbuild)만 감시 대상에 남는다. 그래서 pdfjs-dist 의 '악성 PDF 열람 시 임의 JS 실행' HIGH 권고가 빌드툴 노이즈 속에 묻혀 있었다. 아래 목록은 **devDependencies 이지만 vite 번들을 통해 실제 배포물에 들어가는** 패키지다. CI 의 shipped-audit 스텝이 이 배열을 읽어 high 이상 advisory 면 빌드를 막는다. 목록을 손으로 유지하면 다시 stale 해지므로 여기에 두고, 새 renderer 런타임 라이브러리를 추가하면 여기에도 추가한다(빌드 전용 도구 — vite/tailwind/electron-builder/테스트 인프라 — 는 넣지 않는다).",
+  "shippedDevDependencies": [
+    "pdfjs-dist",
+    "react",
+    "react-dom",
+    "react-markdown",
+    "remark-gfm",
+    "zustand",
+    "pdf-lib"
+  ],
+  "//testingPinPolicy": "R37 P3 (v0.18.23): 테스트 인프라 6종(@testing-library/* 3개, happy-dom, vitest, @vitest/coverage-v8)은 정확 핀. 사유: 테스팅 도구의 patch/minor 업데이트가 assertion 동작·매처·DOM 시뮬레이션 세부를 조용히 바꿔 CI 가 그린인 채로 false negative(또는 false positive) 가 발생한 전례가 다수. 이 6종은 수동 bump 라운드에서만 갱신하므로 핀 비용 0 — QA24(D-M5)에서 dependabot 을 도입했으나 대상을 **배포물에 실리는 것만**으로 좁혀 이 핀들은 자동 범프 대상이 아니다(.github/dependabot.yml 참조). 그 외 deps(electron/vite/react 등)는 SemVer 신뢰가 충분히 검증되어 캐럿 유지.",
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@tailwindcss/typography": "^0.5.19",
@@ -34,7 +44,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.2.0",
     "@vitest/coverage-v8": "4.1.10",
-    "electron": "^43.1.0",
+    "electron": "^43.4.0",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
     "happy-dom": "20.10.6",

@@ -1,0 +1,50 @@
+version: 2
+
+# QA24(D-M5): 정기 갱신 장치가 전혀 없어 배포물의 의존성 갱신이 수동 QA 라운드에만 의존했다.
+# 그 결과 electron 이 캐럿 범위 안에서 3패치(43.1.0 → 43.4.0) 뒤처져 있었고 — Electron 패치는
+# Chromium 보안 수정을 실어 나른다 — pdfjs-dist 의 HIGH 권고도 캐럿 범위 안에 수정본이 있는
+# 채로 방치돼 있었다(6.1.200 → 6.2.108).
+#
+# 범위를 **배포물에 실리는 것만**으로 좁힌다. 빌드툴·테스트 인프라까지 열면 주간 PR 소음이
+# 커져 전부 무시하게 되고(이 저장소가 npm audit 요약에서 이미 겪은 학습된 무시), 테스트
+# 인프라는 //testingPinPolicy 에 따라 의도적으로 정확 핀이라 자동 범프 대상이 아니다.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '02:00'
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: 'chore(deps)'
+    allow:
+      # main/preload 가 런타임에 실제 require 하는 것
+      - dependency-name: electron-updater
+      # 앱 셸 — Chromium 보안 패치 경로
+      - dependency-name: electron
+      # package.json 의 shippedDevDependencies 와 같은 집합 —
+      # devDependencies 이지만 vite 번들을 통해 실제 배포물에 들어간다.
+      - dependency-name: pdfjs-dist
+      - dependency-name: react
+      - dependency-name: react-dom
+      - dependency-name: react-markdown
+      - dependency-name: remark-gfm
+      - dependency-name: zustand
+      - dependency-name: pdf-lib
+    ignore:
+      # major 는 사람이 판단한다 — 이 저장소의 major 이전은 격리 브랜치 스파이크
+      # (설치 → tsc + build + E2E → GO 시 머지) 절차를 따른다.
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
+
+  # 액션은 SHA 핀이라 사람이 손대지 않으면 영원히 고정된다 — 보안 수정도 따라오지 않는다.
+  # 월 1회로 소음을 억제한다.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: 'chore(ci)'

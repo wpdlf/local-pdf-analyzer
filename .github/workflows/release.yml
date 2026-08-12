@@ -116,6 +116,25 @@ jobs:
       #   코드도 릴리즈될 수 있었다. ubuntu 에서 test:coverage 로 게이트 강제(커버리지 비율은
       #   OS/Node 비의존이라 1회면 충분). windows-2025 는 경로/pwsh 회귀 검증용으로 plain
       #   유닛 테스트 유지 — 동일 ubuntu 에서 이중 실행(test + coverage)을 피한다.
+      # QA24(D-M2): 의도 플래그로 바꾼 뒤에도 **플래그 자체가 빠지는 경우**는 여전히 무증상이다 —
+      # matrix include 에서 `coverage: true` 를 지우면 커버리지 게이트가 사라지고 잡은 그대로
+      # 초록이다. 결함이 OS 라벨에서 플래그 이름으로 이동했을 뿐이므로, "이 레그는 무엇을
+      # 실행하기로 돼 있는가"를 레그 스스로 단언하게 한다. 어떤 게이트도 배정받지 못한 레그는
+      # 존재 이유가 없으므로 실패시킨다.
+      - name: Assert this leg has a job to do
+        shell: bash
+        run: |
+          if [ "${{ matrix.coverage }}" != "true" ] && [ "${{ matrix.unitOnly }}" != "true" ]; then
+            echo "::error::이 매트릭스 레그(${{ matrix.os }})에 실행할 게이트가 없습니다 — include 의 의도 플래그(coverage/unitOnly/e2e)가 누락되면 잡이 아무것도 검증하지 않고 통과합니다"
+            exit 1
+          fi
+          # coverage 레그는 E2E 도 함께 지는 설계다(위 C5-I2 주석). e2e 플래그만 지워지면
+          # 커버리지가 돌아 잡이 초록인 채 E2E 게이트만 조용히 사라진다.
+          if [ "${{ matrix.coverage }}" = "true" ] && [ "${{ matrix.e2e }}" != "true" ]; then
+            echo "::error::coverage 레그에 e2e 플래그가 없습니다 — E2E 스모크 게이트가 무증상으로 사라집니다"
+            exit 1
+          fi
+
       - name: Unit tests + coverage gate (ubuntu)
         if: matrix.coverage
         run: npm run test:coverage
@@ -157,6 +176,14 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          # QA24(D-I3): **릴리즈 쓰기 토큰을 실제로 보유한 유일한 잡**인데 여기만 빠져 있었다.
+          # QA20(B-MED)의 위협 모델("npm ci 가 서드파티 라이프사이클 스크립트를 돌리는데
+          # checkout 이 토큰을 .git/config 에 남긴다")이 가장 강하게 적용되는 자리다 —
+          # 침해된 devDependency 하나가 그 토큰으로 릴리즈 자산을 덮어쓸 수 있고, 자동 업데이트
+          # 도입 이후 그 자산은 곧 전 사용자 코드 실행이다. 아래 업로드·증명 액션은
+          # GITHUB_TOKEN/OIDC 를 쓰므로 git config 자격증명이 필요 없다.
+          persist-credentials: false
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
