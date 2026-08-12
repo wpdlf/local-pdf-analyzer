@@ -486,6 +486,29 @@ describe('install — 데이터 손실 방어', () => {
         await ctx.service.install();
         expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
       });
+
+      // QA24(A-M2/B-M4): 재다운로드가 **이벤트 없이** 완료되는 고착 방어 경로를 타면, 종전에는
+      // 직전(이미 사라진) 경로가 그대로 남아 설치가 영구히 막혔다 — 백신이 인스톨러를 격리한 뒤
+      // 재시도하는 시나리오에서 사용자는 재다운로드를 반복해도 같은 실패만 본다.
+      it('재다운로드 시 직전 인스톨러 경로가 남아 설치를 영구 차단하지 않는다', async () => {
+        const ctx = setup({ installerExists: () => false }); // 옛 경로는 이제 존재하지 않는다
+        // 1차: 경로를 받은 정상 다운로드
+        await toDownloaded(ctx);
+        // 설치 시도 → 파일이 없으므로 installer-missing (정상 동작)
+        await ctx.service.install();
+        expect(ctx.service.getState().errorKey).toBe('updateInstallerMissing');
+        expect(ctx.au.quitAndInstall).not.toHaveBeenCalled();
+
+        // 2차: 재시도 — downloadUpdate 는 resolve 하지만 update-downloaded 이벤트가 없는 경우
+        await ctx.service.download();
+
+        expect(ctx.service.getState().status).toBe('downloaded');
+        await ctx.service.install();
+        expect(
+          ctx.au.quitAndInstall,
+          '스테일 경로가 남으면 재다운로드해도 영원히 installer-missing 이 반복된다',
+        ).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('설치 요청 즉시 installing 상태가 되어 재클릭이 조용히 폐기되지 않는다', async () => {
