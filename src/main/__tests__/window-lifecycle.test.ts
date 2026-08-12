@@ -244,8 +244,31 @@ describe('updater 배선 — 인스톨러 실재 확인 주입', () => {
 
   it('clearUpdaterCache 를 주입한다 (체크섬 실패 시 손상 캐시 정리)', () => {
     expect(MAIN_SRC).toMatch(/clearUpdaterCache,/);
-    // 계산된 경로로 지우므로 이름 검증 가드가 반드시 있어야 한다.
-    expect(MAIN_SRC).toMatch(/dirName\.endsWith\('-updater'\)/);
+  });
+
+  // QA24(A-L2/B-M2): 종전 가드는 `dirName.endsWith('-updater')` 의 **존재**를 소스 스캔으로
+  // 확인했는데, 그 조건은 자기가 방금 붙인 리터럴을 검사하는 항진명제라 지켜주는 게 없었다.
+  // 게다가 이 검사는 코드가 아니라 **주석에도 매칭**된다(실제로 그 코드를 제거한 뒤에도 통과했다).
+  // 실질을 본다: 이름은 drift 테스트가 못박은 상수에서 와야 하고, app.getName() 에서 오면 안 된다
+  // (electron 은 productName 이 있으면 그것을 반환하는데 electron-builder 는 name 기반이다).
+  it('캐시 디렉터리 이름을 UPDATER_CACHE_DIR_NAME 상수에서 가져온다', () => {
+    const body = MAIN_SRC.slice(
+      MAIN_SRC.indexOf('function clearUpdaterCache'),
+      MAIN_SRC.indexOf('function broadcastUpdateState'),
+    );
+    // 주석을 걷어낸 실제 코드만 본다 — 위 사건의 재발 방지.
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).toMatch(/dirName\s*=\s*UPDATER_CACHE_DIR_NAME/);
+    expect(code, 'app.getName() 은 productName 을 반환할 수 있어 빌더의 규약과 갈린다').not.toMatch(/app\.getName\(\)/);
+  });
+
+  it('%LOCALAPPDATA% 를 electron-updater 와 같은 출처(env)에서 1순위로 읽는다', () => {
+    const body = MAIN_SRC.slice(
+      MAIN_SRC.indexOf('function clearUpdaterCache'),
+      MAIN_SRC.indexOf('function broadcastUpdateState'),
+    );
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).toMatch(/process\.env\.LOCALAPPDATA/);
   });
 });
 

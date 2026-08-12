@@ -513,7 +513,13 @@ export async function mergeSessionSummary(
     };
     session.summaries = summaries;
     const jsonStr = JSON.stringify(session);
-    await writeFileAtomic(jsonPath, jsonStr);
+    // QA24(C-M1): 요약·Q&A 델타 경로는 fsync 한다. writeFileAtomic 의 제외 근거는 "세션 본문/
+    // index.bin 은 손상 시 **재계산으로 자가치유**" 인데, 같은 파일에 들어 있는 summaries 와
+    // qaMessages 는 재계산이 불가능한 사용자 데이터다(extractedText/pageTexts/인덱스와 다르다).
+    // api-keys-store 가 QA21 에서 정확히 이 논증으로 fsync 를 추가했는데 여기엔 이식되지 않았다.
+    // 전량 저장(writeSession, 멀티MB × 1.5초 디바운스)은 비용 때문에 종전대로 제외하고,
+    // 델타 전용 경로(mergeSessionSummary/patchSession)만 opt-in 한다.
+    await writeFileAtomic(jsonPath, jsonStr, { sync: true });
 
     // manifest: lastAccessed 갱신 + byteSize 재계산(json + 기존 index.bin). 엔트리 없으면 skip(고아 best-effort).
     let blobBytes = 0;
@@ -595,7 +601,8 @@ export async function patchSession(
     if (Array.isArray(qaMessages)) session.qaMessages = qaMessages;
 
     const jsonStr = JSON.stringify(session);
-    await writeFileAtomic(jsonPath, jsonStr);
+    // QA24(C-M1): 요약·Q&A 델타 경로 — 재계산 불가한 사용자 데이터라 fsync(위 mergeSessionSummary 주석).
+    await writeFileAtomic(jsonPath, jsonStr, { sync: true });
 
     // manifest: lastAccessed 갱신 + byteSize 재계산(json + 기존 index.bin 보존분). 엔트리 없으면
     // skip(고아 best-effort). 인덱스 메타(embedModel/dim/chunkCount)는 무변경이라 그대로 둔다.
@@ -665,8 +672,24 @@ export async function clearAll(sessionsDir: string): Promise<{ ok: boolean }> {
 }
 
 /** 최근목록(lastAccessed 내림차순). */
-export async function listSessions(sessionsDir: string): Promise<SessionManifestEntry[]> {
-  const manifest = await loadManifest(sessionsDir);
+/**
+ * 최근 문서 목록 — lastAccessed 내림차순.
+ *
+ * QA24(C-M2): **일시 I/O 오류를 "세션 없음" 으로 단정하지 않는다**(null 반환). QA23(D-LOW)이
+ * `listCollections` 를 같은 이유로 전파형으로 바꿨는데("EBUSY 한 번에 '없습니다' 를 단정적으로
+ * 표시하면 사용자가 전량 소실로 읽는다") 세션에는 이식되지 않았다. 여기서 `[]` 를 반환하면:
+ *  - 최근 문서 목록이 **빈 채로** 표시되고(사용자는 세션이 날아갔다고 읽는다)
+ *  - `use-qa` 의 resolveMembers 가 활성 문서 외 전 멤버를 missing 으로 판정해
+ *    **컬렉션 Q&A 가 다른 문서를 빼고 답변한다**(조용한 오답).
+ * 부재·손상은 종전대로 빈 목록으로 자가치유한다 — 그건 실제로 "없음" 이 맞다.
+ */
+export async function listSessions(sessionsDir: string): Promise<SessionManifestEntry[] | null> {
+  let manifest: SessionManifest;
+  try {
+    manifest = await readManifest(sessionsDir, true);
+  } catch {
+    return null; // 일시 I/O 오류 — "없음" 과 구분해 호출자가 사유를 표시할 수 있게 한다
+  }
   return [...manifest.entries].sort((a, b) => b.lastAccessed.localeCompare(a.lastAccessed));
 }
 

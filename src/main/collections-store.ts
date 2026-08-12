@@ -101,9 +101,25 @@ async function loadCollections(filePath: string): Promise<SavedCollection[]> {
     const raw = await fsp.readFile(filePath, 'utf-8');
     const parsed = JSON.parse(raw) as CollectionStoreFile;
     if (!parsed || !Array.isArray(parsed.collections)) return [];
-    // schemaVersion 분기 없음(현재 v1). COLLECTION_SCHEMA_VERSION 을 올릴 때는 여기서
-    // parsed.schemaVersion 에 따라 마이그레이션을 수행할 것 — 지금은 normalizeCollection 이
-    // 누락 필드를 보정하므로 v1 한정으로 무손실(R48 LOW 메모).
+    // QA24(C-M3): **상위 스키마 다운그레이드 방어**. normalizeCollection 은 알려진 5개 필드만
+    // 재구성하므로, 상위 버전에서 필드가 추가된 파일을 이 버전이 읽고 다시 쓰면 신규 필드가
+    // 디스크에서 **영구 제거**된다. 종전에는 저장·삭제 때만 그 위험이 있었는데, v1.0.1 이
+    // `touchCollection`(열기마다 전체 목록 재기록)을 추가하면서 **읽기 성격의 동작으로 확대**됐다 —
+    // 컬렉션을 열기만 해도 파일이 정규화된 형태로 덮어써진다. collections.json 은 유일 사본이라
+    // 회수 경로가 없으므로, 모르는 상위 버전은 읽지도 쓰지도 않는다(호출자는 "불러오지 못함"
+    // 으로 표시 — 빈 목록으로 단정하는 것보다 정직하다).
+    if (typeof parsed.schemaVersion === 'number' && parsed.schemaVersion > COLLECTION_SCHEMA_VERSION) {
+      // `code` 를 붙여야 아래 catch 의 isRealIoError 가 전파시킨다 — 붙이지 않으면 "손상 JSON"
+      // 으로 흡수돼 빈 목록이 반환되고, 그 위에 저장이 얹히면 방어하려던 파괴가 그대로 일어난다.
+      throw Object.assign(
+        new Error(
+          `collections.json schemaVersion ${parsed.schemaVersion} > ${COLLECTION_SCHEMA_VERSION} — 상위 버전 파일이라 읽지 않습니다`,
+        ),
+        { code: 'ESCHEMAVERSION' },
+      );
+    }
+    // COLLECTION_SCHEMA_VERSION 을 올릴 때는 여기서 parsed.schemaVersion 에 따라 마이그레이션을
+    // 수행할 것 — 지금은 normalizeCollection 이 누락 필드를 보정하므로 v1 한정으로 무손실.
     return parsed.collections
       .map(normalizeCollection)
       .filter((c): c is SavedCollection => c !== null);

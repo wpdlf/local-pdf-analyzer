@@ -40,6 +40,27 @@ export const MAX_SUMMARY_TYPE_LEN = 'custom:'.length + MAX_TEMPLATE_ID_LEN; // 7
 export const LOCALHOST_HOSTS: readonly string[] = ['localhost', '127.0.0.1', '::1'];
 
 /**
+ * package.json 의 `name`. electron-builder 의 updater 캐시 디렉터리 이름이 이 값에서 파생된다.
+ *
+ * QA24(A-L2/B-M2): `clearUpdaterCache` 는 `%LOCALAPPDATA%\<name>-updater` 를 **재귀 삭제**하는데,
+ * electron-updater 가 이 경로를 API 로 노출하지 않아 규약으로 계산한다. 종전 가드는
+ * `dirName.endsWith('-updater')` 였는데 이는 자기가 방금 붙인 리터럴을 검사하는 **항진명제**라
+ * 실제 위험(계산된 이름이 빌더가 쓰는 이름과 어긋남)을 전혀 막지 못했다.
+ *
+ * `app.getName()` 을 쓰면 안 된다 — electron 은 `productName` 이 있으면 그것을 반환하는데
+ * electron-builder 는 **`name` 기반**으로 캐시 이름을 만든다
+ * (`sanitizeFileName(metadata.name).toLowerCase() + '-updater'`, app-builder-lib/out/appInfo.js).
+ * 현재는 루트 package.json 에 productName 이 없어 우연히 일치하지만, `build.productName`
+ * ("PDF 자료 분석기")을 루트로 승격하는 순간 둘이 갈리고 정리는 영구 no-op 이 된다.
+ *
+ * 이 상수가 package.json 과 어긋나지 않도록 `updater-cache-name-drift.test.ts` 가 못박는다.
+ */
+export const APP_PACKAGE_NAME = 'summary-lecture-material';
+
+/** electron-builder 의 updaterCacheDirName 규약을 재현한다(위 주석 참조). */
+export const UPDATER_CACHE_DIR_NAME = `${APP_PACKAGE_NAME.toLowerCase()}-updater`;
+
+/**
  * 외부 hostname 이 로컬호스트로 평가되는지 검사 — SSRF 방어 헬퍼.
  *
  * v0.18.22: IPv6 loopback 호환성 수정. WHATWG URL parser 는 `http://[::1]` 의 hostname 을

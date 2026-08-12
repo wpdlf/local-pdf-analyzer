@@ -71,6 +71,18 @@ import {
 } from '../session-store';
 
 const DIR = '/userData/sessions';
+
+/**
+ * QA24(C-M2): listSessions 는 일시 I/O 오류를 `null` 로 구분해 반환한다("불러오지 못함" ≠
+ * "정말 없음"). 아래 기존 테스트들은 전부 정상 경로라 배열을 기대하므로, null 이면 즉시
+ * 실패시키는 래퍼로 감싼다 — 옵셔널 체이닝으로 넘기면 null 이 반환되기 시작해도 단언이
+ * 조용히 통과하는 공허한 테스트가 된다. null 계약 자체는 아래 별도 describe 에서 검증한다.
+ */
+async function listSessionsOk(dir: string) {
+  const list = await listSessions(dir);
+  if (list === null) throw new Error('listSessions 가 null 을 반환했다 — 이 테스트는 정상 경로를 기대한다');
+  return list;
+}
 const hashOf = (n: number) => n.toString(16).padStart(64, '0'); // 유효 64-hex
 const metaOf = (docHash: string): SessionSaveMeta => ({
   docHash, fileName: 'doc.pdf', filePath: '/x/doc.pdf', pageCount: 10,
@@ -186,11 +198,32 @@ describe('writeSession / readSession 라운드트립', () => {
   });
 });
 
+// QA24(C-M2): "불러오지 못함" 과 "정말 없음" 을 구분한다. 종전에는 둘 다 `[]` 라 EBUSY 한 번에
+// ①최근 문서 목록이 빈 채로 표시되고(사용자는 전량 소실로 읽는다) ②use-qa 의 resolveMembers 가
+// 활성 문서 외 전 멤버를 missing 으로 판정해 **컬렉션 Q&A 가 다른 문서를 빼고 답변**했다(조용한 오답).
+// QA23(D-LOW)이 listCollections 를 같은 이유로 전파형으로 바꿨는데 세션에는 이식되지 않았다.
+describe('listSessions — 읽기 실패 ≠ 부재', () => {
+  it.each(['EBUSY', 'EACCES', 'EPERM'])('일시 I/O 오류(%s)는 null 을 반환한다', async (code) => {
+    await writeSession(DIR, { meta: metaOf(hashOf(1)), session: { a: 1 }, blob: null, now: 1000 });
+    const err: NodeJS.ErrnoException = Object.assign(new Error(code), { code });
+    const spy = vi.spyOn(fsp, 'readFile').mockRejectedValueOnce(err);
+    try {
+      await expect(listSessions(DIR)).resolves.toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('manifest 부재(ENOENT)는 빈 배열 — 그건 실제로 "없음" 이 맞다', async () => {
+    await expect(listSessions('/userData/empty-sessions')).resolves.toEqual([]);
+  });
+});
+
 describe('manifest / list / stats / delete / clear', () => {
   it('저장 시 manifest upsert + list/stats 반영', async () => {
     await writeSession(DIR, { meta: metaOf(hashOf(1)), session: { a: 1 }, blob: null, now: 1000 });
     await writeSession(DIR, { meta: metaOf(hashOf(2)), session: { a: 2 }, blob: null, now: 2000 });
-    const list = await listSessions(DIR);
+    const list = await listSessionsOk(DIR);
     expect(list).toHaveLength(2);
     expect(list[0]!.docHash).toBe(hashOf(2)); // lastAccessed 내림차순
     const stats = await sessionStats(DIR);
@@ -203,7 +236,7 @@ describe('manifest / list / stats / delete / clear', () => {
     const h = hashOf(1);
     await writeSession(DIR, { meta: metaOf(h), session: { v: 1 }, blob: null, now: 1000 });
     await writeSession(DIR, { meta: metaOf(h), session: { v: 2 }, blob: null, now: 5000 });
-    const list = await listSessions(DIR);
+    const list = await listSessionsOk(DIR);
     expect(list).toHaveLength(1);
     expect(list[0]!.createdAt).toBe(new Date(1000).toISOString());
     expect(list[0]!.lastAccessed).toBe(new Date(5000).toISOString());
@@ -213,14 +246,14 @@ describe('manifest / list / stats / delete / clear', () => {
     await writeSession(DIR, { meta: metaOf(hashOf(1)), session: { a: 1 }, blob: null, now: 1000 });
     const r = await deleteSession(DIR, hashOf(1));
     expect(r.ok).toBe(true);
-    expect(await listSessions(DIR)).toHaveLength(0);
+    expect(await listSessionsOk(DIR)).toHaveLength(0);
     expect(await readSession(DIR, hashOf(1))).toBeNull();
   });
 
   it('clearAll 은 전체 비우기', async () => {
     await writeSession(DIR, { meta: metaOf(hashOf(1)), session: { a: 1 }, blob: null, now: 1000 });
     await clearAll(DIR);
-    expect(await listSessions(DIR)).toHaveLength(0);
+    expect(await listSessionsOk(DIR)).toHaveLength(0);
   });
 });
 
@@ -255,7 +288,7 @@ describe('R41 fixes (session-store)', () => {
     const blob = new Float32Array([1, 0, 0, 0, 1, 0]).buffer; // 2×3
     await writeSession(DIR, { meta: metaOf(h), session: { a: 1 }, blob, now: 1000 });
     expect((await readSession(DIR, h))!.blob).not.toBeNull();
-    const withBlob = (await listSessions(DIR))[0]!.byteSize;
+    const withBlob = (await listSessionsOk(DIR))[0]!.byteSize;
 
     // 같은 docHash 를 blob 없이 재저장 → 이전 index.bin 제거 + byteSize 축소
     await writeSession(DIR, {
@@ -263,7 +296,7 @@ describe('R41 fixes (session-store)', () => {
       session: { a: 2 }, blob: null, now: 2000,
     });
     expect((await readSession(DIR, h))!.blob).toBeNull();
-    expect((await listSessions(DIR))[0]!.byteSize).toBeLessThan(withBlob);
+    expect((await listSessionsOk(DIR))[0]!.byteSize).toBeLessThan(withBlob);
   });
 
   it('손상된 meta 필드(거대 문자열/NaN/Infinity) 를 서버측 정규화', async () => {
@@ -275,7 +308,7 @@ describe('R41 fixes (session-store)', () => {
       },
       session: {}, blob: null, now: 1000,
     });
-    const e = (await listSessions(DIR))[0]!;
+    const e = (await listSessionsOk(DIR))[0]!;
     expect(e.fileName.length).toBeLessThanOrEqual(512);
     expect(e.pageCount).toBe(0);      // NaN → 0
     expect(e.chunkCount).toBe(0);     // Infinity → 0
@@ -290,7 +323,7 @@ describe('writeSession keepIndex (serialize-skip, Tier2)', () => {
     const blob = new Float32Array([1, 0, 0, 0, 1, 0]).buffer; // 2×3 인덱스
     await writeSession(DIR, { meta: metaOf(h), session: { v: 1 }, blob, now: 1000 });
     const withBlob = (await readSession(DIR, h))!.blob!;
-    const byteWithBlob = (await listSessions(DIR))[0]!.byteSize;
+    const byteWithBlob = (await listSessionsOk(DIR))[0]!.byteSize;
 
     // keepIndex 로 재저장(blob 미전송) → 인덱스 그대로, 본문만 갱신
     const r = await writeSession(DIR, { meta: metaOf(h), session: { v: 2 }, blob: null, keepIndex: true, now: 2000 });
@@ -301,7 +334,7 @@ describe('writeSession keepIndex (serialize-skip, Tier2)', () => {
     expect(after!.blob!.byteLength).toBe(withBlob.byteLength); // 동일 인덱스
     expect((after!.session as { v: number }).v).toBe(2);      // 본문은 갱신
     // byteSize 가 index.bin 크기를 계속 포함 (과소계상 방지 — LRU 캡 정상)
-    const byteAfter = (await listSessions(DIR))[0]!.byteSize;
+    const byteAfter = (await listSessionsOk(DIR))[0]!.byteSize;
     expect(byteAfter).toBeGreaterThan(Buffer.byteLength(JSON.stringify({ v: 2 })));
     expect(Math.abs(byteAfter - byteWithBlob)).toBeLessThan(50); // json 차이만큼만 변동
   });
@@ -311,7 +344,7 @@ describe('writeSession keepIndex (serialize-skip, Tier2)', () => {
     const r = await writeSession(DIR, { meta: { ...metaOf(h), embedModel: null, embedDim: null, chunkCount: 0 }, session: { v: 1 }, blob: null, keepIndex: true, now: 1000 });
     expect(r.ok).toBe(true);
     expect((await readSession(DIR, h))!.blob).toBeNull();
-    expect(Number.isFinite((await listSessions(DIR))[0]!.byteSize)).toBe(true);
+    expect(Number.isFinite((await listSessionsOk(DIR))[0]!.byteSize)).toBe(true);
   });
 
   // QA21(C-MED, 조용한 오답): 위 테스트는 meta 가 이미 "인덱스 없음"(embedModel:null, chunkCount:0)인
@@ -332,7 +365,7 @@ describe('writeSession keepIndex (serialize-skip, Tier2)', () => {
     expect(r.ok).toBe(true);
     expect(r.indexMissing).toBe(true); // 렌더러가 시그니처를 무효화하고 전체 저장으로 회복하도록
 
-    const entry = (await listSessions(DIR)).find((e) => e.docHash === h)!;
+    const entry = (await listSessionsOk(DIR)).find((e) => e.docHash === h)!;
     expect(entry.embedModel, '없는 인덱스를 있다고 기록하면 안 된다').toBeNull();
     expect(entry.embedDim).toBeNull();
     expect(entry.chunkCount).toBe(0);
@@ -358,7 +391,7 @@ describe('writeSession keepIndex (serialize-skip, Tier2)', () => {
     });
 
     expect(r.ok).toBe(true);
-    const hashes = (await listSessions(DIR)).map((e) => e.docHash);
+    const hashes = (await listSessionsOk(DIR)).map((e) => e.docHash);
     expect(hashes, '열린 탭은 보호돼야 한다').toContain(oldestOpen);
     // 상한은 여전히 지켜진다 — 열린 탭 대신 그 다음으로 오래된 것이 지워진다
     expect(hashes).not.toContain(hashOf(101));
@@ -380,7 +413,7 @@ describe('writeSession keepIndex (serialize-skip, Tier2)', () => {
     expect(r.ok).toBe(true);
     expect(r.evicted).toBeUndefined();
     // 상한(30)을 일시 초과하도록 둔다 — 탭을 닫으면 다음 저장에서 정리된다
-    expect((await listSessions(DIR)).length).toBe(SESSION_MAX_COUNT + 1);
+    expect((await listSessionsOk(DIR)).length).toBe(SESSION_MAX_COUNT + 1);
   });
 
   // QA21(C-MED, 데이터손실): LRU 정리는 완전 무음이었다 — ok:true 로 반환돼 렌더러의 연속실패
@@ -402,7 +435,7 @@ describe('writeSession keepIndex (serialize-skip, Tier2)', () => {
     expect(r.evicted, '삭제 사실이 호출자에게 전달돼야 한다(무음 금지)').toBeDefined();
     expect(r.evicted).toContain('doc-0.pdf'); // 가장 오래된 것
     // 삭제 성공분만 보고 — 목록에서도 실제로 사라졌는지 확인
-    const hashes = (await listSessions(DIR)).map((e) => e.docHash);
+    const hashes = (await listSessionsOk(DIR)).map((e) => e.docHash);
     expect(hashes).not.toContain(hashOf(100));
   });
 });
@@ -639,7 +672,7 @@ describe('chunkMeta 사이드카 분리 (index.meta.json, Tier3)', () => {
     const sessBytes = Buffer.byteLength(String(V.files.get(p(h, 'session.json'))));
     const metaBytes = Buffer.byteLength(String(V.files.get(p(h, 'index.meta.json'))));
     const binBytes = (V.files.get(p(h, 'index.bin')) as Buffer).byteLength;
-    const entry = (await listSessions(DIR)).find((e) => e.docHash === h)!;
+    const entry = (await listSessionsOk(DIR)).find((e) => e.docHash === h)!;
     expect(entry.byteSize).toBe(sessBytes + binBytes + metaBytes);
   });
 });
@@ -659,7 +692,7 @@ describe('R42 fixes (session-store)', () => {
       { docHash: hashOf(2), lastAccessed: '2026-01-01T00:00:00.000Z', byteSize: 20 },
     ]);
     // 과거엔 12345.localeCompare 로 throw → 이제 epoch 폴백으로 정상 정렬
-    const list = await listSessions(DIR);
+    const list = await listSessionsOk(DIR);
     expect(list).toHaveLength(2);
     expect(list[0]!.docHash).toBe(hashOf(2)); // 최신이 먼저 (손상 엔트리는 epoch 로 밀림)
     expect(Number.isFinite((await sessionStats(DIR)).totalBytes)).toBe(true);
@@ -692,10 +725,10 @@ describe('writeSession LRU 통합', () => {
     for (let i = 0; i < SESSION_MAX_COUNT; i++) {
       await writeSession(DIR, { meta: metaOf(hashOf(i)), session: { i }, blob: null, now: 1000 + i });
     }
-    expect(await listSessions(DIR)).toHaveLength(SESSION_MAX_COUNT);
+    expect(await listSessionsOk(DIR)).toHaveLength(SESSION_MAX_COUNT);
     // 1개 더 추가 → 가장 오래된 hashOf(0) 제거, 개수 유지
     await writeSession(DIR, { meta: metaOf(hashOf(9999)), session: { x: 1 }, blob: null, now: 9_000_000 });
-    const list = await listSessions(DIR);
+    const list = await listSessionsOk(DIR);
     expect(list).toHaveLength(SESSION_MAX_COUNT);
     expect(list.some((e) => e.docHash === hashOf(0))).toBe(false);
     expect(list.some((e) => e.docHash === hashOf(9999))).toBe(true);
@@ -711,7 +744,7 @@ describe('writeSession LRU 통합', () => {
     // 가장 오래된 hashOf(0) 이 evict 대상 → 그 rm 을 1회 실패시킨다(EBUSY 모사).
     vi.mocked(fsp.rm).mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
     await writeSession(DIR, { meta: metaOf(hashOf(9999)), session: { x: 1 }, blob: null, now: 9_000_000 });
-    const list = await listSessions(DIR);
+    const list = await listSessionsOk(DIR);
     // rm 실패 → 엔트리 유지(manifest 와 디스크 일치 — 고아 아님).
     expect(list.some((e) => e.docHash === hashOf(0))).toBe(true);
     expect(await readSession(DIR, hashOf(0))).not.toBeNull();
@@ -732,7 +765,7 @@ describe('reconcileSessions (부팅 자가치유)', () => {
     V.files.set(`${DIR}/manifest.json`, '{corrupt');
     const r = await reconcileSessions(DIR, 5000);
     expect(r).toEqual({ registered: 2, removed: 0 });
-    const list = await listSessions(DIR);
+    const list = await listSessionsOk(DIR);
     expect(list.map((e) => e.docHash).sort()).toEqual([h1, h2].sort());
     const e1 = list.find((e) => e.docHash === h1)!;
     expect(e1.fileName).toBe('a.pdf');           // session.json 본문 기준 재구성
@@ -754,7 +787,7 @@ describe('reconcileSessions (부팅 자가치유)', () => {
     expect(V.files.has(p(corrupt, 'session.json'))).toBe(false);
     expect(V.files.has(p(mismatch, 'session.json'))).toBe(false);
     expect(V.files.has(p(empty, 'index.bin'))).toBe(false);
-    expect((await listSessions(DIR)).map((e) => e.docHash)).toEqual([good]);
+    expect((await listSessionsOk(DIR)).map((e) => e.docHash)).toEqual([good]);
   });
 
   it('전부 등록된 상태면 no-op — manifest 재기록 없음', async () => {
@@ -777,7 +810,7 @@ describe('reconcileSessions (부팅 자가치유)', () => {
     V.files.set(p(h, 'index.bin'), Buffer.from(new Uint8Array(36)));
     const r = await reconcileSessions(DIR, 5000);
     expect(r.registered).toBe(1);
-    const entry = (await listSessions(DIR)).find((e) => e.docHash === h)!;
+    const entry = (await listSessionsOk(DIR)).find((e) => e.docHash === h)!;
     expect(entry.chunkCount).toBe(3);
     expect(entry.embedModel).toBe('nomic-embed-text');
   });

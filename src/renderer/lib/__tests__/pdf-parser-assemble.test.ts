@@ -123,8 +123,60 @@ describe('assemblePageText — pdfjs hasEOL 채택 (QA23)', () => {
     expect(assemblePageText(items)).toBe('AB');
   });
 
-  // 국문 교재·논문에서 페이지마다 나오는 형태 — 회전 텍스트보다 훨씬 흔하다.
+  // ─── QA24(A-M1): 단락 경계(빈 줄) ───
+  // pdfjs 는 누적 텍스트가 없는 상태의 EOL 을 `{str:'', hasEOL:true}` **단독 아이템**으로 낸다
+  // (pdf.worker.mjs appendEOL 의 else 분기). 종전 필터 `!item.str` 이 그것만 정확히 버려서
+  // 페이지 안에 `'\n\n'` 이 한 번도 생기지 않았고, `split(/\n\n+/)` 를 쓰는 요약 단락 라벨링과
+  // 청킹이 "한 페이지 = 항상 한 단락" 을 봤다. 픽스처가 전부 str 이 채워진 합성 아이템이라
+  // 이 형태가 입력에 한 번도 등장하지 않았던 것이 미검출의 이유다.
+  it('빈 줄(단독 EOL 마커)이 단락 경계가 된다', () => {
+    const items: TextItemLike[] = [
+      { str: '첫 단락 문장', transform: [12, 0, 0, 12, 0, 700], width: 100, hasEOL: true },
+      // 연속 줄바꿈 → pdfjs 가 내는 단독 빈 아이템
+      { str: '', transform: [12, 0, 0, 12, 0, 686], width: 0, hasEOL: true },
+      { str: '둘째 단락 문장', transform: [12, 0, 0, 12, 0, 672], width: 100 },
+    ];
+    expect(assemblePageText(items)).toBe('첫 단락 문장\n\n둘째 단락 문장');
+  });
+
+  it('빈 줄이 여러 개여도 두 줄로 정규화한다 (여백 많은 문서의 개행 폭증 방지)', () => {
+    const items: TextItemLike[] = [
+      { str: 'A', transform: [12, 0, 0, 12, 0, 700], width: 10, hasEOL: true },
+      { str: '', transform: [12, 0, 0, 12, 0, 686], width: 0, hasEOL: true },
+      { str: '', transform: [12, 0, 0, 12, 0, 672], width: 0, hasEOL: true },
+      { str: '', transform: [12, 0, 0, 12, 0, 658], width: 0, hasEOL: true },
+      { str: 'B', transform: [12, 0, 0, 12, 0, 644], width: 10 },
+    ];
+    expect(assemblePageText(items)).toBe('A\n\nB');
+  });
+
+  it('빈 줄 없는 연속 줄바꿈은 종전대로 한 줄 개행 — 같은 단락이다', () => {
+    const items: TextItemLike[] = [
+      { str: '한 문장이', transform: [12, 0, 0, 12, 0, 700], width: 60, hasEOL: true },
+      { str: '두 줄에 걸쳐 있다', transform: [12, 0, 0, 12, 0, 686], width: 100 },
+    ];
+    expect(assemblePageText(items)).toBe('한 문장이\n두 줄에 걸쳐 있다');
+  });
+
+  it('페이지 선두의 빈 줄은 앞에 붙일 것이 없으므로 무시한다', () => {
+    const items: TextItemLike[] = [
+      { str: '', transform: [12, 0, 0, 12, 0, 700], width: 0, hasEOL: true },
+      { str: '본문', transform: [12, 0, 0, 12, 0, 686], width: 30 },
+    ];
+    expect(assemblePageText(items)).toBe('본문');
+  });
+
+  it('hasEOL 없는 빈 문자열 아이템은 종전대로 무시한다 (단락 경계가 아니다)', () => {
+    const items: TextItemLike[] = [
+      { str: 'A', transform: [12, 0, 0, 12, 0, 700], width: 10, hasEOL: true },
+      { str: '', transform: [12, 0, 0, 12, 0, 686], width: 0 },
+      { str: 'B', transform: [12, 0, 0, 12, 0, 672], width: 10 },
+    ];
+    expect(assemblePageText(items)).toBe('A\nB');
+  });
+
   it('각주 번호(작은 첨자)가 문장 중간에 줄바꿈을 만들지 않는다', () => {
+
     // 본문 12pt → 각주 번호 7pt(위로 4pt) → 본문 복귀. 임계를 첨자 글꼴(7)로 잡으면 3.5 가 되어
     // 4pt 이동이 줄바꿈으로 오판된다. 줄의 본문 글꼴(12)을 기준으로 봐야 한다.
     const items: TextItemLike[] = [

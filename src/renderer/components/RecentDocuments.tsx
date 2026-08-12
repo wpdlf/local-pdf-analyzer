@@ -13,6 +13,8 @@ export function RecentDocuments() {
   const tr = useT();
   const persistEnabled = useAppStore((s) => s.settings.persistSessions);
   const [entries, setEntries] = useState<SessionManifestEntry[]>([]);
+  // QA24(C-M2): 목록을 **불러오지 못한 것**과 **정말 없는 것**을 구분한다(CollectionsList 와 동일).
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   // R41 fix: 열기 성공(handlePdfData → setDocument) 시 이 컴포넌트는 즉시 언마운트된다
   // (App 의 `!document` 조건). 이후 finally setBusy / refresh setEntries 가 언마운트 상태에서
@@ -29,9 +31,15 @@ export function RecentDocuments() {
   const refresh = useCallback(async () => {
     try {
       const list = await window.electronAPI.session.list();
-      if (mountedRef.current) setEntries(Array.isArray(list) ? list : []);
+      if (!mountedRef.current) return;
+      // QA24(C-M2): main 이 일시 I/O 오류를 null 로 구분해 준다. 빈 배열로 흡수하면
+      // "저장된 세션이 없습니다" 를 단정적으로 보여줘 사용자가 전량 소실로 읽는다.
+      // 기존 목록은 지우지 않고 유지한 채 사유만 알린다(컬렉션 목록과 동일 계약).
+      if (list === null) { setLoadFailed(true); return; }
+      setLoadFailed(false);
+      setEntries(Array.isArray(list) ? list : []);
     } catch {
-      if (mountedRef.current) setEntries([]);
+      if (mountedRef.current) setLoadFailed(true);
     }
   }, []);
 
@@ -86,7 +94,18 @@ export function RecentDocuments() {
       <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2 px-1">
         {tr('recent.title')}
       </h2>
-      {entries.length === 0 ? (
+      {loadFailed ? (
+        <div className="flex items-center gap-2 px-1 py-2">
+          <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">{tr('recent.loadFailed')}</p>
+          <button
+            type="button"
+            onClick={() => { void refresh(); }}
+            className="text-xs underline text-blue-600 dark:text-blue-400"
+          >
+            {tr('common.retry')}
+          </button>
+        </div>
+      ) : entries.length === 0 ? (
         <p className="text-xs text-gray-600 dark:text-gray-400 px-1 py-2">{tr('recent.empty')}</p>
       ) : (
       <ul ref={listRef} className="flex flex-col gap-2">

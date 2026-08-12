@@ -272,6 +272,24 @@ describe('체크섬 실패 시 캐시 정리', () => {
     ctx.emit('error', new Error('sha512 checksum mismatch'));
     expect(clearCache).toHaveBeenCalledTimes(1);
   });
+
+  // QA24(A-M3): classifyUpdateError 는 /sha512|checksum|integrity|signature/ 에 걸리는 **모든**
+  // 에러를 updateChecksum 으로 분류한다. 그래서 이미 검증을 통과해 받아둔 인스톨러를 들고 있는
+  // 상태에서 서명·무결성 문구를 포함한 error 가 한 번 흘러도 캐시가 통째로 지워졌다 —
+  // 리듀서는 downloaded 를 유지하니 UI 는 "설치 준비됨" 인데 디스크에는 인스톨러가 없고,
+  // 설치를 누르면 installer-missing 에 착지한다.
+  it('설치 대기(downloaded) 중의 체크섬 오류는 캐시를 지우지 않는다 — 멀쩡한 인스톨러 보호', async () => {
+    const clearCache = vi.fn();
+    const ctx = setup({ clearUpdaterCache: clearCache });
+    await toAvailable(ctx, '1.1.0');
+    await ctx.service.download();
+    ctx.emit('update-downloaded', { version: '1.1.0', downloadedFile: 'C:/cache/pending/Setup.exe' });
+
+    ctx.emit('error', new Error('signature verification failed'));
+
+    expect(ctx.service.getState().status, '설치 자격은 유지된다').toBe('downloaded');
+    expect(clearCache, '받아둔 인스톨러를 지우면 UI 는 설치 준비됨인데 디스크는 비어 있다').not.toHaveBeenCalled();
+  });
 });
 
 describe('install — 데이터 손실 방어', () => {

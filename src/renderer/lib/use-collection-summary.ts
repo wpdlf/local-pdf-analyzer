@@ -263,7 +263,14 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
     const memberHashes = st.collection.memberHashes.includes(activeDocHash)
       ? st.collection.memberHashes
       : [activeDocHash, ...st.collection.memberHashes];
-    const manifest = await window.electronAPI.session.list().catch(() => []);
+    // QA24(C-M2): 목록을 못 읽었으면 멤버 자격 판정 자체가 성립하지 않는다. `[]` 로 흡수하면
+    // 전 멤버가 missing 이 되어 "멤버가 부족합니다"라는 **틀린 사유**를 보여주고, 사용자는
+    // 컬렉션 구성이 잘못됐다고 오해한다. 일시 I/O 오류는 그대로 알린다.
+    const manifest = await window.electronAPI.session.list().catch(() => null);
+    if (manifest === null) {
+      useAppStore.getState().setNotice({ message: t('recent.loadFailed') });
+      return;
+    }
     // 요약 자격(QA M2): 교차 요약은 순수 텍스트 합성이라 임베딩 동질성(status==='ready')이 아니라
     // "본문/요약 텍스트가 있는가"가 기준이다. 'missing'(저장 세션 없음)만 제외하고 'no-index'·
     // 'model-mismatch' 도 포함한다(검색 경로 collectionRagSearch 는 자체적으로 'ready'만 쓰므로 무영향).

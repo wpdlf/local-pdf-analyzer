@@ -16,7 +16,7 @@ import { createUpdaterService, type UpdaterService } from './updater';
 import { AUTO_CHECK_STARTUP_DELAY_MS } from './update-policy';
 import type { UpdateState } from '../shared/update-types';
 import { generate, abortGenerate, abortAllRequests, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
-import { MAX_PDF_SIZE_BYTES, isLocalhostHost, isValidOllamaUrl } from '../shared/constants';
+import { MAX_PDF_SIZE_BYTES, isLocalhostHost, isValidOllamaUrl, UPDATER_CACHE_DIR_NAME } from '../shared/constants';
 import { validateSettingValue } from './settings-validate';
 // v0.18.19 patch R34 P2: settings 키 단일 출처. 이전엔 본 파일 두 곳에 별도 리터럴이 있었고
 // R33 Surface 4 P3 가 drift 가드 부재를 지적. settings-keys.ts 가 양쪽을 derive 함.
@@ -518,21 +518,31 @@ app.on('before-quit', (e) => {
 let updaterService: UpdaterService | null = null;
 
 /**
- * electron-updater 캐시 디렉터리를 비운다 — 체크섬 실패 시에만 호출된다(updater.ts 참조).
+ * electron-updater 캐시 디렉터리를 비운다 — 다운로드 중 체크섬 실패 시에만 호출된다(updater.ts).
  *
- * 경로 규약: `%LOCALAPPDATA%\<updaterCacheDirName>` (app-update.yml 의 updaterCacheDirName,
- * electron-builder 가 productName 기반으로 생성). electron-updater 가 이 경로를 API 로 노출하지
- * 않아 규약으로 계산한다 — 그래서 **삭제 전에 우리 앱의 캐시가 맞는지 이름을 검증**한다
- * (잘못 계산된 경로로 rm -rf 하는 것이 이 함수의 유일한 실질 위험이다).
+ * 경로 규약: `%LOCALAPPDATA%\<updaterCacheDirName>`. electron-updater 가 이 경로를 API 로
+ * 노출하지 않아 규약으로 계산한다 — 잘못 계산된 경로로 재귀 삭제하는 것이 이 함수의 유일한
+ * 실질 위험이므로, 삭제 전에 우리 앱의 캐시가 맞는지 검증한다.
+ *
+ * QA24(A-L2/B-M2): 종전 가드 `dirName.endsWith('-updater')` 는 **항진명제**였다 — 바로 위에서
+ * 자기가 `${app.getName()}-updater` 로 만든 문자열을 검사하므로 앱 이름이 빈 문자열이 아닌 한
+ * 거짓이 될 수 없다. 정작 위험한 것은 계산된 이름이 electron-builder 가 실제로 쓰는 이름과
+ * **어긋나는** 경우인데 그건 전혀 보지 않았다. 이름은 이제 UPDATER_CACHE_DIR_NAME(package.json
+ * 의 name 파생, drift 테스트로 고정)에서 오고, 여기서는 그것이 실재하는 디렉터리인지만 본다.
  */
 function clearUpdaterCache(): void {
-  const base = app.getPath('appData'); // %APPDATA%
-  const local = path.join(path.dirname(base), 'Local'); // %LOCALAPPDATA%
-  const dirName = `${app.getName()}-updater`;
+  // QA24(B-M3): %LOCALAPPDATA% 는 electron-updater 와 **같은 출처**를 1순위로 쓴다. 종전의
+  // `dirname(appData)/Local` 유추는 폴더 리디렉션(로밍 프로파일이 네트워크 공유인 사내 환경)
+  // 에서 갈리고, 그 경우 결과는 무음 no-op(손상 캐시가 그대로 남아 원래 버그 재현)이었다.
+  const local = process.env.LOCALAPPDATA
+    || path.join(path.dirname(app.getPath('appData')), 'Local');
+  const dirName = UPDATER_CACHE_DIR_NAME;
   const target = path.join(local, dirName);
-  // 방어: 계산된 경로가 기대 형태가 아니면 손대지 않는다.
-  if (!dirName.endsWith('-updater') || dirName.length <= '-updater'.length) return;
-  if (!existsSync(target)) return;
+  if (!existsSync(target)) {
+    // 계산이 어긋나면 여기서 조용히 no-op 이 된다 — 그 경우를 진단할 수 있도록 경로를 남긴다.
+    console.warn('[update] 업데이터 캐시를 찾지 못했습니다(경로 계산 확인 필요):', target);
+    return;
+  }
   try {
     rmSync(target, { recursive: true, force: true });
     console.log('[update] 손상된 업데이터 캐시를 정리했습니다:', target);
@@ -834,7 +844,11 @@ export function registerIpcHandlers(): void {
   // 제출 시점 1회 호출(라이브 아님): 세션 본문(≤30)을 읽어 순수 검색 후 점수순 상한.
   ipcMain.handle('session:search', async (_event, query: unknown): Promise<GlobalSearchResult[]> => {
     if (typeof query !== 'string' || query.trim().length < MIN_QUERY_LENGTH) return [];
-    const entries = await listSessions(sessionsDir);
+    // QA24(C-M2): listSessions 가 이제 일시 I/O 오류를 null 로 구분한다. 여기서는 **종전 동작을
+    // 그대로 보존**한다(빈 결과) — 검색은 이전에도 흡수형이었으므로 이 변경으로 회귀시키지
+    // 않는다. 다만 "못 읽어서 0건" 을 "정말 0건" 으로 보여주는 것은 남은 문제이고, 고치려면
+    // GlobalSearchResult 계약에 실패 표현을 추가해야 한다(별도 작업으로 남긴다).
+    const entries = (await listSessions(sessionsDir)) ?? [];
     // perf: 세션 본문 read 를 병렬화 — 이전엔 순차 await 로 디스크 I/O 레이턴시가 누적됐다.
     // 결과는 끝에서 rankSearchResults 로 점수 정렬하므로 수집 순서 무관(병렬 안전). read 동시성은
     // libuv fs 스레드풀(기본 4)이 자연 바운드하고, 본 핸들러는 제출 1회 호출(라이브 아님)·세션 ≤30.

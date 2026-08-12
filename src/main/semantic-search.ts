@@ -119,7 +119,8 @@ export async function runSemanticSearch(
   model: string,
   dim: number,
 ): Promise<SemanticSearchResponse> {
-  const entries = await listSessions(sessionsDir);
+  // QA24(C-M2): 종전 동작 보존 — 의미검색도 이전에는 흡수형이었다(session:search 주석 참조).
+  const entries = (await listSessions(sessionsDir)) ?? [];
   const queryNorm = normalizeToFloat32(queryEmbedding);
 
   let excludedCount = 0;

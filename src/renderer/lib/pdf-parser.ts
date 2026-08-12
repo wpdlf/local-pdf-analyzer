@@ -138,15 +138,37 @@ export function assemblePageText(items: readonly unknown[]): string {
     hasEOL: boolean;
   } | null = null;
 
-  // pdfjs 의 items 는 TextItem | TextMarkedContent 혼합이라 str 유무로 걸러낸다(종전과 동일).
+  /**
+   * QA24(A-M1): 직전에 만난 **빈 줄**(단락 경계) 개수.
+   *
+   * pdfjs 는 EOL 을 두 형태로 낸다(pdf.worker.mjs `appendEOL`): 누적 중이면 그 아이템에
+   * `hasEOL=true` 를 실어 flush 하고, **누적이 없으면**(= 연속 줄바꿈 = 빈 줄)
+   * `{ str: "", width: 0, transform, hasEOL: true }` 를 단독으로 push 한다.
+   * 종전 필터 `!item.str` 은 후자를 통째로 버렸다 — 즉 **단락 경계 신호만 정확히 폐기**했다.
+   *
+   * 그 결과 페이지 안에서 `'\n\n'` 이 **한 번도 생성되지 않았고**, `split(/\n\n+/)` 를 쓰는
+   * 요약 단락 라벨링(use-summarize)과 청킹(chunker)이 "한 페이지 = 항상 한 단락"을 봤다.
+   * QA23 이 Tier3(splitLongParagraph)·Tier4(codepoint 오버랩)로 대증치료한 조건이 실은
+   * 모든 페이지에 해당했던 것이다. 그 두 방어는 긴 단락에 여전히 필요하므로 그대로 둔다.
+   */
+  let pendingBlankLines = 0;
+
+  // pdfjs 의 items 는 TextItem | TextMarkedContent 혼합이라 str 유무로 걸러낸다.
   for (const raw of items) {
     const item = raw as TextItemLike | null;
-    if (!item || typeof item.str !== 'string' || !item.str) continue;
+    if (!item || typeof item.str !== 'string') continue;
+    if (!item.str) {
+      // 빈 문자열 아이템은 텍스트를 기여하지 않지만, hasEOL 이면 **빈 줄**이라는 신호다.
+      // prev 가 없으면(페이지 선두) 앞에 붙일 것이 없으므로 무시한다.
+      if (item.hasEOL === true && prev) pendingBlankLines += 1;
+      continue;
+    }
     const tx = item.transform ?? null;
     if (!tx) {
       // transform이 없으면 공백 연결 fallback
-      if (parts.length > 0) parts.push(' ');
+      if (parts.length > 0) parts.push(pendingBlankLines > 0 ? '\n\n' : ' ');
       parts.push(item.str);
+      pendingBlankLines = 0;
       prev = null;
       continue;
     }
@@ -180,8 +202,11 @@ export function assemblePageText(items: readonly unknown[]): string {
       const scale = Math.max(prev.fontSize, fontSize);
       // pdfjs 가 준 hasEOL 이 1차 신호다 — worker 가 회전·textRise 를 보정한 뒤 판정한 값이라
       // 좌표 재추정보다 정확하다. 기하 판정은 그 필드가 없는 입력(합성 픽스처·구버전)용 보강.
-      if (prev.hasEOL || perp > scale * 0.5) {
-        parts.push('\n');
+      // QA24(A-M1): 빈 줄 신호가 있으면 줄바꿈을 **단락 경계**로 승격한다(`'\n\n'`).
+      // 빈 줄이 여러 개여도 두 줄로 정규화한다 — 단락 분리에는 그것으로 충분하고, 장식용
+      // 여백이 많은 문서에서 개행이 폭증해 청크 예산을 잠식하는 것을 막는다.
+      if (prev.hasEOL || pendingBlankLines > 0 || perp > scale * 0.5) {
+        parts.push(pendingBlankLines > 0 ? '\n\n' : '\n');
       } else if (along > prev.advance + scale * 0.3) {
         // 같은 줄에서 간격이 있으면 공백 (한글 글자 단위 분할은 간격이 좁아 붙는다)
         parts.push(' ');
@@ -189,6 +214,7 @@ export function assemblePageText(items: readonly unknown[]): string {
     }
 
     parts.push(item.str);
+    pendingBlankLines = 0;
     prev = { x, y, dirX, dirY, advance, fontSize, hasEOL: item.hasEOL === true };
   }
 

@@ -198,7 +198,8 @@ export type ElectronAPI = {
     save: (payload: { meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null; keepIndex?: boolean; openDocHashes?: string[] }) => Promise<{ ok: boolean; evicted?: string[]; indexMissing?: boolean }>;
     savePartial: (payload: { docHash: string; summary: { type: string; content: string; model: string; provider: string } | null; summaryType: string; qaMessages: unknown }) => Promise<{ ok: boolean }>;
     saveSummary: (payload: { docHash: string; type: string; summary: { content: string; model: string; provider: string } }) => Promise<{ ok: boolean }>;
-    list: () => Promise<SessionManifestEntry[]>;
+    /** QA24(C-M2): 일시 I/O 오류는 `null` — "불러오지 못함" 과 "정말 없음(빈 배열)" 을 구분한다. */
+    list: () => Promise<SessionManifestEntry[] | null>;
     delete: (docHash: string) => Promise<{ ok: boolean }>;
     clear: () => Promise<{ ok: boolean }>;
     stats: () => Promise<SessionStats>;

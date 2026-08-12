@@ -150,7 +150,16 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
    * 정리 실패는 삼킨다 — best-effort 이고, 여기서 throw 하면 실패 표면화 자체를 잃는다.
    */
   function applyError(errorKey: string): void {
-    if (errorKey === 'updateChecksum') {
+    // QA24(A-M3): 종전에는 errorKey 만 보고 캐시를 지웠다. classifyUpdateError 는
+    // /sha512|checksum|integrity|signature/ 에 걸리는 **모든** 에러를 updateChecksum 으로
+    // 분류하므로, 이미 정상적으로 받아둔(downloaded) 상태에서 서명·무결성 문구를 포함한 error
+    // 이벤트가 한 번 흘러도 캐시가 통째로 지워졌다 — 리듀서는 downloaded 를 유지하니 UI 는
+    // "설치 준비됨" 인데 디스크에는 인스톨러가 없고, 설치를 누르면 installer-missing 에 착지한다.
+    // 이 수정의 의도는 "다운로드 과정의 체크섬 실패로 **손상본이 캐시에 남는 것**" 이었다.
+    // 반대로 downloaded/installing 은 **검증을 통과한 인스톨러를 디스크에 들고 있는** 상태이므로
+    // 여기서 지우면 멀쩡한 것을 없애는 셈이다(installing 중 error 는 downloaded 로 복귀하고,
+    // 그때 인스톨러가 그대로 있어야 재시도가 성립한다). 그 둘만 제외한다.
+    if (errorKey === 'updateChecksum' && state.status !== 'downloaded' && state.status !== 'installing') {
       try {
         deps.clearUpdaterCache?.();
       } catch (err) {
@@ -245,6 +254,12 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
     // 다운로드 실패 후 "다시 시도" 를 눌러도 아무 반응이 없었다). 정책·UI 는 있는데 배선만 닫혀
     // 있던 형태.
     if (!supported || !canDownload(state.status, state.newVersion)) return state;
+    // QA24(A-M2/B-M4): 새 다운로드를 시작하는 순간 직전 경로는 무효다. 종전에는 이 값이
+    // update-downloaded 에서만 세팅되고 **어디에서도 null 로 되돌지 않아**, 아래 고착 방어
+    // 경로(이벤트 없이 downloaded 확정)를 타면 삭제된 옛 경로가 그대로 남았다. 그러면 설치
+    // 직전 존재 확인이 옛 경로를 보고 실패해, 재다운로드를 반복해도 영원히 설치할 수 없다
+    // (백신이 인스톨러를 격리한 뒤 재시도하는 시나리오에서 실제로 도달 가능).
+    downloadedFilePath = null;
     apply({ type: 'download-started' });
     try {
       await deps.autoUpdater.downloadUpdate();

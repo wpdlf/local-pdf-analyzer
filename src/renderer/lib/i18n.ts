@@ -484,6 +484,8 @@ export const _translations = {
   'recent.delete': { ko: '세션 삭제', en: 'Delete session' },
   'recent.pages': { ko: '{count}페이지', en: '{count} pages' },
   'recent.indexed': { ko: '인덱스 {count}청크', en: '{count} chunks indexed' },
+  // QA24(C-M2): "불러오지 못함" 과 "정말 없음" 을 구분 — collection.loadFailed 와 같은 계약.
+  'recent.loadFailed': { ko: '최근 문서 목록을 불러오지 못했습니다. 세션은 그대로 있습니다.', en: 'Could not load the recent documents list. Your sessions are still there.' },
   'recent.openFail': { ko: '문서를 열 수 없습니다. 원본 파일이 이동/삭제되었을 수 있습니다.', en: 'Could not open the document. The original file may have been moved or deleted.' },
   'recent.deleteFail': { ko: '세션을 삭제하지 못했습니다. 잠시 후 다시 시도하세요.', en: 'Could not delete the session. Please try again.' },
   // 전체 문서 검색 (cross-session search)

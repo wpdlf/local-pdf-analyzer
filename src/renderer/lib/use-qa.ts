@@ -639,7 +639,14 @@ export async function resolveCollectionSearch(
   const memberHashes = st.collection.memberHashes.includes(activeDocHash)
     ? st.collection.memberHashes
     : [activeDocHash, ...st.collection.memberHashes];
-  const manifest = await window.electronAPI.session.list().catch(() => []);
+  // QA24(C-M2): manifest 를 못 읽으면 **컬렉션 검색을 하지 않는다**. 종전에는 `[]` 로 흡수했는데,
+  // 그러면 resolveMembers 가 활성 문서 외 전 멤버를 missing 으로 판정해 컬렉션 Q&A 가 다른
+  // 문서를 빼고 답변한다 — 사용자에겐 정상 답변으로 보이는 **조용한 오답**이다. 일시 I/O
+  // 오류에서는 단일 문서 답변으로 강등하고 degraded 로 고지한다(멤버 0인 것과 구분).
+  const manifest = await window.electronAPI.session.list().catch(() => null);
+  if (manifest === null) {
+    return { ragResult: null, degraded: true };
+  }
   const members = resolveMembers(
     memberHashes,
     { docHash: activeDocHash, model: st.ragIndex.model, dim: st.ragIndex.dimension },
