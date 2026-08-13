@@ -48,3 +48,9 @@ updates:
     open-pull-requests-limit: 2
     commit-message:
       prefix: 'chore(ci)'
+    ignore:
+      # npm 쪽과 같은 정책 — major 는 사람이 판단한다. 이 제외를 npm 에만 걸어둔 것은 누락이었고,
+      # 도입 첫날 actions/checkout 6→7, upload-artifact 4→7 major PR 이 바로 열렸다.
+      # 액션 major 는 런타임(Node 버전)·입력 이름이 바뀌는 경우가 있어 자동 머지 대상이 아니다.
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
