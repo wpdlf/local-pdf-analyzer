@@ -265,7 +265,7 @@ jobs:
 
       # actions/attest-build-provenance@v4.1.0
       - name: Attest build provenance (Windows)
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-path: dist/*Setup*.exe
 
