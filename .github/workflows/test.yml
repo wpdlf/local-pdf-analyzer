@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload unit test results on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: unit-failure-${{ matrix.os }}-node${{ matrix.node-version }}-${{ github.run_id }}
           path: test-results/
@@ -302,7 +302,7 @@ jobs:
       # actions/upload-artifact@v4.6.2 (release.yml 과 동일 SHA 핀)
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: e2e-failure-${{ github.run_id }}
           path: test-results/
@@ -362,7 +362,7 @@ jobs:
 
       - name: Upload shuffle failure artifacts
         if: steps.shuffle-run.outcome != 'success'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: shuffle-failure-${{ github.run_id }}
           path: test-results/
@@ -416,7 +416,7 @@ jobs:
 
       - name: Upload packaging failure artifacts
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: nightly-package-failure-${{ github.run_id }}
           path: |

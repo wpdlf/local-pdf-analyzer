@@ -157,7 +157,7 @@ jobs:
       # C5-I3: 실패 포렌식 — trace(on-first-retry) 산출물 회수(test.yml e2e 잡과 대칭).
       - name: Upload E2E failure artifacts
         if: failure() && matrix.e2e
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-e2e-failure-${{ github.run_id }}
           path: test-results/
@@ -219,7 +219,7 @@ jobs:
 
       - name: Upload packaged smoke artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: packaged-smoke-failure-${{ github.run_id }}
           path: test-results/
@@ -242,7 +242,7 @@ jobs:
       # actions/upload-artifact@v4.6.2 (gh api 로 tag→commit SHA 확인 후 핀)
       - name: Upload build diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: build-windows-failure-${{ github.run_id }}
           path: |
