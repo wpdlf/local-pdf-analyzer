@@ -70,6 +70,24 @@ describe('CollectionsList', () => {
     await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());
   });
 
+  // QA24(A-L3): 종전에는 실패 고지가 `items.length === 0` 블록 안에만 있어, **이미 목록이 떠
+  // 있는 상태**의 재조회 실패는 사유도 재시도도 없이 stale 목록으로 보였다(방금 지운 항목이
+  // 그대로 남아 클릭하면 열기 실패). 목록 유무와 무관하게 고지한다.
+  it('목록이 이미 떠 있는 상태의 재조회 실패도 사유와 재시도를 보여준다', async () => {
+    const user = userEvent.setup();
+    render(<CollectionsList />);
+    await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());
+
+    // 삭제 직후 재조회가 실패하는 상황
+    M.list.mockResolvedValue(null);
+    await user.click(screen.getAllByRole('button', { name: /삭제/ })[0]!);
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    // 기존 목록은 지우지 않는 정책은 그대로 — 사유만 함께 보인다.
+    expect(screen.getByText(/강의 묶음/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /다시 시도/ })).toBeTruthy();
+  });
+
   it('저장된 컬렉션 목록 표시(이름 + 문서 수)', async () => {
     render(<CollectionsList />);
     await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());

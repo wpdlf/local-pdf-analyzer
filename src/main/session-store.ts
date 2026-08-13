@@ -331,9 +331,28 @@ export async function writeSession(
     }
 
     const jsonStr = JSON.stringify(sessionForDisk);
-    await writeFileAtomic(path.join(dir, SESSION_JSON), jsonStr);
     const indexBinPath = path.join(dir, INDEX_BIN);
     const indexMetaPath = path.join(dir, INDEX_META);
+    // QA24(C-L2, 조용한 오답): 새 인덱스를 쓸 때는 **옛 인덱스를 먼저 치운 뒤** 본문을 기록한다.
+    //
+    // 종전 순서는 session.json → 사이드카 → index.bin 이었다. 1·2 사이에서 크래시하면 디스크에
+    // **새 텍스트 + 옛 index.bin/옛 chunkMeta** 가 남는데, embedModel·embedDim 이 그대로면
+    // VectorStore.restore 가 **성공**한다 — 즉 탐지되지 않는다. 그 결과 인용이 옛 청크 좌표를
+    // 새 텍스트에 대고 가리켜 **엉뚱한 문장을 근거로 제시**한다(같은 docHash 라도 OCR 재파싱·
+    // Vision enrichment 로 pageTexts 가 바뀌므로 실제로 도달 가능한 경로다).
+    //
+    // 순서만 뒤집어도 해결되지 않는다 — 인덱스를 먼저 쓰면 이번엔 "옛 텍스트 + 새 chunkMeta"
+    // 라는 같은 등급의 짝이 남는다. 그래서 **불일치 대신 부재**로 수렴시킨다: 먼저 지우면 어느
+    // 지점에서 죽어도 "인덱스 없음"이거나 "완전한 새 짝"이고, 전자는 재오픈 시 재임베딩으로
+    // 안전하게 회복된다(아래 사이드카→bin 순서가 이미 채택한 원칙과 같다).
+    //
+    // 비용: 크래시 시 재임베딩이 필요하고, 성공 경로에도 옛 인덱스가 없는 짧은 창이 생긴다.
+    // 같은 docHash 의 쓰기는 그 문서가 활성일 때만 일어나므로 동시 읽기와 겹치지 않는다.
+    if (!keepIndex && blob) {
+      try { await fsp.unlink(indexBinPath); } catch { /* 없으면 무시 */ }
+      try { await fsp.unlink(indexMetaPath); } catch { /* 없으면 무시 */ }
+    }
+    await writeFileAtomic(path.join(dir, SESSION_JSON), jsonStr);
     let blobBytes = 0;
     let metaBytes = 0;
     const metaStrOf = () => JSON.stringify({ chunkMeta: Array.isArray(chunkMeta) ? chunkMeta : [] });

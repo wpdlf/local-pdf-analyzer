@@ -270,6 +270,21 @@ describe('updater 배선 — 인스톨러 실재 확인 주입', () => {
     const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     expect(code).toMatch(/process\.env\.LOCALAPPDATA/);
   });
+
+  // QA24(B-L1): 캐시 **루트 전체**를 지우면 차등 다운로드 기준본(`installer.exe`)까지 날아가
+  // 그 뒤로 계속 전량(≈101MB) 다운로드가 된다 — NSIS 설치가 다시 일어나기 전에는 복구되지
+  // 않는다. 손상되는 것은 재조립 결과물과 그 기준 blockmap 뿐이므로 그 둘만 지운다.
+  it('차등 다운로드 기준본(installer.exe)은 남기고 pending/ 과 current.blockmap 만 지운다', () => {
+    const body = MAIN_SRC.slice(
+      MAIN_SRC.indexOf('function clearUpdaterCache'),
+      MAIN_SRC.indexOf('function broadcastUpdateState'),
+    );
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).toMatch(/'pending'/);
+    expect(code).toMatch(/'current\.blockmap'/);
+    // 루트를 통째로 지우면 안 된다 — rmSync 의 인자가 target 자체이면 기준본이 함께 사라진다.
+    expect(code, '캐시 루트 전체 삭제는 차등 기준본까지 날린다').not.toMatch(/rmSync\(\s*target\s*,/);
+  });
 });
 
 describe('revertFlushMarks — 설치 무산 롤백 (QA19 본문 검증)', () => {

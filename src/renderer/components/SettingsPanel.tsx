@@ -1063,7 +1063,14 @@ export function SettingsPanel() {
               <button
                 ref={updateCheckBtnRef}
                 onClick={handleUpdateCheck}
-                disabled={updateState.status === 'checking' || updateState.status === 'downloading' || updateState.status === 'downloaded'}
+                // QA24(B-L3): 'installing' 누락 — main 의 canCheck 는 설치 중 확인을 막으므로
+                // 클릭이 IPC 를 타고 가서 **조용히 폐기**됐다(눌러도 아무 일도 안 일어난다).
+                // QA23 이 installing 상태를 도입해 없애려던 바로 그 클래스의 잔여다.
+                // ⚠️ 이 조건은 update-policy 의 canCheck 를 손으로 옮겨 적은 것이다 — 렌더러가
+                // main/ 을 import 하지 않는 구조라 단일 출처화하려면 게이트를 shared/ 로 옮겨야
+                // 한다(별도 작업). 그때까지는 두 곳이 함께 바뀌어야 한다.
+                disabled={updateState.status === 'checking' || updateState.status === 'downloading'
+                  || updateState.status === 'downloaded' || updateState.status === 'installing'}
                 className="px-3 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 {t('update.checkBtn')}

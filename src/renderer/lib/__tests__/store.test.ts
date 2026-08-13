@@ -674,15 +674,19 @@ describe('컬렉션 Q&A 상태 (multi-doc Phase 2)', () => {
 });
 
 describe('updateSettings — 디바운스 저장 실패 처리', () => {
+  // QA24 후속: `settingsLoadFailed` 는 **저장을 봉인하는** 상태다. 리셋하지 않으면 봉인 테스트
+  // 이후의 테스트가 봉인된 스토어에서 돌아 IPC 가 아예 나가지 않는다 — 셔플 실행에서 실제로
+  // 2건이 SETTINGS_LOAD_FAIL 로 깨졌다(고정 순서에서는 봉인 테스트가 뒤에 있어 가려져 있었음).
+  // QA22 가 야간 셔플 잡을 만든 이유가 이 클래스이고, 이번엔 내가 만든 상태가 원인이었다.
   beforeEach(() => {
     vi.useFakeTimers();
-    useAppStore.setState({ error: null });
+    useAppStore.setState({ error: null, settingsLoadFailed: false });
   });
   afterEach(() => {
     // 모듈 레벨 settingsSaveTimer 가 미발화로 남아 다음 테스트로 새지 않도록 정리.
     vi.clearAllTimers();
     vi.useRealTimers();
-    useAppStore.setState({ error: null });
+    useAppStore.setState({ error: null, settingsLoadFailed: false });
   });
 
   it('settings.set IPC 실패 → SETTINGS_SAVE_FAIL 에러 설정', async () => {

@@ -628,6 +628,49 @@ describe('chunkMeta 사이드카 분리 (index.meta.json, Tier3)', () => {
     expect(loaded!.blob).not.toBeNull();
   });
 
+  // QA24(C-L2, 조용한 오답): 저장이 중간에 죽으면 디스크에 **새 텍스트 + 옛 인덱스** 가 남을 수
+  // 있었다. embedModel·embedDim 이 그대로면 VectorStore.restore 가 성공하므로 **탐지되지 않고**,
+  // 인용이 옛 청크 좌표를 새 텍스트에 대고 가리켜 엉뚱한 문장을 근거로 제시한다.
+  // 불일치 대신 **부재**로 수렴시켜(옛 인덱스를 먼저 치운다) 재오픈 시 재임베딩으로 회복시킨다.
+  it('인덱스 갱신이 중간에 실패해도 "새 텍스트 + 옛 인덱스" 짝을 남기지 않는다', async () => {
+    const h = hashOf(37);
+    // 1차 저장: 옛 텍스트 + 옛 인덱스
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, extractedText: '옛 본문', chunkMeta: cm },
+      blob: idxBlob(), now: 1000,
+    });
+    expect(V.files.get(p(h, 'index.bin'))).toBeTruthy();
+
+    // 2차 저장: 새 텍스트 + 새 인덱스인데 index.bin 기록에서 죽는다(전원 차단 등)
+    const writeSpy = vi.spyOn(fsp, 'writeFile').mockImplementation(async (path0, data) => {
+      if (String(path0).replace(/\\/g, '/').endsWith('index.bin.tmp')) {
+        throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+      }
+      V.files.set(String(path0).replace(/\\/g, '/'), data as Buffer | string);
+    });
+    try {
+      // writeSession 은 실패를 throw 하지 않고 { ok:false } 로 알린다.
+      await expect(writeSession(DIR, {
+        meta: metaOf(h),
+        session: { docHash: h, extractedText: '새 본문', chunkMeta: cm },
+        blob: idxBlob(), now: 2000,
+      })).resolves.toMatchObject({ ok: false });
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    // 본문은 새 것으로 갱신됐을 수 있다 — 문제는 그 옆에 **옛 인덱스**가 남는 것이다.
+    expect(
+      V.files.get(p(h, 'index.bin')),
+      '옛 index.bin 이 남으면 새 텍스트에 옛 청크 좌표가 매칭돼 조용한 오답이 된다',
+    ).toBeUndefined();
+    // 복원 경로에서도 **쓸 수 있는 인덱스가 없어야** 한다 — 그래야 재임베딩으로 회복된다.
+    // (사이드카가 남는 것은 기존 설계가 택한 안전 상태다: blob 부재 → 인덱스 없음으로 수렴.)
+    const loaded = await readSession(DIR, h);
+    expect(loaded!.blob, '벡터가 남아 있으면 옛 좌표로 인용이 성립해버린다').toBeNull();
+  });
+
   it('구버전(session.json 에 chunkMeta, 사이드카 없음) → readSession fallback', async () => {
     const h = hashOf(32);
     V.files.set(p(h, 'session.json'), JSON.stringify({ docHash: h, chunkMeta: cm })); // 구버전 직접 주입

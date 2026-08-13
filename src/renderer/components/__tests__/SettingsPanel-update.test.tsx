@@ -9,6 +9,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { UpdateState } from '../../../shared/update-types';
+// QA24(B-L3): 게이트 규칙의 원본. update-policy 는 electron 비의존 순수 모듈이라 테스트에서
+// 직접 import 해 렌더러의 손으로 옮겨 적은 조건과 대조할 수 있다(프로덕션 렌더러 코드는
+// main/ 을 import 하지 않는다 — 이 대조는 테스트 층에서만 한다).
+import { canCheck } from '../../../main/update-policy';
 
 const updateMock = {
   getState: vi.fn<() => Promise<UpdateState>>(),
@@ -86,6 +90,26 @@ describe('SettingsPanel — 앱 업데이트 섹션', () => {
     await renderWith(state({ status: 'downloaded', newVersion: '1.1.0', percent: 100 }));
     expect(screen.getByRole('button', { name: t('update.checkBtn') }).hasAttribute('disabled')).toBe(true);
   });
+
+  // QA24(B-L3): "지금 확인" 의 disabled 조건은 main 의 canCheck 를 **손으로 옮겨 적은 것**이다
+  // (렌더러가 main/ 을 import 하지 않는 구조). 실제로 'installing' 이 누락돼 있었고, 클릭은
+  // IPC 를 타고 가서 조용히 폐기됐다 — QA23 이 installing 상태를 도입해 없애려던 그 클래스다.
+  // 전 상태를 canCheck 와 대조해 둘이 갈리는 순간 잡는다(개별 상태 열거는 또 빠뜨린다).
+  it.each<UpdateState['status']>(['idle', 'checking', 'available', 'downloading', 'downloaded', 'installing', 'not-available', 'error'])(
+    '"지금 확인" 활성 여부가 canCheck(%s) 와 일치한다',
+    async (status) => {
+      await renderWith(state({
+        status,
+        // downloaded/installing 은 버전이 있어야 자연스러운 상태다(표시 문구용).
+        newVersion: status === 'idle' || status === 'not-available' ? null : '1.1.0',
+      }));
+      const btn = screen.getByRole('button', { name: t('update.checkBtn') });
+      expect(
+        !btn.hasAttribute('disabled'),
+        `status=${status} 에서 UI 와 canCheck 가 어긋나면 클릭이 조용히 폐기되거나 정당한 조작이 막힌다`,
+      ).toBe(canCheck(status));
+    },
+  );
 
   it('QA19(D-MED): 실패는 role="alert" 로 통지 (성공 메시지와 같은 등급이 아님)', async () => {
     await renderWith(state({ status: 'error', errorKey: 'updateNetwork' }));

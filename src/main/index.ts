@@ -543,12 +543,28 @@ function clearUpdaterCache(): void {
     console.warn('[update] 업데이터 캐시를 찾지 못했습니다(경로 계산 확인 필요):', target);
     return;
   }
-  try {
-    rmSync(target, { recursive: true, force: true });
-    console.log('[update] 손상된 업데이터 캐시를 정리했습니다:', target);
-  } catch (err) {
-    console.error('[update] 업데이터 캐시 정리 실패:', err);
+  // QA24(B-L1): 캐시 **루트 전체**를 지우면 차등 다운로드 기준본까지 날아간다. 루트의
+  // `installer.exe` 는 NSIS 설치기가 남기는 현재 버전 인스톨러(electron-updater 의
+  // CURRENT_APP_INSTALLER_FILE_NAME)로, 이것이 있어야 다음 업데이트가 blockmap 기반 차등
+  // 다운로드를 한다. 지우면 **다음 한 번이 아니라 그 뒤로 계속** 전량(≈101MB) 다운로드가 된다 —
+  // NSIS 설치가 다시 일어나기 전에는 복구되지 않기 때문이고, 이는 커밋 메시지가 설명한 동작과도
+  // 다르다.
+  //
+  // 손상되는 것은 **재조립 결과물과 그 기준 blockmap** 이므로 그 둘만 지우면 회복에 충분하다:
+  //   pending/          — 받다 만/체크섬 불일치 인스톨러
+  //   current.blockmap  — 기준본과 버전이 어긋나 오조립을 유발한 blockmap
+  // (참고: electron-updater 자신은 실패 시 pending/ 만 비우고 루트는 손대지 않는다. 그래서
+  //  current.blockmap 이 남아 다음 시도를 계속 오염시켰고, 이 함수가 필요했던 것이다.)
+  const targets = [path.join(target, 'pending'), path.join(target, 'current.blockmap')];
+  for (const t of targets) {
+    try {
+      rmSync(t, { recursive: true, force: true });
+    } catch (err) {
+      // best-effort — 하나가 실패해도 나머지는 계속 시도한다.
+      console.error('[update] 업데이터 캐시 정리 실패:', t, err);
+    }
   }
+  console.log('[update] 손상된 업데이터 캐시를 정리했습니다(차등 기준본은 보존):', target);
 }
 
 function broadcastUpdateState(state: UpdateState): void {

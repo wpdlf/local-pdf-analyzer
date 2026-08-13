@@ -86,6 +86,24 @@ export function CollectionsList() {
 
   if (!persistEnabled) return null;
 
+  // QA24(A-L3): 실패 고지를 **목록 유무와 무관하게** 렌더한다. 종전에는 이 블록이
+  // `items.length === 0` 안에만 있어서, 이미 목록이 떠 있는 상태의 refresh 실패(삭제 직후
+  // 재조회가 EBUSY 등)는 **사유도 재시도도 없이** 방금 지운 항목이 남은 stale 목록으로 보였다
+  // (클릭하면 열기 실패). "기존 목록을 지우지 않는다" 는 정책 자체는 옳고 고지만 빠졌던 것.
+  // RecentDocuments 가 같은 계약을 목록 유무와 무관하게 적용하므로 형제 비대칭도 함께 닫는다.
+  const failureNotice = loadFailed ? (
+    <div className="flex items-center gap-2 px-1 py-2">
+      <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">{tr('collection.loadFailed')}</p>
+      <button
+        type="button"
+        onClick={() => { void refresh(); }}
+        className="text-xs underline text-blue-600 dark:text-blue-400"
+      >
+        {tr('common.retry')}
+      </button>
+    </div>
+  ) : null;
+
   // 발견성(R47 UX): 컬렉션이 없을 때도 한 줄 안내로 기능 존재/생성 방법을 알린다.
   // QA23(D-LOW): 단 **불러오지 못한 경우**는 "없음"으로 단정하지 않는다 — 사용자가 전량 소실로
   // 읽는다(collections.json 은 유일 사본). 사유와 재시도를 준다.
@@ -95,18 +113,7 @@ export function CollectionsList() {
         <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2 px-1">
           {tr('collection.savedTitle')}
         </h2>
-        {loadFailed ? (
-          <div className="flex items-center gap-2 px-1 py-2">
-            <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">{tr('collection.loadFailed')}</p>
-            <button
-              type="button"
-              onClick={() => { void refresh(); }}
-              className="text-xs underline text-blue-600 dark:text-blue-400"
-            >
-              {tr('common.retry')}
-            </button>
-          </div>
-        ) : (
+        {failureNotice ?? (
           <p className="text-xs text-gray-600 dark:text-gray-400 px-1 py-2">{tr('collection.savedEmptyHint')}</p>
         )}
       </div>
@@ -118,6 +125,7 @@ export function CollectionsList() {
       <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-2 px-1">
         {tr('collection.savedTitle')}
       </h2>
+      {failureNotice}
       <ul className="flex flex-col gap-2">
         {items.map((c) => (
           <li
