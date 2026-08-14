@@ -12,6 +12,7 @@ Most AI summarization services require uploading your PDF to an external server 
 - **RAG-based Q&A chat** — embedding-based semantic search finds the most relevant parts of your PDF, and answers are automatically verified against the source
 - **Page citations + PDF viewer with outline navigation** — summaries and answers carry `[p.12]` source citations; click one to open the original page instantly, or jump through the document's built-in table of contents from the viewer's outline sidebar
 - **Summary mind-map** — flip any summary into an interactive mind-map of its heading structure; collapse/expand branches and click a node's `[p.N]` badge to jump to that page in the source viewer
+- **Formulas rendered as formulas** — mathematical notation the AI carries over from the source is typeset instead of left as raw LaTeX, in summaries, Q&A answers, and exported PDFs
 - **Multi-document tabs + cross-document Q&A** — open several PDFs as tabs and ask a single question across them; answers cite the source document and jump to the right page
 - **Collections + cross-document summaries** — save a set of documents as a named collection and reopen the whole tab set later; generate a unified summary or a comparison across the selected documents
 - **Automatic session save & restore** — reopen an analyzed PDF and your summary, Q&A history, and search index are restored instantly, with no re-summarization or re-embedding
@@ -87,6 +88,7 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 ### 3. View & Save Results
 - The summary streams to the screen in real time
 - Switch between **Text** and **Mind map** with the toggle in the summary header — the mind-map turns the summary's headings into a collapsible tree you can navigate, with a `[p.N]` badge on each node to jump to the source page
+- **Formulas are typeset** — the summary prompts ask the AI to carry important formulas over from the source, and those come back as mathematical notation rather than raw LaTeX. If one arrives malformed, only that fragment is marked in its original text; the rest of the summary keeps its formatting. Summaries saved before this existed are typeset too, the next time you open them
 - Save with **Export `.md`** or **Export PDF** (a formatted PDF with headings/tables/citations), or copy to clipboard with **Copy**
 - Closing the summary is non-destructive — it collapses to the document screen, and **View summary / Continue Q&A** reopens it with the Q&A thread intact
 
@@ -187,6 +189,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Multi-document tabs — keep several PDFs open and switch between them; only the active document's heavy state stays in memory (instant restore on switch). Collection mode searches across the open documents in a single question, with source-attributed citations; save a set as a named collection and generate unified/comparison summaries across it
 - PDF outline navigation — documents with a built-in table of contents get a collapsible outline sidebar in the viewer for one-click jump to any section
 - Summary mind-map — a Text/Mind-map toggle renders the summary's heading hierarchy as a collapsible tree; each node carries its page citation as a `[p.N]` badge for one-click jump to the source page (keyboard- and screen-reader-friendly, no extra dependencies)
+- Mathematical notation — formulas are typeset in summaries, Q&A answers, and exported PDFs via the browser engine's built-in mathematical layout, so no webfonts are downloaded and screen readers read an equation's structure rather than its source. Currency amounts such as `$100` are never mistaken for mathematics
 - Dark mode, instant Korean/English switching — the UI language is auto-detected from your OS locale on first run, with a toggle on the setup screen; screen-reader and keyboard accessibility
 
 **Reliability · Security**
@@ -197,7 +200,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Self-updating — new versions are detected on startup and installed with one click; downloads never start without consent, and in-progress work is saved before the app restarts
 
 **Quality assurance**
-- 1852 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
+- 1881 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -231,6 +234,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Some pages are missing from the summary/search | If the document is a scan whose cover page carries a text layer, the rest is skipped by text extraction; enable "Scanned PDF OCR" in Settings and reopen it. Pages with no extractable text are reported when this happens |
 | The Ollama address is rejected when saving | The address must be a full URL including the scheme, e.g. `http://localhost:11434`. It is validated at save time — previously a malformed address appeared to save, then every request failed while the status bar still showed "connected" |
 | Answers seem to generate twice | Answer verification triggers one extra LLM call when grounding is weak; you can turn off the "Answer verification" toggle in Settings |
+| A formula looks wrong | The AI transcribes formulas from the extracted text, so it can get one wrong — click the `[p.N]` citation beside it to check the original page. A stronger model (or a cloud provider) transcribes mathematics more reliably. A fragment shown in red is notation the AI produced in a form that could not be read as mathematics |
 | Opened from Recent Documents but the PDF viewer is missing | The summary/Q&A analysis is restored, but if the original file was moved/deleted the viewer is disabled. Reopen the original file to restore it |
 | Saved sessions use too much disk | At most 30 sessions/200MB are kept; older ones are pruned automatically. Check usage and "Clear all" under Settings → Session Data |
 | App freezes on a screen error | Use the "Try again" button on the error screen to recover without restarting |
@@ -255,9 +259,10 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | PDF parsing | pdfjs-dist (position-based text extraction + image extraction, Korean-optimized) |
 | State management | Zustand |
 | Styling | Tailwind CSS v4 + @tailwindcss/typography |
+| Markdown · math | react-markdown + remark-gfm; KaTeX in MathML-only output (no webfonts, no CSP relaxation) — shared by the on-screen renderer and PDF export |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
 | Auto-update | electron-updater (GitHub Releases feed) — check on startup, download and install only on user consent, renderer flush before install |
-| Testing | Vitest, 1852 unit tests / 98 files (renderer·shared 1172 + main 680) + Playwright E2E (9 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (79/71/78/82) |
+| Testing | Vitest, 1881 unit tests / 100 files (renderer·shared 1201 + main 680) + Playwright E2E (10 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (79/71/78/82) |
 | i18n | In-house (i18n.ts) — 400+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -310,7 +315,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (1852, 98 files)
+    │   └── __tests__/         # Unit tests (1881, 100 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -505,8 +510,8 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **1852 unit tests / 98 files** — renderer·shared 1172 + main 680. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 17 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
-- **Playwright E2E** — 9 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, session/settings persistence across restart, upload-error paths), all AI-independent; multi-tab restore and summarize/Q&A/collection flows are covered by local-only Ollama specs
+- **1881 unit tests / 100 files** — renderer·shared 1201 + main 680. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 17 components + core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
+- **Playwright E2E** — 10 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, session/settings persistence across restart, upload-error paths, and the browser engine's mathematical layout that formula rendering depends on), all AI-independent; multi-tab restore and summarize/Q&A/collection flows are covered by local-only Ollama specs
 - **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (79/71/78/82), lockfile version sync check, tag ↔ `package.json` version match, `npm audit` advisory, Node 22/24 matrix plus a Windows unit-test leg
 - **Packaged-app gate (release only)** — the release workflow launches the actual packaged binary before uploading any asset, and verifies that the renderer boots and parses a real PDF **from inside the asar alone**, plus an asar size ceiling. Every other E2E spec runs the source tree's `out/`, where the repo's `node_modules` is still visible — so none of them can catch a packaging regression
 - **4-agent parallel QA** — a full-codebase QA round on every release, each agent taking a different axis (recent code, concurrency, persistence, packaging/CI, …). Zero blocking findings for 50+ consecutive rounds; what the rounds actually surface now is the expensive-but-quiet class — data that disappears without an error, and answers that look correct but aren't. Two examples fixed in v0.31.42: on documents whose first pages are a table of contents, those contents lines consumed the chapter numbers and every real chapter after them was suppressed — chapter summaries lost all but one; and opening a document while Ollama was not running deleted its stored search index, so reopening meant re-embedding the whole file. The rounds are also, by design, where regressions introduced by earlier fixes surface: of the findings in that round, five traced back to fixes shipped in the two rounds before it — which is why each fix now lands with a test that reproduces the defect first
