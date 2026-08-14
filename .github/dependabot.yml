@@ -31,6 +31,9 @@ updates:
       - dependency-name: react-dom
       - dependency-name: react-markdown
       - dependency-name: remark-gfm
+      - dependency-name: remark-math
+      - dependency-name: rehype-katex
+      - dependency-name: katex
       - dependency-name: zustand
       - dependency-name: pdf-lib
     ignore:

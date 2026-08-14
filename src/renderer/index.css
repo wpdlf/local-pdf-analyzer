@@ -6,3 +6,11 @@ html, body, #root {
   height: 100%;
   margin: 0;
 }
+
+/* rehype-katex 는 파싱 실패한 수식을 인라인 `style="color:#cc0000"` 으로 표시한다. 다크 배경
+   (gray-800/900)에서 대비가 부족해 사실상 읽히지 않으므로 다크에서만 밝은 적색으로 덮는다.
+   인라인 style 을 이기려면 !important 가 필요하다. 라이트 테마는 katex 기본값을 그대로 둔다.
+   (PDF 내보내기 경로는 항상 흰 배경이라 덮지 않는다.) */
+.dark .katex-error {
+  color: #f87171 !important;
+}

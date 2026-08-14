@@ -50,4 +50,31 @@ describe('summaryToHtml — 인쇄용 HTML 변환', () => {
     const html = summaryToHtml('본문', '<b>&"x"');
     expect(html).toContain('<title>&lt;b&gt;&amp;&quot;x&quot;</title>');
   });
+
+  // 수식: 화면(markdown-renderer)과 내보내기(export-html)가 각자 플러그인 배열을 들면
+  // "화면엔 수식이 나오는데 내보낸 PDF 엔 \(E=mc^2\) 가 찍히는" drift 가 난다.
+  // math-plugins 를 단일 출처로 쓰는 배선이 이 경로에도 실제로 적용됐는지 본다.
+  describe('수식', () => {
+    it('`\\(…\\)` 가 MathML 로 렌더된다', () => {
+      const html = summaryToHtml('수식 \\(E=mc^2\\) 확인[p.8].', 'x');
+      expect(html).toContain('<math');
+      expect(html).toContain('</math>');
+      expect(html).not.toContain('\\(E=mc^2\\)'); // 리터럴이 남지 않는다
+      expect(html).toContain('[p.8]');            // 인용은 plain text 로 보존
+    });
+
+    it('홑 `$` 통화 표기는 수식이 되지 않는다', () => {
+      const html = summaryToHtml('가격은 $100 에서 $200 로 올랐다', 'x');
+      expect(html).not.toContain('<math');
+      expect(html).toContain('$100');
+    });
+
+    it('외부 리소스를 참조하지 않는다 — 인쇄 CSP(default-src none) 하에서 렌더 가능', () => {
+      // MathML 단독 출력을 택한 이유. katex.css/woff2 를 쓰면 이 CSP 로는 로드되지 않는다.
+      const html = summaryToHtml('\\[\\int_0^1 x\\,dx\\]', 'x');
+      expect(html).toContain('<math');
+      expect(html).not.toMatch(/<link[^>]+stylesheet/i);
+      expect(html).not.toContain('katex.min.css');
+    });
+  });
 });

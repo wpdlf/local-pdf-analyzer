@@ -3,11 +3,17 @@ import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { safeComponents } from './safe-markdown';
+import { MATH_REMARK_PLUGINS, MATH_REHYPE_PLUGINS } from './math-plugins';
+import { normalizeMathDelimiters } from './math-normalize';
 
 // export-html 은 PDF 내보내기 시점에만 동적 import 되는 별도 lazy 청크라, react-markdown·
-// remark-gfm 을 직접 정적 import 해도 cold-start eager 번들에 들어가지 않는다.
+// remark-gfm·katex 를 직접 정적 import 해도 cold-start eager 번들에 들어가지 않는다.
 // (요약/Q&A 화면 렌더는 safe-markdown 의 SafeMarkdown → markdown-renderer 경로를 쓴다.)
-const REMARK_PLUGINS = [remarkGfm];
+//
+// 수식 플러그인은 math-plugins 가 단일 출처 — 화면에는 수식이 나오는데 내보낸 PDF 에는
+// `\(E=mc^2\)` 가 찍히는 drift 를 구조적으로 막는다.
+const REMARK_PLUGINS = [remarkGfm, ...MATH_REMARK_PLUGINS];
+const REHYPE_PLUGINS = MATH_REHYPE_PLUGINS;
 
 // PDF 내보내기용 마크다운 → 정적 HTML 변환.
 //
@@ -64,7 +70,11 @@ const PRINT_CSS = `
  */
 export function summaryToHtml(markdown: string, title: string, lang?: string): string {
   const body = renderToStaticMarkup(
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={exportComponents}>{markdown}</ReactMarkdown>,
+    <ReactMarkdown
+      remarkPlugins={REMARK_PLUGINS}
+      rehypePlugins={REHYPE_PLUGINS}
+      components={exportComponents}
+    >{normalizeMathDelimiters(markdown)}</ReactMarkdown>,
   );
   // QA14(C-LOW): 이전엔 lang="ko" 하드코딩이라 영어 요약 PDF 도 SR 이 한국어 음가로 읽고 메타데이터가
   // 틀렸다. 요약 언어(summaryLanguage)를 반영하되, 속성 주입 안전을 위해 2글자 코드만 허용(그 외 'ko').
