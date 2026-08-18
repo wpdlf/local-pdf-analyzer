@@ -130,25 +130,35 @@ describe('normalizeMathDelimiters — 건드리면 안 되는 것', () => {
   // QA25(C-MED): 짝 없는 여는 구분자에서 O(n²) 였다 — 100KB 입력이 렌더러를 3.5초 동결시켰다.
   // Ollama 는 출력 길이 상한이 없어 소형 모델이 반복 루프에 빠지면 적대적 입력 없이도 도달하고,
   // Q&A 라이브 스트림은 50ms flush 마다 누적 텍스트 전체를 재정규화해 비용이 누적된다.
-  // 시간 단언은 느린 CI 러너에서 플레이크가 되므로 **성장률**을 본다 — 선형이면 입력이 5배일 때
-  // 시간도 대략 5배지만, 이차식이면 25배가 된다. 여유를 크게 둬도 둘은 구분된다.
+  // 판정은 **절대 상한**으로 한다.
+  //
+  // 처음에는 성장률(입력 5배 → 시간이 5배인가 25배인가)로 썼는데 **CI 에서 플레이크였다**
+  // (ratio 13.3 > 상한 12 로 실패). 원인을 실측해 보니 이 함수는 수정 후 너무 빨라서 한 번
+  // 측정한 시간이 타이머 해상도 근처이고, 그 작은 분모가 비율을 요동시킨다 — 단일 측정
+  // ratio 가 **1.50~14.74** 로 흩어졌다(반복 측정하면 3.1~4.7 로 안정되지만, 그러려고
+  // 테스트를 무겁게 만들 이유가 없다).
+  //
+  // 실제로 지켜야 할 성질은 "렌더러가 얼지 않는다" 이고, 그건 절대 시간으로 표현하는 것이
+  // 맞다. 실측(2026-08-18): 195KB 병리 입력 **약 5ms**. 수정 전에는 98KB 가 **3547ms** 였다.
+  // 상한 500ms 는 정상 동작 대비 100배 여유이고, 깨진 구현이면 같은 입력에서 초 단위가 되어
+  // 수십 배 초과한다 — 러너가 느려도 두 상태는 섞이지 않는다.
   describe('병리 입력에서 선형으로 동작한다 (QA25 회귀)', () => {
-    const measure = (input: string) => {
-      normalizeMathDelimiters(input); // JIT 워밍업
-      const t = performance.now();
-      normalizeMathDelimiters(input);
-      return performance.now() - t;
-    };
+    const PATHOLOGICAL_BUDGET_MS = 500;
 
     it.each([
       ['\\(', '\\('],
       ['\\[', '\\['],
-    ])('짝 없는 %s 반복이 이차식으로 폭발하지 않는다', (_label, open) => {
-      const small = measure(open.repeat(10_000));
-      const large = measure(open.repeat(50_000));
-      // 이차식이면 25배. 선형이면 5배. 상수 오버헤드와 러너 노이즈를 감안해 12배를 상한으로 둔다.
-      // (수정 전 실측: 10KB 35ms → 100KB 3547ms = 100배)
-      expect(large).toBeLessThan(Math.max(small, 0.5) * 12);
+    ])('짝 없는 %s 반복(195KB)이 예산 안에 끝난다', (_label, open) => {
+      const input = open.repeat(100_000);
+      // 빠른 경로(구분자 부재 시 원본 반환)로 빠지면 측정이 무의미해진다 — 전제를 고정한다.
+      expect(input.includes('\\(') || input.includes('\\[')).toBe(true);
+
+      const t = performance.now();
+      const out = normalizeMathDelimiters(input);
+      const elapsed = performance.now() - t;
+
+      expect(elapsed).toBeLessThan(PATHOLOGICAL_BUDGET_MS);
+      expect(out).toBe(input); // 짝이 없으므로 원문 그대로여야 한다
     });
 
     it('병리 입력이어도 내용은 원문 그대로 보존된다', () => {
