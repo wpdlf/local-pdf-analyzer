@@ -58,15 +58,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-      # actions/checkout@v6.0.2 (Node 24)
       # QA20(B-MED): persist-credentials:false — 이 잡은 자산을 올리지 않으므로 토큰을
       # .git/config 에 남길 이유가 없다(npm ci 가 실행하는 서드파티 스크립트의 탈취 표면 제거).
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      # actions/setup-node@v6.4.0 (Node 24)
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      # Node 24
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           # R37 P5-3 (v0.18.23): 20.11 → 22. Node 20.11 EoL(2026-04) 경과 + test.yml 매트릭스/
           # engines(현재 <25) 정렬. 네이티브 모듈 0개라 빌드 Node 의존 없음.
@@ -135,6 +134,22 @@ jobs:
             exit 1
           fi
 
+      # QA25(D-I2): 릴리즈 경로에 supply-chain 검사가 **0건**이었다. blocking audit 은
+      #   test.yml 의 push/PR 잡에만 있어서, 태그를 밀면 그 경로는 통째로 우회됐다. 위 커버리지
+      #   게이트가 같은 이유로 이미 한 번 뚫렸던 것과 동형이다(QA post-v0.24.4).
+      #   advisory 는 시간이 지나며 새로 뜨므로 "마지막 main push 때 통과했다"는 보증이 되지
+      #   않는다 — 자동 업데이트 도입 이후 이 산출물은 곧 전 사용자 코드 실행이다.
+      #   로직 본체는 scripts/audit-shipped.mjs 단일 출처(test.yml 과 공유).
+      - name: npm audit (프로덕션 트리 전량, blocking)
+        if: matrix.coverage
+        shell: bash
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: npm audit (배포물 한정, blocking)
+        if: matrix.coverage
+        shell: bash
+        run: npm audit --json 2>/dev/null | node scripts/audit-shipped.mjs
+
       - name: Unit tests + coverage gate (ubuntu)
         if: matrix.coverage
         run: npm run test:coverage
@@ -157,7 +172,7 @@ jobs:
       # C5-I3: 실패 포렌식 — trace(on-first-retry) 산출물 회수(test.yml e2e 잡과 대칭).
       - name: Upload E2E failure artifacts
         if: failure() && matrix.e2e
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-e2e-failure-${{ github.run_id }}
           path: test-results/
@@ -175,7 +190,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           # QA24(D-I3): **릴리즈 쓰기 토큰을 실제로 보유한 유일한 잡**인데 여기만 빠져 있었다.
           # QA20(B-MED)의 위협 모델("npm ci 가 서드파티 라이프사이클 스크립트를 돌리는데
@@ -185,7 +200,7 @@ jobs:
           # GITHUB_TOKEN/OIDC 를 쓰므로 git config 자격증명이 필요 없다.
           persist-credentials: false
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           # R37 P5-3 (v0.18.23): 20.11 → 22 (위 test 잡과 동일 사유).
           node-version: '22'
@@ -219,7 +234,7 @@ jobs:
 
       - name: Upload packaged smoke artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: packaged-smoke-failure-${{ github.run_id }}
           path: test-results/
@@ -239,10 +254,10 @@ jobs:
       # 를 올리려 하면 콜드 러너의 빌드 시간과 합쳐 30분 잡 상한에 근접해, 정작 진단이 필요한
       # 순간에 업로드가 잘린다. installer·blockmap·latest.yml 과 out/ 만으로 재현에 충분하고,
       # win-unpacked 는 installer 에서 다시 만들 수 있다.
-      # actions/upload-artifact@v4.6.2 (gh api 로 tag→commit SHA 확인 후 핀)
+      # 핀 SHA 는 gh api 로 tag→commit 확인 후 고정. 버전은 uses 줄 끝 주석이 단일 출처.
       - name: Upload build diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build-windows-failure-${{ github.run_id }}
           path: |
@@ -263,13 +278,12 @@ jobs:
           "sha256=$hash"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "$hash  $name" | Out-File -FilePath dist/SHA256SUMS-windows.txt -Encoding ascii
 
-      # actions/attest-build-provenance@v4.1.0
       - name: Attest build provenance (Windows)
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*Setup*.exe
 
-      # softprops/action-gh-release@v3.0.0 (Node24 런타임).
+      # Node24 런타임.
       # QA(post-v0.24.4): 이전 v2.6.2 는 deprecated Node20 기반이라 GitHub 의 Node20 shim
       # 제거 시 자산 업로드 스텝이 깨질 위험이 있었다. v3.0.0 은 node24 + files/append_body/body
       # 입력 동일(검증 완료)이라 호환 범프.
@@ -290,7 +304,7 @@ jobs:
           echo "latest.yml + blockmap OK"
 
       - name: Upload installer to release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           files: |
             dist/*Setup*.exe
