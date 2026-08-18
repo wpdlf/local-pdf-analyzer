@@ -154,6 +154,23 @@ describe('audit-shipped 게이트', () => {
   });
 });
 
+describe('워크플로 배선 (QA25 후속)', () => {
+  // ⚠️ 이 게이트는 첫 릴리즈 시도에서 **CI 를 통째로 실패시켰다**. 스텝이 bash -o pipefail 로
+  // 도는데 `npm audit` 은 권고를 하나라도 찾으면 exit 1 이고(빌드툴 권고는 항상 존재한다),
+  // 파이프로 직결하면 게이트 판정과 무관하게 그 코드가 스텝의 결과가 된다. 로컬 셸에는
+  // pipefail 이 없어 드러나지 않았다. 두 워크플로가 같은 관용구를 쓰는지 고정한다.
+  it('두 워크플로 모두 audit 종료코드를 삼키고 본문만 파이프한다', () => {
+    for (const wf of ['.github/workflows/test.yml', '.github/workflows/release.yml']) {
+      const src = readFileSync(join(REPO_ROOT, wf), 'utf8');
+      expect(src).toContain('audit-shipped.mjs');
+      // 파이프 직결이 없어야 한다 — 있으면 npm audit 의 exit 1 이 그대로 스텝 결과가 된다.
+      expect(src).not.toContain('npm audit --json 2>/dev/null | node scripts/audit-shipped.mjs');
+      // 대신 종료코드를 삼킨 캡처 형태여야 한다.
+      expect(src).toMatch(/AUDIT_JSON=\$\(npm audit --json[^)]*\|\| true\)/);
+    }
+  });
+});
+
 describe('dependabot allow 목록 ↔ shippedDevDependencies (QA25 D-M5)', () => {
   // 두 목록은 같은 집합이어야 한다고 dependabot.yml 주석이 선언하지만 강제하는 것이 없었다.
   // 한쪽만 갱신하면 새 배포 라이브러리가 자동 범프 대상에서 조용히 빠진다(QA24 D-M5 가 고친

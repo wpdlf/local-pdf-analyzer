@@ -210,7 +210,11 @@ jobs:
             echo "::warning::node_modules 부재 — shipped audit 미실행"
             exit 0
           fi
-          npm audit --json 2>/dev/null | node scripts/audit-shipped.mjs
+          # ⚠️ 파이프로 직접 연결하면 안 된다 — 이 스텝은 bash -o pipefail 로 돌고
+          # `npm audit` 은 **권고를 하나라도 찾으면 exit 1** 이다(빌드툴 권고는 항상 있다).
+          # 그러면 게이트 판정과 무관하게 스텝이 실패한다. 종료코드를 삼키고 본문만 넘긴다.
+          AUDIT_JSON=$(npm audit --json 2>/dev/null || true)
+          printf '%s' "$AUDIT_JSON" | node scripts/audit-shipped.mjs
 
   coverage:
     # R37 P5-2 (v0.18.23): 커버리지 게이트를 CI 에서 실제 강제 (QA M2).

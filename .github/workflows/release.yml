@@ -148,7 +148,11 @@ jobs:
       - name: npm audit (배포물 한정, blocking)
         if: matrix.coverage
         shell: bash
-        run: npm audit --json 2>/dev/null | node scripts/audit-shipped.mjs
+        run: |
+          # ⚠️ 파이프 직결 금지 — pipefail + `npm audit` 의 exit 1(권고 존재)이 게이트
+          # 판정과 무관하게 스텝을 실패시킨다. test.yml 과 동일 관용구.
+          AUDIT_JSON=$(npm audit --json 2>/dev/null || true)
+          printf '%s' "$AUDIT_JSON" | node scripts/audit-shipped.mjs
 
       - name: Unit tests + coverage gate (ubuntu)
         if: matrix.coverage
