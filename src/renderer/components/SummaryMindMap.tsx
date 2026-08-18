@@ -10,6 +10,7 @@ import { useMemo, useState } from 'react';
 import { useT } from '../lib/i18n';
 import { parseSummaryToTree, type SummaryTreeNode } from '../lib/summary-tree';
 import { CitationButton } from './CitationButton';
+import { stripMathDelimiters } from '../lib/math-normalize';
 
 export function SummaryMindMap({ markdown }: { markdown: string }) {
   const t = useT();
@@ -64,7 +65,7 @@ function MindMapNode({ node, isRoot }: { node: SummaryTreeNode; isRoot?: boolean
               : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200'
           }`}
         >
-          {node.title || t('mindmap.untitled')}
+          {node.title ? stripMathDelimiters(node.title) : t('mindmap.untitled')}
         </span>
         {node.page != null && (
           <CitationButton page={node.page} docName={node.docName ?? undefined} />

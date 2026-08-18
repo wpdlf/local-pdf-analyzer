@@ -83,9 +83,28 @@ describe('normalizeMathDelimiters — 건드리면 안 되는 것', () => {
     expect(normalizeMathDelimiters(src)).toBe(src);
   });
 
-  it('교차문서 인용 라벨(`파일 | p.3`)도 마찬가지', () => {
-    const src = '근거 \\[a.pdf | p.3\\] 참고';
-    expect(normalizeMathDelimiters(src)).toBe(src);
+  // QA25(A-IMP): 이 자리에 있던 테스트는 `\[a.pdf | p.3\]`(파이프 구분)을 단언했는데,
+  // **이 앱은 그런 라벨을 만들지 않는다**. use-qa 가 만드는 것은 `[문서명 p.N]`(공백 구분)이고
+  // sanitizeDocLabelName 이 파일명의 `|` 를 공백으로 지우므로 파이프 형태는 발생조차 못 한다.
+  // 즉 옛 테스트는 존재하지 않는 문법에 대한 그린이었고, 실제 라벨은 커버리지 밖에서
+  // 수식으로 둔갑해 인용 버튼이 사라지고 있었다. 실제 생산되는 형태로 교체한다.
+  describe('실제로 생산되는 인용 라벨을 보존한다 (QA25 회귀)', () => {
+    it.each([
+      ['단일 문서', '\\[p.3\\]'],
+      ['교차 문서(공백 구분 — use-qa 가 만드는 형태)', '\\[Beta.pdf p.5\\]'],
+      ['공백이 든 파일명', '\\[Report 2024.pdf p.12\\]'],
+      ['quote 꼬리', '\\[p.5|인용문\\]'],
+      ['페이지 앞 공백', '\\[p. 12\\]'],
+    ])('%s', (_label, token) => {
+      const src = `근거 ${token} 참고`;
+      expect(normalizeMathDelimiters(src)).toBe(src);
+    });
+
+    it('인용 모양이 아니면 정상적으로 수식이 된다 (가드가 과잉 차단하지 않는다)', () => {
+      expect(normalizeMathDelimiters('식 \\[E=mc^2\\] 참고')).toContain('$$E=mc^2$$');
+      // p.N 을 품고 있어도 인용 라벨 전체 형태가 아니면 수식이다.
+      expect(normalizeMathDelimiters('\\[x = p.3 + 1\\]')).toContain('$$');
+    });
   });
 
   it('인라인 구분자가 줄바꿈을 넘으면 우연히 맞은 괄호로 보고 두드리지 않는다', () => {
@@ -106,5 +125,84 @@ describe('normalizeMathDelimiters — 건드리면 안 되는 것', () => {
   it('후보 구분자가 없으면 원본을 그대로 돌려준다(빠른 경로)', () => {
     const src = '# 제목\n\n평범한 **본문** 입니다[p.1].';
     expect(normalizeMathDelimiters(src)).toBe(src);
+  });
+
+  // QA25(C-MED): 짝 없는 여는 구분자에서 O(n²) 였다 — 100KB 입력이 렌더러를 3.5초 동결시켰다.
+  // Ollama 는 출력 길이 상한이 없어 소형 모델이 반복 루프에 빠지면 적대적 입력 없이도 도달하고,
+  // Q&A 라이브 스트림은 50ms flush 마다 누적 텍스트 전체를 재정규화해 비용이 누적된다.
+  // 시간 단언은 느린 CI 러너에서 플레이크가 되므로 **성장률**을 본다 — 선형이면 입력이 5배일 때
+  // 시간도 대략 5배지만, 이차식이면 25배가 된다. 여유를 크게 둬도 둘은 구분된다.
+  describe('병리 입력에서 선형으로 동작한다 (QA25 회귀)', () => {
+    const measure = (input: string) => {
+      normalizeMathDelimiters(input); // JIT 워밍업
+      const t = performance.now();
+      normalizeMathDelimiters(input);
+      return performance.now() - t;
+    };
+
+    it.each([
+      ['\\(', '\\('],
+      ['\\[', '\\['],
+    ])('짝 없는 %s 반복이 이차식으로 폭발하지 않는다', (_label, open) => {
+      const small = measure(open.repeat(10_000));
+      const large = measure(open.repeat(50_000));
+      // 이차식이면 25배. 선형이면 5배. 상수 오버헤드와 러너 노이즈를 감안해 12배를 상한으로 둔다.
+      // (수정 전 실측: 10KB 35ms → 100KB 3547ms = 100배)
+      expect(large).toBeLessThan(Math.max(small, 0.5) * 12);
+    });
+
+    it('병리 입력이어도 내용은 원문 그대로 보존된다', () => {
+      const src = '\\('.repeat(500);
+      expect(normalizeMathDelimiters(src)).toBe(src);
+    });
+  });
+
+  describe('구분자 경계 처리 (QA25 회귀)', () => {
+    it('이스케이프된 백슬래시는 한 토큰으로 소비한다', () => {
+      // 사용자가 `\(x\)` 를 리터럴로 보이려고 이스케이프한 경우. 이전엔 두 번째 백슬래시부터
+      // 매칭돼 `\$$x\$$` 같은 깨진 출력이 나왔다.
+      const src = '\\\\(x\\\\)';
+      expect(normalizeMathDelimiters(src)).toBe(src);
+    });
+
+    it('LaTeX 정렬 관용구 `\\\\[6pt]` 를 깨뜨리지 않는다', () => {
+      const src = '\\\\[6pt]';
+      expect(normalizeMathDelimiters(src)).toBe(src);
+    });
+
+    it('경계에 리터럴 `$` 가 붙어 있으면 치환하지 않는다', () => {
+      // `비용 $\(x\)` → `비용 $$$x$$` 는 여는 런 3·닫는 런 2 라 수식으로 파싱되지도 않고
+      // 사용자는 깨진 리터럴을 본다 — 변환 전보다 나쁘다.
+      const src = '비용 $\\(x\\)';
+      expect(normalizeMathDelimiters(src)).toBe(src);
+      expect(normalizeMathDelimiters('\\(x\\)$')).toBe('\\(x\\)$');
+    });
+  });
+
+  describe('코드 보호 경계 (QA25 회귀)', () => {
+    // ⚠️ 이 두 테스트는 **틸드 펜스**와 **뒤쪽 백틱 짝**을 일부러 쓴다. 처음에 백틱 펜스로
+    // 썼더니 뮤테이션(펜스 들여쓰기 제한 복원)이 잡히지 않았다 — 펜스 인식이 실패해도 백틱
+    // 3개가 인라인 코드 스팬으로 매칭돼 우연히 보호됐기 때문이다. 마찬가지로 짝 없는 백틱
+    // 하나만 두면 옛 정규식도 매칭 자체를 못 해 차이가 드러나지 않았다.
+    it('리스트 항목 안의 펜스도 코드로 인식한다', () => {
+      // 이전엔 펜스 인식이 앞 공백 3칸까지라 리스트 안의 펜스를 놓쳤고, 코드 예제의 `\(` 가
+      // 수식으로 둔갑해 사용자가 보는 것이 원문과 달라졌다.
+      const src = '- 항목:\n\n    ~~~js\n    const re = /\\(a\\)/;\n    ~~~\n';
+      expect(normalizeMathDelimiters(src)).toBe(src);
+    });
+
+    it('짝 없는 백틱이 단락을 넘어 뒤쪽 수식을 삼키지 않는다', () => {
+      // 마크다운의 코드 스팬은 빈 줄을 넘지 못한다. 이전엔 `[\s\S]*?` 라 넘었고, 짝이 안 맞는
+      // 백틱 하나가 훨씬 뒤의 백틱과 "코드 스팬"으로 묶여 그 사이 구간의 변환이 통째로 스킵됐다.
+      const src = '셸에서 `ls 를 입력한다.\n\n값은 \\(f(x)\\) 이다.\n\n가격은 `100달러` 이다.';
+      expect(normalizeMathDelimiters(src)).toContain('$$f(x)$$');
+      // 뒤쪽의 정상 코드 스팬은 여전히 코드로 남는다.
+      expect(normalizeMathDelimiters(src)).toContain('`100달러`');
+    });
+
+    it('정상적인 인라인 코드는 여전히 보호된다', () => {
+      const src = '코드 `\\(a\\)` 는 그대로';
+      expect(normalizeMathDelimiters(src)).toBe(src);
+    });
   });
 });

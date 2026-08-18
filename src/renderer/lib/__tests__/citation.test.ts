@@ -416,3 +416,26 @@ describe('ReDoS 회귀 가드 (R46)', () => {
     expect(Date.now() - t0).toBeLessThan(2000);
   });
 });
+
+// QA25(C-LOW): 이 파일이 날 NUL 바이트를 품고 있어 ripgrep 이 binary 로 분류했다 — 소스 스캔을
+// 회귀 가드로 쓰는 저장소에서 "검색에 안 잡히는 소스"는 그 가드를 조용히 무력화한다.
+// safe-markdown 이 R29 에서 같은 이유로 고쳤던 것의 형제 누락이었다.
+describe('소스 위생 (QA25)', () => {
+  it('citation.ts 에 날 NUL 바이트가 없다 (rg 가 텍스트로 읽어야 한다)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const path = fileURLToPath(new URL('../citation.ts', import.meta.url));
+    expect(readFileSync(path).includes(0)).toBe(false);
+  });
+
+  it('인용만 있는 줄 판정이 공백을 공백으로 다룬다', () => {
+    // sentinel 판정식을 템플릿 리터럴로 조립하면 `\s` 의 백슬래시가 떨어져 **문자 s** 를
+    // 매칭하게 된다. 그러면 인용 사이 공백이 있는 줄이 "인용만 있는 줄"로 인식되지 않는다.
+    const src = '본문 문장입니다.\n[p.1] [p.2]\n다음 문장.';
+    const out = normalizeCitationPlacement(src);
+    // 인용 전용 줄은 앞 문장 끝으로 흡수되어 독립 줄로 남지 않는다.
+    expect(out.split('\n').some((l) => l.trim() === '[p.1] [p.2]')).toBe(false);
+    expect(out).toContain('[p.1]');
+    expect(out).toContain('[p.2]');
+  });
+});

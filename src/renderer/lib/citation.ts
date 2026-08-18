@@ -24,6 +24,21 @@
 export const CITATION_REGEX = /\[(?:(?<doc>[^[\]|\n]{1,120}?)\s+)?p\.\s*(?<page>\d+)(?:\s*\|\s*[^\]\n]{0,200})?\s*\]/gi;
 
 /**
+ * 인용 토큰을 지운 자리 표시용 sentinel 과 "남은 것이 sentinel/구분자뿐인가" 판정 정규식.
+ *
+ * QA25(C-LOW): 이전에는 이 값을 **날 NUL 바이트로 소스에 직접 박아** 넣었다. 그래서 ripgrep 이
+ * 이 파일을 binary 로 분류해 검색 결과에서 통째로 빠졌다(매칭 라인을 하나도 내놓지 않음).
+ * 이 저장소는 소스 스캔을 회귀 가드로 쓰는 곳이 여럿이라(i18n 계약·IPC 배선·updater 캐시명),
+ * 검색에서 사라지는 파일은 그 가드가 조용히 무력화될 수 있다는 뜻이다. safe-markdown 이 R29 에서
+ * 정확히 같은 이유로 고쳤던 것의 형제 누락이다.
+ *
+ * WARNING 정규식은 **리터럴로** 쓴다. 템플릿 리터럴로 조립하면 JS 가 백슬래시-s 를 알 수 없는
+ * 이스케이프로 보고 백슬래시를 떨어뜨려, 공백 대신 **문자 s** 를 매칭하게 되어 조용히 오작동한다.
+ */
+const SENTINEL = '\u0000';
+const SENTINEL_ONLY_RE = /^[\u0000\s.,]*$/;
+
+/**
  * 교차 문서 인용 라벨(`[문서명 p.N]`)에 쓸 문서명으로 정규화.
  *
  * 위 CITATION_REGEX 의 doc 그룹(`[^[\]|\n]{1,120}?`)이 허용하지 않는 문자를 공백으로 치환하고
@@ -148,9 +163,9 @@ export function normalizeCitationPlacement(text: string): string {
     let hadCitation = false;
     const remainder = body.replace(
       new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags),
-      () => { hadCitation = true; return ' '; },
+      () => { hadCitation = true; return SENTINEL; },
     );
-    return hadCitation && /^[ \s.,]*$/.test(remainder);
+    return hadCitation && SENTINEL_ONLY_RE.test(remainder);
   };
   for (const line of lines) {
     if (isStandaloneCitationLine(line)) {
