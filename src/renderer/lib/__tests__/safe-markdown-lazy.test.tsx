@@ -32,7 +32,9 @@ describe('SafeMarkdown lazy 경계 (통합)', () => {
   // 이후 SafeMarkdown 렌더가 정상 동작하는지. (실사용에선 App 마운트 유휴에 호출돼 Suspense
   // fallback 이 안 뜨게 한다.)
   it('prefetchMarkdownRenderer 는 안전·멱등하며 이후 렌더가 정상이다', async () => {
-    expect(prefetchMarkdownRenderer()).toBeUndefined();
+    // QA25(B-LOW): 반환값 단언은 본문을 비워도 통과하므로 제거했다 — 프리페치가 실제로
+    // 청크를 당겨오는지는 safe-markdown-prefetch.test.tsx 가 모듈 로드를 스파이해 본다.
+    prefetchMarkdownRenderer();
     expect(() => prefetchMarkdownRenderer()).not.toThrow(); // 중복 호출도 안전(import 캐시)
     render(<SafeMarkdown content={'**미리로드** 확인'} />);
     const strong = await screen.findByText('미리로드', {}, { timeout: 5000 });

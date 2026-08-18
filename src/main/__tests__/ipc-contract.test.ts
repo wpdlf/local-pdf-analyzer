@@ -72,7 +72,9 @@ describe('main IPC contract — ai:* handler shape (Top5 #2)', () => {
     // SSRF/길이 캡 로직이 단일 출처(ipc-validators)에 실제로 존재하는지 확인.
     expect(VALIDATORS_SRC).toMatch(/isLocalhostHost/);
     expect(VALIDATORS_SRC).toMatch(/\['http:',\s*'https:'\]/);
-    expect(VALIDATORS_SRC).toMatch(/requestId.*256|256/);
+    // QA25(B-LOW): 이전 패턴은 `/requestId.*256|256/` 였다 — 교대(`|`) 때문에 파일 어딘가에
+    // `256` 이 있기만 하면 통과하는 항진명제였고, 주석의 `sha256` 에도 매칭됐다. 정의부를 특정한다.
+    expect(VALIDATORS_SRC).toMatch(/export function isValidRequestId\(id: unknown, max = 256\)/);
   });
 
   it('ai:check-available 가 isValidProvider + isValidOllamaBaseUrl 에 위임 (SSRF 단일 출처)', () => {

@@ -161,8 +161,15 @@ describe('PdfViewer 목차(outline)', () => {
 
   it('목차 없으면 토글 미노출', async () => {
     // 기본 makeDoc 는 getOutline 미구현 → 추출 [] → 토글 없음
+    //
+    // QA25(B-LOW): 이전 대기 조건은 `pdfviewer.title` 이었는데, 그 텍스트는 **첫 렌더에 이미
+    // 존재**한다(토글만 outline.length > 0 게이트다). 즉 문서 로드·목차 추출 체인과 무관한
+    // 조건을 기다린 뒤 "토글이 없다"를 단언한 셈이라, 추출이 끝나기 전에 통과할 수 있었다
+    // (지금은 마이크로태스크 타이밍상 우연히 동작할 뿐이고, outline 경로에 await 가 하나만
+    // 늘어도 조용히 공허해진다). 문서 로드가 끝나야만 나타나는 페이지 표시기를 기다린다 —
+    // totalPages 가 채워진 뒤에만 렌더되므로 getDocument 체인 완료의 실제 증거다.
     render(<PdfViewer pdfBytes={new Uint8Array([7])} targetPage={1} onClose={vi.fn()} />);
-    await waitFor(() => expect(screen.getAllByText(t('pdfviewer.title')).length).toBeGreaterThan(0));
+    await screen.findByText(t('pdfviewer.pageOf', { current: 1, total: 3 }));
     expect(screen.queryByRole('button', { name: t('outline.toggle') })).toBeNull();
   });
 });

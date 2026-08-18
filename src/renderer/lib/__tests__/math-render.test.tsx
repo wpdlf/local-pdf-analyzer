@@ -14,6 +14,7 @@
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { MATH_REHYPE_PLUGINS } from '../math-plugins';
 import { SafeMarkdown } from '../safe-markdown';
 
 afterEach(() => cleanup());
@@ -84,5 +85,27 @@ describe('수식 렌더링 (통합)', () => {
     const container = await renderResolved('설명\n\n```js\nconst re = /\\(a\\)/;\n```\n');
     expect(container.querySelector('code')).not.toBeNull(); // 코드블록으로 파싱됐고
     expect(container.querySelector('math')).toBeNull();     // 수식은 아니다
+  });
+});
+
+// QA25(C-LOW): `trust: false` 회귀 가드.
+//
+// math-plugins 는 본문이 LLM 출력이므로 `\href`/`\url`/`\includegraphics` 를 절대 켜지
+// 않는다고 명시하는데, 그 의도를 지키는 테스트가 없었다 — 뒤집혀도 유닛 10건·E2E 1건이
+// 전부 그린이었다.
+//
+// ⚠️ 처음에는 `javascript:` URL 로 썼는데 **뮤테이션이 잡히지 않았다**: 2차 방어선인
+// safeComponents 의 스킴 화이트리스트가 그 스킴을 어차피 <span> 으로 강등하므로 trust 를
+// 켜든 끄든 <a> 가 없다 — 단언이 공허했다. 두 설정이 실제로 갈리는 입력(허용 스킴)으로 쓴다.
+describe('KaTeX trust 옵션 (QA25)', () => {
+  it('\\href 가 링크를 만들지 않는다 (허용 스킴이어도)', async () => {
+    const container = await renderResolved('$$\\href{https://example.com}{클릭}$$');
+    expect(container.querySelector('a')).toBeNull();
+  });
+
+  it('플러그인 옵션에 trust 가 꺼져 있다', () => {
+    // DOM 단언만으로는 2차 방어선에 가려질 수 있으므로 설정 자체도 고정한다.
+    const [, options] = MATH_REHYPE_PLUGINS[0] as unknown as [unknown, { trust?: unknown }];
+    expect(options.trust).toBe(false);
   });
 });

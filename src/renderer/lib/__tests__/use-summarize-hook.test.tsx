@@ -23,6 +23,13 @@ const M = vi.hoisted(() => ({
   // C5-M1 race 테스트용: 첫 analyzeImage(preflight) 호출만 일시정지 — 이미지분석 단계에서
   // Stop→재요약 시 stale run 부활을 결정적으로 재현.
   imageGate: null as Promise<void> | null,
+  // QA25(B-High) 워치독 테스트용: 토큰 하나를 내보낼 때마다 실행 — fake timer 를 전진시켜
+  // "진전이 있는 채로 시간이 흐르는" 상황을 결정적으로 만든다.
+  onToken: null as null | (() => void),
+  // 이미지 한 장 분석에 걸리는 시간. 0 이 아니면 실제로 그만큼 **기다린다**(fake timer).
+  // 호출 진입 시점에 동기적으로 시계를 밀면 배치 진행 중에 찍히는 진행률 신호가 낄 틈이 없어
+  // 실제와 다른 타이밍이 된다 — 그래서 대기로 재현한다.
+  imageDelayMs: 0,
 }));
 
 vi.mock('../ai-client', () => ({
@@ -35,13 +42,14 @@ vi.mock('../ai-client', () => ({
       M.summarizeCalls.push({ text, type });
       // 첫 호출만 gate 에서 대기 (race 재현). 이후 호출은 즉시 진행.
       if (M.gate && M.summarizeCalls.length === 1) { await M.gate; }
-      for (const tk of M.tokens) yield tk;
+      for (const tk of M.tokens) { M.onToken?.(); yield tk; }
     }
     async analyzeImage(_b: string, _r?: string): Promise<string | null> {
       M.imageCalls++;
       M.onAnalyzeImage?.();
       // 첫 호출(run1 preflight)만 gate 에서 대기 (C5-M1 race 재현). 이후 호출은 즉시 진행.
       if (M.imageGate && M.imageCalls === 1) { await M.imageGate; }
+      if (M.imageDelayMs > 0) { await new Promise((r) => setTimeout(r, M.imageDelayMs)); }
       return M.imageResult;
     }
   },
@@ -81,6 +89,8 @@ beforeEach(() => {
   M.reqCounter = 0;
   M.gate = null;
   M.imageGate = null;
+  M.onToken = null;
+  M.imageDelayMs = 0;
   abortMock.mockClear();
   useAppStore.setState({
     settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: false },
@@ -95,6 +105,8 @@ beforeEach(() => {
     error: null,
     enrichedPageTexts: null,
     currentRequestId: null,
+    // QA25: 범위 요약 테스트가 뒤 테스트로 새지 않도록 명시 초기화(순서 의존 방지).
+    summaryPageRange: null,
   });
 });
 afterEach(() => {
@@ -405,5 +417,119 @@ describe('useSummarize — Stop→재요약 race (ownership 가드, QA post-v0.3
     const st = useAppStore.getState();
     expect(st.summary?.content).toContain('핵심 요약');
     expect(st.isGenerating).toBe(false);
+  });
+});
+
+// QA25(B-High): 요약 무진전 워치독의 **배선** 회귀 넷.
+//
+// 이 자리가 비어 있던 대가를 이미 치렀다. summary-timeout 은 순수 판정 함수(isSummaryTimedOut)를
+// 15건 테스트하고 있었지만, use-summarize* 테스트 5종 중 **fake timer 를 쓰는 파일이 하나도
+// 없어서** 워치독 타이머가 한 번도 발화하지 않았다. 그래서 QA20 에서 "진전 신호를 토큰 수신에만
+// 둬서 이미지 분석 단계(토큰 0)가 무진전으로 오판되는" 회귀가 **2릴리즈 출시된 뒤에야** 발견됐다.
+// 그때 추가한 회귀 넷도 순수 함수 테스트라 재발을 막지 못한다 — 그래서 여기서 배선을 잡는다.
+describe('useSummarize — 무진전 워치독 배선 (QA25)', () => {
+  const IDLE_MS = 120_000; // use-summarize.ts 의 IDLE_TIMEOUT_MS
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('완전 무진전이 임계를 넘으면 요약을 중단시킨다 (워치독이 실제로 장전돼 있는가)', async () => {
+    vi.useFakeTimers();
+    // 첫 summarize 호출을 영원히 붙잡아 토큰도 진행률도 오지 않는 상태를 만든다.
+    M.gate = new Promise<void>(() => {});
+    const { result } = renderHook(() => useSummarize());
+    await act(async () => {
+      void result.current.handleSummarize();
+      await vi.advanceTimersByTimeAsync(IDLE_MS + 1000);
+    });
+    expect(useAppStore.getState().error?.code).toBe('GENERATE_TIMEOUT');
+    expect(abortMock).toHaveBeenCalled();
+  });
+
+  it('토큰이 계속 오는 동안에는 임계를 넘겨도 중단하지 않는다', async () => {
+    vi.useFakeTimers();
+    // 토큰마다 100초씩 흘린다 — 총 경과는 임계를 훌쩍 넘지만 무진전 구간은 100초뿐이다.
+    M.tokens = ['가', '나', '다', '라'];
+    M.onToken = () => { vi.advanceTimersByTime(100_000); };
+    const { result } = renderHook(() => useSummarize());
+    await act(async () => { await result.current.handleSummarize(); });
+    expect(useAppStore.getState().error).toBeNull();
+    expect(useAppStore.getState().summary).not.toBeNull();
+  });
+
+  // ★ QA20 회귀 가드 — 이 테스트가 이 describe 블록의 존재 이유다.
+  //   analyzeDocumentImages 는 append 를 한 번도 하지 않고 **진행률만** 갱신한다. 진전 신호를
+  //   토큰 수신에만 두면 이미지 분석 단계 전체가 무진전으로 오판돼, 기본 설정
+  //   (enableImageAnalysis=true)에서 이미지가 조금만 많아도 정상 요약이 2분에 죽는다.
+  it('토큰 없이 진행률만 갱신되는 이미지 분석 단계를 무진전으로 오판하지 않는다', async () => {
+    vi.useFakeTimers();
+    useAppStore.setState({
+      settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: true },
+      document: makeDoc({ images: [img(0), img(1), img(2)] }),
+    });
+    // 이미지 한 장 분석에 100초가 걸린다(preflight 1장 + 배치 2장 = 누적 200초).
+    // 토큰은 이 단계 내내 한 개도 오지 않는다. 누적 경과는 임계(120초)를 넘지만,
+    // 진행률 갱신이 진전으로 취급되면 무진전 구간은 매번 100초라 살아남아야 한다.
+    M.imageDelayMs = 100_000;
+    const { result } = renderHook(() => useSummarize());
+    await act(async () => {
+      const p = result.current.handleSummarize();
+      await vi.advanceTimersByTimeAsync(400_000);
+      await p;
+    });
+    expect(M.imageCalls).toBeGreaterThanOrEqual(3);
+    expect(useAppStore.getState().error).toBeNull();
+    expect(useAppStore.getState().summary).not.toBeNull();
+  });
+});
+
+// QA25(B-Important): 페이지 범위 요약의 **배선** 회귀 넷.
+//
+// 양 끝은 이미 테스트돼 있었다 — page-range 순수 함수 15건, SummaryTypeSelector UI 5건.
+// 그런데 그 사이, 즉 "요약이 실제로 그 범위만 읽는가" 를 보는 테스트가 없었다. 그래서
+// 슬라이스 한 줄을 지워도(= 사용자가 2~4쪽을 골라도 전체 문서가 조용히 요약돼도) 전부 그린이었다.
+describe('useSummarize — 페이지 범위 요약 배선 (QA25)', () => {
+  const docFivePages = () =>
+    makeDoc({
+      pageCount: 5,
+      pageTexts: [
+        '첫째 쪽 고유내용 알파.',
+        '둘째 쪽 고유내용 베타.',
+        '셋째 쪽 고유내용 감마.',
+        '넷째 쪽 고유내용 델타.',
+        '다섯째 쪽 고유내용 엡실론.',
+      ],
+      extractedText: '전체 본문',
+    });
+
+  it('선택한 범위 밖 페이지 내용이 프롬프트에 들어가지 않는다', async () => {
+    useAppStore.setState({ document: docFivePages(), summaryPageRange: { start: 2, end: 4 } });
+    await runSummarize();
+    const sent = M.summarizeCalls.map((c) => c.text).join('\n');
+    expect(sent).toContain('베타');
+    expect(sent).toContain('감마');
+    expect(sent).toContain('델타');
+    // 범위 밖 — 하나라도 새면 사용자가 고른 범위가 지켜지지 않은 것이다.
+    expect(sent).not.toContain('알파');
+    expect(sent).not.toContain('엡실론');
+  });
+
+  it('전체 범위면 문서를 그대로 쓴다 (마스킹이 과잉 적용되지 않는다)', async () => {
+    useAppStore.setState({ document: docFivePages(), summaryPageRange: { start: 1, end: 5 } });
+    await runSummarize();
+    const sent = M.summarizeCalls.map((c) => c.text).join('\n');
+    expect(sent).toContain('알파');
+    expect(sent).toContain('엡실론');
+  });
+
+  it('범위 요약은 Vision enriched 를 RAG 에 공유하지 않는다 (Q&A 컨텍스트 오염 방지)', async () => {
+    useAppStore.setState({
+      settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: true },
+      document: { ...docFivePages(), images: [img(1)] },
+      summaryPageRange: { start: 2, end: 4 },
+    });
+    await runSummarize();
+    expect(useAppStore.getState().enrichedPageTexts).toBeNull();
   });
 });
