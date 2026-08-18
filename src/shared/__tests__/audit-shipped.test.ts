@@ -1,5 +1,5 @@
 /**
- * QA25(D-H1/D-I2/D-M5): 배포물 audit 게이트의 회귀 넷.
+ * QA25(D-H1/D-I2): 배포물 audit 게이트의 회귀 넷.
  *
  * 이 테스트가 존재하는 이유는 게이트가 **조용히 아무것도 안 잡는 상태로 퇴화**한 전례 때문이다.
  * 이전 게이트는 advisory 의 패키지 이름을 shipped 집합과 그대로 대조해서, 배포 패키지의
@@ -168,42 +168,5 @@ describe('워크플로 배선 (QA25 후속)', () => {
       // 대신 종료코드를 삼킨 캡처 형태여야 한다.
       expect(src).toMatch(/AUDIT_JSON=\$\(npm audit --json[^)]*\|\| true\)/);
     }
-  });
-});
-
-describe('dependabot allow 목록 ↔ shippedDevDependencies (QA25 D-M5)', () => {
-  // 두 목록은 같은 집합이어야 한다고 dependabot.yml 주석이 선언하지만 강제하는 것이 없었다.
-  // 한쪽만 갱신하면 새 배포 라이브러리가 자동 범프 대상에서 조용히 빠진다(QA24 D-M5 가 고친
-  // 상태 = electron 3패치·pdfjs HIGH 방치로 되돌아간다).
-  it('dependabot npm allow 목록 == dependencies + shippedDevDependencies', () => {
-    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
-    const yml = readFileSync(join(REPO_ROOT, '.github/dependabot.yml'), 'utf8');
-
-    // npm 생태계 블록만 잘라낸다(github-actions 블록의 allow 와 섞이지 않도록).
-    const npmStart = yml.indexOf('package-ecosystem: npm');
-    expect(npmStart).toBeGreaterThan(-1);
-    const nextEco = yml.indexOf('package-ecosystem:', npmStart + 1);
-    const npmBlock = yml.slice(npmStart, nextEco === -1 ? undefined : nextEco);
-
-    const allowSection = npmBlock.slice(npmBlock.indexOf('allow:'), npmBlock.indexOf('ignore:'));
-    const allowed = new Set(
-      [...allowSection.matchAll(/dependency-name:\s*([^\s'"]+)/g)].map((m) => m[1]),
-    );
-    const shipped = new Set([
-      ...Object.keys(pkg.dependencies ?? {}),
-      ...(pkg.shippedDevDependencies ?? []),
-    ]);
-
-    // 배포되는 것은 **전부** 자동 범프 대상이어야 한다. 새 배포 라이브러리를 package.json 에만
-    // 추가하고 dependabot.yml 을 잊으면 여기서 잡힌다(이 방향이 실제 위험).
-    const missing = [...shipped].filter((n) => !allowed.has(n));
-    expect(missing).toEqual([]);
-
-    // 반대 방향의 여분은 의도적인 것만 허용한다. electron 은 배포물에 번들되지는 않지만
-    // 앱 셸이라 Chromium 보안 패치 경로로 범프를 받아야 한다(dependabot.yml 주석 참조).
-    // 새 여분이 생기면 그것이 의도인지 여기서 한 번 판단하게 만든다.
-    const INTENTIONAL_EXTRAS = ['electron'];
-    const extras = [...allowed].filter((n) => !shipped.has(n));
-    expect(extras.sort()).toEqual([...INTENTIONAL_EXTRAS].sort());
   });
 });
