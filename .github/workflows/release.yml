@@ -60,7 +60,7 @@ jobs:
     steps:
       # QA20(B-MED): persist-credentials:false — 이 잡은 자산을 올리지 않으므로 토큰을
       # .git/config 에 남길 이유가 없다(npm ci 가 실행하는 서드파티 스크립트의 탈취 표면 제거).
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
 
@@ -194,7 +194,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           # QA24(D-I3): **릴리즈 쓰기 토큰을 실제로 보유한 유일한 잡**인데 여기만 빠져 있었다.
           # QA20(B-MED)의 위협 모델("npm ci 가 서드파티 라이프사이클 스크립트를 돌리는데
