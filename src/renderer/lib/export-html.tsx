@@ -62,6 +62,21 @@ const PRINT_CSS = `
   th { background: #f3f4f6; font-weight: 700; }
   img { max-width: 100%; }
   hr { border: none; border-top: 1px solid #e5e7eb; margin: 1.2em 0; }
+  /* QA25(A-MED): 넓은 display 수식이 인쇄에서 **잘린다**. 화면은 상위 컨테이너가 스크롤을
+     주지만 인쇄에는 가로 스크롤이 없고 printToPDF 는 세로로만 페이지를 나눈다. MathML 은
+     자동 줄바꿈을 하지 않으므로 본문 폭(A4 210mm - 좌우 16mm = 178mm ≈ 673px)을 넘는 부분은
+     그대로 사라진다. 실측: 긴 한 줄 수식이 1151px 로 그려져 오른쪽 477px 이 유실됐다.
+     katex.css 를 싣지 않는 MathML 단독 출력이라 .katex-display{overflow-x:auto} 도 없다.
+     완전한 해법은 없다(순수 CSS 로는 MathML 을 줄바꿈시킬 수 없고, 내보내기 문서는 CSP
+     default-src 'none' + JS 비활성이라 스크립트 기반 축소도 불가). 아래로 여유를 넓혀
+     흔한 폭은 살리고, 남는 한계는 README 의 알려진 한계에 명시한다. */
+  math { max-width: 100%; }
+  math[display="block"] {
+    font-size: 0.85em;      /* 본문 대비 축소 — 약 18% 더 넓은 수식까지 수용 */
+    margin-left: -8mm;      /* @page 좌우 여백(16mm)을 절반까지 잠식해 폭 확보 */
+    margin-right: -8mm;
+    break-inside: avoid;
+  }
 `;
 
 /**

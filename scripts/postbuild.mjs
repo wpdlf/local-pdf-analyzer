@@ -7,7 +7,7 @@
 // 등 CJK PDF 글리프가 정상적으로 표시된다. pdfjs 메이저 업그레이드 (4 → 5) 시 cmaps
 // 경로가 바뀔 수 있으므로 변경 시 본 스크립트 확인 필요.
 
-import { cpSync, existsSync, statSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
@@ -53,3 +53,45 @@ for (const name of SMOKE_FILES) {
   }
 }
 console.log(`[postbuild] copied cmaps: ${src} -> ${dest} (smoke check ok)`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QA25(D-MED): eager 청크 경계 게이트.
+//
+// v1.1.0 의 핵심 전제는 "katex 는 **지연** 마크다운 청크에만 들어간다" 이다(math-plugins.ts
+// 가 명문화). 그 전제 덕에 지연 청크가 157→435KB 로 커져도 cold start 가 무영향이었다.
+// 그런데 이 전제를 지키는 장치가 **사람 눈뿐**이었다 — 누군가 컴포넌트에서 MATH_REMARK_PLUGINS
+// 를 정적 import 하면 435KB 가 조용히 eager 로 이동하고, 빌드·유닛·E2E 가 전부 초록이다.
+//
+// index.html 이 **정적으로 참조하는** 스크립트만 훑어 무거운 지연 전용 라이브러리가 섞였는지
+// 본다(동적 import 로 갈라진 async 청크는 참조되지 않으므로 자연히 제외된다).
+// packaged-smoke 의 ASAR_MAX_BYTES 와 같은 idiom — 역방향 회귀 가드.
+const EAGER_FORBIDDEN = [
+  { name: 'katex', re: /katex/i },
+];
+
+const indexHtml = resolve(root, 'out/renderer/index.html');
+if (existsSync(indexHtml)) {
+  const html = readFileSync(indexHtml, 'utf8');
+  const scriptSrcs = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1]);
+  const failures = [];
+  for (const src of scriptSrcs) {
+    const file = resolve(root, 'out/renderer', src.replace(/^\.?\//, ''));
+    if (!existsSync(file)) continue;
+    const code = readFileSync(file, 'utf8');
+    for (const { name, re } of EAGER_FORBIDDEN) {
+      if (re.test(code)) failures.push(`${name} in ${src}`);
+    }
+  }
+  if (failures.length > 0) {
+    console.error('[postbuild] eager 청크 경계 위반:');
+    for (const f of failures) console.error(`  - ${f}`);
+    console.error('[postbuild] 지연 전용 라이브러리가 eager entry 로 이동했습니다.');
+    console.error('[postbuild] 원인은 대개 정적 import 혼입입니다 — math-plugins/markdown-renderer 를');
+    console.error('[postbuild] 동적 import 경계(safe-markdown) 밖에서 import 하지 않았는지 확인하세요.');
+    process.exit(1);
+  }
+  console.log(`[postbuild] eager 청크 경계 ok (검사한 정적 스크립트 ${scriptSrcs.length}개)`);
+} else {
+  console.error(`[postbuild] out/renderer/index.html 없음 — eager 경계 검사를 건너뛸 수 없습니다`);
+  process.exit(1);
+}

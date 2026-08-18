@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { requireOllama } from './ollama-gate';
 
 // multi-doc Phase 1 E2E: 실제 파일 경로 기반 탭 전환 — 프로덕션 OS 드롭과 동일한
 // file:dropped IPC 로 두 문서를 열고 탭 전환이 완전 복원(뷰어 포함)되는지 검증.
@@ -110,9 +111,7 @@ test('실경로 두 문서 → 탭 전환 (file:dropped IPC)', async () => {
  * 다페이지 PDF 로 임베딩 인덱싱이 수 초 진행되는 동안 탭 작업이 일어나게 한다.
  */
 test('실제 Ollama 인덱싱 중 — 문서 → + → 문서 → 탭 전환 (로컬 전용)', async () => {
-  test.skip(!!process.env.CI, 'CI 러너에는 Ollama 없음');
-  const alive = await fetch('http://localhost:11434/api/version').then((r) => r.ok).catch(() => false);
-  test.skip(!alive, '로컬 Ollama 미실행');
+  await requireOllama();
 
   const userDataDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-ollama-'));
   const docsDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-docs-'));

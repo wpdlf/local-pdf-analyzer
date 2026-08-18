@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { requireOllama } from './ollama-gate';
 
 // multi-doc Phase 2 module-3 — 컬렉션 Q&A 통합 E2E (로컬 전용: 실제 Ollama 필요).
 // 두 문서를 각각 요약(세션+인덱스 생성) → 컬렉션 모드 토글 → 멤버 2개 ready 확인 →
@@ -26,18 +27,7 @@ async function makePdf(marker: string, pages = 3): Promise<Buffer> {
 }
 
 test('컬렉션 Q&A — 두 문서 요약 → 모드 토글 → 교차 질문 (로컬 전용)', async () => {
-  test.skip(!!process.env.CI, 'CI 러너에는 Ollama 없음');
-  const alive = await fetch('http://localhost:11434/api/version').then((r) => r.ok).catch(() => false);
-  test.skip(!alive, '로컬 Ollama 미실행');
-  // QA22(D-LOW): 이 스펙은 exaone3.5(**선택 설치** 한국어 모델)를 settings 에 고정하는데, skip
-  // 게이트는 /api/version 만 봐서 모델 존재를 확인하지 않았다. 표준 설치
-  // (INITIAL_INSTALL_MODELS = gemma3 + nomic-embed-text)만 한 개발자가 로컬에서 돌리면 생성이
-  // 끝나지 않아 타임아웃 red 가 됐다 — 사실상 "특정 머신에서만 도는" 스펙. 모델까지 확인한다.
-  const hasModel = await fetch('http://localhost:11434/api/tags')
-    .then((r) => r.json())
-    .then((j: { models?: { name?: string }[] }) => (j.models ?? []).some((m) => m.name?.startsWith('exaone3.5')))
-    .catch(() => false);
-  test.skip(!hasModel, 'exaone3.5 미설치 (설정 → 모델 관리에서 설치하면 이 스펙이 활성화됩니다)');
+  await requireOllama('exaone3.5');
   test.setTimeout(300000);
 
   const userDataDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-coll-'));

@@ -58,7 +58,10 @@ export default defineConfig({
           // 동적 import 경계(safe-markdown 의 lazy MarkdownRenderer·export-html)에 따라 async 청크로
           // 자동 분리되어 cold-start eager 그래프에서 빠진다.
           manualChunks: {
-            'react-vendor': ['react', 'react-dom', 'react/jsx-runtime', 'scheduler'],
+            // QA25(D-LOW): 'react-dom' 만 지정하면 앱이 쓰는 'react-dom/client' 는 별도 모듈
+            // ID 라 vendor 로 끌려오지 않는다 — 실측상 react-vendor 청크에 createRoot 가 없고
+            // entry 에 있었다(주석이 주장하던 'react-dom 분리'가 성립하지 않는 상태).
+            'react-vendor': ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'scheduler'],
             'pdfjs': ['pdfjs-dist'],
           },
         },

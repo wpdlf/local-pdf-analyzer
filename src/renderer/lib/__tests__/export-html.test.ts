@@ -78,3 +78,28 @@ describe('summaryToHtml — 인쇄용 HTML 변환', () => {
     });
   });
 });
+
+// QA25(A-MED): 인쇄 CSS 의 수식 폭 완화 규칙 드리프트 가드.
+//
+// 넓은 display 수식은 인쇄에서 **잘린다** — 화면은 상위 컨테이너가 가로 스크롤을 주지만
+// 인쇄에는 스크롤이 없고 printToPDF 는 세로로만 페이지를 나눈다. MathML 은 자동 줄바꿈을
+// 하지 않으므로 본문 폭을 넘는 부분은 그대로 사라진다(실측: 오른쪽 477px 유실).
+// Electron 실측으로 완화 효과를 확인했다 — 항목 14개 수식이 794px 를 요구해 잘리던 것이
+// 규칙 적용 후 674px 에 들어간다(잘림 시작점 14 → 16). 이 규칙이 사라지면 조용히 되돌아간다.
+describe('인쇄 CSS — 수식 폭 (QA25)', () => {
+  const html = summaryToHtml('$$x$$', '제목', 'ko');
+
+  it('display 수식에 축소·여백확보 규칙이 있다', () => {
+    expect(html).toContain('math[display="block"]');
+    expect(html).toMatch(/math\[display="block"\][^}]*font-size:\s*0\.85em/);
+    expect(html).toMatch(/math\[display="block"\][^}]*margin-left:\s*-8mm/);
+  });
+
+  it('수식이 본문 폭을 넘지 않도록 max-width 가 걸려 있다', () => {
+    expect(html).toMatch(/(^|\s)math\s*\{[^}]*max-width:\s*100%/);
+  });
+
+  // 외부 리소스 미참조는 이 파일 위쪽의 기존 테스트가 이미 가드한다 — 여기서 중복 단언하지
+  // 않는다(MathML 의 xmlns 네임스페이스 URI 는 가져오는 리소스가 아니므로 URL 패턴 단언은
+  // 오히려 오탐이다).
+});

@@ -51,7 +51,7 @@
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
     "happy-dom": "20.10.6",
-    "katex": "^0.18.4",
+    "katex": "^0.16.47",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.2.108",
     "react": "^19.0.0",
