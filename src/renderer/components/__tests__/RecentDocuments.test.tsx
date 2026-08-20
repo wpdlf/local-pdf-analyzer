@@ -15,8 +15,10 @@ const M = vi.hoisted(() => ({
   del: vi.fn(() => Promise.resolve({ ok: true })),
   openPath: vi.fn(),
   handlePdfData: vi.fn(() => Promise.resolve()),
+  restoreFromSession: vi.fn(() => Promise.resolve(false)),
 }));
 vi.mock('../../lib/pdf-parser', () => ({ handlePdfData: M.handlePdfData }));
+vi.mock('../../lib/tabs', () => ({ openFromSessionOnly: M.restoreFromSession }));
 
 vi.stubGlobal('window', Object.assign(window, {
   electronAPI: {
@@ -41,10 +43,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   M.list.mockResolvedValue([entry('h1', '강의1.pdf', 12, 40)]);
   M.del.mockResolvedValue({ ok: true });
+  M.restoreFromSession.mockResolvedValue(false);
   M.openPath.mockResolvedValue({ data: new Uint8Array(), name: '강의1.pdf', path: '/docs/강의1.pdf' });
   useAppStore.setState({
     settings: { ...DEFAULT_SETTINGS, persistSessions: true },
     error: null,
+    // QA26: notice 를 초기화하지 않으면 앞 테스트의 안내가 새어 순서 의존이 된다.
+    notice: null,
   });
 });
 afterEach(() => cleanup());
@@ -134,5 +139,54 @@ describe('RecentDocuments', () => {
   it('StrictMode 더블 마운트에서도 목록이 표시된다 (mountedRef 리셋 가드)', async () => {
     render(<StrictMode><RecentDocuments /></StrictMode>);
     await waitFor(() => expect(screen.getByText(/강의1\.pdf/)).toBeTruthy());
+  });
+});
+
+// QA26(C-High): 원본 파일이 없을 때의 세션 폴백.
+//
+// 기존 테스트는 openPath 를 항상 성공으로 목킹해 **실패 경로를 한 번도 보지 않았다**. 그래서
+// "실패 시 세션으로 복원한다" 는 단언이 없었고, 재기동 직후(openTabs 가 비어 switchToTab 의
+// 폴백에 도달할 방법이 없는 상태)에 파일을 옮기면 디스크의 요약·Q&A 에 영영 닿지 못했다.
+describe('RecentDocuments — 원본 파일 부재 시 세션 폴백 (QA26)', () => {
+  it('파일이 없어도 세션이 있으면 열고, 뷰어 불가만 안내한다', async () => {
+    M.list.mockResolvedValue([entry('h1', '강의1.pdf', 12, 30)]);
+    M.openPath.mockResolvedValue({ error: 'ENOENT' });
+    M.restoreFromSession.mockResolvedValue(true);
+
+    render(<RecentDocuments />);
+    const btn = await screen.findByRole('button', { name: /강의1\.pdf/ });
+    await userEvent.click(btn);
+
+    await waitFor(() => expect(M.restoreFromSession).toHaveBeenCalled());
+    // 폴백에 넘긴 값이 목록 항목 그대로여야 한다(탭 정체성이 어긋나면 복원본이 엉뚱해진다).
+    expect(M.restoreFromSession).toHaveBeenCalledWith(
+      expect.objectContaining({ docHash: 'h1', filePath: '/docs/강의1.pdf', fileName: '강의1.pdf', pageCount: 12 }),
+    );
+    expect(useAppStore.getState().error).toBeNull();
+    expect(useAppStore.getState().notice?.message).toBeTruthy();
+    expect(M.handlePdfData).not.toHaveBeenCalled();
+  });
+
+  it('파일도 세션도 없으면 그때 에러 배너를 띄운다', async () => {
+    M.list.mockResolvedValue([entry('h1', '강의1.pdf', 12, 30)]);
+    M.openPath.mockResolvedValue({ error: 'ENOENT' });
+    M.restoreFromSession.mockResolvedValue(false);
+
+    render(<RecentDocuments />);
+    await userEvent.click(await screen.findByRole('button', { name: /강의1\.pdf/ }));
+
+    await waitFor(() => expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL'));
+    expect(useAppStore.getState().notice).toBeNull();
+  });
+
+  it('파일이 열리면 폴백을 시도하지 않는다', async () => {
+    M.list.mockResolvedValue([entry('h1', '강의1.pdf', 12, 30)]);
+    M.openPath.mockResolvedValue({ data: new Uint8Array(), name: '강의1.pdf', path: '/docs/강의1.pdf' });
+
+    render(<RecentDocuments />);
+    await userEvent.click(await screen.findByRole('button', { name: /강의1\.pdf/ }));
+
+    await waitFor(() => expect(M.handlePdfData).toHaveBeenCalled());
+    expect(M.restoreFromSession).not.toHaveBeenCalled();
   });
 });

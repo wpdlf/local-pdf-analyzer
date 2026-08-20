@@ -11,11 +11,13 @@ import type { GlobalSearchResult } from '../../../shared/session-types';
 const M = vi.hoisted(() => ({
   search: vi.fn(),
   openPath: vi.fn(),
+  restoreFromSession: vi.fn(() => Promise.resolve(false)),
   handlePdfData: vi.fn(() => Promise.resolve()),
   semantic: vi.fn(),
 }));
 
 vi.mock('../../lib/pdf-parser', () => ({ handlePdfData: M.handlePdfData }));
+vi.mock('../../lib/tabs', () => ({ openFromSessionOnly: M.restoreFromSession }));
 vi.mock('../../lib/semantic-search', () => ({ searchSessionsSemantic: M.semantic }));
 
 vi.stubGlobal('window', Object.assign(window, {
@@ -36,7 +38,9 @@ beforeEach(() => {
   M.search.mockResolvedValue([]);
   M.semantic.mockResolvedValue({ status: 'ok', results: [], excludedCount: 0 });
   M.openPath.mockResolvedValue({ path: '/x/lecture.pdf', name: 'lecture.pdf', data: new ArrayBuffer(8) });
-  useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, persistSessions: true }, error: null });
+  M.restoreFromSession.mockResolvedValue(false);
+  // QA26: notice 를 초기화하지 않으면 앞 테스트의 안내가 새어 순서 의존이 된다.
+  useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, persistSessions: true }, error: null, notice: null });
 });
 afterEach(() => { cleanup(); useAppStore.setState({ settings: { ...DEFAULT_SETTINGS } }); });
 
@@ -211,5 +215,44 @@ describe('GlobalSearch', () => {
     await user.click(screen.getByText(/lecture\.pdf/));
     await waitFor(() => expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL'));
     expect(M.handlePdfData).not.toHaveBeenCalled();
+  });
+});
+
+// QA26(C-High): 전역 검색도 재기동 직후의 유일한 입구 중 하나다 — 파일이 없어도 세션으로 연다.
+describe('GlobalSearch — 원본 파일 부재 시 세션 폴백 (QA26)', () => {
+  async function searchAndOpen() {
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.type(screen.getByLabelText('문서 검색'), '프로세스');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(screen.getByText(/lecture\.pdf/)).toBeTruthy());
+    await user.click(screen.getByText(/lecture\.pdf/));
+  }
+
+  it('파일이 없어도 세션이 있으면 열고, 뷰어 불가만 안내한다', async () => {
+    M.search.mockResolvedValue([result({})]);
+    M.openPath.mockResolvedValue({ error: 'gone' });
+    M.restoreFromSession.mockResolvedValue(true);
+
+    await searchAndOpen();
+
+    await waitFor(() => expect(M.restoreFromSession).toHaveBeenCalled());
+    expect(M.restoreFromSession).toHaveBeenCalledWith(
+      expect.objectContaining({ docHash: 'a'.repeat(64), filePath: '/x/lecture.pdf', fileName: 'lecture.pdf' }),
+    );
+    expect(useAppStore.getState().error).toBeNull();
+    expect(useAppStore.getState().notice?.message).toBeTruthy();
+    expect(M.handlePdfData).not.toHaveBeenCalled();
+  });
+
+  it('파일도 세션도 없으면 그때 에러 배너를 띄운다', async () => {
+    M.search.mockResolvedValue([result({})]);
+    M.openPath.mockResolvedValue({ error: 'gone' });
+    M.restoreFromSession.mockResolvedValue(false);
+
+    await searchAndOpen();
+
+    await waitFor(() => expect(useAppStore.getState().error?.code).toBe('PDF_PARSE_FAIL'));
+    expect(useAppStore.getState().notice).toBeNull();
   });
 });

@@ -153,6 +153,33 @@ async function restoreTabFromSession(tab: OpenTab): Promise<boolean> {
   return true;
 }
 
+/**
+ * 원본 파일 없이 **세션만으로** 문서를 연다 — 최근 문서·전역 검색의 폴백.
+ *
+ * QA26(C-High): 세션에는 extractedText·pageTexts·요약·Q&A·인덱스가 전부 들어 있어 파일이 없어도
+ * 분석 상태를 완전히 복원할 수 있다. switchToTab 은 그 계약을 이미 코드화했지만(세션 우선 →
+ * 없을 때만 재파싱), **openTabs 는 영속되지 않으므로 재기동 직후에는 그 경로에 도달할 방법이
+ * 없다**. 그때 유일한 입구인 최근 문서·전역 검색은 순서가 반대이고(파일 먼저) 폴백도 없어서,
+ * 파일을 옮기거나 이름을 바꾸거나 USB 가 빠진 상태로 재기동하면 목록에는 "N페이지 · N청크
+ * 인덱싱됨" 으로 멀쩡히 보이는데 열기는 실패 배너만 띄웠다. 같은 상황이 앱을 켜 둔 채로는
+ * 복원되고 껐다 켜면 안 되는 비대칭이었다.
+ *
+ * 성공하면 뷰어만 비활성(pdfBytes=null)이고 나머지는 평소와 동일하다.
+ */
+export async function openFromSessionOnly(entry: {
+  docHash: string; fileName: string; filePath: string; pageCount: number;
+}): Promise<boolean> {
+  if (isTabSwitchBlocked()) return false;
+  // restoreTabFromSession 은 세션 부재/손상 시 **store 를 건드리기 전에** false 를 반환하므로,
+  // 실패해도 열리지 않은 탭이 남지 않는다(탭 등록은 성공 경로 안에 있다).
+  return restoreTabFromSession({
+    filePath: entry.filePath,
+    fileName: entry.fileName,
+    pageCount: entry.pageCount,
+    docHash: entry.docHash,
+  });
+}
+
 /** 탭 전환 — 이미 활성이면 no-op. 파일/세션 모두 복원 불가 시 에러 배너 + 탭 유지 */
 export async function switchToTab(filePath: string): Promise<void> {
   const store = useAppStore.getState();

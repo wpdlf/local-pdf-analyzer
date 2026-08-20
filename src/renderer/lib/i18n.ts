@@ -486,6 +486,7 @@ export const _translations = {
   'recent.indexed': { ko: '인덱스 {count}청크', en: '{count} chunks indexed' },
   // QA24(C-M2): "불러오지 못함" 과 "정말 없음" 을 구분 — collection.loadFailed 와 같은 계약.
   'recent.loadFailed': { ko: '최근 문서 목록을 불러오지 못했습니다. 세션은 그대로 있습니다.', en: 'Could not load the recent documents list. Your sessions are still there.' },
+  'recent.openedWithoutFile': { ko: '원본 파일을 찾지 못해 저장된 분석 결과만 열었습니다. 요약·Q&A 는 그대로이며 PDF 뷰어만 사용할 수 없습니다.', en: 'The original file was not found, so only the saved analysis was opened. Your summary and Q&A are intact; only the PDF viewer is unavailable.' },
   'recent.openFail': { ko: '문서를 열 수 없습니다. 원본 파일이 이동/삭제되었을 수 있습니다.', en: 'Could not open the document. The original file may have been moved or deleted.' },
   'recent.deleteFail': { ko: '세션을 삭제하지 못했습니다. 잠시 후 다시 시도하세요.', en: 'Could not delete the session. Please try again.' },
   // 전체 문서 검색 (cross-session search)

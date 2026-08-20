@@ -3,6 +3,7 @@ import { useT } from '../lib/i18n';
 import { useAppStore } from '../lib/store';
 import { handlePdfData } from '../lib/pdf-parser';
 import type { SessionManifestEntry } from '../../shared/session-types';
+import { openFromSessionOnly } from '../lib/tabs';
 
 /**
  * 최근 문서 목록 (session-persistence module-4).
@@ -52,6 +53,13 @@ export function RecentDocuments() {
     try {
       const result = await window.electronAPI.file.openPath(entry.filePath);
       if ('error' in result) {
+        // QA26(C-High): 파일이 없어도 세션에 분석 상태가 전부 있다 — 재기동 직후에는 여기가
+        // 유일한 입구이므로, 여기서 포기하면 사용자는 디스크에 멀쩡히 있는 요약·Q&A 에
+        // 영영 닿지 못한다(목록에는 계속 "N페이지 · N청크 인덱싱됨" 으로 보이는 채로).
+        if (await openFromSessionOnly(entry)) {
+          useAppStore.getState().setNotice({ message: tr('recent.openedWithoutFile') });
+          return;
+        }
         useAppStore.getState().setError({ code: 'PDF_PARSE_FAIL', message: tr('recent.openFail') });
         return;
       }
