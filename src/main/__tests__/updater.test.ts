@@ -599,3 +599,97 @@ describe('브로드캐스트 실패 격리', () => {
     await expect(ctx.service.check('manual')).resolves.toMatchObject({ status: 'not-available' });
   });
 });
+
+// 실기기 검증(2026-08-20)이 찾은 두 결함의 회귀 넷.
+//
+// 둘 다 **앱을 껐다 켜야만** 드러나는 종류라 기존 유닛/E2E 로는 잡히지 않았다. 이벤트를 주입하는
+// 테스트는 프로세스가 죽었다 살아나는 구간을 표현하지 않기 때문이다. 여기서는 "새로 기동한
+// 프로세스가 디스크에 남은 것을 어떻게 해석하는가"를 직접 구동한다.
+describe('createUpdaterService — 재기동 시 staged 인스톨러 (실기기 2026-08-20)', () => {
+  const PENDING = { sha512: 'AAAA==', filePath: 'C:/cache/pending/Setup-1.1.2.exe' };
+
+  it('이미 받아둔 것과 같은 업데이트면 downloaded 로 복원한다 ("다운로드" 재노출 방지)', async () => {
+    const ctx = setup({ readPendingUpdate: () => PENDING });
+    await ctx.service.check('manual');
+    ctx.emit('update-available', { version: '1.1.2', files: [{ sha512: 'AAAA==' }] });
+
+    const state = ctx.handlers.get('update:get-state')!() as UpdateState;
+    expect(state.status).toBe('downloaded');
+    expect(state.newVersion).toBe('1.1.2');
+  });
+
+  it('sha512 가 다르면 available 에 머문다 (다른 버전의 잔여물을 오인하지 않는다)', async () => {
+    const ctx = setup({ readPendingUpdate: () => ({ ...PENDING, sha512: 'OLD==' }) });
+    await ctx.service.check('manual');
+    ctx.emit('update-available', { version: '1.1.2', files: [{ sha512: 'AAAA==' }] });
+
+    expect((ctx.handlers.get('update:get-state')!() as UpdateState).status).toBe('available');
+  });
+
+  it('staged 된 것이 없으면 평소대로 available 이다', async () => {
+    const ctx = setup({ readPendingUpdate: () => null });
+    await ctx.service.check('manual');
+    ctx.emit('update-available', { version: '1.1.2', files: [{ sha512: 'AAAA==' }] });
+
+    expect((ctx.handlers.get('update:get-state')!() as UpdateState).status).toBe('available');
+  });
+
+  it('피드가 sha512 를 싣지 않으면 추측하지 않는다', async () => {
+    const ctx = setup({ readPendingUpdate: () => PENDING });
+    await ctx.service.check('manual');
+    ctx.emit('update-available', { version: '1.1.2' });
+
+    expect((ctx.handlers.get('update:get-state')!() as UpdateState).status).toBe('available');
+  });
+
+  it('복원된 상태에서 설치하면 그 파일 경로로 실재 확인을 한다', async () => {
+    const installerExists = vi.fn(() => true);
+    const ctx = setup({ readPendingUpdate: () => PENDING, installerExists });
+    await ctx.service.check('manual');
+    ctx.emit('update-available', { version: '1.1.2', files: [{ sha512: 'AAAA==' }] });
+    await ctx.service.install();
+
+    // 경로를 복원하지 못했다면 확인 자체를 건너뛰어(installerExists 미호출) 파일이 사라진
+    // 경우에도 앱이 조용히 꺼지는 예전 결함으로 되돌아간다.
+    expect(installerExists).toHaveBeenCalledWith(PENDING.filePath);
+    expect(ctx.au.quitAndInstall).toHaveBeenCalled();
+  });
+});
+
+describe('createUpdaterService — 설치 완료 후 pending 정리 (실기기 2026-08-20)', () => {
+  it('최신 버전이면 staged 인스톨러를 지운다 (설치 후 105MB 잔류 방지)', async () => {
+    const clearPendingUpdate = vi.fn();
+    const ctx = setup({
+      readPendingUpdate: () => ({ sha512: 'X==', filePath: 'C:/cache/pending/old.exe' }),
+      clearPendingUpdate,
+    });
+    await ctx.service.check('manual');
+    ctx.emit('update-not-available', {});
+
+    expect(clearPendingUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('staged 된 것이 없으면 정리를 시도하지 않는다', async () => {
+    const clearPendingUpdate = vi.fn();
+    const ctx = setup({ readPendingUpdate: () => null, clearPendingUpdate });
+    await ctx.service.check('manual');
+    ctx.emit('update-not-available', {});
+
+    expect(clearPendingUpdate).not.toHaveBeenCalled();
+  });
+
+  // ⚠️ "available 에서는 지우지 않는다" 는 테스트를 처음에 넣었다가 지웠다 — 정리 코드는
+  // update-not-available 핸들러 안에만 있어서 available 이벤트로는 그 줄에 닿지도 않는다.
+  // 뮤테이션(가드 제거)이 통과하는 것으로 그 공허함이 드러났고, 그래서 프로덕션 쪽의 중복
+  // status 가드도 함께 걷어냈다(canCheck 이 downloaded 중의 재확인을 막으므로 항상 참이었다).
+
+  it('정리 중 예외가 나도 상태를 깨뜨리지 않는다 (best-effort)', async () => {
+    const ctx = setup({
+      readPendingUpdate: () => ({ sha512: 'X==', filePath: 'p' }),
+      clearPendingUpdate: () => { throw new Error('EBUSY'); },
+    });
+    await ctx.service.check('manual');
+    expect(() => ctx.emit('update-not-available', {})).not.toThrow();
+    expect((ctx.handlers.get('update:get-state')!() as UpdateState).status).toBe('not-available');
+  });
+});

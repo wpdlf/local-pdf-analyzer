@@ -7,13 +7,13 @@ import { fileURLToPath, pathToFileURL } from 'url';
 // R38 P1-2: sync `fs` 는 API 키 저장 로직과 함께 api-keys-store.ts 로 이동. 본 파일은 fsp 만 사용.
 import fsp from 'fs/promises';
 // 동기 확인이 필요한 유일한 지점 — updater 의 설치 직전 인스톨러 실재 확인(deps 로 주입).
-import { existsSync, rmSync } from 'fs';
+import { existsSync, readFileSync, rmSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { OllamaManager } from './ollama-manager';
 import { decideCloseAction, selectFlushTargets } from './window-flush-policy';
 import { computeDefaultWindowSize, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT } from './window-size';
 import { createUpdaterService, type UpdaterService } from './updater';
-import { AUTO_CHECK_STARTUP_DELAY_MS } from './update-policy';
+import { AUTO_CHECK_STARTUP_DELAY_MS, type PendingUpdateLike } from './update-policy';
 import type { UpdateState } from '../shared/update-types';
 import { generate, abortGenerate, abortAllRequests, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
 import { MAX_PDF_SIZE_BYTES, isLocalhostHost, isValidOllamaUrl, UPDATER_CACHE_DIR_NAME } from '../shared/constants';
@@ -530,6 +530,67 @@ let updaterService: UpdaterService | null = null;
  * **어긋나는** 경우인데 그건 전혀 보지 않았다. 이름은 이제 UPDATER_CACHE_DIR_NAME(package.json
  * 의 name 파생, drift 테스트로 고정)에서 오고, 여기서는 그것이 실재하는 디렉터리인지만 본다.
  */
+/**
+ * 업데이터 캐시 루트 경로. 없으면 null(계산이 어긋난 경우 진단 로그를 남긴다).
+ * clearUpdaterCache 가 쓰던 계산을 그대로 공유한다 — 두 벌로 두면 드리프트한다.
+ */
+function updaterCacheDir(): string | null {
+  // QA24(B-M3): %LOCALAPPDATA% 는 electron-updater 와 **같은 출처**를 1순위로 쓴다. 종전의
+  // `dirname(appData)/Local` 유추는 폴더 리디렉션(로밍 프로파일이 네트워크 공유인 사내 환경)
+  // 에서 갈리고, 그 경우 결과는 무음 no-op 이었다.
+  const local = process.env.LOCALAPPDATA
+    || path.join(path.dirname(app.getPath('appData')), 'Local');
+  const target = path.join(local, UPDATER_CACHE_DIR_NAME);
+  if (!existsSync(target)) {
+    console.warn('[update] 업데이터 캐시를 찾지 못했습니다(경로 계산 확인 필요):', target);
+    return null;
+  }
+  return target;
+}
+
+/**
+ * `pending/` 에 staged 된 인스톨러 정보를 읽는다(실기기 검증 2026-08-20).
+ *
+ * update-info.json 의 sha512 와 **파일 실재**를 함께 확인한다 — 정보만 남고 파일이 사라진
+ * 경우(백신 격리 등)에 "이미 받아둠"으로 오판하면 설치 시점에야 실패한다.
+ */
+function readPendingUpdate(): PendingUpdateLike | null {
+  const dir = updaterCacheDir();
+  if (!dir) return null;
+  const pendingDir = path.join(dir, 'pending');
+  try {
+    const info = JSON.parse(readFileSync(path.join(pendingDir, 'update-info.json'), 'utf8')) as {
+      fileName?: unknown; sha512?: unknown;
+    };
+    if (typeof info.fileName !== 'string' || typeof info.sha512 !== 'string') return null;
+    const filePath = path.join(pendingDir, info.fileName);
+    if (!existsSync(filePath)) return null;
+    return { sha512: info.sha512, filePath };
+  } catch {
+    // 없거나 손상 — staged 된 것이 없다고 본다(정상 경로다).
+    return null;
+  }
+}
+
+/**
+ * `pending/` 만 비운다. 설치가 끝나 쓸모없어진 인스톨러를 다음 기동에서 치우는 용도다.
+ *
+ * ⚠️ 루트의 installer.exe / current.blockmap 은 **건드리지 않는다** — 차등 다운로드의 기준본이라
+ * 지우면 다음 한 번이 아니라 그 뒤로 계속 전량(≈100MB) 다운로드가 된다(QA24 B-L1).
+ */
+function clearPendingUpdate(): void {
+  const dir = updaterCacheDir();
+  if (!dir) return;
+  const pendingDir = path.join(dir, 'pending');
+  if (!existsSync(pendingDir)) return;
+  try {
+    rmSync(pendingDir, { recursive: true, force: true });
+    console.log('[update] 설치 완료된 staged 인스톨러를 정리했습니다(차등 기준본은 보존).');
+  } catch (err) {
+    console.error('[update] pending 정리 실패:', err);
+  }
+}
+
 function clearUpdaterCache(): void {
   // QA24(B-M3): %LOCALAPPDATA% 는 electron-updater 와 **같은 출처**를 1순위로 쓴다. 종전의
   // `dirname(appData)/Local` 유추는 폴더 리디렉션(로밍 프로파일이 네트워크 공유인 사내 환경)
@@ -608,6 +669,8 @@ function getUpdaterService(): UpdaterService {
       // 체크섬 실패 = 디스크의 것을 믿을 수 없다 → 손상된 캐시를 비워 다음 시도가 전체
       // 다운로드로 깨끗하게 받게 한다(2026-08-07 실기기: 어긋난 차등 캐시가 손상본을 만들었다).
       clearUpdaterCache,
+      readPendingUpdate,
+      clearPendingUpdate,
     });
     updaterService.wire();
   }

@@ -24,7 +24,9 @@ import {
   classifyUpdateError,
   createInitialState,
   nextUpdateState,
+  isPendingUpdateUsable,
   shouldAutoCheck,
+  type PendingUpdateLike,
   type UpdateEvent,
 } from './update-policy';
 import type { UpdateState } from '../shared/update-types';
@@ -33,7 +35,12 @@ import type { UpdateState } from '../shared/update-types';
  * autoUpdater 이벤트 페이로드 중 실제로 읽는 필드만 (electron-updater 의 UpdateInfo 부분집합).
  * `downloadedFile` 은 `update-downloaded` 에만 실려 오는 실제 인스톨러 경로(UpdateDownloadedEvent).
  */
-export interface UpdateInfoLike { version?: string; downloadedFile?: string }
+export interface UpdateInfoLike {
+  version?: string;
+  downloadedFile?: string;
+  /** 피드가 싣는 파일 목록. 첫 항목의 sha512 로 캐시된 인스톨러와 동일성을 판정한다. */
+  files?: { sha512?: string }[];
+}
 export interface DownloadProgressLike { percent?: number }
 
 /**
@@ -107,6 +114,16 @@ export interface UpdaterDeps {
    * 네트워크 오류 등 다른 실패에는 호출하지 않는다 — 부분 다운로드 재개 여지를 없앨 이유가 없다.
    */
   clearUpdaterCache?: () => void;
+  /**
+   * 캐시에 staged 된 인스톨러 정보를 읽는다(`pending/update-info.json` + 파일 실재 확인).
+   * 없거나 읽을 수 없으면 null. fs 접근은 주입해 이 모듈을 순수하게 유지한다.
+   */
+  readPendingUpdate?: () => PendingUpdateLike | null;
+  /**
+   * `pending/` 만 비운다. 캐시 **루트**의 installer.exe / current.blockmap 은 차등 다운로드
+   * 기준본이므로 건드리지 않는다(QA24 B-L1).
+   */
+  clearPendingUpdate?: () => void;
   now?: () => number;
 }
 
@@ -190,8 +207,33 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
     deps.autoUpdater.on('checking-for-update', () => apply({ type: 'check-started' }));
     deps.autoUpdater.on('update-available', (info) => {
       apply({ type: 'available', version: String(info?.version ?? '') });
+      // 실기기 검증(2026-08-20): 다운로드를 마치고 설치를 누르지 않은 채 앱을 껐다 켜면
+      // 상태가 처음부터 다시 시작해 **"다운로드" 버튼**이 떴다 — 검증까지 끝난 인스톨러가
+      // pending/ 에 그대로 있는데도. 실손해는 없지만(재클릭 시 electron-updater 가 캐시를
+      // 재사용해 즉시 끝난다) UI 가 필요한 작업량을 과장한다. 디스크를 보고 상태를 복원한다.
+      const offeredSha512 = info?.files?.[0]?.sha512;
+      const pending = deps.readPendingUpdate?.() ?? null;
+      if (isPendingUpdateUsable(pending, offeredSha512)) {
+        downloadedFilePath = pending!.filePath;
+        apply({ type: 'downloaded', version: String(info?.version ?? '') });
+      }
     });
-    deps.autoUpdater.on('update-not-available', () => apply({ type: 'not-available' }));
+    deps.autoUpdater.on('update-not-available', () => {
+      apply({ type: 'not-available' });
+      // 최신 버전을 쓰고 있다는 것이 확정된 시점 = staged 인스톨러가 쓸모없어진 시점이다.
+      // 설치 직후가 아니라 다음 기동이라 파일 잠금(EBUSY)도 없다. 루트의 차등 기준본은
+      // 건드리지 않는다(QA24 B-L1) — 지우면 이후 매번 전량 다운로드가 된다.
+      // status 를 다시 보지 않는다 — canCheck 이 downloaded/downloading 중의 재확인을 막으므로
+      // 이 핸들러에 도달했다는 것 자체가 "최신을 쓰고 있다"는 뜻이다. 조건을 덧붙이면 절대
+      // 거짓이 되지 않는 죽은 가드가 되고, 그것을 지키는 테스트도 공허해진다(QA25 교훈).
+      if (deps.readPendingUpdate?.() != null) {
+        try {
+          deps.clearPendingUpdate?.();
+        } catch (err) {
+          console.error('[update] pending 정리 실패:', err);
+        }
+      }
+    });
     deps.autoUpdater.on('download-progress', (progress) => {
       apply({ type: 'progress', percent: Number(progress?.percent ?? 0) });
     });

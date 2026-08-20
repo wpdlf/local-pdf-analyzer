@@ -275,3 +275,35 @@ export function nextUpdateState(prev: UpdateState, event: UpdateEvent): UpdateSt
       return prev;
   }
 }
+
+/**
+ * 캐시에 staged 된 인스톨러의 최소 정보(`pending/update-info.json` + 파일 실재).
+ * sha512 는 electron-updater 가 쓰는 것과 같은 값이라 그대로 대조할 수 있다.
+ */
+export interface PendingUpdateLike {
+  sha512: string;
+  filePath: string;
+}
+
+/**
+ * 지금 제안된 업데이트가 **이미 디스크에 받아져 있는가**.
+ *
+ * 실기기 검증(2026-08-20)에서 발견: 다운로드를 마친 뒤 설치를 누르지 않고 앱을 종료하면,
+ * 다음 기동에서 상태가 처음부터 다시 시작해 **"다운로드" 버튼**이 뜬다. 105MB 짜리 검증된
+ * 인스톨러가 `pending/` 에 그대로 있는데도 그렇다 — `downloadedFilePath` 가 `update-downloaded`
+ * 이벤트에서만 채워지고, 기동 시 디스크를 보는 경로가 없었기 때문이다.
+ *
+ * 실제 손해는 없다(electron-updater 의 DownloadedUpdateHelper 가 sha512 를 대조해 캐시를
+ * 재사용하므로 다시 눌러도 즉시 끝난다 — 실기기에서 확인). 문제는 **UI 가 필요한 작업량을
+ * 과장**한다는 것이다: 종량제 회선이라면 "또 100MB 를 받아야 하나" 하고 주저하게 된다.
+ *
+ * 판정은 electron-updater 와 같은 기준(sha512 일치)을 쓴다. 파일명에서 버전을 파싱하지 않는다 —
+ * 파일명 규칙은 electron-builder 설정에 딸린 것이라 바뀔 수 있고, sha512 가 훨씬 강한 신호다.
+ */
+export function isPendingUpdateUsable(
+  pending: PendingUpdateLike | null | undefined,
+  offeredSha512: string | null | undefined,
+): boolean {
+  if (!pending || !pending.sha512 || !offeredSha512) return false;
+  return pending.sha512 === offeredSha512;
+}
