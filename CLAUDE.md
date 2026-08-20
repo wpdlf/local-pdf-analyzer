@@ -53,6 +53,41 @@ npm run package      # 빌드 + electron-builder 패키징
 - CI 빌드에 약 8~12분 소요 (Ubuntu/Windows test 매트릭스 → Windows-2025 cold cache → electron-builder NSIS 패키징 + Sigstore provenance attest). 릴리즈 생성 직후에는 설치 파일 미첨부 상태가 정상.
 - 릴리즈 생성 후 `gh run watch <run-id> --exit-status`로 CI 완료를 확인하고, 설치 파일 첨부를 `gh release view` 로 검증할 것
 
+## Dependency & Action Update Procedure
+
+**dependabot 은 쓰지 않는다**(2026-08-20 제거, 재도입 금지). 자동 범프 PR 이 없으므로 아래는
+**사람이 도는 절차**다. QA 라운드마다 함께 보는 것을 기본으로 한다.
+
+### 판단 기준 — "무조건 최신"이 아니다
+안 올렸을 때의 비용이 올렸을 때의 위험보다 큰 것만 가져온다.
+
+| 분류 | 판단 |
+|---|---|
+| **electron** (앱 셸) | Chromium 보안 패치 경로. 이 앱은 신뢰할 수 없는 PDF 를 파싱하므로 patch 는 지체 없이 |
+| **배포 라이브러리** (`shippedDevDependencies`) | 범위 밖으로 밀리면 나중에 권고가 떠도 major 이전이 필요해진다 — 따라간다 |
+| **타입 전용** (`@types/*`) | 런타임 0, 부담 없이 |
+| **테스트 인프라** (vitest/happy-dom/testing-library) | ⚠️ `//testingPinPolicy` 의 정확 핀. 매처·DOM 시뮬레이션이 조용히 바뀌어 **CI 가 초록인 채 false negative** 를 낸 전례가 있다. 수동 라운드에서만, 갱신 후 **테스트 수가 그대로인지** 반드시 대조 |
+| **major 전반** | 격리 브랜치 스파이크(설치 → tsc + build + E2E → GO 시 머지) |
+
+⛔ 보류 중: `vite` 8(electron-vite 6 stable 대기) · `katex` 0.18(rehype-katex 가 `^0.16` 요구)
+
+### GitHub Actions SHA 핀
+액션은 40자 SHA 로 핀돼 있고 **사람이 손대지 않으면 보안 수정도 영원히 오지 않는다.**
+버전은 `uses:` 줄 **끝 주석**이 단일 출처다(앞줄 주석은 드리프트하므로 쓰지 않는다).
+
+```bash
+# 핀이 실제로 그 태그인지 대조
+gh api repos/<owner>/<repo>/tags --paginate -q '.[] | select(.commit.sha=="<SHA>") | .name'
+# 런타임 확인 — node20 액션은 GitHub 의 shim 제거 시 깨진다
+gh api "repos/<owner>/<repo>/contents/action.yml?ref=<tag>" -q '.content' | base64 -d | grep using:
+```
+
+### 배포 분류 (audit 게이트의 입력)
+새 의존성을 추가하면 `package.json` 의 셋 중 하나로 **반드시 분류**한다 —
+`shippedDevDependencies`(vite 번들에 들어감) / `shippedRuntimeBinaries`(바이너리로 실림) /
+테스트의 `BUILD_ONLY`. 분류를 빠뜨리면 `audit-shipped.test.ts` 가 실패한다. 이 가드가 없던
+동안 배포 표면의 대부분인 **electron 이 두 blocking 게이트 밖**에 있었다(QA26 D-High).
+
 ## Code Signing
 
 `package.json` 의 `forceCodeSigning: false` 는 의도적 설정. EV 인증서를 도입하기 전까지는

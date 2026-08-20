@@ -19,6 +19,18 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * 자식 프로세스 상한.
+ *
+ * QA26(D-Important): 이 파일은 저장소에서 **유일하게 실제 자식 프로세스를 띄우는** 유닛 파일이다
+ * (다른 child_process 사용처는 전부 vi.mock). timeout 이 없으면 자식이 매달릴 때 vitest 의 기본
+ * 테스트 상한(5s)을 통째로 먹고, 실패 메시지도 "타임아웃" 뿐이라 원인을 알 수 없다.
+ * QA26 라운드에서 커버리지 실행 1회가 원인 미상으로 실패했고 이름을 잡지 못했는데, 이 파일이
+ * 유력 후보였다(단독 실행은 커버리지 하에서도 1.0초 — 단정할 근거는 아니지만 방어 비용이 0이다).
+ * 자식 상한을 테스트 상한보다 짧게 두어, 매달림이면 자식 쪽에서 먼저 이름 붙은 실패가 나온다.
+ */
+const SPAWN_TIMEOUT_MS = 15000;
+
 const SCRIPT = fileURLToPath(new URL('../../../scripts/audit-shipped.mjs', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -40,7 +52,11 @@ function runGate(pkg: unknown, lock: unknown, audit: unknown) {
     cwd: dir,
     input: JSON.stringify(audit),
     encoding: 'utf8',
+    timeout: SPAWN_TIMEOUT_MS,
   });
+  // 자식이 매달리면 vitest 의 테스트 타임아웃을 통째로 먹고 "어느 단계에서 멈췄는지" 단서 없이
+  // 끝난다. 여기서 먼저 끊고 원인을 이름 붙여 던진다.
+  if (r.error) throw new Error(`게이트 실행 실패: ${r.error.message}`);
   return { code: r.status, out: r.stdout ?? '', err: r.stderr ?? '' };
 }
 
@@ -54,7 +70,7 @@ const highVuln = (title: string) => ({
   via: [{ title }],
 });
 
-describe('audit-shipped 게이트', () => {
+describe('audit-shipped 게이트', { timeout: 30000 }, () => {
   it('배포 패키지의 전이 의존에 high 가 있으면 차단한다 (QA25 회귀)', () => {
     const r = runGate(
       { dependencies: { 'root-pkg': '^1.0.0' }, shippedDevDependencies: [] },
@@ -139,7 +155,8 @@ describe('audit-shipped 게이트', () => {
   it('audit 입력이 비었으면 skip 한다 (네트워크 실패가 빌드를 막지 않도록)', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { a: '^1' } }));
     writeFileSync(join(dir, 'package-lock.json'), JSON.stringify({ packages: {} }));
-    const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, input: '', encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, input: '', encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS });
+    expect(r.error, '게이트 실행 실패').toBeUndefined();
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('입력 없음');
   });
@@ -171,7 +188,7 @@ describe('워크플로 배선 (QA25 후속)', () => {
   });
 });
 
-describe('런타임 바이너리 이름 대조 (QA26 D-High)', () => {
+describe('런타임 바이너리 이름 대조 (QA26 D-High)', { timeout: 30000 }, () => {
   const lock = {
     packages: {
       '': { name: 'app' },

@@ -91,7 +91,7 @@ jobs:
 
       - name: Upload unit test results on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unit-failure-${{ matrix.os }}-node${{ matrix.node-version }}-${{ github.run_id }}
           path: test-results/
@@ -240,7 +240,20 @@ jobs:
 
       # vitest.config.mts 의 coverage.thresholds 미달 시 vitest 가 non-zero exit → 잡 실패.
       # 베이스라인 상승 시(예: pdf-parser/use-summarize 테스트 추가) thresholds 동시 상향 권장.
-      - run: npm run test:coverage
+      # QA26(D-Important): junit 리포터와 실패 아티팩트가 `npm test` 스텝에만 붙어 있었다.
+      # QA22 가 그 장치를 만든 계기는 "릴리즈 게이트 1건 실패 → 스크롤백을 놓쳐 테스트 이름을
+      # 영영 확보 못 함" 이었는데, 정작 **커버리지 경로에는 없었다**. QA26 라운드에서 실제로
+      # 그 경로의 미상 플레이크 1건을 겪었고 이름을 잡지 못했다. 같은 관용구를 여기에도 적용한다.
+      - run: npm run test:coverage -- --reporter=default --reporter=junit --outputFile=test-results/junit.xml
+
+      - name: Upload coverage test results on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-failure-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 7
 
   # R45: E2E 스모크 (Playwright + Electron) — 빌드 산출물(out/) 실행으로 단위 테스트가
   # 구조적으로 못 덮는 영역(electron-vite 번들, preload 실배선, pdfjs worker/cmaps 로딩,
@@ -275,7 +288,7 @@ jobs:
       # release.yml 과 동일 SHA 핀.
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-failure-${{ github.run_id }}
           path: test-results/
@@ -335,7 +348,7 @@ jobs:
 
       - name: Upload shuffle failure artifacts
         if: steps.shuffle-run.outcome != 'success'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: shuffle-failure-${{ github.run_id }}
           path: test-results/
@@ -389,7 +402,7 @@ jobs:
 
       - name: Upload packaging failure artifacts
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nightly-package-failure-${{ github.run_id }}
           path: |

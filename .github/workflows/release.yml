@@ -53,6 +53,11 @@ jobs:
           - os: ubuntu-latest
             coverage: true
             e2e: true
+            # QA26(D-Medium): audit 은 커버리지와 무관한 관심사인데 같은 플래그에 얹혀 있었다.
+            # test.yml 이 커버리지를 별도 잡으로 분리한 전례가 있어, 릴리즈 쪽도 같은 정리를 하는
+            # 순간 audit 두 스텝이 조용히 딸려 사라진다(QA24 D-M2 가 라벨→플래그로 옮기며 막으려던
+            # 클래스가 플래그 재사용으로 재발할 자리). 자기 플래그를 준다.
+            audit: true
           - os: windows-2025
             unitOnly: true
     runs-on: ${{ matrix.os }}
@@ -133,6 +138,13 @@ jobs:
             echo "::error::coverage 레그에 e2e 플래그가 없습니다 — E2E 스모크 게이트가 무증상으로 사라집니다"
             exit 1
           fi
+          # QA26(D-Medium): audit 도 같은 이유로 레그가 스스로 단언한다 — 릴리즈 경로에
+          # supply-chain 검사가 0건이던 것이 QA25 의 발견이었고(D-I2), 플래그가 조용히 빠지면
+          # 그 상태로 되돌아간다.
+          if [ "${{ matrix.coverage }}" = "true" ] && [ "${{ matrix.audit }}" != "true" ]; then
+            echo "::error::coverage 레그에 audit 플래그가 없습니다 — 릴리즈 경로의 supply-chain 게이트가 무증상으로 사라집니다"
+            exit 1
+          fi
 
       # QA25(D-I2): 릴리즈 경로에 supply-chain 검사가 **0건**이었다. blocking audit 은
       #   test.yml 의 push/PR 잡에만 있어서, 태그를 밀면 그 경로는 통째로 우회됐다. 위 커버리지
@@ -141,12 +153,12 @@ jobs:
       #   않는다 — 자동 업데이트 도입 이후 이 산출물은 곧 전 사용자 코드 실행이다.
       #   로직 본체는 scripts/audit-shipped.mjs 단일 출처(test.yml 과 공유).
       - name: npm audit (프로덕션 트리 전량, blocking)
-        if: matrix.coverage
+        if: matrix.audit
         shell: bash
         run: npm audit --omit=dev --audit-level=high
 
       - name: npm audit (배포물 한정, blocking)
-        if: matrix.coverage
+        if: matrix.audit
         shell: bash
         run: |
           # ⚠️ 파이프 직결 금지 — pipefail + `npm audit` 의 exit 1(권고 존재)이 게이트
@@ -156,7 +168,18 @@ jobs:
 
       - name: Unit tests + coverage gate (ubuntu)
         if: matrix.coverage
-        run: npm run test:coverage
+        # QA26(D-Important): 릴리즈 경로에서 커버리지 게이트가 실패하면 스크롤백 외에 단서가
+        # 없었다 — 태그를 다시 밀기 전에 원인을 확인할 방법이 필요하다(test.yml 과 동일 관용구).
+        run: npm run test:coverage -- --reporter=default --reporter=junit --outputFile=test-results/junit.xml
+
+      - name: Upload coverage test results on failure
+        if: failure() && matrix.coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-coverage-failure-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Unit tests (windows path regression)
         if: matrix.unitOnly
@@ -176,7 +199,7 @@ jobs:
       # C5-I3: 실패 포렌식 — trace(on-first-retry) 산출물 회수(test.yml e2e 잡과 대칭).
       - name: Upload E2E failure artifacts
         if: failure() && matrix.e2e
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-e2e-failure-${{ github.run_id }}
           path: test-results/
@@ -238,7 +261,7 @@ jobs:
 
       - name: Upload packaged smoke artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: packaged-smoke-failure-${{ github.run_id }}
           path: test-results/
@@ -261,7 +284,7 @@ jobs:
       # 핀 SHA 는 gh api 로 tag→commit 확인 후 고정. 버전은 uses 줄 끝 주석이 단일 출처.
       - name: Upload build diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-windows-failure-${{ github.run_id }}
           path: |
