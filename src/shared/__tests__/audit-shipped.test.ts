@@ -170,3 +170,115 @@ describe('워크플로 배선 (QA25 후속)', () => {
     }
   });
 });
+
+describe('런타임 바이너리 이름 대조 (QA26 D-High)', () => {
+  const lock = {
+    packages: {
+      '': { name: 'app' },
+      'node_modules/bundled-lib': { version: '1.0.0' },
+      // electron 은 폐포에 넣지 않는다 — 이름만 대조하는 것이 이 기능의 요지다.
+      'node_modules/electron': { version: '43.4.1', dev: true, dependencies: { got: '^11' } },
+      'node_modules/got': { version: '11.0.0', dev: true },
+    },
+  };
+  const pkg = {
+    dependencies: {},
+    shippedDevDependencies: ['bundled-lib'],
+    shippedRuntimeBinaries: ['electron'],
+  };
+  const vuln = (title: string) => ({ severity: 'high', range: '<9', effects: [], via: [{ title }] });
+
+  it('런타임 바이너리의 advisory 를 차단한다', () => {
+    const r = runGate(pkg, lock, { vulnerabilities: { electron: vuln('Chromium 취약점') } });
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('electron');
+  });
+
+  it('그 바이너리의 설치 시점 의존은 무시한다 (폐포를 넓히지 않는다)', () => {
+    // got 은 electron 이 바이너리를 내려받을 때만 쓰는 의존이라 배포물에 없다. 폐포에 넣으면
+    // 이 게이트가 없애려던 빌드툴 노이즈가 그대로 되살아난다.
+    const r = runGate(pkg, lock, { vulnerabilities: { got: { ...vuln('설치 시점 전용'), severity: 'critical' } } });
+    expect(r.code).toBe(0);
+    expect(r.err).not.toContain('got');
+  });
+
+  it('목록이 비어 있어도 번들 폐포 판정은 그대로 동작한다', () => {
+    const r = runGate(
+      { ...pkg, shippedRuntimeBinaries: [] },
+      lock,
+      { vulnerabilities: { 'bundled-lib': vuln('번들 취약점') } },
+    );
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('bundled-lib');
+  });
+});
+
+describe('배포 분류 드리프트 가드 (QA26 D-High/D-Important)', () => {
+  /**
+   * 배포물에 **닿지 않는** devDependency. 여기 없고 shipped 목록에도 없으면 테스트가 실패한다.
+   *
+   * 왜 필요한가: QA25 가 shipped 폐포 게이트를 만들었지만 **목록 자체가 맞는지 보는 장치는
+   * 없었다**. 그 결과 배포 표면의 대부분인 `electron` 이 두 blocking 게이트 어디에도 없는 상태로
+   * 남았다(인스톨러 101MB 중 asar 는 4.67MB — 나머지가 electron 런타임). 목록에서 pdfjs-dist 를
+   * 지워도 기존 테스트는 전부 그린이었다. 이 가드는 새 devDependency 를 추가할 때 "이건
+   * 사용자에게 배포되는가"를 **한 번 답하도록 강제**한다.
+   */
+  const BUILD_ONLY = [
+    '@playwright/test',        // E2E 러너
+    '@tailwindcss/typography', // CSS 생성 — 산출물은 CSS 이고 패키지는 배포되지 않는다
+    '@tailwindcss/vite',
+    '@testing-library/jest-dom',
+    '@testing-library/react',
+    '@testing-library/user-event',
+    '@types/react',            // 타입 전용, 런타임 0
+    '@types/react-dom',
+    '@vitejs/plugin-react',
+    '@vitest/coverage-v8',
+    'electron-builder',        // 패키징 도구
+    'electron-vite',
+    'happy-dom',
+    'tailwindcss',
+    'typescript',
+    'vite',
+    'vitest',
+  ];
+
+  it('모든 devDependency 가 배포 여부로 분류돼 있다', () => {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
+    const classified = new Set([
+      ...(pkg.shippedDevDependencies ?? []),
+      ...(pkg.shippedRuntimeBinaries ?? []),
+      ...BUILD_ONLY,
+    ]);
+    const unclassified = Object.keys(pkg.devDependencies ?? {}).filter((d) => !classified.has(d));
+    expect(
+      unclassified,
+      '새 devDependency 는 shippedDevDependencies(번들에 들어감) / shippedRuntimeBinaries(바이너리로 실림) / BUILD_ONLY 중 하나로 분류해야 한다',
+    ).toEqual([]);
+  });
+
+  it('분류 목록에 이제 없는 패키지가 남아 있지 않다', () => {
+    // 반대 방향 — 의존성을 제거했는데 목록에만 남으면 "검사하고 있다"는 착각을 준다.
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
+    const declared = new Set([
+      ...Object.keys(pkg.dependencies ?? {}),
+      ...Object.keys(pkg.devDependencies ?? {}),
+    ]);
+    const stale = [
+      ...(pkg.shippedDevDependencies ?? []),
+      ...(pkg.shippedRuntimeBinaries ?? []),
+      ...BUILD_ONLY,
+    ].filter((d) => !declared.has(d));
+    expect(stale).toEqual([]);
+  });
+
+  it('electron 이 게이트의 검사 범위 안에 있다 (QA26 D-High 회귀)', () => {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
+    const covered = new Set([
+      ...Object.keys(pkg.dependencies ?? {}),
+      ...(pkg.shippedDevDependencies ?? []),
+      ...(pkg.shippedRuntimeBinaries ?? []),
+    ]);
+    expect(covered.has('electron'), '앱 셸이 audit 게이트 밖에 있으면 배포 표면의 대부분이 무방비다').toBe(true);
+  });
+});

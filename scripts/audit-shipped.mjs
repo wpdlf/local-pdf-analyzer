@@ -67,11 +67,19 @@ export function computeReachable(lock, shipped) {
   return { names, missing };
 }
 
-/** audit JSON 에서 배포물에 도달하는 high/critical 만 골라낸다. */
-export function findShippedHits(audit, reachable) {
+/**
+ * audit JSON 에서 배포물에 도달하는 high/critical 만 골라낸다.
+ *
+ * 판정 대상은 두 종류다:
+ *  - `reachable` — vite 가 번들해 asar 에 들어가는 것의 **의존 폐포**(전이 포함)
+ *  - `runtimeBinaries` — electron 처럼 배포물에 **바이너리로** 실리는 것의 **이름만**.
+ *    이쪽은 폐포를 넓히지 않는다. npm 의존이 설치 시점 전용이라 배포물에 없기 때문이고,
+ *    넓히면 이 게이트가 없애려던 빌드툴 노이즈가 되살아난다(QA26 D-High).
+ */
+export function findShippedHits(audit, reachable, runtimeBinaries = new Set()) {
   const hits = [];
   for (const [name, v] of Object.entries(audit.vulnerabilities || {})) {
-    if (!reachable.has(name)) continue;
+    if (!reachable.has(name) && !runtimeBinaries.has(name)) continue;
     if (v.severity !== 'high' && v.severity !== 'critical') continue;
     const titles = (v.via || [])
       .map((x) => (typeof x === 'string' ? x : x.title))
@@ -121,14 +129,16 @@ function main() {
   const { names: reachable, missing } = computeReachable(lock, shipped);
   for (const name of missing) console.log(`경고: lockfile 에서 못 찾음 — ${name}`);
 
-  const hits = findShippedHits(audit, reachable);
+  const runtimeBinaries = new Set(pkg.shippedRuntimeBinaries || []);
+  const hits = findShippedHits(audit, reachable, runtimeBinaries);
   const summary = process.env.GITHUB_STEP_SUMMARY;
   const lines = ['## npm audit — 배포물 한정 (blocking)', ''];
   if (hits.length === 0) {
     lines.push(':white_check_mark: 배포되는 패키지에 high/critical advisory 없음.');
     lines.push(
       '',
-      `검사 대상(루트 ${shipped.size} → 전이 포함 ${reachable.size}): ${[...shipped].sort().join(', ')}`,
+      `검사 대상(번들: 루트 ${shipped.size} → 전이 포함 ${reachable.size}) ${[...shipped].sort().join(', ')}`,
+      `검사 대상(런타임 바이너리, 이름 대조): ${[...runtimeBinaries].sort().join(', ') || '(없음)'}`,
     );
     if (summary) fs.appendFileSync(summary, `${lines.join('\n')}\n`);
     process.exit(0);

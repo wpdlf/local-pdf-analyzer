@@ -35,6 +35,10 @@
     "zustand",
     "pdf-lib"
   ],
+  "//shippedRuntimeBinaries": "QA26(D-High): shippedDevDependencies 는 **vite 가 번들해 asar 에 들어가는 것**의 목록이라 폐포(전이 의존)까지 검사한다. 그런데 배포 표면의 대부분은 그쪽이 아니라 electron 런타임 자체다 — 인스톨러 101MB 중 asar 는 4.67MB 뿐이고 나머지가 Chromium/Node 이다. electron 은 devDependency 이고 vite 번들에도 안 들어가므로 `npm audit --omit=dev` 와 shipped 폐포 **양쪽 모두에서 빠져** 있었다. 즉 electron 에 high advisory 가 떠도 두 blocking 게이트가 통과했다(발견 시점 실제 hit 0 — 잠복 상태였다). 여기에 넣는 것은 **이름만** advisory 와 대조한다: electron 의 npm 의존(@electron/get·got·extract-zip 등)은 바이너리를 내려받기 위한 **설치 시점 전용**이라 배포물에 없고, 폐포에 넣으면 이 게이트가 없애려던 빌드툴 노이즈가 그대로 되살아난다.",
+  "shippedRuntimeBinaries": [
+    "electron"
+  ],
   "//testingPinPolicy": "R37 P3 (v0.18.23): 테스트 인프라 6종(@testing-library/* 3개, happy-dom, vitest, @vitest/coverage-v8)은 정확 핀. 사유: 테스팅 도구의 patch/minor 업데이트가 assertion 동작·매처·DOM 시뮬레이션 세부를 조용히 바꿔 CI 가 그린인 채로 false negative(또는 false positive) 가 발생한 전례가 다수. 이 6종은 수동 bump 라운드에서만 갱신하므로 핀 비용 0. 그 외 deps(electron/vite/react 등)는 SemVer 신뢰가 충분히 검증되어 캐럿 유지.",
   "devDependencies": {
     "@playwright/test": "^1.60.0",
