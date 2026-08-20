@@ -84,8 +84,9 @@ describe('summaryToHtml — 인쇄용 HTML 변환', () => {
 // 넓은 display 수식은 인쇄에서 **잘린다** — 화면은 상위 컨테이너가 가로 스크롤을 주지만
 // 인쇄에는 스크롤이 없고 printToPDF 는 세로로만 페이지를 나눈다. MathML 은 자동 줄바꿈을
 // 하지 않으므로 본문 폭을 넘는 부분은 그대로 사라진다(실측: 오른쪽 477px 유실).
-// Electron 실측으로 완화 효과를 확인했다 — 항목 14개 수식이 794px 를 요구해 잘리던 것이
-// 규칙 적용 후 674px 에 들어간다(잘림 시작점 14 → 16). 이 규칙이 사라지면 조용히 되돌아간다.
+// Electron 실측(2026-08-20 재측정) — 박스 폭 734px, 잘림 시작점 16개. QA25 당시 적었던
+// "14 → 16" 은 max-width 상쇄(아래 QA26 항목) 때문에 font-size 효과만 본 숫자였다.
+// 이 규칙들이 사라지면 조용히 되돌아간다.
 describe('인쇄 CSS — 수식 폭 (QA25)', () => {
   const html = summaryToHtml('$$x$$', '제목', 'ko');
 
@@ -95,8 +96,15 @@ describe('인쇄 CSS — 수식 폭 (QA25)', () => {
     expect(html).toMatch(/math\[display="block"\][^}]*margin-left:\s*-8mm/);
   });
 
-  it('수식이 본문 폭을 넘지 않도록 max-width 가 걸려 있다', () => {
-    expect(html).toMatch(/(^|\s)math\s*\{[^}]*max-width:\s*100%/);
+  // QA26(B-MED): max-width 를 math 전체에 걸면 바로 아래 display 규칙의 음수 마진과
+  // over-constrained 가 되어 margin-right 가 무시된다 — 박스 폭이 본문 폭 그대로이고 8mm
+  // 왼쪽으로 이동만 한다. Electron 실측으로 확인했다: 674px/left -30 → 수정 후 734px/left -30,
+  // 잘림 시작점 15→16. 즉 QA25 가 관측한 개선은 font-size 단독 효과였고 마진 60px 은 전량
+  // 상쇄돼 있었다. 선택자가 다시 넓어지면 그 상쇄가 조용히 돌아온다.
+  it('max-width 는 인라인 수식에만 건다 (display 수식의 폭 확보를 상쇄하지 않도록)', () => {
+    expect(html).toMatch(/math:not\(\[display="block"\]\)\s*\{[^}]*max-width:\s*100%/);
+    // math 전체에 거는 규칙이 남아 있으면 안 된다.
+    expect(html).not.toMatch(/(^|[\s;}])math\s*\{[^}]*max-width/);
   });
 
   // 외부 리소스 미참조는 이 파일 위쪽의 기존 테스트가 이미 가드한다 — 여기서 중복 단언하지

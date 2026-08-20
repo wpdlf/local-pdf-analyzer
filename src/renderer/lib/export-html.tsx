@@ -70,7 +70,13 @@ const PRINT_CSS = `
      완전한 해법은 없다(순수 CSS 로는 MathML 을 줄바꿈시킬 수 없고, 내보내기 문서는 CSP
      default-src 'none' + JS 비활성이라 스크립트 기반 축소도 불가). 아래로 여유를 넓혀
      흔한 폭은 살리고, 남는 한계는 README 의 알려진 한계에 명시한다. */
-  math { max-width: 100%; }
+  /* QA26(B-MED): max-width 를 **인라인 수식에만** 건다. 종전에는 math 요소 전체에 걸어서, 바로 아래
+     display 수식의 음수 마진과 over-constrained 가 되어(CSS 2.1 §10.3.3) LTR 에서 margin-right 가
+     무시됐다 — 박스 폭은 본문 폭 그대로이고 8mm 왼쪽으로 **이동만** 했다. 실측으로 확인:
+     박스 674px / left -30px. 즉 QA25 가 의도한 폭 확보 60px 은 전량 상쇄됐고, 그때 관측한
+     개선(잘림 시작점 이동)은 font-size 0.85em 단독 효과였다.
+     인라인 math 는 인라인 박스라 max-width 가 어차피 무효이므로 잃는 것이 없다. */
+  math:not([display="block"]) { max-width: 100%; }
   math[display="block"] {
     font-size: 0.85em;      /* 본문 대비 축소 — 약 18% 더 넓은 수식까지 수용 */
     margin-left: -8mm;      /* @page 좌우 여백(16mm)을 절반까지 잠식해 폭 확보 */
