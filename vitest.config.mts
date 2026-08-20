@@ -76,7 +76,10 @@ export default defineConfig({
       //      소스 파일이 분모에서 조용히 사라져 임계 게이트가 영구히 감지 못 했다(실측: App.tsx
       //      594줄이 lcov 에 부재). include 를 명시해 "제외는 아래 exclude 목록으로만, 명시적으로"
       //      라는 본 파일의 정책을 Vitest 4 의미론에서 복원한다.
-      include: ['src/**'],
+      // QA26(B-Low): src/** 는 index.html 까지 JS 로 파싱하려다 매 실행 RollupError 를 출력한다.
+      // 종료코드 무영향이지만 CI 로그에 상시 error 문자열이 남아 "이 잡의 error 는 무시" 를
+      // 학습시킨다 — 실제 오류가 묻히는 길이다. 측정 대상 확장자만 지정한다.
+      include: ['src/**/*.{ts,tsx}'],
       exclude: [
         'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
         '**/*.config.*', '**/*.d.ts', '**/__tests__/**',

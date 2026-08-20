@@ -421,11 +421,24 @@ describe('ReDoS 회귀 가드 (R46)', () => {
 // 회귀 가드로 쓰는 저장소에서 "검색에 안 잡히는 소스"는 그 가드를 조용히 무력화한다.
 // safe-markdown 이 R29 에서 같은 이유로 고쳤던 것의 형제 누락이었다.
 describe('소스 위생 (QA25)', () => {
-  it('citation.ts 에 날 NUL 바이트가 없다 (rg 가 텍스트로 읽어야 한다)', async () => {
-    const { readFileSync } = await import('node:fs');
+  // QA26(B-Low): 근거는 "검색에 안 잡히는 소스는 소스 스캔 가드를 무력화한다" 는 **저장소 전역**
+  // 성질인데 검사는 citation.ts 한 파일이었다. 같은 사고가 다른 파일에서 나면 그대로 통과한다.
+  it('src 의 어떤 소스에도 날 NUL 바이트가 없다 (rg 가 텍스트로 읽어야 한다)', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
-    const path = fileURLToPath(new URL('../citation.ts', import.meta.url));
-    expect(readFileSync(path).includes(0)).toBe(false);
+    const { join } = await import('node:path');
+    const root = fileURLToPath(new URL('../../../', import.meta.url)); // src/
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const d of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, d.name);
+        if (d.isDirectory()) { walk(full); continue; }
+        if (!/\.(ts|tsx)$/.test(d.name)) continue;
+        if (readFileSync(full).includes(0)) offenders.push(full.replace(root, ''));
+      }
+    };
+    walk(root);
+    expect(offenders).toEqual([]);
   });
 
   it('인용만 있는 줄 판정이 공백을 공백으로 다룬다', () => {

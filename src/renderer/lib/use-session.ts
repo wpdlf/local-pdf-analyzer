@@ -459,6 +459,7 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
       pageTexts: doc.pageTexts,
       chapters: doc.chapters,
       isOcr: doc.isOcr,
+      imagesSkipped: doc.imagesSkipped,
       summaries,
       summaryType: s.summaryType,
       qaMessages: safeQaMessages,

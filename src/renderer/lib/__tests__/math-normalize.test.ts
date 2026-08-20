@@ -4,7 +4,7 @@
 // 가르치는데 remark-math 는 `$`/`$$` 만 알기 때문이다. 아래 테스트는 "바꿔야 할 것을 바꾸는가"
 // 만큼이나 **"바꾸면 안 되는 것을 그대로 두는가"** 를 본다 — 후자가 실제 회귀 위험이다.
 import { describe, it, expect } from 'vitest';
-import { normalizeMathDelimiters } from '../math-normalize';
+import { normalizeMathDelimiters, stripMathDelimiters } from '../math-normalize';
 
 describe('normalizeMathDelimiters — 변환', () => {
   it('인라인 `\\(…\\)` 를 `$$…$$` 로 바꾼다', () => {
@@ -214,5 +214,23 @@ describe('normalizeMathDelimiters — 건드리면 안 되는 것', () => {
       const src = '코드 `\\(a\\)` 는 그대로';
       expect(normalizeMathDelimiters(src)).toBe(src);
     });
+  });
+});
+
+// QA26(B-Low): stripMathDelimiters 는 마인드맵이 heading 을 평문으로 그릴 때 쓰는 표시용 폴백이다.
+// 인용 가드를 상속하지 않으면 인용 라벨의 대괄호까지 벗겨져 텍스트 뷰와 표기가 어긋난다 —
+// 이 함수의 존재 이유가 두 뷰의 표기 통일인데 정반대로 작용한다.
+describe('stripMathDelimiters — 인용 가드 상속 (QA26)', () => {
+  const B = String.fromCharCode(92); // 백슬래시
+
+  it('수식 구분자는 벗기고 내용만 남긴다', () => {
+    expect(stripMathDelimiters(`분산 ${B}(${B}sigma^2${B}) 정리`)).toBe(`분산 ${B}sigma^2 정리`);
+    expect(stripMathDelimiters('$$E=mc^2$$')).toBe('E=mc^2');
+  });
+
+  it('인용 라벨은 원문 그대로 둔다', () => {
+    for (const token of [`${B}[p.3${B}]`, `${B}[Beta.pdf p.5${B}]`, `${B}[p.5|인용문${B}]`]) {
+      expect(stripMathDelimiters(`제목 ${token}`)).toBe(`제목 ${token}`);
+    }
   });
 });

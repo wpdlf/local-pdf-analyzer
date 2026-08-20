@@ -127,7 +127,10 @@ function main() {
 
   const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
   const { names: reachable, missing } = computeReachable(lock, shipped);
-  for (const name of missing) console.log(`경고: lockfile 에서 못 찾음 — ${name}`);
+  // QA26(B-Low): 오타·이름 변경으로 루트를 못 찾으면 **검사 범위가 조용히 줄어든다**.
+  // 이 게이트의 실패 모드가 '빨간불' 이 아니라 '조용한 통과' 라는 점이 QA25 의 출발점이었다.
+  // Actions 로그에 경고로 띄워 최소한 눈에는 걸리게 한다.
+  for (const name of missing) console.log(`::warning::shipped 목록의 ${name} 을 lockfile 에서 찾지 못했습니다 — 검사 범위에서 빠집니다`);
 
   const runtimeBinaries = new Set(pkg.shippedRuntimeBinaries || []);
   const hits = findShippedHits(audit, reachable, runtimeBinaries);

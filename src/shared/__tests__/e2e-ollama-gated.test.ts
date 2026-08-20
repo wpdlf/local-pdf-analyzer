@@ -19,7 +19,16 @@ import { fileURLToPath } from 'node:url';
 
 const E2E_DIR = fileURLToPath(new URL('../../../e2e/', import.meta.url));
 
-/** CI 에서 실행되지 않는다고 **의도적으로** 승인된 스펙들. 추가할 때는 이유를 함께 적을 것. */
+/**
+ * **CI 에서 실행되지 않는 테스트를 품은 스펙 파일** 목록. 추가할 때는 이유를 함께 적을 것.
+ *
+ * QA26(B-Low): 종전 주석은 "CI 에서 실행되지 않는 스펙" 이라고 적었는데 단위가 파일이라 사실과
+ * 어긋났다 — `tabs.spec.ts` 는 두 테스트 중 하나(:29)가 CI 에서 **정상 실행**되고 다른 하나만
+ * 게이트다. 목록만 읽으면 CI 커버리지를 실제보다 작게 본다.
+ *
+ * 또한 `E2E_OLLAMA_REQUIRED` 는 `.github/` 어디에도 설정돼 있지 않다 — REQUIRED 모드는 현재
+ * **수동 전용**이고, CI 에서의 실질 변화는 stdout 사유 로그와 이 드리프트 목록뿐이다.
+ */
 const OLLAMA_GATED = [
   'collection-phase3.spec.ts', // 통합 요약 + 저장→재오픈 (실 LLM 생성 필요)
   'collection.spec.ts', // 교차문서 Q&A (실 LLM + 임베딩 필요)

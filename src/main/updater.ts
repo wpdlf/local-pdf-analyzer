@@ -38,8 +38,8 @@ import type { UpdateState } from '../shared/update-types';
 export interface UpdateInfoLike {
   version?: string;
   downloadedFile?: string;
-  /** 피드가 싣는 파일 목록. 첫 항목의 sha512 로 캐시된 인스톨러와 동일성을 판정한다. */
-  files?: { sha512?: string }[];
+  /** 피드가 싣는 파일 목록. 설치 대상 exe 의 sha512 로 캐시된 인스톨러와 동일성을 판정한다. */
+  files?: { url?: string; sha512?: string }[];
 }
 export interface DownloadProgressLike { percent?: number }
 
@@ -150,6 +150,23 @@ export interface UpdaterService {
   install(): Promise<UpdateState>;
 }
 
+/**
+ * 피드 파일 목록에서 **설치 대상 exe** 를 고른다 — electron-updater 의 findFile 과 같은 규칙.
+ *
+ * QA26(A-Low): 종전에는 `files[0]` 을 썼다. 현재는 win-x64 단일 타깃이라 일치하지만, arm64 를
+ * 추가하거나 web installer 가 latest.yml 에 함께 실리면 첫 항목이 설치 대상이 아닐 수 있다.
+ * 그러면 sha512 대조가 엉뚱한 파일과 이뤄져 복원 판정이 뒤집힌다(NsisUpdater.js:33 이 쓰는
+ * findFile(files, 'exe') 와 같은 기준으로 맞춘다 — url 이 없는 피드에서는 종전대로 첫 항목).
+ */
+export function pickInstallerFile(
+  files: { url?: string; sha512?: string }[] | undefined,
+): { url?: string; sha512?: string } | undefined {
+  if (!files || files.length === 0) return undefined;
+  const exes = files.filter((f) => typeof f.url === 'string' && f.url.toLowerCase().endsWith('.exe'));
+  if (exes.length === 0) return files[0]; // url 미제공 피드 — 종전 동작 유지
+  return exes.find((f) => f.url!.includes(process.arch)) ?? exes[0];
+}
+
 export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
   const now = deps.now ?? (() => Date.now());
   const supported = deps.isPackaged && deps.platform === 'win32';
@@ -221,16 +238,22 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
     deps.autoUpdater.autoInstallOnAppQuit = false;
     deps.autoUpdater.on('checking-for-update', () => apply({ type: 'check-started' }));
     deps.autoUpdater.on('update-available', (info) => {
-      apply({ type: 'available', version: String(info?.version ?? '') });
+      const version = String(info?.version ?? '');
       // 실기기 검증(2026-08-20): 다운로드를 마치고 설치를 누르지 않은 채 앱을 껐다 켜면
       // 상태가 처음부터 다시 시작해 **"다운로드" 버튼**이 떴다 — 검증까지 끝난 인스톨러가
       // pending/ 에 그대로 있는데도. 실손해는 없지만(재클릭 시 electron-updater 가 캐시를
       // 재사용해 즉시 끝난다) UI 가 필요한 작업량을 과장한다. 디스크를 보고 상태를 복원한다.
-      const offeredSha512 = info?.files?.[0]?.sha512;
+      //
+      // QA26(A-Low): 판정을 **먼저** 하고 상태를 한 번만 낸다. 종전에는 available 을 낸 뒤
+      // downloaded 를 덧씌워 같은 틱에 브로드캐스트가 2건 나갔고, IPC 는 별개 태스크로 전달되어
+      // React 자동 배칭이 묶지 않으므로 "다운로드" 배너가 한 프레임 그려졌다 교체될 수 있었다.
       const pending = deps.readPendingUpdate?.() ?? null;
-      if (isPendingUpdateUsable(pending, offeredSha512)) {
+      const usable = isPendingUpdateUsable(pending, pickInstallerFile(info?.files)?.sha512);
+      if (usable) {
         downloadedFilePath = pending!.filePath;
-        apply({ type: 'downloaded', version: String(info?.version ?? '') });
+        apply({ type: 'downloaded', version });
+      } else {
+        apply({ type: 'available', version });
       }
     });
     deps.autoUpdater.on('update-not-available', () => {
@@ -241,7 +264,10 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
       // status 를 다시 보지 않는다 — canCheck 이 downloaded/downloading 중의 재확인을 막으므로
       // 이 핸들러에 도달했다는 것 자체가 "최신을 쓰고 있다"는 뜻이다. 조건을 덧붙이면 절대
       // 거짓이 되지 않는 죽은 가드가 되고, 그것을 지키는 테스트도 공허해진다(QA25 교훈).
-      if (deps.readPendingUpdate?.() != null) {
+      // QA26(A-Low): 릴리즈 회수·CDN 캐시로 구버전 latest.yml 이 응답되면 방금 받은 인스톨러가
+      // 삭제된다. 데이터 손실은 아니고 재다운로드로 회복되지만, **이 프로세스에서 받은 것**은
+      // 사용자가 곧 설치할 물건이므로 보수적으로 남긴다(다음 기동에서 정리된다).
+      if (!downloadedThisProcess && deps.readPendingUpdate?.() != null) {
         try {
           deps.clearPendingUpdate?.();
         } catch (err) {

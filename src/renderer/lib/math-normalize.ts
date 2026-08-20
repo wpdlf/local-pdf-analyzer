@@ -168,10 +168,14 @@ function convertSegment(segment: string): string {
  */
 export function stripMathDelimiters(text: string): string {
   if (!text) return text;
+  // QA26(B-Low): 인용 가드를 함께 상속한다. 없으면 인용 라벨로 끝나는 heading 이 마인드맵에서
+  // 대괄호만 벗겨져 **텍스트 뷰와 표기가 어긋난다** — 이 함수의 존재 이유가 두 뷰의 표기 통일인데
+  // 반대로 작용한다.
+  const keep = (whole: string, content: string): string => (isCitationShaped(content) ? whole : content);
   return text
-    .replace(/\\\((.*?)\\\)/g, '$1')
-    .replace(/\\\[(.*?)\\\]/g, '$1')
-    .replace(/\$\$(.+?)\$\$/g, '$1');
+    .replace(/\\\((.*?)\\\)/g, keep)
+    .replace(/\\\[(.*?)\\\]/g, keep)
+    .replace(/\$\$(.+?)\$\$/g, keep);
 }
 
 /**

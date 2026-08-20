@@ -129,6 +129,9 @@ async function restoreTabFromSession(tab: OpenTab): Promise<boolean> {
     images: [], // 이미지는 미영속화 — 재요약 시에만 필요, 전환 즉시성 우선
     createdAt: new Date(),
     isOcr: session.isOcr,
+    // 세션 복원은 정의상 이미지를 갖고 있지 않다(images: [] 위). 파싱 당시 스킵 마커를 복원해야
+    // "재오픈 필요" 안내가 이 경로에서도 뜬다 — 없으면 무음 no-op 으로 되돌아간다.
+    imagesSkipped: session.imagesSkipped,
   };
   // handlePdfData 성공 블록과 동일한 정리 시퀀스
   const s = useAppStore.getState();

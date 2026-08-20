@@ -204,6 +204,32 @@ describe('switchToTab', () => {
     expect(key, 'OCR 문서면 OCR 부분 실패 문구여야 한다').toBe('pdf.ocrPartialFailNotice');
   });
 
+  // QA26(C-Medium): imagesSkipped 는 세션에 실리지 않아 **세션 복원 문서에서만** 사라졌다.
+  // 그러면 use-summarize 의 `enableImageAnalysis && images.length===0 && imagesSkipped` 가 영원히
+  // false 가 되어, QA6-D 가 만든 "재오픈 필요" 안내가 이 경로에서 도달 불가가 된다 — 이미지 분석을
+  // 켠 사용자가 이미지 없이 만들어진 요약을 정상 결과로 받는다. isOcr 은 싣는데 이것만 누락이었다.
+  it('세션 복원이 imagesSkipped 마커를 되살린다', async () => {
+    seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+    useAppStore.setState((s) => ({
+      openTabs: [...s.openTabs, { filePath: '/docs/img.pdf', fileName: 'img.pdf', pageCount: 3, docHash: 'f'.repeat(64) }],
+    }));
+    M.sessionLoad.mockResolvedValue({
+      session: {
+        schemaVersion: 1, docHash: 'f'.repeat(64), fileName: 'img.pdf', filePath: '/docs/img.pdf',
+        pageCount: 3, extractedText: '본문', pageTexts: ['본문', '본문', '본문'],
+        imagesSkipped: true,
+        chapters: [], summaries: {}, qaMessages: [], embedModel: null, embedDim: null, chunkMeta: [],
+      },
+      blob: null,
+    });
+
+    await switchToTab('/docs/img.pdf');
+
+    const doc = useAppStore.getState().document!;
+    expect(doc.images, '세션 복원은 정의상 이미지를 갖지 않는다').toEqual([]);
+    expect(doc.imagesSkipped, '마커가 없으면 Vision 무음 no-op 안내가 도달 불가가 된다').toBe(true);
+  });
+
   // QA23(D-MED): 영속화 OFF + 다중 탭이면 전환이 현재 문서의 요약·Q&A 를 **경고 없이** 파기했다
   // (저장할 곳이 없어 persistCurrentSession 은 no-op, 대상은 재파싱 경로로 가며 store 초기화).
   // "디스크에 안 쓴다"는 설정이 "탭을 바꾸면 작업이 사라진다"를 뜻하지는 않는다.

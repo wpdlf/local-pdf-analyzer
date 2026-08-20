@@ -365,6 +365,16 @@ export interface PersistedSession {
   pageTexts: string[];
   chapters: Chapter[];
   isOcr?: boolean;
+  /**
+   * QA26(C-Medium): 파싱 당시 이미지 추출을 스킵했다는 마커를 세션에도 싣는다.
+   *
+   * 종전에는 메모리(PdfDocument)에만 있어서, 세션-우선 복원 문서에서는 use-summarize 의
+   * `enableImageAnalysis && images.length === 0 && imagesSkipped` 판정이 **영원히 false** 였다.
+   * 그래서 QA6-D 가 만든 "재오픈이 필요합니다" 안내가 그 경로에서만 사라지고, 이미지 분석을
+   * 켠 사용자가 이미지 없이 만들어진 요약을 정상 결과로 받았다(isOcr 은 싣는데 이것만 누락 —
+   * 같은 성격의 형제였다).
+   */
+  imagesSkipped?: boolean;
   // 분석 결과 — 커스텀 템플릿 요약은 `custom:<id>` 키로 캐시(기존 세션에 추가적·하위호환).
   summaries: Partial<Record<ActiveSummaryType, PersistedSummary>>;
   summaryType: ActiveSummaryType;

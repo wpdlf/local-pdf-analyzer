@@ -785,3 +785,47 @@ describe('createUpdaterService — 복원 후 설치 (QA26 Critical 회귀)', ()
     expect(escapable, '다운로드도 설치도 불가하면 영구 고착이다').toBe(true);
   });
 });
+
+describe('createUpdaterService — 피드 파일 선택·브로드캐스트·보수적 정리 (QA26 Low)', () => {
+  const PENDING = { sha512: 'EXE==', filePath: 'C:/cache/pending/Setup.exe' };
+
+  it('설치 대상 exe 의 sha512 로 판정한다 (blockmap 이 먼저 실려도)', async () => {
+    const ctx = setup({ readPendingUpdate: () => PENDING });
+    await ctx.service.check('manual');
+    ctx.emit('update-available', {
+      version: '1.1.5',
+      files: [
+        { url: 'Setup-1.1.5.exe.blockmap', sha512: 'BLOCK==' }, // 첫 항목이 설치 대상이 아니다
+        { url: 'Setup-1.1.5.exe', sha512: 'EXE==' },
+      ],
+    });
+    expect(ctx.service.getState().status).toBe('downloaded');
+  });
+
+  it('url 이 없는 피드에서는 첫 항목으로 종전 동작을 유지한다', async () => {
+    const ctx = setup({ readPendingUpdate: () => PENDING });
+    await ctx.service.check('manual');
+    ctx.emit('update-available', { version: '1.1.5', files: [{ sha512: 'EXE==' }] });
+    expect(ctx.service.getState().status).toBe('downloaded');
+  });
+
+  it('복원 시 브로드캐스트가 1건이다 ("다운로드" 배너가 한 프레임 스치지 않도록)', async () => {
+    const ctx = setup({ readPendingUpdate: () => PENDING });
+    await ctx.service.check('manual');
+    const before = ctx.broadcasts.length;
+    ctx.emit('update-available', { version: '1.1.5', files: [{ url: 'a.exe', sha512: 'EXE==' }] });
+    const sent = ctx.broadcasts.slice(before);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.status).toBe('downloaded');
+  });
+
+  it('이 프로세스에서 받은 인스톨러는 not-available 이 와도 지우지 않는다', async () => {
+    const clearPendingUpdate = vi.fn();
+    const ctx = setup({ readPendingUpdate: () => PENDING, clearPendingUpdate });
+    await toAvailable(ctx, '1.1.5');
+    await ctx.service.download(); // 이 프로세스에서 받음
+    // 피드가 잠시 뒤로 가는 상황(릴리즈 회수·CDN 캐시)
+    ctx.emit('update-not-available', {});
+    expect(clearPendingUpdate).not.toHaveBeenCalled();
+  });
+});
