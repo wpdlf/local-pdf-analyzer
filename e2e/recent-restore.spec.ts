@@ -89,7 +89,11 @@ test('세션 영속 → 앱 재시작 후 최근 문서에서 재오픈', async 
   }
 });
 
-test('최근 문서 재오픈 — 원본 파일 이동/삭제 시 graceful 에러(목록 유지)', async () => {
+// QA26(C-High): 이 스펙은 원래 "원본 파일이 사라지면 에러 배너" 를 **정상 동작으로** 단언했다.
+// 그런데 세션에는 요약·Q&A·인덱스가 전부 있어 파일 없이도 완전히 복원할 수 있고, 재기동 직후에는
+// 최근 문서가 그 분석 결과에 닿는 유일한 입구다. 즉 옛 단언은 결함을 계약으로 굳힌 것이었다.
+// 이제 "파일이 없으면 세션으로 열고 뷰어 불가만 안내한다" 를 단언한다.
+test('최근 문서 재오픈 — 원본 파일이 사라져도 세션으로 복원(뷰어만 비활성)', async () => {
   test.setTimeout(120000);
   const userDataDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-restore-'));
   const docsDir = mkdtempSync(join(tmpdir(), 'pdf-analyzer-restore-docs-'));
@@ -127,10 +131,12 @@ test('최근 문서 재오픈 — 원본 파일 이동/삭제 시 graceful 에�
       await expect(row).toBeVisible();
 
       await row.getByRole('button', { name: '열기' }).click();
-      // openPath 실패 → recent.openFail 배너, 문서 화면 전환은 일어나지 않고 목록은 유지
-      await expect(r2.page.getByText(/문서를 열 수 없습니다/)).toBeVisible({ timeout: 15000 });
-      await expect(row).toBeVisible(); // 항목 잔존(클릭이 먹히지 않은 것처럼 사라지지 않음)
-      await expect(r2.page.getByText('gamma.pdf (1p)')).toHaveCount(0); // 문서 헤더로 전환되지 않음
+      // openPath 실패 → 세션 폴백으로 문서가 실제로 열린다(재파싱 없이 분석 상태 복원).
+      await expect(r2.page.getByText('gamma.pdf (1p)')).toBeVisible({ timeout: 15000 });
+      // 잃은 것은 뷰어뿐이라는 사실을 알린다.
+      await expect(r2.page.getByText(/원본 파일을 찾지 못해/)).toBeVisible({ timeout: 15000 });
+      // 실패가 아니므로 에러 배너는 뜨지 않는다.
+      await expect(r2.page.getByText(/문서를 열 수 없습니다/)).toHaveCount(0);
     } finally {
       await r2.app.close().catch(() => { /* 이미 종료 */ });
     }
