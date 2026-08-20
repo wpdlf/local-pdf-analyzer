@@ -810,8 +810,8 @@ export function registerIpcHandlers(): void {
   // 직렬화해 초기 자동저장과의 manifest read-modify-write 경합을 배제. 실패는 무해(best-effort,
   // reconcileSessions 는 throw 하지 않음).
   void serializeSessionWrite(() => reconcileSessions(sessionsDir, Date.now())).then((r) => {
-    if (r.registered > 0 || r.removed > 0) {
-      console.log(`[session] reconcile: ${r.registered} re-registered, ${r.removed} removed`);
+    if (r.registered > 0 || r.removed > 0 || r.repaired > 0) {
+      console.log(`[session] reconcile: ${r.registered} re-registered, ${r.removed} removed, ${r.repaired} index-claims repaired`);
     }
   });
 

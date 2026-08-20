@@ -807,7 +807,7 @@ describe('reconcileSessions (부팅 자가치유)', () => {
     // manifest 부분 쓰기 손상 → loadManifest 가 [] 로 리셋되는 상황 모사
     V.files.set(`${DIR}/manifest.json`, '{corrupt');
     const r = await reconcileSessions(DIR, 5000);
-    expect(r).toEqual({ registered: 2, removed: 0 });
+    expect(r).toEqual({ registered: 2, removed: 0, repaired: 0 });
     const list = await listSessionsOk(DIR);
     expect(list.map((e) => e.docHash).sort()).toEqual([h1, h2].sort());
     const e1 = list.find((e) => e.docHash === h1)!;
@@ -826,7 +826,7 @@ describe('reconcileSessions (부팅 자가치유)', () => {
     V.files.set(p(mismatch, 'session.json'), JSON.stringify({ docHash: hashOf(99), fileName: 'x.pdf', filePath: '/x.pdf' }));
     V.files.set(p(empty, 'index.bin'), Buffer.from([1, 2, 3])); // session.json 없이 blob 만 — 복원 불가 찌꺼기
     const r = await reconcileSessions(DIR, 5000);
-    expect(r).toEqual({ registered: 0, removed: 3 });
+    expect(r).toEqual({ registered: 0, removed: 3, repaired: 0 });
     expect(V.files.has(p(corrupt, 'session.json'))).toBe(false);
     expect(V.files.has(p(mismatch, 'session.json'))).toBe(false);
     expect(V.files.has(p(empty, 'index.bin'))).toBe(false);
@@ -838,12 +838,12 @@ describe('reconcileSessions (부팅 자가치유)', () => {
     await writeSession(DIR, { meta: metaOf(h), session: { docHash: h, fileName: 'a.pdf', filePath: '/a.pdf' }, blob: null, now: 1000 });
     vi.mocked(fsp.writeFile).mockClear();
     const r = await reconcileSessions(DIR, 5000);
-    expect(r).toEqual({ registered: 0, removed: 0 });
+    expect(r).toEqual({ registered: 0, removed: 0, repaired: 0 });
     expect(vi.mocked(fsp.writeFile)).not.toHaveBeenCalled();
   });
 
   it('sessions 디렉토리 부재(첫 실행) → {0,0} (throw 없음)', async () => {
-    expect(await reconcileSessions(DIR, 1)).toEqual({ registered: 0, removed: 0 });
+    expect(await reconcileSessions(DIR, 1)).toEqual({ registered: 0, removed: 0, repaired: 0 });
   });
 
   it('사이드카(index.meta.json) chunkMeta 로 chunkCount 복원', async () => {
@@ -874,5 +874,85 @@ describe('reconcileSessions (부팅 자가치유)', () => {
     expect(V.files.has(p(h, 'index.meta.json.tmp'))).toBe(false);
     // 실제 세션 파일은 보존
     expect(V.files.has(p(h, 'session.json'))).toBe(true);
+  });
+});
+
+// QA26(C-Important): "엔트리는 인덱스를 주장하는데 디스크에는 없는" 상태의 생성·회수.
+//
+// 이 상태가 위험한 이유는 전파가 전부 무음이기 때문이다 — 의미검색은 blob 부재로 그 문서를
+// 결과에서 빼면서 excludedCount 에도 넣지 않아 사용자는 "관련 내용이 없다" 로 읽고, 컬렉션
+// Q&A 는 ready 배지를 켠 채 그 문서를 빼고 답한다(조용한 오답).
+describe('인덱스 거짓 주장 (QA26)', () => {
+  const p = (h: string, f: string) => `${DIR}/${h}/${f}`;
+  const claimsIndex = (e: { embedModel: string | null; chunkCount: number }) =>
+    e.embedModel !== null || e.chunkCount > 0;
+
+  it('blob 없이 갱신하면 엔트리도 인덱스 없음으로 정규화된다 (생성 차단)', async () => {
+    const h = hashOf(90);
+    // 1차: 인덱스와 함께 저장
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'a.pdf', filePath: '/a.pdf' },
+      blob: new ArrayBuffer(8),
+      now: 1000,
+    });
+    expect(claimsIndex((await listSessionsOk(DIR))[0]!)).toBe(true);
+
+    // 2차: blob 없이 갱신 — index.bin 이 지워지므로 주장도 사라져야 한다.
+    await writeSession(DIR, {
+      meta: metaOf(h), // 렌더러가 인덱스를 주장하는 meta 를 보내더라도
+      session: { docHash: h, fileName: 'a.pdf', filePath: '/a.pdf' },
+      blob: null,
+      now: 2000,
+    });
+    const entry = (await listSessionsOk(DIR))[0]!;
+    expect(claimsIndex(entry), 'index.bin 을 지웠는데 엔트리가 인덱스를 주장하면 조용한 오답이 된다').toBe(false);
+    expect(V.files.has(p(h, 'index.bin'))).toBe(false);
+  });
+
+  it('부팅 reconcile 이 거짓 주장을 회수한다 (크래시·부분삭제로 이미 생긴 것)', async () => {
+    const h = hashOf(91);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'a.pdf', filePath: '/a.pdf' },
+      blob: new ArrayBuffer(8),
+      now: 1000,
+    });
+    expect(claimsIndex((await listSessionsOk(DIR))[0]!)).toBe(true);
+
+    // 크래시/EBUSY 부분삭제 재현 — manifest 는 그대로인데 index.bin 만 사라진다.
+    V.files.delete(p(h, 'index.bin'));
+
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r.repaired).toBe(1);
+    const entry = (await listSessionsOk(DIR))[0]!;
+    expect(claimsIndex(entry)).toBe(false);
+    // "chunkMeta 는 있고 blob 은 없는" 상태를 남기지 않는다(writeSession 과 동일 규칙).
+    expect(V.files.has(p(h, 'index.meta.json'))).toBe(false);
+  });
+
+  it('인덱스가 멀쩡하면 건드리지 않는다', async () => {
+    const h = hashOf(92);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'a.pdf', filePath: '/a.pdf' },
+      blob: new ArrayBuffer(8),
+      now: 1000,
+    });
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r.repaired).toBe(0);
+    expect(claimsIndex((await listSessionsOk(DIR))[0]!)).toBe(true);
+  });
+
+  it('애초에 인덱스를 주장하지 않는 엔트리는 stat 조차 하지 않는다 (부팅 비용)', async () => {
+    const h = hashOf(93);
+    await writeSession(DIR, {
+      meta: { ...metaOf(h), embedModel: null, embedDim: null, chunkCount: 0 },
+      session: { docHash: h, fileName: 'a.pdf', filePath: '/a.pdf' },
+      blob: null,
+      now: 1000,
+    });
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r).toEqual({ registered: 0, removed: 0, repaired: 0 });
   });
 });

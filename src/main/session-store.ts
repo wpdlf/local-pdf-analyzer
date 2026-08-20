@@ -408,6 +408,13 @@ export async function writeSession(
       // chunkMeta 사이드카도 함께 제거해 index.bin 과 생명주기를 일치시킨다.
       try { await fsp.unlink(indexBinPath); } catch { /* 없으면 무시 */ }
       try { await fsp.unlink(indexMetaPath); } catch { /* 없으면 무시 */ }
+      // QA26(C-Important): 방금 인덱스를 지웠으므로 엔트리도 "없음" 이어야 한다. 종전에는 렌더러가
+      // 보낸 meta 의 embedModel/chunkCount 를 **그대로** manifest 에 썼다 — keepIndex 분기는
+      // blobBytes===0 에서 정규화하는데(위) 이 형제 분기만 빠져 있었다. 그러면 크래시 없이도
+      // "엔트리는 인덱스를 주장하는데 디스크에는 없는" 상태가 만들어지고, 그 뒤로는 무음이다:
+      // 의미검색이 그 문서를 결과에서 빼면서 excludedCount 에도 넣지 않아 사용자는 "관련 내용이
+      // 없다" 로 읽는다. 부팅 reconcile 이 회수하지만, 그 전까지는 그대로 쓰인다.
+      meta = { ...meta, embedModel: null, embedDim: null, chunkCount: 0 };
     }
     const byteSize = Buffer.byteLength(jsonStr) + blobBytes + metaBytes;
     const nowIso = new Date(now).toISOString();
@@ -734,15 +741,16 @@ export async function sessionStats(sessionsDir: string): Promise<SessionStats> {
 export async function reconcileSessions(
   sessionsDir: string,
   now: number,
-): Promise<{ registered: number; removed: number }> {
+): Promise<{ registered: number; removed: number; repaired: number }> {
   let registered = 0;
   let removed = 0;
+  let repaired = 0;
   try {
     let dirents;
     try {
       dirents = await fsp.readdir(sessionsDir, { withFileTypes: true });
     } catch {
-      return { registered, removed }; // 첫 실행(sessions 디렉토리 부재) 등 — 할 일 없음
+      return { registered, removed, repaired }; // 첫 실행(sessions 디렉토리 부재) 등 — 할 일 없음
     }
     const manifest = await loadManifest(sessionsDir);
     const known = new Set(manifest.entries.map((e) => e.docHash));
@@ -758,7 +766,38 @@ export async function reconcileSessions(
       for (const f of [SESSION_JSON, INDEX_BIN, INDEX_META]) {
         try { await fsp.unlink(path.join(cleanupDir, f) + '.tmp'); } catch { /* 없으면 무시 */ }
       }
-      if (known.has(d.name)) continue;
+      if (known.has(d.name)) {
+        // QA26(C-Important): 종전에는 여기서 **무조건** 건너뛰었다. reconcile 이 디렉터리→manifest
+        // 방향(고아 재등록)만 보고, manifest→디스크 방향(엔트리 주장의 사실 여부)은 한 번도
+        // 검사하지 않았다는 뜻이다.
+        //
+        // 그런데 "엔트리는 인덱스를 주장하는데 index.bin 이 없는" 상태는 크래시 없이도 생긴다:
+        //   - 재파싱 중 전원 차단 — 옛 index.bin 을 먼저 unlink 한 뒤 manifest 를 마지막에 쓴다
+        //   - LRU evict 의 부분 삭제 — 재귀 rm 이 자식부터 지우다 EBUSY 로 멈추면 엔트리는 보존된다
+        // 이 불일치는 그 문서를 다시 열기 전까지 **영구히** 남고, 전파는 전부 무음이다:
+        // 의미검색은 blob 부재로 그 문서를 결과에서 빼면서 excludedCount 에도 넣지 않아 사용자는
+        // "관련 내용이 없다" 로 읽고, 컬렉션 Q&A 는 ready 배지를 켠 채 그 문서를 빼고 답한다.
+        //
+        // writeSession 의 blobBytes===0 정규화와 **같은 규칙**으로 회수한다.
+        const entry = manifest.entries.find((e) => e.docHash === d.name);
+        const claimsIndex = !!entry && (entry.embedModel !== null || entry.chunkCount > 0);
+        if (claimsIndex) {
+          let hasBlob = false;
+          try {
+            const st = await fsp.stat(path.join(sessionDir(sessionsDir, d.name), INDEX_BIN));
+            hasBlob = st.size > 0;
+          } catch { /* 부재 → 거짓 주장 */ }
+          if (!hasBlob) {
+            entry.embedModel = null;
+            entry.embedDim = null;
+            entry.chunkCount = 0;
+            // "chunkMeta 는 있고 blob 은 없는" 상태를 남기지 않는다(writeSession 과 동일).
+            try { await fsp.unlink(path.join(sessionDir(sessionsDir, d.name), INDEX_META)); } catch { /* 없으면 무시 */ }
+            repaired++;
+          }
+        }
+        continue;
+      }
       let meta: { session: unknown } | null = null;
       try {
         meta = await readSessionMeta(sessionsDir, d.name);
@@ -814,13 +853,13 @@ export async function reconcileSessions(
       });
       registered++;
     }
-    if (registered > 0) {
+    if (registered > 0 || repaired > 0) {
       manifest.schemaVersion = SESSION_SCHEMA_VERSION;
       await saveManifest(sessionsDir, manifest);
     }
-    return { registered, removed };
+    return { registered, removed, repaired };
   } catch (err) {
     console.warn('[session] reconcile failed:', (err as Error)?.message);
-    return { registered, removed };
+    return { registered, removed, repaired };
   }
 }
