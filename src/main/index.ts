@@ -563,7 +563,9 @@ function readPendingUpdate(): PendingUpdateLike | null {
       fileName?: unknown; sha512?: unknown;
     };
     if (typeof info.fileName !== 'string' || typeof info.sha512 !== 'string') return null;
-    const filePath = path.join(pendingDir, info.fileName);
+    // electron-updater 자신도 같은 자리에서 basename 으로 봉인한다(AppUpdater.js:581-582) —
+    // update-info.json 은 피드에서 온 값을 담으므로 `..\` 이스케이프를 막는다.
+    const filePath = path.join(pendingDir, path.basename(info.fileName));
     if (!existsSync(filePath)) return null;
     return { sha512: info.sha512, filePath };
   } catch {

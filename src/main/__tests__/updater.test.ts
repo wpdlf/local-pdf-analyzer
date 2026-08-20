@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createUpdaterService, INSTALL_QUIT_GRACE_MS, type AutoUpdaterLike, type IpcMainLike, type UpdaterDeps } from '../updater';
-import { canDownload } from '../update-policy';
+import { canDownload, canInstall } from '../update-policy';
 import type { UpdateState } from '../../shared/update-types';
 
 // updater.ts 행위 검증 — electron / electron-updater 를 주입받으므로 node 환경에서 직접 구동한다.
@@ -14,6 +14,8 @@ type Listener = (...args: never[]) => void;
 
 function makeAutoUpdater() {
   const listeners = new Map<string, Listener[]>();
+  // au 정의보다 emit 이 뒤에 오므로 참조 홀더를 통해 늦게 바인딩한다.
+  const emitRef: { fn?: (event: string, payload?: unknown) => void } = {};
   const au = {
     autoDownload: true,
     autoInstallOnAppQuit: true,
@@ -24,12 +26,38 @@ function makeAutoUpdater() {
       return au;
     }),
     checkForUpdates: vi.fn(() => Promise.resolve({})),
-    downloadUpdate: vi.fn(() => Promise.resolve([])),
-    quitAndInstall: vi.fn(),
+    // QA26(A-Important): 예전 가짜는 downloadUpdate 를 부르든 말든 quitAndInstall 이 성공한
+    // 것처럼 굴어서, **electron-updater 가 실패하는 유일한 조건**(다운로드 경로 미경유)을
+    // 모사하지 못했다. 그래서 "복원된 상태에서 설치하면 항상 실패" 하는 Critical 이 8건 전부
+    // 초록인 채로 출시됐다. 실물 계약을 모사한다:
+    //   installerPath = downloadedUpdateHelper?.file        (BaseUpdater.js:38-40)
+    //   downloadedUpdateHelper 는 executeDownload 에서만 생성 (AppUpdater.js:585)
+    //   installerPath == null 이면 dispatchError 후 false   (BaseUpdater.js:47-53)
+    downloadUpdate: vi.fn(() => {
+      au.installerReady = true;
+      // 실물은 실다운로드든 캐시 재사용이든 update-downloaded 를 발화한다. 그 사실을 기본값으로
+      // 두어야 "이벤트가 온다" 를 전제하는 프로덕션 코드가 테스트에서 검증된다.
+      // 이벤트가 오지 않는 경우를 **의도적으로** 보는 테스트만 autoEmitDownloaded=false 로 끈다.
+      if (au.autoEmitDownloaded) {
+        emitRef.fn?.('update-downloaded', { version: '1.1.2', downloadedFile: 'C:/cache/pending/Setup.exe' });
+      }
+      return Promise.resolve([]);
+    }),
+    quitAndInstall: vi.fn(() => {
+      // installerReady=false 면 실물은 dispatchError(동기 emit) 후 app.quit() 없이 리턴한다.
+      if (!au.installerReady) {
+        emitRef.fn?.('error', new Error("No update filepath provided, can't quit and install"));
+      }
+    }),
+    /** electron-updater 의 downloadedUpdateHelper 유무를 대신한다. */
+    installerReady: false,
+    /** downloadUpdate 가 update-downloaded 를 발화하는가(실물 기본 동작). */
+    autoEmitDownloaded: true,
   };
   const emit = (event: string, payload?: unknown) => {
     for (const l of listeners.get(event) ?? []) (l as (p?: unknown) => void)(payload);
   };
+  emitRef.fn = emit;
   return { au, emit, listeners };
 }
 
@@ -181,6 +209,7 @@ describe('download', () => {
 
   it('이벤트 없이 resolve 해도 downloading 에 고착되지 않는다 (설치 가능 상태로 확정)', async () => {
     const ctx = setup();
+    ctx.au.autoEmitDownloaded = false; // 이 테스트의 전제가 "이벤트가 오지 않는다" 이다
     await toAvailable(ctx);
     const state = await ctx.service.download();
     expect(state).toMatchObject({ status: 'downloaded', newVersion: '1.1.0' });
@@ -494,6 +523,8 @@ describe('install — 데이터 손실 방어', () => {
         const ctx = setup({ installerExists: () => false }); // 옛 경로는 이제 존재하지 않는다
         // 1차: 경로를 받은 정상 다운로드
         await toDownloaded(ctx);
+        // 2차 재다운로드는 **이벤트 없이** 완료되는 경우를 본다(주석 참조) — 자동 발화를 끈다.
+        ctx.au.autoEmitDownloaded = false;
         // 설치 시도 → 파일이 없으므로 installer-missing (정상 동작)
         await ctx.service.install();
         expect(ctx.service.getState().errorKey).toBe('updateInstallerMissing');
@@ -691,5 +722,66 @@ describe('createUpdaterService — 설치 완료 후 pending 정리 (실기기 2
     await ctx.service.check('manual');
     expect(() => ctx.emit('update-not-available', {})).not.toThrow();
     expect((ctx.handlers.get('update:get-state')!() as UpdateState).status).toBe('not-available');
+  });
+});
+
+// QA26(A-Critical) 회귀 넷.
+//
+// v1.1.3 의 복원 분기가 만든 **영구 고착**을 재현·차단한다. 다운로드만 하고 앱을 껐다 켜면
+// 상태는 downloaded 로 복원되는데, electron-updater 의 downloadedUpdateHelper 는 이 프로세스에서
+// 만들어진 적이 없어 quitAndInstall 이 즉시 실패한다. 그 실패는 리듀서에서 downloaded 로
+// 되돌아가고, downloaded 에서는 canDownload·canCheck 가 모두 false 라 빠져나갈 길이 없다.
+describe('createUpdaterService — 복원 후 설치 (QA26 Critical 회귀)', () => {
+  const PENDING = { sha512: 'AAAA==', filePath: 'C:/cache/pending/Setup-1.1.2.exe' };
+
+  function restored(over: Partial<UpdaterDeps> = {}) {
+    const ctx = setup({ readPendingUpdate: () => PENDING, ...over });
+    return ctx;
+  }
+
+  async function toRestoredDownloaded(ctx: ReturnType<typeof setup>) {
+    await ctx.service.check('manual');
+    ctx.emit('update-available', { version: '1.1.2', files: [{ sha512: 'AAAA==' }] });
+  }
+
+  it('복원된 상태에서 설치하면 실제로 설치가 시작된다 (고착되지 않는다)', async () => {
+    const ctx = restored();
+    await toRestoredDownloaded(ctx);
+    expect(ctx.service.getState().status).toBe('downloaded');
+
+    await ctx.service.install();
+
+    // 핵심: 다운로드 경로를 먼저 태워 electron-updater 를 설치 가능한 상태로 만든 뒤 진행한다.
+    expect(ctx.au.downloadUpdate).toHaveBeenCalled();
+    expect(ctx.au.installerReady).toBe(true);
+    expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
+    // quitAndInstall 이 실패 신호를 내지 않았다 = 설치가 실제로 시작됐다.
+    expect(ctx.service.getState().errorKey).toBeNull();
+  });
+
+  it('복원 없이 이 프로세스에서 받은 경우에는 재다운로드하지 않는다', async () => {
+    const ctx = setup();
+    await toAvailable(ctx, '1.1.2');
+    await ctx.service.download();
+    const callsAfterDownload = ctx.au.downloadUpdate.mock.calls.length;
+
+    await ctx.service.install();
+
+    expect(ctx.au.downloadUpdate).toHaveBeenCalledTimes(callsAfterDownload);
+    expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it('재다운로드가 실패해도 고착되지 않는다 (재시도 경로가 열려 있다)', async () => {
+    const ctx = restored();
+    await toRestoredDownloaded(ctx);
+    ctx.au.downloadUpdate.mockRejectedValueOnce(new Error('net::ERR_INTERNET_DISCONNECTED'));
+
+    await ctx.service.install();
+
+    expect(ctx.au.quitAndInstall).not.toHaveBeenCalled();
+    // 상태가 무엇이든 사용자가 다시 시도할 길이 있어야 한다.
+    const st = ctx.service.getState();
+    const escapable = canDownload(st.status, st.newVersion) || canInstall(st.status);
+    expect(escapable, '다운로드도 설치도 불가하면 영구 고착이다').toBe(true);
   });
 });

@@ -161,6 +161,21 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
   let installAbortTimer: ReturnType<typeof setTimeout> | null = null;
   // update-downloaded 가 알려준 실제 인스톨러 경로. 설치 직전 존재 확인용(없으면 확인 생략).
   let downloadedFilePath: string | null = null;
+  /**
+   * **이 프로세스에서** 다운로드 경로를 거쳤는가.
+   *
+   * QA26(A-Critical): 복원 분기가 디스크만 보고 상태를 downloaded 로 올리는데, electron-updater
+   * 의 `installerPath` 는 `downloadedUpdateHelper.file` 이고 그 헬퍼는 **`executeDownload` 안의
+   * `getOrCreateDownloadHelper()` 에서만** 생성된다(AppUpdater.js:542-556, 호출부 585 한 곳).
+   * 확인 경로는 헬퍼를 만들지 않으므로, 다운로드를 거치지 않은 프로세스에서 quitAndInstall 을
+   * 부르면 `install()` 이 installerPath==null 로 dispatchError 후 false 를 반환한다
+   * (BaseUpdater.js:38-53). 그 error 는 리듀서에서 downloaded+errorKey 로 되돌아가는데
+   * (update-policy.ts:266-268 — QA19/QA23 이 "설치 대기분을 에러로 잃지 않는다"고 만든 방어),
+   * downloaded 에서는 canDownload·canCheck 가 모두 false 라 **재기동해도 반복되는 영구 고착**이
+   * 된다. 패치 전에는 "다운로드" 버튼이 캐시를 재사용해 즉시 정상 경로로 합류시켜 주었는데,
+   * 그 버튼을 없앤 것이 곧 유일한 회복 경로를 없앤 것이었다.
+   */
+  let downloadedThisProcess = false;
 
   /**
    * 실패를 상태에 반영한다. 체크섬 실패면 손상된 캐시를 함께 비운다(위 clearUpdaterCache 주석).
@@ -240,6 +255,9 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
     deps.autoUpdater.on('update-downloaded', (info) => {
       // 설치 직전 존재 확인에 쓸 실제 파일 경로를 보관(없으면 확인을 건너뛴다 — 아래 install 참조).
       downloadedFilePath = typeof info?.downloadedFile === 'string' ? info.downloadedFile : null;
+      // 이 이벤트는 실제 다운로드와 캐시 재사용 양쪽에서 온다 — 어느 쪽이든 electron-updater 의
+      // downloadedUpdateHelper 가 채워졌다는 뜻이므로 설치가 가능한 상태다.
+      downloadedThisProcess = true;
       apply({ type: 'downloaded', version: String(info?.version ?? state.newVersion ?? '') });
     });
     deps.autoUpdater.on('error', (err) => {
@@ -302,9 +320,15 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
     // 직전 존재 확인이 옛 경로를 보고 실패해, 재다운로드를 반복해도 영원히 설치할 수 없다
     // (백신이 인스톨러를 격리한 뒤 재시도하는 시나리오에서 실제로 도달 가능).
     downloadedFilePath = null;
+    downloadedThisProcess = false;
     apply({ type: 'download-started' });
     try {
       await deps.autoUpdater.downloadUpdate();
+      // QA26(A-Critical): 신호는 **이벤트 도착이 아니라 호출 완료**다. downloadedUpdateHelper 는
+      // executeDownload 안에서 생성되므로(AppUpdater.js:585) downloadUpdate 가 resolve 했다는
+      // 것 자체가 electron-updater 가 설치 가능한 상태라는 뜻이다. 이벤트를 기준으로 삼으면
+      // "이벤트 없이 resolve" 하는 고착 방어 경로(QA24 A-M2)에서 설치가 막힌다.
+      downloadedThisProcess = true;
       // check 와 동일한 고착 방어. downloadUpdate 의 resolve 는 파일 수신 성공을 뜻하므로
       // (실패는 reject) update-downloaded 이벤트가 없었더라도 완료로 확정한다 — 그러지 않으면
       // 'downloading' 에 갇혀 확인·다운로드·설치가 모두 막힌다.
@@ -353,6 +377,31 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
       }
       apply({ type: 'installer-missing' });
       return state;
+    }
+    // QA26(A-Critical): 복원 경로면 electron-updater 의 내부 상태가 비어 있다. 디스크에 파일이
+    // 있어도 `downloadedUpdateHelper` 가 null 이라 quitAndInstall 이 즉시 실패하고, 그 실패가
+    // downloaded 로 되돌아가면 canDownload·canCheck 가 모두 닫혀 **영구 고착**이 된다.
+    //
+    // 여기서 downloadUpdate() 를 한 번 태워 정상 경로에 합류시킨다. 캐시가 유효하면
+    // getValidCachedUpdateFile 이 sha512 를 재대조한 뒤 곧바로 update-downloaded 를 발화하므로
+    // (DownloadedUpdateHelper.js:88-131, AppUpdater.js:592-608) **네트워크 비용이 0** 이다.
+    // 덤으로 우리 복원 판정(파일 실재만 확인)보다 강한 검증을 electron-updater 에 위임하게 된다 —
+    // 백신이 파일을 0바이트로 만든 경우 등은 여기서 걸러져 재다운로드로 회복된다.
+    if (!downloadedThisProcess) {
+      apply({ type: 'download-started' }); // 재사용이면 즉시 끝나지만, 실다운로드가 되면 진행률이 필요하다
+      try {
+        await deps.autoUpdater.downloadUpdate();
+        downloadedThisProcess = true; // 호출 완료 = 헬퍼 생성 완료(위 download() 주석 참조)
+      } catch (err) {
+        applyError(classifyUpdateError(err));
+        return state;
+      }
+      // 캐시가 무효해 재다운로드까지 실패한 경우 — 여기서 멈춘다. 상태는 error 계열이므로
+      // canDownload 가 열려 사용자가 재시도할 수 있다(고착되지 않는다).
+      if (!downloadedThisProcess) {
+        applyError('updateInstallFailed');
+        return state;
+      }
     }
     installing = true;
     // 설치 구간을 상태로 드러낸다 — 버튼이 "설치 중"으로 바뀌어 재클릭이 조용히 폐기되지 않는다.
