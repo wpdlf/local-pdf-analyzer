@@ -183,7 +183,19 @@ jobs:
 
       - name: Unit tests (windows path regression)
         if: matrix.unitOnly
-        run: npm test
+        # QA27(D-MED): 저장소 안에서 유일하게 포렌식이 없는 테스트 실행이었다. 실패해도 남는
+        # 것이 스크롤백뿐이라, **태그를 다시 미는 비용이 가장 큰 경로**에서 실패한 테스트
+        # 이름조차 회수할 수 없었다(다른 4곳은 전부 junit 산출물을 올린다).
+        run: npm test -- --reporter=default --reporter=junit --outputFile=test-results/junit.xml
+
+      - name: Upload windows unit test results on failure
+        if: failure() && matrix.unitOnly
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-windows-unit-failure-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 7
 
       # C5-I2(QA cycle5): E2E 스모크를 릴리즈 게이트로 승격. 이전엔 E2E 실행이 test.yml(main push)
       # 에만 있고 릴리즈 경로는 e2e 타입체크만 해서, 번들/IPC/preload 배선 회귀가 태그 push 로

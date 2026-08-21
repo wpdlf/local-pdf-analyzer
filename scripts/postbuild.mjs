@@ -8,7 +8,8 @@
 // 경로가 바뀔 수 있으므로 변경 시 본 스크립트 확인 필요.
 
 import { cpSync, existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { collectEagerFiles, checkEagerScope } from './eager-graph.mjs';
+import { relative, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const src = resolve(root, 'node_modules/pdfjs-dist/cmaps');
@@ -71,61 +72,40 @@ const EAGER_FORBIDDEN = [
   { name: 'katex', re: /katex/i },
 ];
 
-/**
- * eager 그래프에 속하는 JS 파일 전부를 모은다.
- *
- * QA26(B/D-Important): 종전에는 `<script src>` 만 훑었다. 그런데 Vite 는 entry 를 `<script>` 로,
- * **entry 가 정적 import 하는 공유 청크**를 `<link rel="modulepreload">` 로 낸다. 실측상 eager
- * JS 446KB 중 253KB(entry)만 검사되고 react-vendor 192KB(43%)는 한 번도 열리지 않았다.
- *
- * 더 나쁜 것은 그것이 **이 게이트가 상정한 시나리오 그 자체**라는 점이다 — 누군가 컴포넌트에서
- * math 플러그인을 정적 import 하면 katex 는 entry 와 async 청크의 공유 모듈이 되어 rollup 이
- * 별도 청크로 뽑고, 그 청크는 entry 의 정적 import 이므로 modulepreload 로 실린다. 게이트가
- * 자기 목적의 시나리오를 통과시킬 수 있었다.
- *
- * html 의 두 출처에서 시작해 **정적 import 를 재귀로 따라간다**. 동적 import(`import("./x")`)는
- * 따라가지 않는다 — 그것이 지연 경계이고, 이 게이트가 지키려는 것이 바로 그 경계다.
- */
-function collectEagerFiles(html, dir) {
-  // html 의 참조는 문서 기준 상대경로(`./assets/x.js`), 청크 안의 import 는 **그 청크 기준**
-  // 상대경로(`./y.js`)다. 둘을 섞으면 경로가 어긋나므로 큐에는 절대경로만 넣는다.
-  const queue = [
-    ...[...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1]),
-    ...[...html.matchAll(/<link[^>]+rel="modulepreload"[^>]+href="([^"]+)"/g)].map((m) => m[1]),
-  ].map((ref) => resolve(dir, ref));
+// QA27(D-Low): 의도적으로 지연 경계 밖에 둔 무거운 청크는 katex 만이 아니다 — pdfjs(~1MB)도
+// electron.vite.config.ts 가 별도 청크로 분리해 **첫 PDF 업로드 직전까지** 로드되지 않게 해
+// 두었는데, 그 전제를 지키는 장치가 없었다.
+//
+// 다만 내용 매칭(`GlobalWorkerOptions` 등)은 오탐이다 — entry 는 그 심볼을 **동적 import 의
+// 콜백 안에서** 참조하므로 문자열이 entry 코드에 그대로 남는다(실측 확인). 지켜야 할 불변식은
+// "그 청크가 eager 그래프에 **들어왔는가**" 이고, collectEagerFiles 는 정적 import 만 따라가므로
+// 그 청크가 목록에 나타나는 것 자체가 곧 위반이다. 파일명으로 판정한다.
+const EAGER_FORBIDDEN_CHUNKS = [/(^|[\\/])pdfjs-[^\\/]*\.js$/];
 
-  const seen = new Map(); // 절대경로 → 코드
-  while (queue.length > 0) {
-    const file = queue.shift();
-    if (seen.has(file)) continue;
-    if (!existsSync(file)) {
-      // 무음 skip 금지 — 경로 해석이 깨지면 게이트가 조용히 통과한다.
-      console.error(`[postbuild] eager 그래프의 파일을 찾지 못했습니다: ${file}`);
-      process.exit(1);
-    }
-    const code = readFileSync(file, 'utf8');
-    seen.set(file, code);
-    // 정적 import 만 — `from"./x.js"` / `import"./x.js"`. `import("./x.js")` 는 괄호가 오므로
-    // 이 패턴에 걸리지 않는다(의도: 동적 경계가 곧 이 게이트가 지키려는 것이다).
-    for (const m of code.matchAll(/(?:from|import)\s*["'](\.[^"']+\.js)["']/g)) {
-      queue.push(resolve(dirname(file), m[1]));
-    }
-  }
-  return seen;
-}
-
+// 그래프 수집 규칙(어디까지가 eager 인가)은 eager-graph.mjs 가 소유한다 — QA27(D-Important)
+// 에서 순수 분리해 단위 테스트 대상이 됐다. 여기서는 금지 패턴 판정과 종료 처리만 한다.
 const indexHtml = resolve(root, 'out/renderer/index.html');
 if (!existsSync(indexHtml)) {
   console.error(`[postbuild] out/renderer/index.html 없음 — eager 경계 검사를 건너뛸 수 없습니다`);
   process.exit(1);
 }
-const eager = collectEagerFiles(readFileSync(indexHtml, 'utf8'), resolve(root, 'out/renderer'));
+const { files: eager, error: collectError } = collectEagerFiles(
+  readFileSync(indexHtml, 'utf8'),
+  resolve(root, 'out/renderer'),
+);
+if (collectError) {
+  console.error(`[postbuild] ${collectError}`);
+  process.exit(1);
+}
 const failures = [];
 const outDir = resolve(root, 'out/renderer');
 for (const [abs, code] of eager) {
   const rel = relative(outDir, abs);
   for (const { name, re } of EAGER_FORBIDDEN) {
     if (re.test(code)) failures.push(`${name} in ${rel}`);
+  }
+  for (const re of EAGER_FORBIDDEN_CHUNKS) {
+    if (re.test(rel)) failures.push(`지연 전용 청크가 eager 그래프에 있음: ${rel}`);
   }
 }
 if (failures.length > 0) {
@@ -137,4 +117,12 @@ if (failures.length > 0) {
   process.exit(1);
 }
 const totalBytes = [...eager.values()].reduce((n, c) => n + Buffer.byteLength(c), 0);
+// QA27(D-Important): 이 게이트의 실패 모드는 '빨간불' 이 아니라 **조용한 축소**다 — 범위가
+// entry 하나로 줄어도 위 루프는 아무 위반도 못 찾고 exit 0 으로 끝난다.
+const scopeError = checkEagerScope(eager.size, totalBytes);
+if (scopeError) {
+  console.error(`[postbuild] ${scopeError}`);
+  console.error('[postbuild] 번들 구조가 의도적으로 바뀐 것이라면 eager-graph.mjs 의 하한을 함께 갱신하세요.');
+  process.exit(1);
+}
 console.log(`[postbuild] eager 청크 경계 ok (파일 ${eager.size}개 / ${(totalBytes / 1024).toFixed(0)}KB 검사)`);

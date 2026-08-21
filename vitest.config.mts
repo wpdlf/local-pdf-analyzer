@@ -44,7 +44,10 @@ export default defineConfig({
     // 의미 있는 비율이 나오도록 한다.
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'lcov'],
+      // QA27(D-MED): json-summary 를 추가한다 — coverage-drift.test.ts 가 이 파일을 읽어
+      // "게이트가 실측에 뒤처졌는가" 를 자동 판정한다(종전에는 라운드마다 사람이 대조했고
+      // QA13·QA22·QA24·QA27 에서 매번 뒤처진 채 발견됐다).
+      reporter: ['text', 'lcov', 'json-summary'],
       // R31 (v0.18.18 patch): exclude 정책 명확화.
       //   1) 표준 인프라/빌드 산출물: node_modules, out, dist, test, scripts, *.config, *.d.ts
       //   2) 테스트 파일 자체: **/__tests__/** — coverage 의 분모에서 테스트 코드를 제외
@@ -187,10 +190,18 @@ export default defineConfig({
       // QA25(B-High): App.tsx 편입 후 실측 **83.57 / 75.6 / 83.32 / 86.59**. 게이트는 그대로
       //   둔다 — 마진이 4.6~5.3pp 로 -5pp 정책 범위 안이고(드리프트 아님), 분모가 779줄 늘었으므로
       //   같은 숫자라도 **절대 기준은 강해졌다**. 낮추면 나머지의 회귀 감도만 떨어진다.
+      // QA27(D-MED): 실측 **83.34 / 75.51 / 83.31 / 86.36**(2026-08-21, 2024테스트 시점).
+      //   마진 4.34 / 4.51 / **5.31** / 4.36 — functions 만 -5pp 정책을 넘겼다(QA25 때 5.32 로
+      //   이미 넘겨 있었고 "범위 안"으로 잘못 판정했다). 정책대로 78 → 79 로 올린다.
+      //   이 라운드가 붙인 회귀 넷들이 분모를 더 올리므로 상향해도 여유가 남는다.
+      //
+      //   ⚠️ 이 재정렬은 **라운드마다 사람이 대조**해 왔고 QA13·QA22·QA24·QA27 에서 매번
+      //   뒤처진 채 발견됐다. 드리프트 자체를 자동으로 잡는 가드는 coverage-drift.test.ts 가
+      //   소유한다(측정치와 게이트의 간격이 5pp 를 넘으면 실패).
       thresholds: {
         statements: 79,
         branches: 71,
-        functions: 78,
+        functions: 79,
         lines: 82,
       },
     },
