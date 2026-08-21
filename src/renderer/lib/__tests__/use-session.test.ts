@@ -9,7 +9,8 @@ vi.stubGlobal('localStorage', {
   removeItem: (k: string) => { delete lsStore[k]; },
 });
 const api = {
-  session: { load: vi.fn(), loadMeta: vi.fn(), save: vi.fn((_payload: unknown) => Promise.resolve({ ok: true })), savePartial: vi.fn((_payload: unknown) => Promise.resolve({ ok: true })) },
+  // save 의 반환에는 main 이 실어 보내는 indexMissing·evicted 도 포함된다(preload 계약과 동일).
+  session: { load: vi.fn(), loadMeta: vi.fn(), save: vi.fn((_payload: unknown): Promise<{ ok: boolean; indexMissing?: boolean; evicted?: string[] }> => Promise.resolve({ ok: true })), savePartial: vi.fn((_payload: unknown) => Promise.resolve({ ok: true })) },
   ai: { checkEmbedModel: vi.fn(() => Promise.resolve({ available: true, model: 'nomic-embed-text' })), abort: vi.fn(() => Promise.resolve()) },
   settings: { set: vi.fn(() => Promise.resolve()), get: vi.fn(() => Promise.resolve({})) },
 };
@@ -310,6 +311,32 @@ describe('persistCurrentSession (module-3)', () => {
     expect(payload.session.summaries.full?.content).toBe('저장할 요약');
     expect(payload.session.qaMessages).toHaveLength(1);
     expect(payload.blob).not.toBeNull();
+  });
+
+  // QA27(A-Important): 복원 문서는 언제나 images:[] 라, "이미지가 있었다" 를 세션이 기억하지
+  // 않으면 텍스트-only PDF 와 구분할 방법이 없다 — 재요약이 Vision 없이 조용히 진행된다.
+  it('이미지가 있던 문서는 hadImages 를 세션에 남긴다 (텍스트-only 와 구분)', async () => {
+    const withImages: PdfDocument = {
+      ...makeDoc('had-images-doc'),
+      images: [{ pageIndex: 0, imageIndex: 0, base64: 'AA', width: 10, height: 10, mimeType: 'image/png' }],
+    };
+    useAppStore.setState({ document: withImages, summary: null, summaryStream: '', qaMessages: [], ragIndex: new VectorStore() });
+    api.session.load.mockResolvedValue(null);
+
+    await persistCurrentSession();
+
+    const payload = api.session.save.mock.calls[0]![0] as { session: PersistedSession };
+    expect(payload.session.hadImages).toBe(true);
+  });
+
+  it('이미지가 없던 문서는 hadImages 가 참이 아니다 (거짓 안내 방지)', async () => {
+    useAppStore.setState({ document: makeDoc('no-images-doc'), summary: null, summaryStream: '', qaMessages: [], ragIndex: new VectorStore() });
+    api.session.load.mockResolvedValue(null);
+
+    await persistCurrentSession();
+
+    const payload = api.session.save.mock.calls[0]![0] as { session: PersistedSession };
+    expect(payload.session.hadImages).toBe(false);
   });
 
   it('P1: 같은 문서 반복 저장 시 docHash 를 1회만 계산(캐시)하고 결과는 동일', async () => {
@@ -764,6 +791,42 @@ describe('persistCurrentSession serialize-skip + 부분저장 (Tier2/3)', () => 
     const partial = api.session.savePartial.mock.calls[0]![0] as PartialPayload;
     expect(partial.summary?.content).toBe('완성 요약'); // 완성 요약 유지
     expect(partial.qaMessages).toHaveLength(2);          // trailing lone-user 제거
+  });
+
+  // QA27(D-Important): main 은 `indexMissing` 을 내고 렌더러는 그것으로 시그니처를 무효화하는데,
+  // **그 경계를 건너는 테스트가 하나도 없었다**(session-store.test 는 main 의 반환값만 본다).
+  // 소비 항 `indexMissing ||` 을 지워도 전 스위트가 초록이었다 — 실제 결과는 다음 자동저장이
+  // 계속 keepIndex 로 내려가고 main 이 매번 "인덱스 없음" 으로 정규화해, index.bin 이 문서를
+  // 다시 열 때까지 **영원히 재기록되지 않는** 것이다(재오픈 시 재임베딩 강제).
+  it('main 이 indexMissing 을 알리면 다음 저장은 blob 을 포함한 전체 저장으로 자가회복한다', async () => {
+    const doc = makeDoc('index-missing-doc');
+    const vs = VectorStore.restore(makeIndexFixture());
+    useAppStore.setState({ document: doc, ...summaryState(doc, 's'), ragIndex: vs });
+    api.session.load.mockResolvedValue(null);
+    api.session.loadMeta.mockResolvedValue(null);
+
+    // savePartial 을 제거해 **keepIndex 전체 저장 경로**를 고정한다. 부분저장 실패 경로는
+    // 그 자체로 시그니처를 무효화하므로 indexMissing 의 효과를 가려 버린다(그 길로 쓰면
+    // 소비 항을 지워도 통과하는 공허한 테스트가 된다 — 실제로 한 번 그렇게 썼다).
+    const saved = api.session.savePartial;
+    (api.session as { savePartial?: unknown }).savePartial = undefined;
+    try {
+      await persistCurrentSession(); // 1회차 — 전체 저장으로 시그니처 등록
+      expect((api.session.save.mock.calls[0]![0] as SavePayload).blob).not.toBeNull();
+
+      // 2회차: 인덱스 무변경 → keepIndex. main 이 "디스크에 index.bin 이 없다" 고 알린다.
+      api.session.save.mockResolvedValueOnce({ ok: true, indexMissing: true });
+      await persistCurrentSession();
+      expect((api.session.save.mock.calls[1]![0] as SavePayload).keepIndex).toBe(true);
+
+      // 3회차: 시그니처가 무효화됐어야 하므로 blob 을 다시 실어 보내 디스크를 재기록한다.
+      await persistCurrentSession();
+      const third = api.session.save.mock.calls[2]![0] as SavePayload;
+      expect(third.keepIndex, 'keepIndex 를 반복하면 디스크 인덱스가 끝내 복구되지 않는다').toBeFalsy();
+      expect(third.blob).not.toBeNull();
+    } finally {
+      (api.session as { savePartial?: unknown }).savePartial = saved;
+    }
   });
 
   it('인덱스가 바뀌면(revision↑) 부분저장이 아니라 전체 blob 전송', async () => {

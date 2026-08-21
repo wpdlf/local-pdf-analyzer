@@ -132,6 +132,11 @@ async function restoreTabFromSession(tab: OpenTab): Promise<boolean> {
     // 세션 복원은 정의상 이미지를 갖고 있지 않다(images: [] 위). 파싱 당시 스킵 마커를 복원해야
     // "재오픈 필요" 안내가 이 경로에서도 뜬다 — 없으면 무음 no-op 으로 되돌아간다.
     imagesSkipped: session.imagesSkipped,
+    // QA27(A-Important): 파싱 당시 이미지가 있었다면 그 사실도 복원한다. imagesSkipped 는
+    // "설정 OFF" 전용이라 기본값(ON)으로 열린 문서에서는 false 이고, 복원 문서는 언제나
+    // images:[] 이므로 그것만으로는 **텍스트-only PDF 와 구분되지 않았다** — 재요약이 Vision
+    // 없이 조용히 진행됐다(QA6-D 가 없앤 무음 no-op 이 다수 경로에서 살아 있었다).
+    hadImages: session.hadImages,
   };
   // handlePdfData 성공 블록과 동일한 정리 시퀀스
   const s = useAppStore.getState();
@@ -173,14 +178,25 @@ export async function openFromSessionOnly(entry: {
   docHash: string; fileName: string; filePath: string; pageCount: number;
 }): Promise<boolean> {
   if (isTabSwitchBlocked()) return false;
-  // restoreTabFromSession 은 세션 부재/손상 시 **store 를 건드리기 전에** false 를 반환하므로,
-  // 실패해도 열리지 않은 탭이 남지 않는다(탭 등록은 성공 경로 안에 있다).
-  return restoreTabFromSession({
-    filePath: entry.filePath,
-    fileName: entry.fileName,
-    pageCount: entry.pageCount,
-    docHash: entry.docHash,
-  });
+  // QA27(A-MED): 게이트를 **검사만 하고 세우지 않았다** — switchToTab·closeTab·openNewTabView 는
+  // 전부 setTabSwitching(true) 로 자기 구간을 잠그는데 이 신규 진입점만 빠진 네 번째 형제였다.
+  // isTabSwitching 은 isTabSwitchBlocked 의 입력이므로, 세우지 않으면 두 번째 호출이 같은 창에서
+  // 게이트를 그대로 통과한다: 최근 문서에서 A→B 를 연달아 누르면 restoreTabFromSession 의
+  // session.load await 뒤에 store 를 쓰는 쪽이 **늦게 끝난 A** 가 되어, 사용자가 누른 것은 B 인데
+  // 활성 문서는 A 가 된다(탭은 둘 다 등록된다). QA6-C M2 가 닫은 클래스와 같은 모양이다.
+  setTabSwitching(true);
+  try {
+    // restoreTabFromSession 은 세션 부재/손상 시 **store 를 건드리기 전에** false 를 반환하므로,
+    // 실패해도 열리지 않은 탭이 남지 않는다(탭 등록은 성공 경로 안에 있다).
+    return await restoreTabFromSession({
+      filePath: entry.filePath,
+      fileName: entry.fileName,
+      pageCount: entry.pageCount,
+      docHash: entry.docHash,
+    });
+  } finally {
+    setTabSwitching(false);
+  }
 }
 
 /** 탭 전환 — 이미 활성이면 no-op. 파일/세션 모두 복원 불가 시 에러 배너 + 탭 유지 */

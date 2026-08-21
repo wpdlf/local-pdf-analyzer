@@ -460,6 +460,9 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
       chapters: doc.chapters,
       isOcr: doc.isOcr,
       imagesSkipped: doc.imagesSkipped,
+      // QA27(A-Important): 이미지가 **있었다는 사실**을 함께 남긴다 — 복원 문서는 images:[] 라
+      // imagesSkipped 만으로는 텍스트-only PDF 와 구분되지 않는다(types/index.ts 주석 참조).
+      hadImages: doc.images.length > 0,
       summaries,
       summaryType: s.summaryType,
       qaMessages: safeQaMessages,

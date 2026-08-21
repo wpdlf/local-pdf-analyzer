@@ -952,7 +952,104 @@ describe('인덱스 거짓 주장 (QA26)', () => {
       blob: null,
       now: 1000,
     });
+    // QA27(D-Low): 제목은 "stat 조차 하지 않는다" 인데 결과 객체만 보고 있었다 — 회수 로직이
+    // 매 부팅 전 세션을 stat 해도 그린이었다. 실제로 stat 이 불리지 않는지 관측한다.
+    const statSpy = vi.spyOn(fsp, 'stat');
+    try {
+      const r = await reconcileSessions(DIR, 5000);
+      expect(r).toEqual({ registered: 0, removed: 0, repaired: 0 });
+      expect(statSpy.mock.calls.some(([p]) => String(p).endsWith('index.bin'))).toBe(false);
+    } finally {
+      statSpy.mockRestore();
+    }
+  });
+
+  it('QA27(A-Important): 고아 재등록도 index.bin 이 없으면 인덱스를 주장하지 않는다', async () => {
+    // 크래시로 "session.json + 사이드카는 있고 index.bin 은 없는" 고아가 남은 상태.
+    // 회수해야 할 reconcile 이 거짓 주장의 **생산자**가 되면 안 된다.
+    const h = hashOf(94);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: {
+        docHash: h, fileName: 'a.pdf', filePath: '/a.pdf',
+        embedModel: 'nomic-embed-text', embedDim: 3,
+        chunkMeta: [{ text: 'A', index: 0, pageStart: 1 }, { text: 'B', index: 1, pageStart: 2 }],
+      },
+      blob: new ArrayBuffer(8),
+      now: 1000,
+    });
+    // manifest 에서 엔트리를 지워 "고아 디렉터리" 로 만든다(manifest 손상 리셋 재현) + index.bin 소실
+    V.files.delete(`${DIR}/manifest.json`);
+    V.files.delete(p(h, 'index.bin'));
+
     const r = await reconcileSessions(DIR, 5000);
-    expect(r).toEqual({ registered: 0, removed: 0, repaired: 0 });
+    expect(r.registered).toBe(1);
+    const entry = (await listSessionsOk(DIR))[0]!;
+    expect(claimsIndex(entry), 'index.bin 이 없는데 재등록 엔트리가 인덱스를 주장하면 조용한 누락이 된다').toBe(false);
+    // "chunkMeta 는 있고 blob 은 없는" 짝도 남기지 않는다(writeSession·known 분기와 동일 규칙).
+    expect(V.files.has(p(h, 'index.meta.json'))).toBe(false);
+  });
+
+  it('QA27(A-Important): index.bin 이 온전한 고아는 인덱스 메타를 보존한 채 재등록된다', async () => {
+    const h = hashOf(95);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: {
+        docHash: h, fileName: 'a.pdf', filePath: '/a.pdf',
+        embedModel: 'nomic-embed-text', embedDim: 3,
+        chunkMeta: [{ text: 'A', index: 0, pageStart: 1 }, { text: 'B', index: 1, pageStart: 2 }],
+      },
+      blob: new ArrayBuffer(8),
+      now: 1000,
+    });
+    V.files.delete(`${DIR}/manifest.json`);
+
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r.registered).toBe(1);
+    const entry = (await listSessionsOk(DIR))[0]!;
+    expect(claimsIndex(entry)).toBe(true);
+    expect(entry.embedModel).toBe('nomic-embed-text');
+    expect(entry.chunkCount).toBe(2);
+  });
+});
+
+describe('reconcileSessions — 일시 I/O 오류에 디스크를 확정하지 않는다 (QA27 C-Important)', () => {
+  it.each(['EBUSY', 'EACCES', 'EPERM'])('manifest 읽기 %s 면 재구축 없이 종료한다', async (code) => {
+    // 흡수형 로더였을 때: manifest 읽기 실패 → {entries: []} 를 기준으로 전 디렉터리를 고아로
+    // 재등록하는데, 그중 session.json 읽기가 함께 실패한 것은 `continue` 로 빠진다. 기준이
+    // 비어 있으므로 그 continue 는 보존이 아니라 **누락**이고, 그 상태가 디스크에 확정된다.
+    const a = hashOf(96);
+    const b = hashOf(97);
+    for (const h of [a, b]) {
+      await writeSession(DIR, {
+        meta: metaOf(h), session: { docHash: h, fileName: `${h}.pdf`, filePath: `/${h}.pdf` },
+        blob: null, now: 1000,
+      });
+    }
+    const before = V.files.get(`${DIR}/manifest.json`);
+
+    const err: NodeJS.ErrnoException = Object.assign(new Error(code), { code });
+    const spy = vi.spyOn(fsp, 'readFile').mockRejectedValueOnce(err); // manifest 읽기만 1회 실패
+    try {
+      const r = await reconcileSessions(DIR, 5000);
+      expect(r).toEqual({ registered: 0, removed: 0, repaired: 0 });
+    } finally {
+      spy.mockRestore();
+    }
+    // manifest 는 손대지 않았어야 한다 — 두 세션 모두 그대로 살아 있다.
+    expect(V.files.get(`${DIR}/manifest.json`)).toBe(before);
+    const list = await listSessionsOk(DIR);
+    expect(list.map((e) => e.docHash).sort()).toEqual([a, b].sort());
+  });
+
+  it('manifest 부재(ENOENT)는 종전대로 진행한다 — 그건 실제로 "없음" 이 맞다', async () => {
+    const h = hashOf(98);
+    await writeSession(DIR, {
+      meta: metaOf(h), session: { docHash: h, fileName: 'a.pdf', filePath: '/a.pdf' },
+      blob: null, now: 1000,
+    });
+    V.files.delete(`${DIR}/manifest.json`);
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r.registered).toBe(1);
   });
 });

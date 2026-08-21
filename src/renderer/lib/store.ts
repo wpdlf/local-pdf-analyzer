@@ -438,7 +438,12 @@ export const useAppStore = create<AppState>((set) => ({
     const idx = s.openTabs.findIndex((t) => t.filePath === tab.filePath);
     if (idx === -1) return { openTabs: [...s.openTabs, tab] };
     const next = s.openTabs.slice();
-    next[idx] = tab;
+    // QA27(C-Low): 통째 교체가 아니라 **병합**한다. 호출자 4곳 중 pdf-parser 의 성공 경로만
+    // docHash 를 넘기지 않는데(해시는 그 뒤 restoreSessionForDocument 가 계산한다), 교체
+    // 시맨틱이면 이미 열려 있던 탭을 재파싱할 때 그 탭의 docHash 가 잠시 사라진다. 그 창에서
+    // 탭은 openDocHashes(LRU pin)와 컬렉션 후보 어디에도 잡히지 않고, 복원이 upsert 전에
+    // 반환·throw 하면 소실이 영구가 된다. 부분 갱신이 기존 필드를 지우지 않게 한다.
+    next[idx] = { ...s.openTabs[idx]!, ...tab };
     return { openTabs: next };
   }),
   removeOpenTab: (filePath) => set((s) => {

@@ -55,6 +55,10 @@ export const _translations = {
   'ai.imageAnalysisFail': { ko: '이미지 분석에 실패했습니다. Vision 모델을 확인해주세요.', en: 'Image analysis failed. Please check your Vision model.' },
   // QA6-D: 이미지 분석 OFF 로 파싱된 문서를 ON 전환 후 재요약 — 무음 no-op 대신 재오픈 안내
   'summary.imagesSkippedNotice': { ko: '이 문서는 이미지 분석이 꺼진 상태로 열려 이미지가 추출되지 않았습니다. 이미지 분석을 적용하려면 문서를 다시 열어주세요.', en: 'This document was opened with image analysis turned off, so no images were extracted. Reopen the document to apply image analysis.' },
+  // QA27(A-Important): 저장된 세션에서 복원된 문서는 이미지를 싣지 않는다(전환 즉시성 우선).
+  // 원래 이미지가 있던 문서면 재요약이 Vision 없이 진행되므로 사유를 밝힌다 — 위 문구와 달리
+  // 설정은 이미 켜져 있고, 필요한 조작은 "파일을 다시 열기" 다.
+  'summary.imagesUnloadedNotice': { ko: '저장된 분석 상태에서 복원된 문서라 이미지가 메모리에 없습니다. 이미지 분석을 포함해 요약하려면 원본 파일을 다시 열어주세요.', en: 'This document was restored from a saved session, so its images are not in memory. Reopen the original file to include image analysis in the summary.' },
   'summary.templateNotFound': { ko: '선택한 커스텀 요약 템플릿을 찾을 수 없습니다. 설정에서 삭제되었을 수 있어요.', en: 'The selected custom summary template was not found. It may have been deleted in settings.' },
   'summary.customTruncated': { ko: '문서가 길어 앞부분만으로 커스텀 요약을 생성했습니다. 뒷부분 내용은 포함되지 않았을 수 있어요.', en: 'The document is long, so the custom summary was generated from the beginning only. Later content may not be included.' },
   // Vision 실패 시 전체 요약을 막지 않고 텍스트 전용으로 강등할 때의 비차단 안내.

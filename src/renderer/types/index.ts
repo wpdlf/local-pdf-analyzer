@@ -47,6 +47,15 @@ export interface PdfDocument {
    * 텍스트-only PDF 의 정당한 0장과 구분해 "재오픈 필요" 안내를 띄우기 위해 필요.
    */
   imagesSkipped?: boolean;
+  /**
+   * QA27(A-Important): 세션에서 복원된 문서가 **원래는 이미지를 갖고 있었다**는 표식.
+   *
+   * 세션 복원은 이미지를 싣지 않으므로(전환 즉시성 우선) 복원 문서는 언제나 `images: []` 다.
+   * `imagesSkipped` 는 "설정 OFF" 전용이라 기본값(ON)으로 파싱된 대다수 문서에서는 false 이고,
+   * 그 결과 복원 문서가 텍스트-only PDF 와 구분되지 않아 Vision 이 **무음으로** 빠졌다.
+   * 이 표식이 있으면 "다시 열어야 이미지 분석이 적용된다" 를 정확한 문구로 안내할 수 있다.
+   */
+  hadImages?: boolean;
 }
 
 // 챕터 (페이지 기반 분할)
@@ -375,6 +384,20 @@ export interface PersistedSession {
    * 같은 성격의 형제였다).
    */
   imagesSkipped?: boolean;
+  /**
+   * QA27(A-Important): 파싱 당시 **이미지가 실제로 있었는가**. `imagesSkipped` 의 형제.
+   *
+   * `imagesSkipped` 는 "설정이 OFF 라 추출을 건너뛰었다" 만 표현한다. 그런데 이미지 분석은
+   * 기본 ON 이므로 대다수 문서는 `imagesSkipped:false` 로 저장되고, 세션 복원 문서는 정의상
+   * `images: []` 다(이미지는 미영속 — 전환 즉시성 우선). 그래서 복원된 문서는
+   * `images:[] + imagesSkipped:false` 가 되어 **정당한 텍스트-only PDF 와 구분이 불가능**했고,
+   * 재요약하면 Vision 없이 요약되면서 안내도 뜨지 않았다 — QA6-D 가 없앤 무음 no-op 이
+   * 다수 경로에서 그대로 살아 있었던 셈이다(마커가 소수 케이스만 덮고 있었다).
+   *
+   * 이 값을 함께 실어, 복원 시 "이미지가 있었는데 지금 메모리에 없다" 를 판정할 수 있게 한다.
+   * 구버전 세션에는 두 필드가 모두 없으므로 종전 동작(안내 없음)으로 자연 폴백한다.
+   */
+  hadImages?: boolean;
   // 분석 결과 — 커스텀 템플릿 요약은 `custom:<id>` 키로 캐시(기존 세션에 추가적·하위호환).
   summaries: Partial<Record<ActiveSummaryType, PersistedSummary>>;
   summaryType: ActiveSummaryType;

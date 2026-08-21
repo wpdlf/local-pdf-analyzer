@@ -752,7 +752,21 @@ export async function reconcileSessions(
     } catch {
       return { registered, removed, repaired }; // 첫 실행(sessions 디렉토리 부재) 등 — 할 일 없음
     }
-    const manifest = await loadManifest(sessionsDir);
+    // QA27(C-Important): reconcile 은 **read-modify-write 경로**다(아래 saveManifest). 그런데
+    // QA21 이 6개 RMW 경로를 loadManifestForWrite 로 옮길 때 이 함수만 흡수형 loadManifest 로
+    // 남아 있었다 — 형제 누락.
+    //
+    // 흡수형이면 부팅 시 manifest.json 읽기가 EBUSY/EPERM 으로 **한 번만** 실패해도
+    // `{entries: []}` 가 기준이 된다. 그러면 known 이 비어 모든 디렉터리가 "고아" 로 재등록
+    // 대상이 되는데, 그중 session.json 읽기가 함께 실패한 것은 아래 `continue`(일시 오류 →
+    // 판단 불가, 보존)로 빠진다. 기준 manifest 가 비어 있으므로 그 `continue` 는 보존이 아니라
+    // **누락**이고, 그 상태가 그대로 디스크에 확정된다. 해당 세션은 디렉터리가 남은 채
+    // 최근목록·전역검색·의미검색·LRU 집계에서 사라지고, 컬렉션 Q&A 는 그 문서를 빼고 답한다.
+    //
+    // 비흡수형이면 일시 오류는 throw → 바깥 catch 가 받아 **디스크를 건드리지 않고** 종료한다.
+    // 읽을 수 없는 manifest 를 기준으로 재구축하느니 이번 부팅은 건너뛰는 편이 항상 낫다
+    // (부재/손상은 종전대로 빈 manifest 로 진행 — 첫 실행이 정상 동작해야 한다).
+    const manifest = await loadManifestForWrite(sessionsDir);
     const known = new Set(manifest.entries.map((e) => e.docHash));
 
     // QA7(B-LOW): 크래시/전원차단으로 writeFileAtomic 의 tmp→rename 사이에서 죽으면 stray
@@ -819,11 +833,15 @@ export async function reconcileSessions(
       }
       // byteSize·타임스탬프는 디스크 실측 기준으로 재구성
       let byteSize = 0;
+      let hasBlob = false;
+      let metaBytes = 0;
       let mtimeIso = new Date(now).toISOString();
       for (const f of [SESSION_JSON, INDEX_BIN, INDEX_META]) {
         try {
           const st = await fsp.stat(path.join(dir, f));
           byteSize += st.size;
+          if (f === INDEX_BIN && st.size > 0) hasBlob = true;
+          if (f === INDEX_META) metaBytes = st.size;
           // mtimeMs 비유한(모킹/특수 FS) 시 now 폴백 유지
           if (f === SESSION_JSON && Number.isFinite(st.mtimeMs)) {
             mtimeIso = new Date(st.mtimeMs).toISOString();
@@ -838,15 +856,30 @@ export async function reconcileSessions(
           if (im && Array.isArray(im.chunkMeta)) chunkCount = im.chunkMeta.length;
         } catch { /* 사이드카 I/O 오류 — chunkCount 0 유지 */ }
       }
+      // QA27(A-Important): 위 known 분기와 **같은 규칙**을 여기에도 적용한다 — 형제 누락.
+      // QA26 이 "엔트리는 인덱스를 주장하는데 디스크에 index.bin 이 없다" 를 두 곳(writeSession
+      // 의 blob 부재 분기, reconcile 의 known 분기)에서 닫았는데, 40줄 아래 이 **고아 재등록**
+      // 분기는 빠져 있었다. session.json 의 embedModel 과 사이드카의 chunkMeta 를 그대로 믿고
+      // 등록하므로, 크래시로 "session.json + 사이드카는 있고 index.bin 은 없는" 고아가 생기면
+      // 부팅 reconcile 이 그 거짓 주장을 **직접 만들어낸다**(회수해야 할 함수가 생산자가 된다).
+      // 그 뒤 전파는 전부 무음이다: 의미검색은 blob 로드 실패로 그 문서를 빼면서 excludedCount
+      // 에도 넣지 않고, 컬렉션 Q&A 는 ready 배지를 켠 채 그 문서를 빼고 답한다.
+      // 이 상태는 그 문서를 다시 열기 전까지 남는다 — 다음 부팅의 known 분기가 회수하지만,
+      // 애초에 만들지 않는 편이 옳다. 사이드카도 함께 정리해 "chunkMeta 는 있고 blob 은 없는"
+      // 짝을 남기지 않는다(writeSession·known 분기와 동일).
+      if (!hasBlob) {
+        try { await fsp.unlink(path.join(dir, INDEX_META)); } catch { /* 없으면 무시 */ }
+        byteSize -= metaBytes; // 방금 지운 사이드카는 용량 집계(LRU)에서 뺀다
+      }
       // writeSession 의 meta 정규화와 동일 규칙으로 재등록
       manifest.entries.push({
         docHash: d.name,
         fileName: (s.fileName as string).slice(0, 512),
         filePath: (s.filePath as string).slice(0, 4096),
         pageCount: typeof s.pageCount === 'number' && Number.isFinite(s.pageCount) ? s.pageCount : 0,
-        embedModel: typeof s.embedModel === 'string' ? s.embedModel.slice(0, 128) : null,
-        embedDim: typeof s.embedDim === 'number' && Number.isFinite(s.embedDim) ? s.embedDim : null,
-        chunkCount,
+        embedModel: hasBlob && typeof s.embedModel === 'string' ? s.embedModel.slice(0, 128) : null,
+        embedDim: hasBlob && typeof s.embedDim === 'number' && Number.isFinite(s.embedDim) ? s.embedDim : null,
+        chunkCount: hasBlob ? chunkCount : 0,
         byteSize,
         createdAt: mtimeIso,
         lastAccessed: mtimeIso, // mtime 기준 — 오래된 고아는 이후 LRU 에서 자연히 먼저 밀린다

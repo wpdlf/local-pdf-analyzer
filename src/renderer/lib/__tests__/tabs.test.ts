@@ -32,7 +32,7 @@ vi.stubGlobal('window', Object.assign(window, {
   },
 }));
 
-import { switchToTab, closeTab, openNewTabView, openCollection } from '../tabs';
+import { switchToTab, closeTab, openNewTabView, openCollection, openFromSessionOnly } from '../tabs';
 import { useAppStore } from '../store';
 import type { PdfDocument } from '../../types';
 
@@ -228,6 +228,31 @@ describe('switchToTab', () => {
     const doc = useAppStore.getState().document!;
     expect(doc.images, '세션 복원은 정의상 이미지를 갖지 않는다').toEqual([]);
     expect(doc.imagesSkipped, '마커가 없으면 Vision 무음 no-op 안내가 도달 불가가 된다').toBe(true);
+  });
+
+  // QA27(A-Important): 위 마커는 "설정 OFF" 만 표현한다. 이미지 분석은 **기본 ON** 이므로
+  // 대다수 문서는 imagesSkipped=false 로 저장되고, 복원 문서는 언제나 images:[] 다 —
+  // 즉 정당한 텍스트-only PDF 와 구분이 불가능했고, 재요약이 Vision 없이 조용히 끝났다.
+  it('세션 복원이 hadImages 도 되살린다 (설정 ON 으로 파싱된 다수 경로)', async () => {
+    seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+    useAppStore.setState((s) => ({
+      openTabs: [...s.openTabs, { filePath: '/docs/photo.pdf', fileName: 'photo.pdf', pageCount: 3, docHash: 'e'.repeat(64) }],
+    }));
+    M.sessionLoad.mockResolvedValue({
+      session: {
+        schemaVersion: 1, docHash: 'e'.repeat(64), fileName: 'photo.pdf', filePath: '/docs/photo.pdf',
+        pageCount: 3, extractedText: '본문', pageTexts: ['본문', '본문', '본문'],
+        imagesSkipped: false, hadImages: true, // 설정 ON 으로 파싱돼 이미지가 12장 있었던 문서
+        chapters: [], summaries: {}, qaMessages: [], embedModel: null, embedDim: null, chunkMeta: [],
+      },
+      blob: null,
+    });
+
+    await switchToTab('/docs/photo.pdf');
+
+    const doc = useAppStore.getState().document!;
+    expect(doc.images).toEqual([]);
+    expect(doc.hadImages, 'hadImages 가 없으면 텍스트-only PDF 와 구분되지 않아 무음 no-op 이 된다').toBe(true);
   });
 
   // QA23(D-MED): 영속화 OFF + 다중 탭이면 전환이 현재 문서의 요약·Q&A 를 **경고 없이** 파기했다
@@ -599,5 +624,31 @@ describe('탭 전환/닫기 재진입 가드 (QA6-C M2)', () => {
     // 이웃(오른쪽 우선 = /docs/b.pdf) 전환만 수행 — switchToTab('/docs/c.pdf') 는 개입 못함
     expect(M.openPath).toHaveBeenCalledTimes(1);
     expect(M.openPath).toHaveBeenCalledWith('/docs/b.pdf');
+  });
+
+  // QA27(A-MED): openFromSessionOnly 는 게이트를 **검사만 하고 세우지 않던** 네 번째 형제였다.
+  it('세션-전용 열기 진행 중 두 번째 호출은 차단된다 (네 번째 형제)', async () => {
+    seedTabs([], null); // 업로드 화면 — 최근 문서/전역 검색의 진입 상태
+    let release!: (v: unknown) => void;
+    M.sessionLoad.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+
+    const first = openFromSessionOnly({ docHash: 'a'.repeat(64), fileName: 'A.pdf', filePath: '/docs/A.pdf', pageCount: 3 });
+    // 첫 호출의 session.load 가 아직 pending — 사용자가 목록의 다른 항목을 누른다.
+    const second = await openFromSessionOnly({ docHash: 'b'.repeat(64), fileName: 'B.pdf', filePath: '/docs/B.pdf', pageCount: 4 });
+    expect(second, '두 번째 호출이 게이트를 통과하면 늦게 끝난 쪽이 활성 문서가 된다').toBe(false);
+    expect(M.sessionLoad).toHaveBeenCalledTimes(1);
+
+    release({ session: { docHash: 'a'.repeat(64), extractedText: 'x'.repeat(60), pageTexts: ['x'.repeat(60)], pageCount: 3 } });
+    await first;
+    // 게이트는 반드시 해제된다 — 안 그러면 이후 모든 전환이 영구 차단된다.
+    expect(useAppStore.getState().isTabSwitching).toBe(false);
+    expect(useAppStore.getState().document?.fileName).toBe('A.pdf');
+  });
+
+  it('세션-전용 열기가 실패해도 게이트를 해제한다', async () => {
+    seedTabs([], null);
+    M.sessionLoad.mockResolvedValueOnce(null); // 세션 부재
+    await expect(openFromSessionOnly({ docHash: 'c'.repeat(64), fileName: 'C.pdf', filePath: '/docs/C.pdf', pageCount: 1 })).resolves.toBe(false);
+    expect(useAppStore.getState().isTabSwitching).toBe(false);
   });
 });
