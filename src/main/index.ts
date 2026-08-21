@@ -336,7 +336,10 @@ export function createWindow(): BrowserWindow {
       isQuitting,
       // QA23(B-MED): 설치를 요청했는데 아직 종료되지 않은 구간에서는 flush 표식을 신뢰하지
       // 않는다(설치가 무산되면 표식만 남아 이 close 가 종료 flush 를 통째로 우회했다).
-      isInstallPending: updaterService?.getState().status === 'installing',
+      // QA27(A/C-Important): 판정 근거를 상태(`status === 'installing'`)에서 **내부 잠금**으로
+      // 바꾼다. 상태는 리듀서 전이가 성공해야 세워지므로, 전이가 빗나가면(예: 복원 설치 경로가
+      // 'downloading' 에 머무는 경우) 표식만 남고 그 표식을 무시하라는 신호는 사라졌다.
+      isInstallPending: updaterService?.isInstalling() === true,
     });
     if (action === 'intercept-wait') { e.preventDefault(); return; }
     if (action === 'allow') return;
@@ -516,6 +519,19 @@ app.on('before-quit', (e) => {
 // 주입만 한다. 설치 경로가 flushRenderersBeforeQuit 를 재사용하는 것이 핵심 — 그러지 않으면
 // quitAndInstall 의 즉시 종료가 QA10/16/17/18 이 반복해서 막아온 마지막 델타 소실을 재현한다.
 let updaterService: UpdaterService | null = null;
+
+/**
+ * 테스트 전용 — 창 닫기 판정이 읽는 updater 를 주입한다.
+ *
+ * QA27(D-Important): `isInstallPending` 배선에 회귀 넷이 없었다. `isInstallPending: false` 로
+ * 바꿔도 전 스위트가 초록이다 — window-flush-policy.test 는 플래그를 **리터럴로** 넘겨 검증하고
+ * window-lifecycle.test 에는 updater 가 아예 없었기 때문이다. 그래서 QA23(B-MED)이 막은
+ * "설치가 무산돼 표식만 남은 창의 X 닫기가 종료 flush 를 우회" 하는 데이터 손실 경로가
+ * 무보호 상태였다. 순수 정책과 부작용 사이의 이 한 줄을 관측 가능하게 만든다.
+ */
+export function __setUpdaterServiceForTest(svc: UpdaterService | null): void {
+  updaterService = svc;
+}
 
 /**
  * electron-updater 캐시 디렉터리를 비운다 — 다운로드 중 체크섬 실패 시에만 호출된다(updater.ts).

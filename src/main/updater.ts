@@ -140,6 +140,16 @@ export const INSTALL_QUIT_GRACE_MS = 15000;
 
 export interface UpdaterService {
   getState(): UpdateState;
+  /**
+   * 설치를 요청했고 아직 종료되지 않았는가 — **내부 잠금을 직접** 보고한다.
+   *
+   * QA27(A/C-Important): 종전에 창 닫기 판정(`isInstallPending`)은 `getState().status ===
+   * 'installing'` 으로 이 사실을 **추론**했다. 그런데 그 상태는 리듀서 전이가 성공해야만
+   * 세워지고(prev.status === 'downloaded' 전제), 전이가 한 번이라도 빗나가면 flush 표식은
+   * 남았는데 표식을 무시하라는 신호는 사라진다 — 그 조합이 정확히 QA23(B-MED)이 막으려던
+   * 데이터 손실이다. 표식의 유효성을 상태 머신에 의존시키지 않고 잠금 그 자체를 노출한다.
+   */
+  isInstalling(): boolean;
   /** autoUpdater 이벤트 구독 + 정책 플래그 설정. 지원 환경이 아니면 no-op. */
   wire(): void;
   /** update:* IPC 핸들러 등록 */
@@ -422,11 +432,16 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
         applyError(classifyUpdateError(err));
         return state;
       }
-      // 캐시가 무효해 재다운로드까지 실패한 경우 — 여기서 멈춘다. 상태는 error 계열이므로
-      // canDownload 가 열려 사용자가 재시도할 수 있다(고착되지 않는다).
-      if (!downloadedThisProcess) {
-        applyError('updateInstallFailed');
-        return state;
+      // QA27(A/C-Important): download() 의 고착 방어를 **여기에도** 적용한다 — 형제 누락이었다.
+      // 위 download-started 로 상태는 'downloading' 인데, update-downloaded 이벤트 없이
+      // downloadUpdate 가 resolve 하면(QA24 A-M2 가 방어한 바로 그 경로) 상태가 거기 머문다.
+      // 그러면 아래 install-started 가 리듀서에서 no-op 이 되고(prev.status !== 'downloaded'),
+      // 그 파급이 UI 표시에 그치지 않는다: index.ts 의 isInstallPending 은 status==='installing'
+      // 으로 판정하므로 거짓이 되고, QA23(B-MED)이 세운 "설치가 무산돼 표식만 남은 창의 X 닫기는
+      // 종료 flush 를 우회한다" 방어선이 통째로 열린다 — 그 구간에 창을 닫으면 마지막 요약·
+      // Q&A·인덱스 델타가 디스크에 닿지 못한다.
+      if (state.status === 'downloading') {
+        apply({ type: 'downloaded', version: state.newVersion ?? '' });
       }
     }
     installing = true;
@@ -481,6 +496,7 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
 
   return {
     getState: () => state,
+    isInstalling: () => installing,
     wire,
     registerHandlers,
     check,

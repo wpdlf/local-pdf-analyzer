@@ -771,6 +771,34 @@ describe('createUpdaterService — 복원 후 설치 (QA26 Critical 회귀)', ()
     expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
   });
 
+  // QA27(A/C-Important): 복원 설치 경로는 download-started 로 상태를 'downloading' 으로 올리는데,
+  // download() 가 가진 "이벤트 없이 resolve" 고착 방어(QA24 A-M2)를 포팅하지 않았다. 그러면
+  // install-started 가 리듀서에서 no-op 이 되고(prev.status !== 'downloaded'), 그 파급은 UI 에
+  // 그치지 않는다 — index.ts 의 창 닫기 판정이 "설치 대기 아님" 으로 뒤집혀, QA23(B-MED)이 세운
+  // 종료 flush 우회 방어선이 열린다.
+  it('update-downloaded 이벤트 없이 재다운로드가 끝나도 설치 구간 상태가 세워진다', async () => {
+    const ctx = restored();
+    await toRestoredDownloaded(ctx);
+    ctx.au.autoEmitDownloaded = false; // 이벤트가 오지 않는 경로를 의도적으로 재현
+
+    await ctx.service.install();
+
+    expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
+    expect(ctx.service.getState().status, "'downloading' 에 머물면 설치 대기 판정이 거짓이 된다").toBe('installing');
+  });
+
+  it('설치 잠금은 상태 전이와 무관하게 isInstalling 으로 직접 관측된다', async () => {
+    // 창 닫기 판정이 이 값을 쓴다 — 리듀서 전이가 빗나가도 flush 표식의 유효성이 흔들리면 안 된다.
+    const ctx = restored();
+    await toRestoredDownloaded(ctx);
+    expect(ctx.service.isInstalling()).toBe(false);
+
+    ctx.au.autoEmitDownloaded = false;
+    await ctx.service.install();
+
+    expect(ctx.service.isInstalling(), '설치를 요청했는데 잠금이 거짓이면 종료 flush 가 우회된다').toBe(true);
+  });
+
   it('재다운로드가 실패해도 고착되지 않는다 (재시도 경로가 열려 있다)', async () => {
     const ctx = restored();
     await toRestoredDownloaded(ctx);

@@ -113,7 +113,7 @@ vi.mock('fs/promises', () => ({
   default: { writeFile: vi.fn(), readFile: vi.fn(), stat: vi.fn(), lstat: vi.fn(), rename: vi.fn(), mkdir: vi.fn(), rm: vi.fn(), unlink: vi.fn(), readdir: vi.fn() },
 }));
 
-import { createWindow, flushRenderersBeforeQuit, revertFlushMarks } from '../index';
+import { createWindow, flushRenderersBeforeQuit, revertFlushMarks, __setUpdaterServiceForTest } from '../index';
 
 /** 렌더러가 flush ack 를 보낸 것처럼 — app:flush-done 리스너를 그 창의 webContents 로 호출. */
 function ackFlush(win: { webContents: unknown }): void {
@@ -125,8 +125,9 @@ const FakeBW = H.FakeBrowserWindow;
 beforeEach(() => {
   FakeBW.instances.length = 0;
   H.ipcListeners.clear();
+  __setUpdaterServiceForTest(null);
 });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { vi.useRealTimers(); __setUpdaterServiceForTest(null); });
 
 describe('창 X 닫기 → flush 인터셉트 (QA16 회귀 가드)', () => {
   it('첫 close 는 가로채고 flush IPC 를 보낸다 (즉시 파괴 금지)', () => {
@@ -189,6 +190,41 @@ describe('flush 완료 후 close (이중 flush 방지)', () => {
 
     expect(prevented, '완료된 창을 또 가로채면 종료가 지연된다').toBe(false);
   });
+
+  // QA27(D-Important): 이 배선에 넷이 없었다 — `isInstallPending: false` 로 상수화해도 전
+  // 스위트가 초록이었다(정책 테스트는 플래그를 리터럴로 받고, 여기엔 updater 가 없었다).
+  // QA23(B-MED)이 막은 경로: 설치 직전 flush 로 표식이 남았는데 quitAndInstall 이 조용히
+  // 실패하면 앱은 살아 있고 표식만 남는다. 그 상태의 창 X 닫기가 'allow' 로 빠지면 그 뒤
+  // 사용자가 만든 델타(요약·Q&A·인덱스·설정)가 통째로 디스크에 닿지 못한다.
+  it('설치 대기 중에는 flush 표식을 무시하고 다시 가로챈다', async () => {
+    const win = createWindow() as unknown as InstanceType<typeof FakeBW>;
+    win.emitClose();
+    ackFlush(win);
+    await Promise.resolve();
+    await Promise.resolve();
+    win.destroyed = false; // 파괴 이후의 재close 가 아니라 "표식만 남은 창" 을 본다
+
+    __setUpdaterServiceForTest({ isInstalling: () => true } as unknown as Parameters<typeof __setUpdaterServiceForTest>[0]);
+    win.webContents.sent.length = 0;
+
+    const prevented = win.emitClose();
+
+    expect(prevented, '설치가 무산된 뒤의 close 를 그냥 통과시키면 마지막 델타가 소실된다').toBe(true);
+    expect(win.webContents.sent).toContain('app:flush-before-quit');
+  });
+
+  it('설치 대기가 아니면 종전대로 통과시킨다 (종료 지연 방지)', async () => {
+    const win = createWindow() as unknown as InstanceType<typeof FakeBW>;
+    win.emitClose();
+    ackFlush(win);
+    await Promise.resolve();
+    await Promise.resolve();
+    win.destroyed = false;
+
+    __setUpdaterServiceForTest({ isInstalling: () => false } as unknown as Parameters<typeof __setUpdaterServiceForTest>[0]);
+
+    expect(win.emitClose()).toBe(false);
+  });
 });
 
 describe('flushRenderersBeforeQuit — 대상 선정 (QA18 회귀 가드)', () => {
@@ -232,7 +268,11 @@ describe('flushRenderersBeforeQuit — 대상 선정 (QA18 회귀 가드)', () =
 // 배선 가드: updater 는 installerExists 를 **주입받아야만** 확인할 수 있다. 순수 판정이 맞아도
 // index.ts 가 주입하지 않으면 실기기에서는 그대로 앱이 조용히 꺼진다(2026-08-07 에 겪은 그것).
 describe('updater 배선 — 인스톨러 실재 확인 주입', () => {
-  const MAIN_SRC = readFileSync(resolve(import.meta.dirname, '../index.ts'), 'utf-8');
+  // QA27(D-Low): 이 describe 의 단언들은 주석을 걷어내지 않은 소스에 매칭한다. 아래 QA24 사건이
+  // 정확히 그것이었다 — 코드를 지운 뒤에도 **주석에 매칭돼** 통과했다. 형제 단언들에도 같은
+  // 처리를 적용해, 코드가 사라지면 주석이 남아도 빨개지게 한다.
+  const RAW_SRC = readFileSync(resolve(import.meta.dirname, '../index.ts'), 'utf-8');
+  const MAIN_SRC = RAW_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
   it('installerExists 를 실제 파일 확인으로 주입한다', () => {
     expect(MAIN_SRC).toMatch(/installerExists:\s*\(filePath: string\) =>\s*existsSync\(filePath\)/);
