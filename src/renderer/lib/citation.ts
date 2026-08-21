@@ -20,7 +20,11 @@
 // 보안(ReDoS): doc 그룹을 `{1,120}` 로, quote-tail 을 `{0,200}` 로 상한 — 무제한 `[^\]]*` 는
 // 닫히지 않은 파이프 인용(`[p.5| [p.5| …`, 악성 PDF→LLM)에서 시작 위치당 O(n) 백트래킹 × n
 // 개 opener = O(n²) UI 프리즈였다(QA14 B-MED: 192KB 22s). 상한으로 opener 당 백트래킹을 200 에
-// 묶어 전체 O(200·n) 선형화. quote 는 어차피 무시하므로 절단 무해. \n 제외로 줄 경계 차단.
+// 묶어 전체 O(200·n) 선형화. \n 제외로 줄 경계 차단.
+// QA27(D-Low): 종전 주석은 "quote 는 어차피 무시하므로 **절단** 무해" 라고 적었는데 사실이
+// 아니다 — 상한을 넘는 quote 는 잘리는 게 아니라 **토큰 전체가 매칭에 실패**해 그 인용이
+// 평문으로 강등된다(클릭 불가). quote 포맷은 제거된 기능의 잔재라 실사용 빈도가 사실상 0 이고
+// 상한을 풀면 위 ReDoS 가 되살아나므로 동작은 그대로 둔다 — 주석만 실제와 맞춘다.
 export const CITATION_REGEX = /\[(?:(?<doc>[^[\]|\n]{1,120}?)\s+)?p\.\s*(?<page>\d+)(?:\s*\|\s*[^\]\n]{0,200})?\s*\]/gi;
 
 /**
@@ -58,6 +62,50 @@ export function sanitizeDocLabelName(fileName: string): string {
     .trim()
     .slice(0, 110)
     .trim();
+}
+
+/**
+ * 맨 인용(`[p.N]`)에 출처 문서명을 붙여 교차 문서 라벨(`[문서명 p.N]`)로 승격한다.
+ *
+ * QA27(B-High, 조용한 오답): 교차 문서 합성(컬렉션 통합/비교 요약)은 각 멤버의 **저장된
+ * 단일-문서 요약**을 그대로 reduce 프롬프트에 넣는데, 그 요약은 정의상 맨 `[p.N]` 로 가득하다.
+ * 출처 접두는 프롬프트 지시로만 요구했으므로, 모델이 한 문장이라도 원문의 라벨을 그대로
+ * 복사하면 doc 그룹이 없는 인용이 최종 답변에 남는다. 그러면 CitationButton 은 그것을
+ * **활성 문서의 인용**으로 해석해(isCrossDoc=false → activePageCount 로 검증) 멀쩡히 클릭
+ * 가능한 버튼으로 렌더하고, 클릭하면 지금 보고 있는 문서의 그 페이지로 점프한다 —
+ * 근거는 다른 문서에 있는데. docName 이 아예 없으므로 QA21 이 세운 동명 모호성·닫힌 문서
+ * 가드는 전부 비껴간다.
+ *
+ * 모델의 지시 이행에 의존하지 않고 **입력 쪽에서 미리 승격**해, 모델이 그대로 복사해도
+ * 이미 올바른 라벨이 되게 한다. 이미 doc 접두가 있는 토큰은 손대지 않는다 — 그 멤버 요약이
+ * 또 다른 문서를 인용하고 있을 수 있고, 그 출처를 이 파일명으로 덮으면 새 오답이 된다.
+ */
+export function qualifyBareCitations(text: string, fileName: string): string {
+  const label = sanitizeDocLabelName(fileName);
+  if (!label) return text;
+  const re = new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags);
+  return text.replace(re, (raw: string, ...args: unknown[]) => {
+    const groups = args[args.length - 1] as { doc?: string; page?: string } | undefined;
+    if (!groups?.page) return raw;
+    if (groups.doc !== undefined) return raw; // 이미 출처가 붙어 있으면 그대로(다른 문서의 인용일 수 있다)
+    return `[${label} p.${groups.page}]`;
+  });
+}
+
+/**
+ * 문자 예산으로 잘린 텍스트의 **끝에 남은 반쪽 인용 토큰**을 제거한다.
+ *
+ * QA27(B-MED): 예산 절단(`slice`)은 임의 오프셋에서 자르는데, 대상은 문단마다 `[p.N]` 이 박힌
+ * LLM 출력이라 토큰 한가운데가 잘릴 확률이 낮지 않다. `[p.123]` 이 `[p.12` 로 남으면 그 자체는
+ * CITATION_REGEX 에 안 걸려 평문이 되지만, 이 텍스트는 **다음 단계 모델의 입력**이다 —
+ * 통합 요약·컬렉션 합성 모델이 그 반쪽을 보고 `[p.12]` 로 완성해 버리면, 범위 안의 번호라
+ * clampCitationPage 를 통과해 **엉뚱한 페이지를 가리키는 정상 버튼**이 된다.
+ *
+ * 상한 130 = doc 그룹 상한(120) + `p.N` 여유. 닫히지 않은 `[` 만 지우므로 완성된 토큰은
+ * `]` 를 포함해 매칭되지 않는다.
+ */
+export function stripTrailingPartialCitation(text: string): string {
+  return text.replace(/\[[^\]\n]{0,130}$/, '');
 }
 
 /**

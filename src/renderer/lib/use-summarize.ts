@@ -4,7 +4,7 @@ import { t } from './i18n';
 import { PROVIDER_LABELS, isCustomSummaryType } from '../types';
 import { AiClient } from './ai-client';
 import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
-import { normalizeCitationPlacement, CITATION_REGEX } from './citation';
+import { normalizeCitationPlacement, stripTrailingPartialCitation, CITATION_REGEX } from './citation';
 import { enrichDocumentWithImages } from './enrich-doc';
 import { slicePdfDocumentByPageRange, isFullRange } from './page-range';
 
@@ -35,11 +35,11 @@ export function isSummaryTimedOut(
  * 요약 경로는 이 함수로 단락마다 단일 라벨을 인라인 삽입해 동일 문제를 원천 회피한다.
  * use-summarize.test.ts 가 이 불변식(범위 미방출 + CITATION_REGEX 재파싱 가능)을 가드한다.
  */
-export function labelParagraphsWithPages(pageTexts: string[]): string {
+export function labelParagraphsWithPages(pageTexts: string[], startPageOffset = 0): string {
   const labeled: string[] = [];
   pageTexts.forEach((pageText, pageIdx) => {
     if (!pageText || !pageText.trim()) return;
-    const label = `[p.${pageIdx + 1}]`;
+    const label = `[p.${startPageOffset + pageIdx + 1}]`;
     const paragraphs = pageText.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
     for (const para of paragraphs) {
       // QA23(C-MED): 라벨은 **단락 앞에 한 번만** 붙는다. 그런데 마크다운 표 위주의 OCR 페이지는
@@ -54,6 +54,37 @@ export function labelParagraphsWithPages(pageTexts: string[]): string {
     }
   });
   return labeled.join('\n\n');
+}
+
+/**
+ * 챕터별 요약 경로의 페이지 라벨링 (순수 — 단위 테스트 대상).
+ *
+ * `chapter.text` 는 `pageTexts.slice(startPage-1, endPage).join('\n\n')` 이므로, 같은 slice 에
+ * 오프셋을 준 `labelParagraphsWithPages` 를 적용하면 챕터 안에서도 절대 페이지 번호가 유지된다.
+ *
+ * QA27(B-Important): 종전에는 이 로직이 `summarizeByChapter` 안에 **인라인으로 다시 구현**돼
+ * 있었다. 그래서 QA23(C-MED)이 `labelParagraphsWithPages` 에 넣은 `splitLongParagraph` 를 받지
+ * 못했고, 빈 줄 없는 OCR 표 페이지(최대 12000자)가 청킹 예산(한글 ~6000자)을 넘으면 **두 번째
+ * 조각부터 `[p.N]` 이 사라졌다**. 프롬프트(CITATION_RULES)는 "입력 텍스트의 각 단락은 [p.N] 로
+ * 시작합니다" 라고 단언하므로, 라벨 없는 조각을 받은 모델은 페이지 번호를 **지어낸다** —
+ * 그 번호가 1..pageCount 안이면 clampCitationPage 를 통과해 클릭 가능한 오답 인용이 된다.
+ * 전체·페이지범위·커스텀 경로는 같은 문서에서 정상 동작하므로 챕터 뷰만 조용히 틀렸다.
+ *
+ * 순수 함수로 분리해 **배선까지** 테스트 가능하게 한다(인라인이면 라벨링이 다시 갈라져도
+ * 순수 함수 테스트는 그대로 그린이다 — 이 저장소가 반복해 겪은 실패 모드).
+ * pageTexts 가 없는 레거시 문서는 챕터를 그대로 통과시킨다.
+ */
+export function labelChaptersWithPages<T extends { text: string; startPage: number; endPage: number }>(
+  chapters: T[],
+  pageTexts: string[] | undefined,
+): T[] {
+  const hasPageTexts = Array.isArray(pageTexts) && pageTexts.length > 0;
+  return chapters.map((ch) => {
+    if (!hasPageTexts) return { ...ch }; // 레거시 경로
+    const chapterPageTexts = pageTexts.slice(ch.startPage - 1, ch.endPage);
+    const labeled = labelParagraphsWithPages(chapterPageTexts, ch.startPage - 1);
+    return { ...ch, text: labeled || ch.text };
+  });
 }
 
 /**
@@ -136,8 +167,13 @@ export function truncateChunkSummariesForIntegration(
     for (let i = 0; i < chunkSummaries.length; i++) if (allot[i] === -1) allot[i] = share;
   }
 
+  // QA27(B-MED): 절단면이 인용 토큰 한가운데면 `[p.123]` 이 `[p.12` 로 남고, 이 텍스트는
+  // **통합 모델의 입력**이라 모델이 그 반쪽을 `[p.12]` 로 완성하면 범위 안이라 클릭 가능한
+  // 오답 인용이 된다. 반쪽 토큰을 떼고 말줄임을 붙인다.
   const parts = chunkSummaries.map((s, i) =>
-    s.length > allot[i]! ? s.slice(0, allot[i]!).trimEnd() + '…' : s,
+    s.length > allot[i]!
+      ? stripTrailingPartialCitation(s.slice(0, allot[i]!)).trimEnd() + '…'
+      : s,
   );
   return parts.join(sep) + `\n\n${truncatedLabel}`;
 }
@@ -321,27 +357,7 @@ async function summarizeByChapter(
   progressOffset: number,
 ) {
   const progressRange = 100 - progressOffset; // 요약 단계에서 사용할 진행률 범위
-  // page-citation-viewer: 챕터의 원래 페이지들을 복원해 단락별 [p.N] 라벨 적용.
-  // chapter.text 는 pageTexts.slice(startPage-1, endPage).join('\n\n') 이므로,
-  // 같은 slice 에서 labelParagraphsWithPages 를 호출해 per-page 라벨링된 텍스트 생성.
-  const hasPageTexts = Array.isArray(doc.pageTexts) && doc.pageTexts.length > 0;
-  const labeledChapters = doc.chapters.map((ch) => {
-    if (!hasPageTexts) {
-      return { ...ch }; // 레거시 경로
-    }
-    const chapterPageTexts = doc.pageTexts.slice(ch.startPage - 1, ch.endPage);
-    // labelParagraphsWithPages 는 0-based index 를 가정 → pageIdx 를 startPage-1 만큼 shift 필요
-    const labeled = chapterPageTexts
-      .map((pt, i) => {
-        if (!pt || !pt.trim()) return '';
-        const label = `[p.${ch.startPage + i}]`;
-        const paragraphs = pt.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
-        return paragraphs.map((para) => `${label} ${para}`).join('\n\n');
-      })
-      .filter(Boolean)
-      .join('\n\n');
-    return { ...ch, text: labeled || ch.text };
-  });
+  const labeledChapters = labelChaptersWithPages(doc.chapters, doc.pageTexts);
   const chaptersData = chunkChapters(labeledChapters, settings.maxChunkSize);
   const total = chaptersData.reduce((sum, c) => sum + c.chunks.length, 0);
   // 모든 챕터의 청크가 비어있는 경우 → chunkText가 [] 반환(공백뿐인 텍스트)
@@ -808,8 +824,15 @@ export function useSummarize() {
       // QA6-D: 파싱 당시 이미지 분석 OFF 로 추출이 스킵된 문서(imagesSkipped)는 지금 ON 이어도
       // 분석할 이미지가 메모리에 없어 무음 no-op 이었다 — 재오픈 안내로 표면화(텍스트-only PDF
       // 의 정당한 images=0 과 마커로 구분).
-      if (currentSettings.enableImageAnalysis && doc.images.length === 0 && doc.imagesSkipped) {
-        useAppStore.getState().setNotice({ message: t('summary.imagesSkippedNotice') });
+      // QA27(A-Important): 마커가 "설정 OFF" 만 표현해 **소수 케이스만** 덮고 있었다. 이미지
+      // 분석은 기본 ON 이고 세션 복원 문서는 언제나 images:[] 이므로, 탭을 옮겼다 돌아오거나
+      // 재기동 후 최근 문서로 연 문서는 imagesSkipped=false + images:[] 가 되어 정당한
+      // 텍스트-only PDF 와 구분되지 않았다 — 재요약이 Vision 없이 조용히 끝났다.
+      // 두 사유는 사용자가 할 일이 다르므로(설정을 켜라 / 문서를 다시 열어라) 문구를 나눈다.
+      if (currentSettings.enableImageAnalysis && doc.images.length === 0 && (doc.imagesSkipped || doc.hadImages)) {
+        useAppStore.getState().setNotice({
+          message: t(doc.imagesSkipped ? 'summary.imagesSkippedNotice' : 'summary.imagesUnloadedNotice'),
+        });
       }
       if (doc.images.length > 0 && currentSettings.enableImageAnalysis) {
         setProgressInfo({

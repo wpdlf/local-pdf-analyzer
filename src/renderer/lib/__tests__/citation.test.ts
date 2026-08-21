@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCitations, formatPageLabel, clampCitationPage, CITATION_REGEX, normalizeCitationPlacement, stripCitations, sanitizeDocLabelName } from '../citation';
+import { parseCitations, formatPageLabel, clampCitationPage, CITATION_REGEX, normalizeCitationPlacement, stripCitations, sanitizeDocLabelName, qualifyBareCitations, stripTrailingPartialCitation } from '../citation';
 
 describe('parseCitations', () => {
   it('단일 인용을 3 세그먼트로 분리한다', () => {
@@ -439,6 +439,38 @@ describe('소스 위생 (QA25)', () => {
     };
     walk(root);
     expect(offenders).toEqual([]);
+  });
+
+  it('QA27(B-High): 맨 인용은 출처를 붙여 승격하고, 이미 출처가 있는 인용은 건드리지 않는다', () => {
+    // 교차 문서 합성의 입력(멤버 요약)은 전부 맨 `[p.N]` 이다. 모델이 그대로 복사하면
+    // parseCitations 가 docName 없이 파싱해 **활성 문서**의 인용으로 렌더된다.
+    const src = '결론이다[p.7]. 그리고 다른 근거[Alpha.pdf p.3] 도 있다.';
+    const out = qualifyBareCitations(src, 'Beta.pdf');
+    expect(out).toContain('[Beta.pdf p.7]');
+    // 다른 문서의 인용을 이 파일명으로 덮으면 새 오답이 된다.
+    expect(out).toContain('[Alpha.pdf p.3]');
+    // 승격 결과는 반드시 doc 그룹으로 재파싱돼야 한다(라벨 생산↔소비 왕복 불변식).
+    const segs = parseCitations(out).filter((s) => s.type === 'citation');
+    expect(segs.map((s) => (s as { docName?: string }).docName)).toEqual(['Beta.pdf', 'Alpha.pdf']);
+  });
+
+  it('QA27(B-High): 승격에 쓰는 문서명은 sanitizeDocLabelName 을 거친다(소비자와 같은 함수)', () => {
+    // 정규화하지 않으면 doc 그룹(`[^[\]|\n]`)에 걸리지 않아 인용이 평문으로 강등된다.
+    const out = qualifyBareCitations('본문[p.2]', '[2024] Report|v2.pdf');
+    const segs = parseCitations(out).filter((s) => s.type === 'citation');
+    expect(segs).toHaveLength(1);
+    expect((segs[0] as { docName?: string }).docName).toBe(sanitizeDocLabelName('[2024] Report|v2.pdf'));
+  });
+
+  it('QA27(B-MED): 예산 절단이 남긴 반쪽 인용을 제거한다(완성 토큰은 보존)', () => {
+    // `[p.123]` 이 `[p.12` 로 잘리면 다음 단계 모델이 `[p.12]` 로 완성해 오답 인용이 된다.
+    expect(stripTrailingPartialCitation('앞 문장[p.1] 뒷 문장[p.12')).toBe('앞 문장[p.1] 뒷 문장');
+    // 닫힌 토큰은 그대로.
+    expect(stripTrailingPartialCitation('문장[p.12]')).toBe('문장[p.12]');
+    // 인용이 없으면 무변화.
+    expect(stripTrailingPartialCitation('그냥 문장')).toBe('그냥 문장');
+    // 잘린 잔해가 재파싱에서 인용으로 살아나지 않는다.
+    expect(parseCitations(stripTrailingPartialCitation('본문[Beta.pdf p.4')).some((s) => s.type === 'citation')).toBe(false);
   });
 
   it('인용만 있는 줄 판정이 공백을 공백으로 다룬다', () => {

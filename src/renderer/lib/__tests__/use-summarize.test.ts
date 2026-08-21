@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { labelParagraphsWithPages, truncateChunkSummariesForIntegration } from '../use-summarize';
+import { labelParagraphsWithPages, labelChaptersWithPages, truncateChunkSummariesForIntegration } from '../use-summarize';
 import { parseCitations, CITATION_REGEX } from '../citation';
 
 /**
@@ -131,5 +131,61 @@ describe('truncateChunkSummariesForIntegration — 통합요약 비례 절단', 
     const out = truncateChunkSummariesForIntegration(['짧음', 'L'.repeat(500)], 60, LABEL);
     expect(out).toContain('짧음'); // 짧은 청크는 무손실
     expect(out).toContain('…');    // 긴 청크는 말줄임
+  });
+
+  it('QA27(B-MED): 절단면이 인용 토큰 한가운데여도 반쪽 토큰을 남기지 않는다', () => {
+    // 이 결과물은 **통합 모델의 입력**이다. `[p.123]` 이 `[p.12` 로 남으면 모델이 그것을
+    // 완성해 범위 안의 오답 페이지를 확신 있게 인용한다.
+    // 절단 지점이 인용 중간에 오도록 본문 길이를 맞춘다.
+    const long = 'A'.repeat(60) + '[p.123]' + 'B'.repeat(200);
+    for (let budget = 55; budget <= 70; budget++) {
+      const out = truncateChunkSummariesForIntegration([long], budget, LABEL);
+      expect(out, `budget=${budget} 에서 반쪽 인용이 남았다`).not.toMatch(/\[[^\]\n]*…/);
+      // 살아남은 인용은 전부 온전한 토큰으로 재파싱된다.
+      for (const seg of parseCitations(out)) {
+        if (seg.type === 'citation') expect(seg.page).toBe(123);
+      }
+    }
+  });
+});
+
+/**
+ * QA27(B-Important): 챕터 경로의 페이지 라벨링.
+ *
+ * `summarizeByChapter` 안에 라벨링이 **인라인으로 다시 구현**돼 있어서 QA23 의 긴 단락 처리를
+ * 받지 못했다 — 순수 함수 테스트(위 describe)가 전부 그린인데 챕터 뷰만 라벨을 잃는 구조였다.
+ * 배선을 순수 함수로 뽑았으므로 여기서 그 배선 자체를 가드한다.
+ */
+describe('labelChaptersWithPages — 챕터 경로 라벨링 배선', () => {
+  const chapter = (title: string, startPage: number, endPage: number) =>
+    ({ title, text: '', startPage, endPage });
+
+  it('챕터 시작 페이지 오프셋이 절대 페이지 번호로 반영된다', () => {
+    const pageTexts = ['1쪽', '2쪽', '3쪽', '4쪽', '5쪽'];
+    const out = labelChaptersWithPages([chapter('2장', 3, 5)], pageTexts);
+    expect(out[0]!.text).toContain('[p.3] 3쪽');
+    expect(out[0]!.text).toContain('[p.5] 5쪽');
+    // 챕터 안에서 1부터 다시 세면(오프셋 누락) 인용이 통째로 어긋난다.
+    expect(out[0]!.text).not.toContain('[p.1]');
+  });
+
+  it('빈 줄 없는 거대 페이지도 챕터 경로에서 조각마다 라벨을 유지한다(QA23 형제 적용)', () => {
+    // 인라인 구현으로 되돌아가면(splitLongParagraph 미적용) 이 단언이 깨진다.
+    const huge = '가'.repeat(9000); // 표 위주 OCR 페이지
+    const out = labelChaptersWithPages([chapter('1장', 4, 4)], ['a', 'b', 'c', huge]);
+    const segments = out[0]!.text.split('\n\n');
+    expect(segments.length, '한 덩어리로 남으면 청킹 후 라벨 없는 조각이 생긴다').toBeGreaterThan(1);
+    expect(segments.every((s) => s.startsWith('[p.4] ')), '모든 조각이 라벨을 가져야 한다').toBe(true);
+  });
+
+  it('pageTexts 가 없는 레거시 문서는 챕터 본문을 그대로 통과시킨다', () => {
+    const legacy = { ...chapter('1장', 1, 2), text: '원본 본문' };
+    expect(labelChaptersWithPages([legacy], undefined)[0]!.text).toBe('원본 본문');
+    expect(labelChaptersWithPages([legacy], [])[0]!.text).toBe('원본 본문');
+  });
+
+  it('라벨링 결과가 비면(빈 페이지들) 원본 본문으로 폴백한다', () => {
+    const ch = { ...chapter('1장', 1, 2), text: '원본 본문' };
+    expect(labelChaptersWithPages([ch], ['   ', '\n\n'])[0]!.text).toBe('원본 본문');
   });
 });

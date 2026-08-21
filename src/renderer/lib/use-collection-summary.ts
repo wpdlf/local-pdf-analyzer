@@ -3,6 +3,7 @@ import { AiClient } from './ai-client';
 import { resolveMembers } from './collection';
 import { t } from './i18n';
 import { sanitizePromptInput } from './use-qa';
+import { qualifyBareCitations, stripTrailingPartialCitation } from './citation';
 import { isCustomSummaryType } from '../types';
 import type { PersistedSession, ResolvedMember, SummaryType, AppSettings } from '../types';
 
@@ -200,7 +201,12 @@ async function gatherMemberBlocks(
       ? summary.slice(0, MEMBER_SUMMARY_CHARS)
       : (typeof text === 'string' ? text.slice(0, MEMBER_EXCERPT_CHARS) : null);
     if (!raw || !raw.trim()) continue;
-    const content = raw.length > budget ? raw.slice(0, budget) : raw;
+    const capped = raw.length > budget ? raw.slice(0, budget) : raw;
+    // QA27(B-High/B-MED): 예산 절단은 임의 오프셋이라 반쪽 인용을 남기고, 멤버 요약의 인용은
+    // 전부 **맨 `[p.N]`**(단일 문서 형식)이다. reduce 모델이 그대로 복사하면 출처 없는 인용이
+    // 최종 답변에 남아 활성 문서로 점프한다(citation.ts qualifyBareCitations 주석 참조).
+    // 지시로 요구하는 대신 입력에서 승격해, 복사돼도 이미 올바른 라벨이 되게 한다.
+    const content = qualifyBareCitations(stripTrailingPartialCitation(capped), m.fileName);
     if (!content.trim()) continue; // 예산 절단으로 공백만 남은 블록은 제외(빈 헤더 방지)
     budget -= content.length;
     blocks.push({ fileName: m.fileName, content });

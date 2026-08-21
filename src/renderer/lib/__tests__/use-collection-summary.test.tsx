@@ -35,6 +35,7 @@ vi.stubGlobal('crypto', { randomUUID: () => 'test-uuid' });
 import { buildCollectionSummaryPrompt, generateCollectionSummary, abortCollectionGather } from '../use-collection-summary';
 import { useAppStore } from '../store';
 import { VectorStore } from '../vector-store';
+import { CITATION_REGEX } from '../citation';
 
 const MODEL = 'm';
 
@@ -154,6 +155,40 @@ describe('generateCollectionSummary (L2)', () => {
     expect(msgs.at(-1)?.content).toContain('통합 결과');       // 본문
     expect(msgs.at(-1)?.content).toContain('통합 요약');       // 결과 배지(제목)
     expect(msgs.some((m) => m.role === 'user')).toBe(true); // 요청 메시지
+  });
+
+  it('QA27(B-High): 멤버 요약의 맨 [p.N] 은 reduce 프롬프트에서 출처가 붙은 라벨로 승격된다', async () => {
+    // 승격하지 않으면 모델이 그대로 복사한 `[p.7]` 이 **활성 문서(Alpha.pdf)** 의 인용으로
+    // 렌더돼, 베타의 근거를 알파 7쪽으로 확신 있게 점프시킨다(docName 이 없어 QA21 의
+    // 동명 모호성·닫힌 문서 가드도 전부 비껴간다).
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf',
+        h === 'a'.repeat(64) ? '알파 근거[p.2] 이다.' : '베타 근거[p.7] 이다.', 'fulltext')));
+
+    await generateCollectionSummary('unified');
+
+    expect(M.prompt).toContain('[Alpha.pdf p.2]');
+    expect(M.prompt).toContain('[Beta.pdf p.7]');
+    // 출처 없는 인용이 프롬프트에 하나도 남지 않아야 한다 — 남으면 모델이 그것을 복사한다.
+    const bare = Array.from(M.prompt.matchAll(new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags)))
+      .filter((m) => m.groups?.doc === undefined);
+    expect(bare, '맨 인용이 reduce 프롬프트에 남아 있다').toHaveLength(0);
+  });
+
+  it('QA27(B-High): 이미 출처가 붙은 인용은 멤버 파일명으로 덮어쓰지 않는다', async () => {
+    // 멤버 요약이 또 다른 문서를 인용하고 있을 수 있다 — 그 출처를 이 파일명으로 바꾸면 새 오답.
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf',
+        h === 'a'.repeat(64) ? '알파 요약' : '외부 근거[Gamma.pdf p.9] 참조.', 'fulltext')));
+
+    await generateCollectionSummary('unified');
+
+    expect(M.prompt).toContain('[Gamma.pdf p.9]');
+    expect(M.prompt).not.toContain('[Beta.pdf p.9]');
   });
 
   it('요약 없는 멤버는 인라인 생성 후 영속화 + 생성분으로 합성', async () => {
