@@ -88,7 +88,16 @@ describe('createWindow 배선 가드', () => {
   });
 
   it('고정 크기로 되돌아가지 않았다 (하드코딩 복귀 차단)', () => {
-    const literal = /new BrowserWindow\(\{[\s\S]{0,200}?\bwidth:\s*\d+/;
-    expect(MAIN_SRC).not.toMatch(literal);
+    // QA27(D-Low): 창이 200자였다 — 옵션 객체 앞쪽 200자를 넘긴 자리에 `width: 1200` 을 넣으면
+    // 그대로 통과했다. 생성부 옵션 객체 전체를 보고, 주석은 걷어낸 뒤 판정한다.
+    const start = MAIN_SRC.indexOf('new BrowserWindow({');
+    expect(start, 'BrowserWindow 생성부를 찾지 못했다 — 가드가 무력화된 상태다').toBeGreaterThan(-1);
+    const end = MAIN_SRC.indexOf('});', start);
+    expect(end).toBeGreaterThan(start);
+    const code = MAIN_SRC.slice(start, end)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    expect(code, '창 크기가 다시 하드코딩됐다').not.toMatch(/\bwidth:\s*\d+/);
+    expect(code, '창 크기가 다시 하드코딩됐다').not.toMatch(/\bheight:\s*\d+/);
   });
 });

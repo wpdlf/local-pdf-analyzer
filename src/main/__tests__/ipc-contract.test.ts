@@ -70,7 +70,9 @@ describe('main IPC contract — ai:* handler shape (Top5 #2)', () => {
       /ipcMain\.handle\(['"]ai:generate['"][\s\S]{0,600}?validateGenerateRequest\(\s*requestId\s*,\s*request\s*\)/,
     );
     // SSRF/길이 캡 로직이 단일 출처(ipc-validators)에 실제로 존재하는지 확인.
-    expect(VALIDATORS_SRC).toMatch(/isLocalhostHost/);
+    // QA27(D-Low): 이름의 존재만 보면 **import 줄**에 매칭돼 실제 호출을 전부 지워도 통과했다
+    // (isLocalhostHost 는 shared/constants 에서 오므로 이 파일엔 정의부가 없다). 호출부를 특정한다.
+    expect(VALIDATORS_SRC).toMatch(/isLocalhostHost\(parsed\.hostname\)/);
     expect(VALIDATORS_SRC).toMatch(/\['http:',\s*'https:'\]/);
     // QA25(B-LOW): 이전 패턴은 `/requestId.*256|256/` 였다 — 교대(`|`) 때문에 파일 어딘가에
     // `256` 이 있기만 하면 통과하는 항진명제였고, 주석의 `sha256` 에도 매칭됐다. 정의부를 특정한다.
@@ -116,9 +118,12 @@ describe('main IPC contract — ai:* handler shape (Top5 #2)', () => {
 
   it('ai-service 단일 출처 import — registerEmbedRequest / unregisterEmbedRequest / cleanupAiService', () => {
     // 임베딩 측의 controller 등록/해제도 ai-service 에 위임 (R29 identity check 정합성).
-    expect(INDEX_SRC).toMatch(/registerEmbedRequest/);
-    expect(INDEX_SRC).toMatch(/unregisterEmbedRequest/);
-    expect(INDEX_SRC).toMatch(/cleanupAiService/);
+    // QA27(D-Low): 종전 단언은 이름의 **존재**만 봤는데, 이 파일들은 그 이름을 import 줄에서
+    // 이미 한 번 쓴다 — 즉 호출을 전부 지워도 import 만 남으면 통과했다(noUnusedLocals 없음).
+    // 호출 형태로 특정한다.
+    expect(INDEX_SRC).toMatch(/registerEmbedRequest\(/);
+    expect(INDEX_SRC).toMatch(/unregisterEmbedRequest\(/);
+    expect(INDEX_SRC).toMatch(/cleanupAiService\(/);
   });
 
   it('ai:embed handler 가 controller 등록 후 abort 가능한 형태', () => {

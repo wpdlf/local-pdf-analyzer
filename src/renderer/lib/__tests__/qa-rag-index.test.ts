@@ -25,7 +25,9 @@ import { useAppStore } from '../store';
 beforeEach(() => {
   const s = useAppStore.getState();
   s.ragIndex.clear();
-  s.setRagState({ isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0 });
+  // QA27(D-MED): `error` 를 리셋하지 않아 한 테스트가 세운 'embedFailed' 가 모듈 스코프
+  // Zustand 를 타고 뒤 테스트로 샜다(셔플에서 드러나는 순서 의존).
+  s.setRagState({ isIndexing: false, progress: null, isAvailable: false, model: null, chunkCount: 0, error: null });
   useAppStore.setState({ document: null });
   mockCheckEmbedModel.mockReset();
   mockEmbed.mockReset();
@@ -41,6 +43,10 @@ describe('buildRagIndex — 임베딩 가용성', () => {
     expect(useAppStore.getState().ragState.isAvailable).toBe(false);
     expect(useAppStore.getState().ragIndex.size).toBe(0);
     expect(mockEmbed).not.toHaveBeenCalled();
+    // 이 분기는 메모리 인덱스를 **비우지 않는다** — 그래서 error 표식이 없어도 디스크 인덱스가
+    // 위험하지 않다(preserveDiskIndex 는 size===0 일 때만 필요해진다). 아래 실패 분기들과
+    // 계약이 다르다는 사실 자체를 고정한다.
+    expect(useAppStore.getState().ragState.error).toBeNull();
   });
 });
 
@@ -100,6 +106,8 @@ describe('buildRagIndex — 방어 분기', () => {
     const ok = await buildRagIndex(TEXT, 'doc1', new AbortController().signal);
     expect(ok).toBe(false);
     expect(useAppStore.getState().ragIndex.size).toBe(0);
+    // QA27(D-MED): 배치 실패 경로도 같은 조인을 지켜야 한다(형제 단언).
+    expect(useAppStore.getState().ragState.error).toBe('embedFailed');
   });
 
   it('이미 abort 된 signal 이면 임베딩 없이 false 반환 (인덱스 무손상)', async () => {

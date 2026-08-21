@@ -26,6 +26,8 @@ vi.mock('../../lib/tabs', () => ({ switchToTab: mockSwitchToTab }));
 
 import { CitationButton } from '../CitationButton';
 import { useAppStore } from '../../lib/store';
+// QA27(D-Important): 실물 모듈을 그대로 쓴다 — vi.mock 으로 대체하면 배선이 아니라 목을 검증하게 된다.
+import { restoreCitationFocus } from '../../lib/citation-focus';
 
 function setDocument(pageCount: number): void {
   useAppStore.setState({
@@ -296,5 +298,37 @@ describe('CitationButton — 교차 문서 인용 (multi-doc Phase 2)', () => {
     render(<CitationButton page={3} docName="report.pdf" />);
     expect(screen.queryByRole('button')).toBeNull();
     expect(screen.getByText('[p.3]').getAttribute('aria-disabled')).toBe('true');
+  });
+
+  // QA27(D-Important): citation-focus 의 **배선**은 무보호였다. 그 모듈의 테스트 헤더가
+  // "CitationButton 의 등록을 지워도 그린이었다" 고 스스로 적어 놓았는데, 이후에도 순수 홀더만
+  // 테스트해 그 문장이 여전히 참이었다. 등록이 사라지면 인용 패널을 닫았을 때 포커스가 <body>
+  // 로 유실돼(QA14 가 고친 a11y 회귀) 키보드·SR 사용자가 읽던 위치를 잃는다.
+  it('인용 클릭이 포커스 반환 트리거를 등록한다 (패널 닫힘 후 복귀 지점)', async () => {
+    const user = userEvent.setup();
+    setDocument(10);
+    render(<CitationButton page={4} />);
+    const btn = screen.getByRole('button');
+
+    await user.click(btn);
+
+    // 패널이 닫힐 때 복원이 이 버튼으로 포커스를 되돌려야 한다.
+    (document.body as HTMLElement).focus();
+    restoreCitationFocus();
+    expect(document.activeElement, '등록이 없으면 포커스가 body 에 남는다').toBe(btn);
+  });
+
+  it('클릭하지 않았으면 복원은 아무것도 하지 않는다 (1회성 소비)', async () => {
+    const user = userEvent.setup();
+    setDocument(10);
+    render(<CitationButton page={4} />);
+    const btn = screen.getByRole('button');
+    await user.click(btn);
+    restoreCitationFocus(); // 1회 소비
+    (document.body as HTMLElement).focus();
+
+    restoreCitationFocus(); // 두 번째는 무효
+
+    expect(document.activeElement).not.toBe(btn);
   });
 });

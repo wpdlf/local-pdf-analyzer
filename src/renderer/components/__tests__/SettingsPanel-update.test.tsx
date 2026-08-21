@@ -12,7 +12,7 @@ import type { UpdateState } from '../../../shared/update-types';
 // QA24(B-L3): 게이트 규칙의 원본. update-policy 는 electron 비의존 순수 모듈이라 테스트에서
 // 직접 import 해 렌더러의 손으로 옮겨 적은 조건과 대조할 수 있다(프로덕션 렌더러 코드는
 // main/ 을 import 하지 않는다 — 이 대조는 테스트 층에서만 한다).
-import { canCheck } from '../../../main/update-policy';
+import { canCheck, canInstall } from '../../../main/update-policy';
 
 const updateMock = {
   getState: vi.fn<() => Promise<UpdateState>>(),
@@ -108,6 +108,25 @@ describe('SettingsPanel — 앱 업데이트 섹션', () => {
         !btn.hasAttribute('disabled'),
         `status=${status} 에서 UI 와 canCheck 가 어긋나면 클릭이 조용히 폐기되거나 정당한 조작이 막힌다`,
       ).toBe(canCheck(status));
+    },
+  );
+
+  // QA27(D-Low): "재시작하여 설치" 의 노출 조건도 canInstall 을 손으로 옮겨 적은 것이고,
+  // downloaded 한 상태에서만 검증돼 있었다. 조건을 넓히면(예: 'installing' 포함) 인스톨러
+  // 이중 spawn 클래스가 되살아나는데 전 스위트가 초록이다 — 확인 버튼이 같은 이유로 이미
+  // 파리티 루프를 받았으므로 형제에도 적용한다.
+  it.each<UpdateState['status']>(['idle', 'checking', 'available', 'downloading', 'downloaded', 'installing', 'not-available', 'error'])(
+    '"재시작하여 설치" 노출 여부가 canInstall(%s) 와 일치한다',
+    async (status) => {
+      await renderWith(state({
+        status,
+        newVersion: status === 'idle' || status === 'not-available' ? null : '1.1.0',
+      }));
+      const shown = screen.queryByRole('button', { name: t('update.installBtn') }) !== null;
+      expect(
+        shown,
+        `status=${status} 에서 UI 와 canInstall 이 어긋나면 설치가 막히거나 이중 spawn 이 열린다`,
+      ).toBe(canInstall(status));
     },
   );
 

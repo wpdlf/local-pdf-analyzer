@@ -23,18 +23,38 @@ const PRELOAD_SRC = readFileSync(
   'utf-8',
 ).replace(/\r\n/g, '\n');
 
+/**
+ * QA27(D-Important): 아래 시그니처 가드들은 파일 **전체**를 대상으로 돌았는데, 모든 키와
+ * 시그니처가 이 파일에 **두 번** 나온다 — `exposeInMainWorld` 의 실제 배선과 `export type
+ * ElectronAPI` 의 타입 선언. 그래서 배선에서 인자를 지워도 타입 블록이 그대로면 통과했다
+ * (예: analyzeImage 의 requestId 를 배선에서만 빼면 Vision abort 가 조용히 죽는데 tsc 도
+ * 타입이 그대로라 침묵한다). 검사 대상을 **배선 구간으로 잘라** 그 구멍을 닫는다.
+ */
+const WIRING_SRC = (() => {
+  const start = PRELOAD_SRC.indexOf('exposeInMainWorld(');
+  const end = PRELOAD_SRC.indexOf('export type ElectronAPI');
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error('preload 배선 구간을 찾지 못했습니다 — 이 가드가 조용히 무력화되지 않도록 즉시 실패시킨다');
+  }
+  return PRELOAD_SRC.slice(start, end);
+})();
+
 describe('preload contextBridge shape (R34 P2)', () => {
   it('expose target 은 정확히 `electronAPI` 라는 이름이어야 한다', () => {
     expect(PRELOAD_SRC).toMatch(/exposeInMainWorld\(['"]electronAPI['"]/);
   });
 
   it('top-level 키 집합 — ollama / ai / file / settings / apiKey / update / openExternal / onSetupProgress / onFileDropped', () => {
+    // QA27(D-Important): 목록이 stale 했고(session/collections 누락) 대상이 파일 전체라
+    // `exposeInMainWorld` 에서 블록을 통째로 지워도 타입 선언의 같은 들여쓰기에 매칭돼 통과했다.
+    // 배선 구간만 보고, 목록도 실제 노출 surface 에 맞춘다.
     const expectedTopKeys = [
       'ollama:', 'ai:', 'file:', 'settings:', 'apiKey:', 'update:',
+      'session:', 'collections:',
       'openExternal:', 'onSetupProgress:', 'onFileDropped:', 'getPathForFile:',
     ];
     for (const key of expectedTopKeys) {
-      expect(PRELOAD_SRC).toContain(`  ${key}`);
+      expect(WIRING_SRC, `${key} 가 실제 노출 배선에 없다`).toContain(`  ${key}`);
     }
   });
 
@@ -51,11 +71,16 @@ describe('preload contextBridge shape (R34 P2)', () => {
   });
 
   it('ai.embed 시그니처는 (texts, requestId?) — R29 회귀 가드', () => {
-    expect(PRELOAD_SRC).toMatch(/embed:\s*\(texts:\s*string\[\],\s*requestId\?:\s*string\)/);
+    expect(WIRING_SRC).toMatch(/embed:\s*\(texts:\s*string\[\],\s*requestId\?:\s*string\)/);
+    // QA27(D-Important): 시그니처만 보면 배선이 그 인자를 **실제로 넘기는지**는 알 수 없다.
+    // ocrPage 가 이 두 번째 단언 덕분에 유일하게 실질을 지키고 있었다 — 형제에도 적용한다.
+    expect(WIRING_SRC).toMatch(/ipcRenderer\.invoke\(\s*['"]ai:embed['"],\s*texts,\s*requestId\s*\)/);
   });
 
   it('ai.analyzeImage 시그니처는 (imageBase64, requestId?) — R30 P2 회귀 가드', () => {
-    expect(PRELOAD_SRC).toMatch(/analyzeImage:\s*\(imageBase64:\s*string,\s*requestId\?:\s*string\)/);
+    expect(WIRING_SRC).toMatch(/analyzeImage:\s*\(imageBase64:\s*string,\s*requestId\?:\s*string\)/);
+    // requestId 를 넘기지 않으면 Vision abort 가 조용히 죽는다(문서 전환·Stop 시 클라우드 과금 지속).
+    expect(WIRING_SRC).toMatch(/ipcRenderer\.invoke\(\s*['"]ai:analyze-image['"],\s*imageBase64,\s*requestId\s*\)/);
   });
 
   it('openExternal 은 https:// prefix 가드 + invoke 직접 wiring 유지', () => {

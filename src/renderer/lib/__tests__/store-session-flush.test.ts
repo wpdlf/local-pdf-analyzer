@@ -38,7 +38,7 @@ const H = vi.hoisted(() => {
   return { flushBeforeQuitDone, holder };
 });
 
-import { flushPendingWrites } from '../store';
+import { flushPendingWrites, useAppStore } from '../store';
 import { persistCurrentSession } from '../use-session';
 
 const flushBeforeQuitDone = H.flushBeforeQuitDone;
@@ -72,6 +72,44 @@ describe('flushPendingWrites → 세션 flush (QA8 MED)', () => {
     expect(persistCurrentSession).toHaveBeenCalledWith(true); // QA12: 종료 handshake 도 flush 경로
     // persist promise 착지 후 정확히 1회 ack
     await new Promise((r) => setTimeout(r));
+    expect(flushBeforeQuitDone).toHaveBeenCalledTimes(1);
+  });
+
+  // QA27(D-Important): QA24(I5)가 "세션과 설정 **둘 다** 착지한 뒤 ack" 로 고쳤는데, 이 파일은
+  // settingsFlushed 를 한 번도 언급하지 않아 그 항이 늘 미리 resolve 된 상태였다 —
+  // `return persisted` 로 되돌려도 전 스위트가 초록이었다. 실제 손실은 "설정 화면에서 커스텀
+  // 템플릿을 저장하고 곧바로 종료" 할 때의 300ms 디바운스분이다.
+  it('종료 handshake: 대기 중인 설정 IPC 가 착지할 때까지 ack 하지 않는다 (QA24 I5)', async () => {
+    flushBeforeQuitDone.mockClear();
+    vi.mocked(persistCurrentSession).mockClear();
+
+    // 설정 변경 → 300ms 디바운스 대기 상태(pendingSettingsPayload + 타이머)를 만든다.
+    let releaseSettings!: () => void;
+    const settingsSet = vi.mocked(window.electronAPI.settings.set);
+    settingsSet.mockImplementationOnce(() => new Promise((r) => { releaseSettings = () => r(undefined as never); }) as ReturnType<typeof settingsSet>);
+    useAppStore.getState().updateSettings({
+      ...useAppStore.getState().settings,
+      customSummaryTemplates: [{ id: 't1', name: '새 템플릿', prompt: '요약해줘' }],
+    });
+
+    H.holder.cb!();
+    await new Promise((r) => setTimeout(r));
+    expect(settingsSet, 'flush 가 디바운스 대기분을 즉시 발화해야 한다').toHaveBeenCalled();
+    expect(flushBeforeQuitDone, '설정이 디스크에 닿기 전에 ack 하면 그 변경이 종료에 잘린다').not.toHaveBeenCalled();
+
+    releaseSettings();
+    await new Promise((r) => setTimeout(r));
+    expect(flushBeforeQuitDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('종료 handshake: 설정 IPC 가 reject 해도 ack 는 발화한다 (quit 무한보류 방지)', async () => {
+    flushBeforeQuitDone.mockClear();
+    vi.mocked(window.electronAPI.settings.set).mockRejectedValueOnce(new Error('EBUSY'));
+    useAppStore.getState().updateSettings({ ...useAppStore.getState().settings, theme: 'dark' });
+
+    H.holder.cb!();
+    await new Promise((r) => setTimeout(r));
+
     expect(flushBeforeQuitDone).toHaveBeenCalledTimes(1);
   });
 

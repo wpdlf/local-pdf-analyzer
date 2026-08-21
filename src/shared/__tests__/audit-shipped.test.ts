@@ -48,16 +48,27 @@ afterAll(() => {
 function runGate(pkg: unknown, lock: unknown, audit: unknown) {
   writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg));
   writeFileSync(join(dir, 'package-lock.json'), JSON.stringify(lock));
+  // QA27(D-High): 성공 경로에서 **검사 범위**(폐포 크기·대상 이름)는 stdout 이 아니라
+  // GITHUB_STEP_SUMMARY 에만 적힌다. 그것을 주지 않으면 테스트는 종료코드만 보게 되고,
+  // 폐포가 통째로 쪼그라들어도(= 취약점을 못 보게 돼도) 전부 초록이다. 파일을 물려 관측한다.
+  const summaryPath = join(dir, 'step-summary.md');
+  writeFileSync(summaryPath, '');
   const r = spawnSync(process.execPath, [SCRIPT], {
     cwd: dir,
     input: JSON.stringify(audit),
     encoding: 'utf8',
     timeout: SPAWN_TIMEOUT_MS,
+    env: { ...process.env, GITHUB_STEP_SUMMARY: summaryPath },
   });
   // 자식이 매달리면 vitest 의 테스트 타임아웃을 통째로 먹고 "어느 단계에서 멈췄는지" 단서 없이
   // 끝난다. 여기서 먼저 끊고 원인을 이름 붙여 던진다.
   if (r.error) throw new Error(`게이트 실행 실패: ${r.error.message}`);
-  return { code: r.status, out: r.stdout ?? '', err: r.stderr ?? '' };
+  return {
+    code: r.status,
+    out: r.stdout ?? '',
+    err: r.stderr ?? '',
+    summary: readFileSync(summaryPath, 'utf8'),
+  };
 }
 
 const highVuln = (title: string) => ({
@@ -167,7 +178,38 @@ describe('audit-shipped 게이트', { timeout: 30000 }, () => {
     // advisory 없는 입력이므로 여기서 보는 것은 "폐포 계산이 실제 lockfile 에서 터지지 않는가".
     const r = runGate(pkg, lock, { vulnerabilities: {} });
     expect(r.code).toBe(0);
-    expect(r.out).not.toContain('lockfile 에서 못 찾음');
+    // QA27(D-High): 종전 단언은 `not.toContain('lockfile 에서 못 찾음')` 이었는데, 그 문자열은
+    // **저장소 어디에도 없다**(스크립트가 내는 것은 'lockfile 에서 찾지 못했습니다'). 즉 발화가
+    // 구조적으로 불가능한 단언이었고, 이 게이트의 유일한 "범위 축소" 감시가 비어 있었다.
+    // 실제로 내는 경고 형태로 고정한다.
+    expect(r.out).not.toContain('lockfile 에서 찾지 못했습니다');
+    expect(r.out).not.toContain('::warning::');
+  });
+
+  // QA27(D-High): 위 테스트가 죽은 문자열을 보는 동안, 폐포가 11개 루트에서 1개로 쪼그라들어도
+  // 전부 초록이었다(예: 폐포 진입 조건에 `!nodes[cand].dev` 를 더하면 shippedDevDependencies 가
+  // 전부 lockfile 상 dev:true 라 통째로 빠진다). 그러면 QA24 가 닫은 pdfjs-dist "악성 PDF →
+  // 임의 JS 실행" 사각이 **블로킹 게이트가 초록인 채로** 되살아난다. 실제 검사 범위를 관측한다.
+  it('실제 저장소에서 검사 범위가 조용히 줄어들지 않는다 (폐포 하한)', () => {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'));
+    const lock = JSON.parse(readFileSync(join(REPO_ROOT, 'package-lock.json'), 'utf8'));
+    const r = runGate(pkg, lock, { vulnerabilities: {} });
+
+    // 배포 표면의 핵심 루트들이 검사 대상 목록에 실제로 들어 있어야 한다.
+    for (const name of ['pdfjs-dist', 'react', 'katex', 'electron-updater']) {
+      expect(r.summary, `${name} 이 검사 범위에서 빠졌다`).toContain(name);
+    }
+    // 앱 셸(QA26 D-High 로 편입)도 범위 안이어야 한다.
+    expect(r.summary).toContain('electron');
+
+    // 전이 폐포는 루트 수보다 훨씬 커야 한다 — "루트 N → 전이 포함 M" 에서 M 이 무너지면
+    // 전이 의존 취약점(QA25 의 js-yaml)이 다시 보이지 않게 된다.
+    const m = /루트 (\d+) → 전이 포함 (\d+)/.exec(r.summary);
+    expect(m, '검사 범위 요약이 출력되지 않았다').not.toBeNull();
+    const roots = Number(m![1]);
+    const closure = Number(m![2]);
+    expect(roots).toBeGreaterThanOrEqual(8);
+    expect(closure, '전이 폐포가 루트 수준으로 붕괴했다').toBeGreaterThan(roots * 3);
   });
 });
 

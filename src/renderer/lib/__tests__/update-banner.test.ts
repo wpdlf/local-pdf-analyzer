@@ -118,8 +118,15 @@ describe('App 배선 가드', () => {
     // 다운로드 버튼에 게이트가 붙으면 요약 중인 사용자는 업데이트를 받아둘 수조차 없다.
     const installBlock = /update\.install\(\)[\s\S]{0,600}?disabled=\{updateInstallBusy\}/;
     expect(APP_SRC).toMatch(installBlock);
+    // QA27(D-MED): 정규식이 빗나가면 `''` 가 되고, 빈 문자열은 아래 **부정 단언을 만족**한다 —
+    // 즉 이 가드는 자기가 아무것도 못 찾았을 때 가장 조용히 통과한다. 창(400자)을 넘기거나
+    // `disabled=` 를 `onClick` 위로 옮기기만 해도 그렇게 된다. 추출 성공을 먼저 못박는다.
     const downloadBlock = /update\.download\(\)[\s\S]{0,400}?<\/button>/.exec(APP_SRC)?.[0] ?? '';
+    expect(downloadBlock, '다운로드 버튼 블록을 추출하지 못했다 — 가드가 무력화된 상태다').not.toBe('');
     expect(downloadBlock).not.toMatch(/disabled=/);
+    // 속성 순서에 의존하지 않는 실질 단언: 버튼 요소 자체가 게이트를 달고 있지 않아야 한다.
+    const downloadButton = /<button[^>]*onClick=\{\(\) => [^}]*update\.download\(\)[\s\S]{0,400}?<\/button>/.exec(APP_SRC)?.[0] ?? '';
+    if (downloadButton) expect(downloadButton).not.toMatch(/disabled=\{updateInstallBusy\}/);
   });
 });
 
