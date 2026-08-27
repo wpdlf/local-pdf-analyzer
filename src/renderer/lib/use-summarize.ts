@@ -177,7 +177,7 @@ export function truncateChunkSummariesForIntegration(
   );
   return parts.join(sep) + `\n\n${truncatedLabel}`;
 }
-import type { PdfDocument, DefaultSummaryType, AppSettings, ProgressInfo, AppError, SummaryTemplate } from '../types';
+import type { PdfDocument, DefaultSummaryType, ActiveSummaryType, AiProviderType, AppSettings, ProgressInfo, AppError, SummaryTemplate } from '../types';
 
 // TrackFn은 요약 파이프라인 내부에서만 사용되며 'qa' 타입은 호출되지 않음.
 // 'qa'는 use-qa.ts 의 handleAsk 에서 ai-client.summarize 를 직접 호출하는 별도 경로.
@@ -634,8 +634,26 @@ export function useSummarize() {
   const setError = useAppStore((s) => s.setError);
   const clientRef = useRef<AiClient | null>(null);
   const timeoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * QA29(C-3, 데이터손실): 스트림이 **환경 요인**으로 끊겼을 때 이미 받아 둔 부분 요약.
+   *
+   * catch 는 배너만 세우고 setSummary 를 호출하지 않는데, `summaryStreamComplete` 를 세우는
+   * 것은 setSummary 뿐이고(store.ts:543) 자동저장 게이트는 그 플래그를 요구한다(use-session.ts:281).
+   * 그래서 화면에는 보이는 토큰이 **디스크에 한 글자도 닿지 않은 채** 다음 문서 전환에서
+   * 사라졌다 — 로컬 모델이 20분 돌다 언로드되면 그 20분이 통째로 없어진다.
+   *
+   * 라운드 19 는 이 커밋을 의도적으로 보류했지만 그 근거는 **사용자 중단**(재시도 의사가 있다)
+   * 만 고려했다. 자동 커밋은 QA12 의 "생성 중 skip 과 구분" 원칙을 깨므로 하지 않고, 사용자가
+   * 명시적으로 승인할 때만 커밋한다(getPartialRecovery().commit).
+   */
+  const partialRecoveryRef = useRef<{
+    docId: string; type: ActiveSummaryType; content: string; model: string; provider: AiProviderType; durationMs: number;
+  } | null>(null);
 
   const handleAbort = useCallback(() => {
+    // QA29(C-3): 사용자 중단은 라운드 19 판단대로 **재시도 의사**로 해석한다 — 부분 저장 제안을
+    // 남기지 않는다(제안이 남으면 중단 직후 뜬 배너가 이전 실패의 것인지 헷갈린다).
+    partialRecoveryRef.current = null;
     // 타임아웃 타이머 클리어 — 사용자 수동 abort 시 이중 abort 방지
     if (timeoutTimerRef.current) {
       clearTimeout(timeoutTimerRef.current);
@@ -710,6 +728,9 @@ export function useSummarize() {
     }
 
     setIsGenerating(true);
+    // QA29(C-3): 새 run 이 시작하면 이전 실패의 부분 저장 제안은 무효다 — 남겨 두면 이 run 의
+    // 스트림을 지운 자리(clearStream)에 **이전 run 의 본문**을 커밋할 수 있다.
+    partialRecoveryRef.current = null;
     // QA18(A-MED): 이 run 이 만들 스트림의 소유 타입을 등록 — 중단·실패로 setSummary 가
     // 호출되지 않아도 영속 경로가 올바른 타입 키로 저장한다.
     clearStream(currentSummaryType);
@@ -1026,9 +1047,31 @@ export function useSummarize() {
         const validCodes = new Set(['PDF_NO_TEXT', 'GENERATE_TIMEOUT', 'API_KEY_MISSING', 'API_KEY_INVALID', 'OLLAMA_NOT_RUNNING']);
         const code = (rawCode && validCodes.has(rawCode) ? rawCode : 'GENERATE_FAIL') as AppError['code'];
         const message = err instanceof Error ? err.message : String(err);
+        // QA29(C-3, 데이터손실): 이미 받아 둔 토큰이 있으면 **버리기 전에** 사용자에게 저장
+        // 기회를 준다. 여기서 자동 커밋하지 않는 이유는 QA12 원칙 — 자동저장이 "생성 중"과
+        // "완주"를 구분하는 유일한 신호가 summaryStreamComplete 이고, 실패한 run 을 완주로
+        // 위장하면 그 구분이 사라진다. 승인 경로(getPartialRecovery)만 열어 둔다.
+        // 소유권: 이 run 이 아직 훅을 소유할 때만 — stale run 이 새 run 의 스트림을 자기
+        // 부분물로 착각해 제안하는 것을 막는다.
+        let recoverable = '';
+        if (clientRef.current === runClient) {
+          try { flushStream(); } catch { /* 버퍼 flush 실패는 무시 */ }
+          recoverable = useAppStore.getState().summaryStream;
+        }
+        if (recoverable.trim()) {
+          partialRecoveryRef.current = {
+            docId: doc.id,
+            type: currentSummaryType,
+            content: recoverable,
+            model: currentSettings.model,
+            provider: currentSettings.provider,
+            durationMs: Date.now() - startTime,
+          };
+        }
         setError({
           code,
-          message: message || t('ai.generateFail'),
+          message: (message || t('ai.generateFail'))
+            + (partialRecoveryRef.current ? ` ${t('summary.partialRecoveryHint')}` : ''),
         });
       }
     } finally {
@@ -1051,5 +1094,47 @@ export function useSummarize() {
     }
   };
 
-  return { handleSummarize, handleAbort };
+  /**
+   * QA29(C-3): 중단된 요약의 부분 저장 제안. 제안이 없으면 null — UI 는 이 값이 있을 때만
+   * 배너에 버튼 하나를 그리면 된다(`label` 을 그대로 쓰고 클릭에 `commit` 호출).
+   *
+   * `commit` 은 사용자의 승인이 있을 때만 호출돼야 하며, 커밋 시점에 조건이 바뀌었으면
+   * (새 요약이 돌고 있거나 문서가 교체됨) 아무 것도 하지 않고 false 를 돌려준다.
+   */
+  const getPartialRecovery = useCallback((): { label: string; commit: () => boolean } | null => {
+    if (!partialRecoveryRef.current) return null;
+    return {
+      label: t('summary.partialRecoverAction'),
+      commit: () => {
+        const pending = partialRecoveryRef.current;
+        if (!pending) return false;
+        const st = useAppStore.getState();
+        // 새 run 이 돌고 있으면 그 스트림을 덮어쓰게 되고, 문서가 바뀌었으면 남의 세션 파일에
+        // 이 본문이 기록된다(QA20 C-MED 가 성공 커밋 경로에서 막은 것과 같은 오염).
+        if (st.isGenerating || st.document?.id !== pending.docId) return false;
+        partialRecoveryRef.current = null;
+        // 절단 표식은 이 파일의 기존 규약(INTEGRATION_LABELS.truncated)과 같은 자리·형식 —
+        // 본문 말미에 대괄호 한 줄. 저장본만 봐도 미완성임을 알 수 있어야 한다.
+        const marked = `${pending.content.trimEnd()}\n\n${t('summary.partialMarker')}`;
+        st.replaceSummaryStream(marked);
+        // setSummary 가 summaryStreamComplete 를 세워 자동저장 게이트를 통과시킨다 —
+        // 영속 경로가 실제로 집는 값은 summaryStream 이므로 replace 가 먼저다.
+        st.setSummary({
+          id: crypto.randomUUID(),
+          documentId: pending.docId,
+          type: pending.type,
+          content: marked,
+          model: pending.model,
+          provider: pending.provider,
+          createdAt: new Date(),
+          durationMs: pending.durationMs,
+        });
+        st.setError(null);
+        st.setNotice({ message: t('summary.partialSaved') });
+        return true;
+      },
+    };
+  }, []);
+
+  return { handleSummarize, handleAbort, getPartialRecovery };
 }

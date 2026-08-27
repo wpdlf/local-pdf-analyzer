@@ -30,6 +30,9 @@ const M = vi.hoisted(() => ({
   // 호출 진입 시점에 동기적으로 시계를 밀면 배치 진행 중에 찍히는 진행률 신호가 낄 틈이 없어
   // 실제와 다른 타이밍이 된다 — 그래서 대기로 재현한다.
   imageDelayMs: 0,
+  // QA29(C-3): N 개의 토큰을 내보낸 **뒤** 스트림이 환경 요인으로 죽는 상황(모델 언로드·연결
+  // 단절). null 이면 정상 완주. 사용자 abort 와 달리 ABORTED 코드가 아니라 일반 실패다.
+  throwAfterTokens: null as number | null,
 }));
 
 vi.mock('../ai-client', () => ({
@@ -42,7 +45,12 @@ vi.mock('../ai-client', () => ({
       M.summarizeCalls.push({ text, type });
       // 첫 호출만 gate 에서 대기 (race 재현). 이후 호출은 즉시 진행.
       if (M.gate && M.summarizeCalls.length === 1) { await M.gate; }
-      for (const tk of M.tokens) { M.onToken?.(); yield tk; }
+      let sent = 0;
+      for (const tk of M.tokens) {
+        if (M.throwAfterTokens !== null && sent >= M.throwAfterTokens) throw new Error('model unloaded');
+        M.onToken?.(); yield tk; sent++;
+      }
+      if (M.throwAfterTokens !== null && sent >= M.throwAfterTokens) throw new Error('model unloaded');
     }
     async analyzeImage(_b: string, _r?: string): Promise<string | null> {
       M.imageCalls++;
@@ -91,6 +99,7 @@ beforeEach(() => {
   M.imageGate = null;
   M.onToken = null;
   M.imageDelayMs = 0;
+  M.throwAfterTokens = null;
   abortMock.mockClear();
   useAppStore.setState({
     settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableImageAnalysis: false },
@@ -558,5 +567,99 @@ describe('useSummarize — 페이지 범위 요약 배선 (QA25)', () => {
     });
     await runSummarize();
     expect(useAppStore.getState().enrichedPageTexts).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QA29(C-3, 데이터손실): 스트림이 **환경 요인**(모델 언로드·네트워크 단절)으로 끊기면 catch 는
+// 배너만 세우고 setSummary 를 호출하지 않는다. 그런데 `summaryStreamComplete` 를 세우는 것은
+// setSummary 뿐이고(store.ts) 자동저장 게이트는 그 플래그를 요구한다(use-session.ts) — 그래서
+// 화면에 보이는 토큰이 디스크에 한 글자도 닿지 못한 채 다음 문서 전환에서 사라졌다.
+//
+// 자동 커밋은 QA12 의 "생성 중 skip 과 구분" 원칙을 깨므로 하지 않는다. 사용자가 승인하는
+// 경로만 연다: 실패 배너에 저장 액션을 노출하고, 그 액션이 부분 표식과 함께 커밋한다.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('useSummarize — 중단된 부분 요약의 승인 저장 (QA29 C-3)', () => {
+  async function runUntilStreamFailure() {
+    M.tokens = ['앞부분 ', '요약 내용'];
+    M.throwAfterTokens = 2; // 두 토큰을 받은 뒤 모델이 죽는다
+    const { result } = renderHook(() => useSummarize());
+    await act(async () => { await result.current.handleSummarize(); });
+    return result;
+  }
+
+  it('실패 직후에는 자동 커밋하지 않는다 — 화면엔 남지만 완주 표시는 서지 않는다', async () => {
+    await runUntilStreamFailure();
+    const st = useAppStore.getState();
+    expect(st.error?.code).toBe('GENERATE_FAIL');
+    expect(st.summary, '실패한 run 이 완주본으로 자동 커밋됐다').toBeNull();
+    expect(st.summaryStreamComplete, '미완주인데 자동저장 게이트가 열렸다').toBe(false);
+    expect(st.summaryStream).toContain('앞부분 요약 내용');
+    // 배너가 저장 가능함을 알린다 — 안내가 없으면 사용자는 액션의 존재를 모른다.
+    expect(st.error?.message).toContain('저장할 수 있습니다');
+  });
+
+  it('승인하면 부분 표식과 함께 커밋되어 자동저장 게이트를 통과한다', async () => {
+    const result = await runUntilStreamFailure();
+    const rec = result.current.getPartialRecovery();
+    expect(rec, '부분 저장 액션이 노출되지 않았다').not.toBeNull();
+    expect(rec!.label.trim().length).toBeGreaterThan(0);
+
+    let ok = false;
+    await act(async () => { ok = rec!.commit(); });
+    expect(ok).toBe(true);
+
+    const st = useAppStore.getState();
+    expect(st.summary?.content).toContain('앞부분 요약 내용');
+    expect(st.summary?.type).toBe('full');
+    expect(st.summary?.documentId).toBe('doc-1');
+    expect(st.summaryStreamComplete, '커밋했는데 자동저장 게이트가 닫혀 있다').toBe(true);
+    // 영속 경로가 실제로 집는 값은 summaryStream 이다 — 표식이 여기에도 들어가야 한다.
+    expect(st.summaryStream).toContain('앞부분 요약 내용');
+    expect(st.summaryStream, '미완성 표식이 없다 — 저장본만 보면 완성본과 구별되지 않는다').toMatch(/\[\.\.\./);
+    expect(st.summary?.content).toMatch(/\[\.\.\./);
+    expect(st.error, '저장했는데 실패 배너가 남아 있다').toBeNull();
+    expect(st.notice).not.toBeNull();
+    // 한 번 커밋하면 제안은 사라진다(중복 커밋 방지).
+    expect(result.current.getPartialRecovery()).toBeNull();
+  });
+
+  it('사용자 Stop 은 제안을 남기지 않는다 (라운드 19 판단 유지 — 재시도 의사)', async () => {
+    M.tokens = ['앞부분 ', '요약 내용'];
+    const { result } = renderHook(() => useSummarize());
+    await act(async () => { await result.current.handleSummarize(); });
+    await act(async () => { result.current.handleAbort(); });
+    expect(result.current.getPartialRecovery()).toBeNull();
+  });
+
+  it('토큰을 한 개도 못 받고 실패하면 제안하지 않는다 (빈 요약 커밋 방지)', async () => {
+    M.tokens = ['앞부분 '];
+    M.throwAfterTokens = 0; // 첫 토큰 전에 죽는다
+    const { result } = renderHook(() => useSummarize());
+    await act(async () => { await result.current.handleSummarize(); });
+    expect(useAppStore.getState().error?.code).toBe('GENERATE_FAIL');
+    expect(useAppStore.getState().error?.message).not.toContain('저장할 수 있습니다');
+    expect(result.current.getPartialRecovery()).toBeNull();
+  });
+
+  it('새 요약이 시작되면 이전 실패의 제안은 폐기된다 (새 스트림에 옛 본문 커밋 금지)', async () => {
+    const result = await runUntilStreamFailure();
+    expect(result.current.getPartialRecovery()).not.toBeNull();
+    M.throwAfterTokens = null;
+    M.tokens = ['새 ', '요약'];
+    await act(async () => { await result.current.handleSummarize(); });
+    expect(result.current.getPartialRecovery()).toBeNull();
+    expect(useAppStore.getState().summary?.content).toContain('새 요약');
+  });
+
+  it('문서가 교체된 뒤의 승인은 거부된다 (남의 세션 파일 오염 방지)', async () => {
+    const result = await runUntilStreamFailure();
+    const rec = result.current.getPartialRecovery();
+    useAppStore.setState({ document: makeDoc({ id: 'doc-2', fileName: 'b.pdf' }) });
+    let ok = true;
+    await act(async () => { ok = rec!.commit(); });
+    expect(ok).toBe(false);
+    expect(useAppStore.getState().summary).toBeNull();
+    expect(useAppStore.getState().summaryStreamComplete).toBe(false);
   });
 });

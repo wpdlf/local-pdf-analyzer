@@ -68,6 +68,13 @@ export const _translations = {
   'summary.imagesUnloadedNotice': { ko: '저장된 분석 상태에서 복원된 문서라 이미지가 메모리에 없습니다. 이미지 분석을 포함해 요약하려면 원본 파일을 다시 열어주세요.', en: 'This document was restored from a saved session, so its images are not in memory. Reopen the original file to include image analysis in the summary.' },
   'summary.templateNotFound': { ko: '선택한 커스텀 요약 템플릿을 찾을 수 없습니다. 설정에서 삭제되었을 수 있어요.', en: 'The selected custom summary template was not found. It may have been deleted in settings.' },
   'summary.customTruncated': { ko: '문서가 길어 앞부분만으로 커스텀 요약을 생성했습니다. 뒷부분 내용은 포함되지 않았을 수 있어요.', en: 'The document is long, so the custom summary was generated from the beginning only. Later content may not be included.' },
+  // QA29(C-3, 데이터손실): 스트림이 환경 요인(모델 언로드·네트워크 단절)으로 끊기면 이미 받아 둔
+  // 토큰이 화면에만 남고 디스크에는 한 글자도 닿지 않는다 — 자동 커밋은 "생성 중 skip 과 구분"
+  // (QA12) 을 깨므로, 사용자가 승인할 때만 저장한다. 아래 4개가 그 경로의 문구.
+  'summary.partialRecoveryHint': { ko: '지금까지 생성된 부분은 저장할 수 있습니다.', en: 'You can still save the portion generated so far.' },
+  'summary.partialRecoverAction': { ko: '생성된 부분까지 저장', en: 'Save what was generated' },
+  'summary.partialMarker': { ko: '[... 이하 생략 — 요약이 중단되어 여기까지만 저장되었습니다]', en: '[... truncated — the summary was interrupted, so only this much was saved]' },
+  'summary.partialSaved': { ko: '중단된 요약을 생성된 부분까지 저장했습니다.', en: 'Saved the interrupted summary up to the portion that was generated.' },
   // Vision 실패 시 전체 요약을 막지 않고 텍스트 전용으로 강등할 때의 비차단 안내.
   'ai.imageAnalysisSkipped': { ko: '이미지 분석을 건너뛰고 텍스트만 요약했습니다 (Vision 모델 없음/실패 — llava 등 설치 시 이미지 포함).', en: 'Skipped image analysis and summarized text only (no/failed Vision model — install e.g. llava to include images).' },
   'ai.summaryTimeout': { ko: '요약 시간이 초과되었습니다. 생성된 부분까지 표시됩니다. 청크 크기를 줄이거나 경량 모델을 사용해보세요.', en: 'Summary timed out. The portion generated so far is shown. Try reducing chunk size or using a lighter model.' },

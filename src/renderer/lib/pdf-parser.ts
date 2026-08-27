@@ -227,8 +227,82 @@ export function assemblePageText(items: readonly unknown[]): string {
  */
 export function countEmptyPages(pageTexts: readonly string[]): { empty: number; total: number; significant: boolean } {
   const total = pageTexts.length;
-  const empty = pageTexts.filter((p) => !p || p.replace(/\s+/g, '').length === 0).length;
+  const empty = pageTexts.filter((p) => isBlankOcrPage(p)).length;
   return { empty, total, significant: total > 0 && empty >= 2 && empty / total > 0.1 };
+}
+
+/**
+ * QA29(C-1/C-2): "이 페이지는 아무것도 얻지 못했다" 의 단일 판정(순수).
+ * OCR 회로차단기(진행 중)와 최종 실패 판정, 그리고 위 통지 판정이 **같은 기준**을 보도록 한다.
+ */
+export function isBlankOcrPage(text: string | undefined | null): boolean {
+  return !text || text.replace(/\s+/g, '').length === 0;
+}
+
+/**
+ * QA29(C-1): **연속 전량공란 배치** 상한 = 3.
+ *
+ * 1~2 로 두면 오탐이 실제로 가능하다 — 스캔본의 간지·사진 전용 페이지가 배치 하나를 통째로
+ * 채우는 일은 흔하고, 클라우드 429 가 짧게 한 배치를 쓸어가는 일도 있다. 3 배치 연속으로
+ * **단 한 글자도** 못 얻는 것은 그런 우연으로 설명되지 않는다(= runner 고착·자격증명 만료·
+ * 모델 미탑재 같은 지속 상태). 비용 상한도 함께 본다: Ollama BATCH_SIZE=3 × callVision
+ * timeoutMs 90s 기준 최악 3×3×90s ≈ 13분에서 끊긴다(종전엔 300페이지 = 100배치 ≈ 2.5시간
+ * 동안 isParsing 게이트가 요약·Q&A·컬렉션을 잠갔다).
+ */
+export const OCR_BLANK_BATCH_STREAK_LIMIT = 3;
+
+/**
+ * QA29(C-2): 문서 전체에서 허용하는 **공란 페이지 비율** 상한 = 30%.
+ *
+ * 종전 판정은 `ocrText.trim().length < 50` 이라는 절대 문자수 하나였다. 300페이지 중 앞 10장만
+ * OCR 된 뒤 Ollama 가 죽어도 그 10장이 50자를 가볍게 넘으므로 파싱은 **성공**으로 끝나고,
+ * 자동저장이 나머지 290장의 빈 pageTexts 를 같은 docHash 의 **디스크 세션 위에 덮어썼다**
+ * (재드롭은 handlePdfData 경로라 세션-우선 복원이 없다 — tabs.ts 의 탭 전환 전용).
+ * 30% 는 "정상 스캔본의 간지·사진 페이지"(경험적으로 한 자릿수 %)와 "파이프라인이 도중에
+ * 죽었다"(대개 절반 이상 공란) 사이의 넉넉한 분리선이다. 10~30% 구간은 종전대로 부분 실패
+ * 통지(pdf.ocrPartialFailNotice)만 띄운다 — 두 임계가 겹치지 않게 맞춰 둔 값이기도 하다.
+ */
+export const OCR_BLANK_PAGE_RATIO_LIMIT = 0.3;
+
+/**
+ * 비율 판정의 **절대 하한**. 2페이지 문서의 간지 1장(50%)처럼 표본이 너무 작아 비율이
+ * 의미를 갖지 못하는 경우를 배제한다(통지 판정의 `empty >= 2` 와 같은 이유·같은 값).
+ */
+export const OCR_BLANK_PAGE_MIN_COUNT = 2;
+
+export type OcrAbortReason = 'blankStreak' | 'blankRatio' | null;
+
+export interface OcrHealthObservation {
+  /** 직전까지 **연속으로 전 페이지가 공란**이던 배치 수. */
+  consecutiveBlankBatches: number;
+  /** 지금까지 OCR 을 마친 페이지 수(공란 포함). */
+  processedPages: number;
+  /** 그중 공란으로 돌아온 페이지 수. */
+  blankPages: number;
+}
+
+/**
+ * QA29(C-1/C-2): OCR 중단 판정 — **순수**. 관측치를 주입받아 결정만 내린다
+ * (update-policy.ts / window-flush-policy.ts / isSummaryTimedOut 과 같은 분리 원칙).
+ * 파이프라인을 모킹하지 않고도 경계값을 단위 테스트로 고정할 수 있다.
+ *
+ * - `'inProgress'`(배치 루프): 연속 전량공란 스트릭만 본다. 진행 중 비율은 표본이 앞쪽에
+ *   치우쳐 있어 정상 문서(표지 몇 장이 먼저 나오는 스캔본)를 오탐할 수 있다.
+ * - `'final'`(전 페이지 완료): 스트릭 + 전체 공란 비율.
+ *
+ * 반환값이 null 이 아니면 호출자는 OCR_FAIL 로 중단한다 — **아무것도 영속되지 않는다**는
+ * 것이 이 판정의 핵심 계약이다(부분 결과를 성공으로 저장하면 온전한 세션을 파괴한다).
+ */
+export function ocrAbortReason(
+  obs: OcrHealthObservation,
+  phase: 'inProgress' | 'final',
+): OcrAbortReason {
+  if (obs.consecutiveBlankBatches >= OCR_BLANK_BATCH_STREAK_LIMIT) return 'blankStreak';
+  if (phase !== 'final') return null;
+  if (obs.processedPages <= 0) return null;
+  if (obs.blankPages < OCR_BLANK_PAGE_MIN_COUNT) return null;
+  if (obs.blankPages / obs.processedPages > OCR_BLANK_PAGE_RATIO_LIMIT) return 'blankRatio';
+  return null;
 }
 
 /**
@@ -398,7 +472,19 @@ export async function parsePdf(
       throwIfAborted(signal);
       const ocrPages = await ocrFallback(pdf, pageCount, options.onOcrProgress ?? (() => {}), signal);
       const ocrText = ocrPages.join('\n\n');
-      if (ocrText.trim().length < 50) {
+      // QA29(C-2): **부분 실패를 성공으로 끝내지 않는다.** 종전 판정은 절대 문자수 하나여서,
+      // 300페이지 중 앞 10장만 OCR 된 뒤 파이프라인이 죽어도 그 10장이 50자를 넘으면 파싱이
+      // 성공으로 끝났다 — 통지 배너 한 장만 뜨고, 자동저장이 나머지 290장의 빈 pageTexts 를
+      // 같은 docHash 의 디스크 세션 위에 덮어썼다(재드롭은 handlePdfData 경로라 세션-우선
+      // 복원이 없다 → 잘 OCR 됐던 세션이 파괴된다). 이제 **공란 페이지 비율**로 판정한다.
+      // 절대 문자수 조건은 그대로 둔다 — 비율이 낮아도(공란은 아닌데) 문서 전체가 잡음 몇 글자뿐인
+      // 경우를 잡는 별개 조건이다.
+      const { empty: blankPages, total: processedPages } = countEmptyPages(ocrPages);
+      const ocrVerdict = ocrAbortReason(
+        { consecutiveBlankBatches: 0, processedPages, blankPages },
+        'final',
+      );
+      if (ocrVerdict !== null || ocrText.trim().length < 50) {
         throw Object.assign(new Error(t('uploader.ocrFail')), {
           code: 'OCR_FAIL',
         });
@@ -530,6 +616,13 @@ async function ocrFallback(
   // 대용량 PDF: 50+ 페이지 시 scale 자동 축소
   const scale = pageCount > 100 ? 1.0 : pageCount > 50 ? 1.5 : 2.0;
 
+  // QA29(C-1): **무진전 회로차단기.** per-page catch 와 배치 catch 가 ABORTED 외 모든 실패를
+  // '' 로 삼켜서, 루프는 실패를 한 번도 세지 않고 언제나 pageCount 까지 완주했다. Ollama 가
+  // 고착되면(서비스는 살아 있고 runner 만 멈춘 상태 — 모델 교체 중에 흔하다) 페이지마다
+  // callVision 의 timeoutMs 90초를 통째로 태운다. 요약 경로는 QA19/20 이 정확히 이 회로차단기를
+  // 세웠는데(isSummaryTimedOut) OCR 만 형제가 없었다.
+  let consecutiveBlankBatches = 0;
+
   for (let i = 0; i < pageCount; i += BATCH_SIZE) {
     // 취소 체크 — 배치 사이에 조기 종료
     throwIfAborted(signal);
@@ -589,6 +682,24 @@ async function ocrFallback(
     });
     pages.push(...results);
     onProgress(Math.min(i + BATCH_SIZE, pageCount), pageCount);
+
+    // QA29(C-1): 배치가 **전량 공란**이면 스트릭을 올리고, 한 장이라도 건졌으면 리셋한다
+    // (간헐적 실패는 정상 동작으로 본다 — 차단 대상은 "지속적으로 아무것도 못 얻는 상태").
+    // 판정은 순수 함수에 위임해 테스트와 기준을 공유한다. ABORTED 전파 경로는 위 catch 들이
+    // 그대로 유지하며, 여기서 던지는 OCR_FAIL 은 parsePdf 의 try/finally 를 타고 loadingTask 를
+    // 정리한 뒤 상위로 나간다 — 부분 결과는 **저장되지 않는다**(C-2 와 같은 계약).
+    consecutiveBlankBatches = results.every((text) => isBlankOcrPage(text))
+      ? consecutiveBlankBatches + 1
+      : 0;
+    if (ocrAbortReason(
+      { consecutiveBlankBatches, processedPages: pages.length, blankPages: 0 },
+      'inProgress',
+    ) !== null) {
+      console.warn(
+        `[pdf-parser] OCR 연속 ${consecutiveBlankBatches}개 배치가 전량 공란 — 중단 (page ${pages.length}/${pageCount})`,
+      );
+      throw Object.assign(new Error(t('uploader.ocrFail')), { code: 'OCR_FAIL' });
+    }
   }
   return pages;
 }

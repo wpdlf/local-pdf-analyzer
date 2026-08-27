@@ -13,6 +13,8 @@
 import { normalizeToFloat32, dotClamped } from '../shared/vector-math';
 import type { GlobalSearchResult, SearchSnippet, SemanticSearchResponse } from '../shared/session-types';
 import { listSessions, readIndexMeta, readIndexBlob, readSessionMeta } from './session-store';
+// QA29(C-4): 무캡 팬아웃 + 동기 코사인 루프가 main 을 초 단위로 잡던 것을 캡 + 양보로 바꾼다.
+import { mapWithConcurrency, SESSION_FANOUT_LIMIT } from './async-pool';
 
 const TOP_K_PER_DOC = 3;
 const MIN_SCORE = 0.3; // RAG_MIN_SCORE 와 동일 — 약한 유사도 노이즈 컷 (renderer 와 일치)
@@ -25,11 +27,31 @@ interface ChunkMetaLite {
   pageStart?: number;
 }
 
+/**
+ * 예산 절단으로 끝에 남은 **반쪽 인용 토큰**을 제거한다.
+ *
+ * QA29(A-5): `slice(0, SNIPPET_MAX_CHARS)` 는 임의 오프셋에서 자르는데, 대상은 문단마다
+ * `[p.N]` 이 박힌 본문이라 토큰 한가운데가 잘릴 확률이 낮지 않다. `[p.123]` 이 `[p.12` 로
+ * 남으면 렌더러 인용 파서에 안 걸려 평문이 되지만 — 지금은 표시 전용이라 Low 다 — 잘린 조각이
+ * 그대로 노출되는 것 자체가 QA27(B-MED)/QA28/QA29 가 반복해서 잡아온 것과 **같은 모양**이다.
+ *
+ * main 은 src/renderer 를 import 할 수 없다(빌드 경계). 인용 정규식을 src/shared 로 옮기는
+ * 선택지도 있었지만 그러려면 renderer/lib/citation.ts 를 손대야 하고, 이 라운드에서는 다른
+ * 에이전트가 그 트리를 동시에 편집 중이라 충돌을 만든다. 여기서는 **닫히지 않은 `[` 꼬리만**
+ * 지우는 최소 로컬 구현을 둔다 — renderer 의 stripTrailingPartialCitation 과 같은 계약이며
+ * 상한 130(= doc 그룹 상한 120 + `p.N` 여유)도 같다. 완성된 토큰은 `]` 를 포함하므로 매칭되지
+ * 않는다. (인용 문법이 바뀌면 shared 승격을 재검토한다.)
+ */
+function stripTrailingPartialCitation(text: string): string {
+  return text.replace(/\[[^\]\n]{0,130}$/, '');
+}
+
 function chunkSnippet(text: string, pageStart?: number): SearchSnippet {
   const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length <= SNIPPET_MAX_CHARS) return { page: pageStart ?? 0, text: t };
   return {
     page: pageStart ?? 0, // 0 = 페이지 메타 없음
-    text: t.length > SNIPPET_MAX_CHARS ? t.slice(0, SNIPPET_MAX_CHARS) + '…' : t,
+    text: stripTrailingPartialCitation(t.slice(0, SNIPPET_MAX_CHARS)).trimEnd() + '…',
   };
 }
 
@@ -134,9 +156,16 @@ export async function runSemanticSearch(
     candidates.push(e);
   }
 
-  // perf: 후보 세션 read 병렬화(결과는 끝에서 점수 정렬이라 순서 무관). libuv fs 풀 자연 바운드.
-  const perDoc = await Promise.all(
-    candidates.map(async (e): Promise<GlobalSearchResult | null> => {
+  // perf: 후보 세션 read 병렬화(결과는 끝에서 점수 정렬이라 순서 무관).
+  //
+  // QA29(C-4): 종전 주석은 "libuv fs 풀이 자연 바운드한다" 고 했으나 그건 **디스크 읽기**만이다.
+  // 읽고 난 뒤의 JSON.parse / Float32Array 할당 / 코사인 루프는 전부 main 스레드의 동기 작업이고,
+  // 무캡 Promise.all 은 그것을 한 덩어리로 밀어넣는다. 후보 수만큼 캡을 두고 문서 사이마다
+  // 이벤트 루프에 양보한다 — 그 사이 종료 flush handshake(2s)·업데이터 이벤트·IPC 가 돈다.
+  const perDoc = await mapWithConcurrency(
+    candidates,
+    SESSION_FANOUT_LIMIT,
+    async (e): Promise<GlobalSearchResult | null> => {
       let idx: Awaited<ReturnType<typeof loadSearchIndex>>;
       try {
         idx = await loadSearchIndex(sessionsDir, e.docHash);
@@ -155,7 +184,7 @@ export async function runSemanticSearch(
         inSummary: false,
         snippets: hits.slice(0, MAX_SNIPPETS).map((h) => chunkSnippet(h.text, h.pageStart)),
       };
-    }),
+    },
   );
 
   const results = perDoc.filter((r): r is GlobalSearchResult => r !== null);

@@ -89,7 +89,7 @@ export default function App() {
   // (전역 t()는 호출 시점 snapshot만 반환하므로 JSX 내부 사용 시 stale 가능)
   const tr = useT();
 
-  const { handleSummarize, handleAbort } = useSummarize();
+  const { handleSummarize, handleAbort, getPartialRecovery } = useSummarize();
 
   // H2(UX): 파일 열기 다이얼로그 단일 진입점 — Ctrl+O 와 헤더 "PDF 열기" 버튼이 공유.
   // dialogOpenRef 재진입 가드 + async throw 의 setError 수렴은 기존 Ctrl+O 경로와 동일.
@@ -646,13 +646,31 @@ export default function App() {
         {error && (
           <div role="alert" className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start justify-between">
             <p className="text-red-700 dark:text-red-400 text-sm">{error.message}</p>
-            <button
-              onClick={() => setError(null)}
-              className="text-red-400 hover:text-red-600 dark:hover:text-red-300 ml-2 shrink-0"
-              aria-label={tr('app.closeError')}
-            >
-              ✕
-            </button>
+            <div className="flex items-start gap-2 ml-2 shrink-0">
+              {/* QA29(C-3): 스트림이 환경 이유로 끊기면 이미 받은 본문이 화면에만 남고 디스크에
+                  닿지 못했다(setSummary 미호출 → summaryStreamComplete false → 자동저장 게이트 차단).
+                  자동 커밋은 QA12 의 "생성 중 skip 과 구분" 원칙을 깨므로 **사용자 승인 경로**만 연다.
+                  제안이 유효하지 않으면(새 run 진행·문서 교체) 훅이 null 을 반환해 버튼이 사라진다. */}
+              {(() => {
+                const recovery = getPartialRecovery();
+                if (!recovery) return null;
+                return (
+                  <button
+                    onClick={() => { if (recovery.commit()) setError(null); }}
+                    className="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700 transition-colors"
+                  >
+                    {recovery.label}
+                  </button>
+                );
+              })()}
+              <button
+                onClick={() => setError(null)}
+                className="text-red-400 hover:text-red-600 dark:hover:text-red-300"
+                aria-label={tr('app.closeError')}
+              >
+                ✕
+              </button>
+            </div>
           </div>
         )}
 

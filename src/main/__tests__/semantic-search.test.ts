@@ -145,6 +145,61 @@ describe('runSemanticSearch (main 코사인)', () => {
     expect(store.readIndexBlob).toHaveBeenCalledTimes(1);     // index.bin 1회만(이중 읽기 회귀 방지)
   });
 
+  // QA29(A-5): 스니펫 예산 절단(180자)이 `[p.N]` 토큰 한가운데를 자르면 반쪽이 그대로 노출된다.
+  // 오늘은 표시 전용이라 Low 지만, QA27(B-MED)/QA28/QA29 가 반복해서 잡아온 것과 같은 모양이다.
+  it('스니펫 절단이 인용 토큰을 반으로 남기지 않는다', async () => {
+    // 절단 경계(180자) 직전에 `[p.123]` 이 걸치도록 배치한다.
+    const head = '가'.repeat(176);
+    store.listSessions.mockResolvedValue([entry({})]);
+    setIndex({ chunkMeta: [{ text: `${head}[p.123] 뒷부분 본문이 더 있다`, index: 0, pageStart: 5 }] });
+
+    const out = await runSemanticSearch(DIR, [1, 0], 'nomic', 2);
+
+    const text = out.results[0]!.snippets[0]!.text;
+    expect(text, '반쪽 토큰이 남으면 잘린 조각이 그대로 보인다').not.toMatch(/\[[^\]]*$/);
+    expect(text.endsWith('…')).toBe(true);
+  });
+
+  it('절단 경계에 인용이 없으면 종전대로 자른다 (과잉 삭제 금지)', async () => {
+    store.listSessions.mockResolvedValue([entry({})]);
+    setIndex({ chunkMeta: [{ text: '나'.repeat(300), index: 0, pageStart: 5 }] });
+
+    const out = await runSemanticSearch(DIR, [1, 0], 'nomic', 2);
+
+    const text = out.results[0]!.snippets[0]!.text;
+    expect(text).toBe('나'.repeat(180) + '…');
+  });
+
+  it('상한 이하 텍스트는 말줄임 없이 그대로', async () => {
+    store.listSessions.mockResolvedValue([entry({})]);
+    setIndex({ chunkMeta: [{ text: '짧은 청크 [p.3]', index: 0, pageStart: 3 }] });
+
+    const out = await runSemanticSearch(DIR, [1, 0], 'nomic', 2);
+
+    expect(out.results[0]!.snippets[0]!.text).toBe('짧은 청크 [p.3]');
+  });
+
+  // QA29(C-4): 무캡 Promise.all 이 main 을 초 단위로 잡던 것을 캡 + 양보로 교체.
+  it('후보 세션 읽기가 동시 4건을 넘지 않는다 (main 무캡 팬아웃 금지)', async () => {
+    const hashes = Array.from({ length: 12 }, (_, i) => String(i).padStart(64, '0'));
+    store.listSessions.mockResolvedValue(hashes.map((h) => entry({ docHash: h })));
+    store.readIndexMeta.mockResolvedValue({ chunkMeta: defaultChunkMeta });
+    let inFlight = 0;
+    let peak = 0;
+    store.readIndexBlob.mockImplementation(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight -= 1;
+      return blob([[1, 0]]);
+    });
+
+    const out = await runSemanticSearch(DIR, [1, 0], 'nomic', 2);
+
+    expect(out.results).toHaveLength(12); // 캡을 둬도 결과는 전부 나온다
+    expect(peak, '캡이 없으면 12건이 한 번에 들어와 main 이 그만큼 잡힌다').toBeLessThanOrEqual(4);
+  });
+
   it('점수 내림차순 정렬', async () => {
     store.listSessions.mockResolvedValue([entry({ docHash: 'a'.repeat(64) }), entry({ docHash: 'b'.repeat(64) })]);
     store.readIndexBlob.mockImplementation((_dir: string, hash: string) =>
