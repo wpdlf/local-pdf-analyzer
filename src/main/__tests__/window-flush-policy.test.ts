@@ -77,6 +77,43 @@ describe('selectFlushTargets — flushRenderersBeforeQuit 대상 선정', () => 
       .toEqual(['await-inflight']);
   });
 
+  // QA29(A-2): 같은 파일의 두 술어가 **같은 사실**(설치 요청됐으나 종료로 이어지지 않음)에
+  // 대해 서로 다른 답을 냈다 — decideCloseAction 은 표식을 불신하는데(QA23 B-MED)
+  // selectFlushTargets 에는 필드 자체가 없어 무조건 skip 이었다.
+  it('설치 대기 중이면 표식이 있어도 다시 flush 한다 (decideCloseAction 과 같은 예외)', () => {
+    expect(selectFlushTargets([
+      { isDestroyed: false, isFlushing: false, hasFlushed: true, isInstallPending: true },
+    ])).toEqual(['start']);
+  });
+
+  it('설치 대기여도 파괴/진행중 판정이 우선한다 (우선순위 불변)', () => {
+    expect(selectFlushTargets([
+      { isDestroyed: true, isFlushing: false, hasFlushed: true, isInstallPending: true },
+      { isDestroyed: false, isFlushing: true, hasFlushed: true, isInstallPending: true },
+    ])).toEqual(['skip', 'await-inflight']);
+  });
+
+  it('설치 대기가 아니면 표식 있는 창은 종전대로 skip', () => {
+    expect(selectFlushTargets([
+      { isDestroyed: false, isFlushing: false, hasFlushed: true, isInstallPending: false },
+    ])).toEqual(['skip']);
+  });
+
+  // 두 술어가 같은 입력에 같은 답을 내는지 대조한다 — 한쪽만 고치면 여기서 갈린다.
+  it('두 술어가 hasFlushed × isInstallPending 에 대해 일치한다', () => {
+    for (const hasFlushed of [false, true]) {
+      for (const isInstallPending of [false, true]) {
+        const reflush = decideCloseAction({
+          isDestroyed: false, isFlushing: false, hasFlushed, isQuitting: false, isInstallPending,
+        }) === 'intercept-flush';
+        const started = selectFlushTargets([
+          { isDestroyed: false, isFlushing: false, hasFlushed, isInstallPending },
+        ])[0] === 'start';
+        expect(started, `hasFlushed=${hasFlushed} isInstallPending=${isInstallPending}`).toBe(reflush);
+      }
+    }
+  });
+
   it('혼재 상황에서 창별로 독립 판정', () => {
     expect(selectFlushTargets([
       { isDestroyed: false, isFlushing: true, hasFlushed: true },   // 창 X 인터셉트 진행 중

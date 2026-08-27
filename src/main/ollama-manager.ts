@@ -42,18 +42,103 @@ export class OllamaManager {
   private startPromise: Promise<boolean> | null = null; // 동시 start() 호출 시 동일 Promise 반환
   private installPromise: Promise<{ success: boolean; error?: string }> | null = null; // 동시 install() 호출 시 동일 Promise 반환
 
-  // Ollama 실행 파일 경로 (설치 직후 PATH 반영 안 될 수 있으므로 직접 지정)
-  private getOllamaPath(): string {
+  // 실행 가능성이 확인된 ollama 경로(프로세스 수명 동안 1회 프로브). install() 후 무효화된다.
+  private resolvedOllamaPath: string | null = null;
+  private resolvingOllamaPath: Promise<string> | null = null;
+
+  /**
+   * Ollama 실행 파일 후보 — 앞에서부터 우선순위. 마지막은 항상 PATH.
+   * 설치 직후 PATH 반영이 안 될 수 있어 win32 표준 설치 경로를 먼저 본다.
+   *
+   * QA29(A-3): 종전에는 `existsSync` 로 **존재**만 보고 첫 후보를 그대로 반환했다 — v1.2.3 이
+   * 인스톨러에서 막 고친 "존재하면 실행된다" 는 전제를 그대로 반복한 것이다. 백신 격리·중단된
+   * 제거로 `Programs\Ollama\ollama.exe` 가 0바이트/스텁으로 남으면 이후 모든 spawn 이 그 죽은
+   * 경로에 고정되고 **두 번째 후보나 PATH 로 절대 흘러가지 않는다**. 결과는 getStatus 의
+   * installed:false → UI 가 재설치를 요구하는데, 정작 PATH 에는 멀쩡한 ollama 가 있다.
+   * (isInstalled 의 QA16 주석이 "손상/AV격리된 ollama.exe" 를 이미 실입력으로 인정하고 있었다 —
+   * 그때는 타임아웃만 붙였고 폴백 사슬은 손대지 않았다.)
+   * → 0바이트/비파일 후보는 후보에서 제외한다.
+   */
+  private ollamaPathCandidates(): string[] {
+    const candidates: string[] = [];
     if (process.platform === 'win32') {
       const localAppData = process.env['LOCALAPPDATA'] || '';
-      const programsPath = path.join(localAppData, 'Programs', 'Ollama', 'ollama.exe');
-      if (fs.existsSync(programsPath)) return programsPath;
-
       const userProfile = process.env['USERPROFILE'] || '';
-      const appDataPath = path.join(userProfile, 'AppData', 'Local', 'Ollama', 'ollama.exe');
-      if (fs.existsSync(appDataPath)) return appDataPath;
+      const paths = [
+        path.join(localAppData, 'Programs', 'Ollama', 'ollama.exe'),
+        path.join(userProfile, 'AppData', 'Local', 'Ollama', 'ollama.exe'),
+      ];
+      for (const p of paths) {
+        if (this.isPlausibleExecutable(p)) candidates.push(p);
+      }
     }
-    return 'ollama'; // PATH에서 찾기
+    candidates.push('ollama'); // PATH에서 찾기 — 항상 마지막 폴백
+    return candidates;
+  }
+
+  /** 존재하고 **크기가 0이 아닌 파일**인가. 읽지 못하면 후보에서 제외(거부 쪽 착지). */
+  private isPlausibleExecutable(filePath: string): boolean {
+    try {
+      if (!fs.existsSync(filePath)) return false;
+      // statSync 가 없는 환경(축소된 모킹 등)에서는 존재 확인까지만 — 종전 동작으로 폴백한다.
+      if (typeof fs.statSync !== 'function') return true;
+      const st = fs.statSync(filePath);
+      return st.isFile() && st.size > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 후보가 `--version` 에 실제로 응답하는가(= 실행 가능한가). */
+  private probeVersion(ollamaPath: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      // isInstalled 와 같은 5s 타임아웃 — 손상 바이너리가 블록해도 사슬이 멈추지 않는다.
+      execFile(ollamaPath, ['--version'], { timeout: 5000 }, (error) => resolve(!error));
+    });
+  }
+
+  /**
+   * 동기 경로 조회 — spawn 을 지연시키면 안 되는 자리(start/pull)가 쓴다.
+   *
+   * 프로브로 확정된 경로가 있으면 그것을, 없으면 크기 필터를 통과한 첫 후보를 준다.
+   * start/pull 은 모두 `isInstalled`/`getVersion` 뒤에 오므로 실제로는 확정값이 들어 있다.
+   */
+  private getOllamaPath(): string {
+    return this.resolvedOllamaPath ?? this.ollamaPathCandidates()[0]!;
+  }
+
+  /**
+   * 실행 가능한 ollama 경로를 고른다. 후보가 하나(=PATH뿐)면 프로브 없이 그대로 반환해
+   * 종전 동작·spawn 수를 유지하고, 둘 이상일 때만 앞에서부터 `--version` 으로 확인한다.
+   * 어느 후보도 응답하지 않으면 첫 후보를 반환한다(미설치로 보고되는 종전 경로).
+   *
+   * 결과는 메모이즈한다 — 프로브 1회이지 호출마다 1회가 아니다. install() 이 무효화한다.
+   * 상태 조회 경로(isInstalled/getVersion)만 이것을 쓰고, 그 뒤의 spawn 은 getOllamaPath() 로
+   * 확정값을 동기 조회한다 — pull/start 의 spawn 타이밍을 미루면 재진입 가드가 흔들린다.
+   */
+  private async resolveOllamaPath(): Promise<string> {
+    if (this.resolvedOllamaPath !== null) return this.resolvedOllamaPath;
+    if (this.resolvingOllamaPath) return this.resolvingOllamaPath;
+    this.resolvingOllamaPath = (async () => {
+      const candidates = this.ollamaPathCandidates();
+      if (candidates.length === 1) return candidates[0]!;
+      for (const c of candidates) {
+        if (await this.probeVersion(c)) return c;
+      }
+      return candidates[0]!;
+    })();
+    try {
+      const resolved = await this.resolvingOllamaPath;
+      this.resolvedOllamaPath = resolved;
+      return resolved;
+    } finally {
+      this.resolvingOllamaPath = null;
+    }
+  }
+
+  /** 설치·제거로 후보 구성이 바뀐 뒤 다음 호출이 다시 고르게 한다. */
+  private invalidateOllamaPath(): void {
+    this.resolvedOllamaPath = null;
   }
 
   async getStatus(): Promise<OllamaStatusResult> {
@@ -68,7 +153,7 @@ export class OllamaManager {
   }
 
   async isInstalled(): Promise<boolean> {
-    const ollamaPath = this.getOllamaPath();
+    const ollamaPath = await this.resolveOllamaPath();
     return new Promise((resolve) => {
       // QA16(C-LOW): 타임아웃 없이 두면 손상/AV격리된 ollama.exe 가 --version 에서 블록될 때
       // getStatus() 가 영영 미해결 → 기동 상태 정체 + 포커스마다 재프로브로 좀비 프로세스 누적.
@@ -80,7 +165,7 @@ export class OllamaManager {
   }
 
   private async getVersion(): Promise<string | undefined> {
-    const ollamaPath = this.getOllamaPath();
+    const ollamaPath = await this.resolveOllamaPath();
     return new Promise((resolve) => {
       execFile(ollamaPath, ['--version'], { timeout: 5000 }, (error, stdout) => {
         if (error) {
@@ -100,6 +185,9 @@ export class OllamaManager {
       return await this.installPromise;
     } finally {
       this.installPromise = null;
+      // QA29(A-3): 설치로 후보 구성이 바뀌었다 — 메모이즈한 경로(설치 전에 고른 PATH 폴백 등)를
+      // 그대로 쓰면 방금 설치한 바이너리를 영영 못 본다.
+      this.invalidateOllamaPath();
     }
   }
 
@@ -113,6 +201,25 @@ export class OllamaManager {
     }
 
     return { success: false, error: '지원하지 않는 운영체제입니다.', errorKey: 'unsupportedOs' };
+  }
+
+  /**
+   * 선두 4바이트가 ZIP 로컬 파일 헤더(`PK\x03\x04`)인가 — mac 다운로드의 실제 무결성 검사.
+   * 읽지 못하면 false(거부 쪽 착지). 빈/무압축 zip 의 다른 시그니처(`PK\x05\x06` 등)는
+   * Ollama 배포물로는 성립하지 않으므로 받지 않는다.
+   */
+  private hasZipMagic(filePath: string): boolean {
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(filePath, 'r');
+      const buf = Buffer.alloc(4);
+      if (fs.readSync(fd, buf, 0, 4, 0) !== 4) return false;
+      return buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04;
+    } catch {
+      return false;
+    } finally {
+      if (fd !== null) { try { fs.closeSync(fd); } catch { /* 무시 */ } }
+    }
   }
 
   /** 다운로드 파일의 SHA-256 해시를 계산합니다 (로깅 + 에러 진단용) */
@@ -271,13 +378,26 @@ export class OllamaManager {
         const zipUrl = 'https://ollama.com/download/Ollama-darwin.zip';
         await this.downloadFile(zipUrl, zipPath);
 
-        // 다운로드 무결성 검증
+        // 다운로드 무결성 검증 (크기 + ZIP 포맷 매직)
+        //
+        // QA29(A-4): 종전에는 `computeFileHash` 를 계산해 놓고 **아무것과도 대조하지 않았다** —
+        // 값은 에러 문자열에 보간될 뿐이었고, 실제 검사는 크기 하한 하나뿐인데 진행 표시는
+        // win32(Authenticode 로 진짜 검증한다)와 **같은 'verifyingDownload'** 를 띄웠다.
+        // Ollama 는 이 zip 의 기준 해시를 게시하지 않으므로 해시 대조는 도입할 수 없다. 대신
+        // 검사를 표시에 맞춰 올린다 — 선두 매직으로 실제 ZIP 인지 확인한다. HTML 에러 페이지·
+        // 잘린 전송·프록시 차단 페이지가 크기 하한만 넘겨 통과하던 경로가 여기서 막힌다.
+        // (해시는 종전대로 진단용이며, 이제 그 사실이 로그에 드러난다.)
         this.sendProgress({ key: 'verifyingDownload', source: 'install' });
         const hash = await this.computeFileHash(zipPath);
         const stat = fs.statSync(zipPath);
+        console.log(`[Ollama] Ollama-darwin.zip downloaded: ${stat.size} bytes (sha256:${hash} — 진단용, 대조 기준 없음)`);
         if (stat.size < 1024 * 1024) {
           fs.unlinkSync(zipPath);
           throw new Error(`다운로드 파일이 비정상적으로 작습니다 (sha256:${hash.slice(0, 16)}...)`);
+        }
+        if (!this.hasZipMagic(zipPath)) {
+          fs.unlinkSync(zipPath);
+          throw new Error(`다운로드 파일이 ZIP 형식이 아닙니다 (sha256:${hash.slice(0, 16)}...). 네트워크 차단 페이지가 내려왔을 수 있습니다.`);
         }
 
         // zip エントリのパス検証 (path traversal 防止)

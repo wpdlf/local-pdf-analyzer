@@ -21,6 +21,10 @@ const M = vi.hoisted(() => ({
   createReadStream: vi.fn(),
   existsSync: vi.fn(),
   send: vi.fn(),
+  // QA29(A-4): installMac 의 fallback 이 이제 zip 매직을 실제로 읽는다.
+  openSync: vi.fn(),
+  readSync: vi.fn(),
+  closeSync: vi.fn(),
 }));
 
 vi.mock('child_process', () => ({
@@ -35,6 +39,9 @@ vi.mock('fs', () => ({
     unlinkSync: (...a: unknown[]) => M.unlinkSync(...a),
     createReadStream: (...a: unknown[]) => M.createReadStream(...a),
     createWriteStream: vi.fn(),
+    openSync: (...a: unknown[]) => M.openSync(...a),
+    readSync: (...a: unknown[]) => M.readSync(...a),
+    closeSync: (...a: unknown[]) => M.closeSync(...a),
   },
 }));
 vi.mock('electron', () => ({
@@ -95,6 +102,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   M.existsSync.mockReturnValue(false);
   M.statSync.mockReturnValue({ size: 50 * 1024 * 1024 });
+  // 기본은 정상 ZIP(`PK\x03\x04`) — 매직 게이트가 있는 경로들이 종전대로 흐르게 한다.
+  M.openSync.mockReturnValue(3);
+  M.readSync.mockImplementation((_fd: number, buf: Buffer) => { buf.set([0x50, 0x4b, 0x03, 0x04]); return 4; });
+  M.closeSync.mockReturnValue(undefined);
   vi.useFakeTimers();
 });
 
@@ -288,6 +299,62 @@ describe('installMac — brew + fallback 오케스트레이션', () => {
     expect(r.success).toBe(false);
     expect(r.errorKey).toBe('installFailed');
     expect(M.unlinkSync).toHaveBeenCalled();
+  });
+
+  // QA29(A-4): 이 경로는 `verifyingDownload`("다운로드 무결성 검증 중")를 띄우면서 실제로는
+  // **크기 하한 하나**만 봤다 — computeFileHash 는 계산만 되고 아무것과도 대조되지 않았다
+  // (win32 는 Authenticode 로 진짜 검증한다). Ollama 가 기준 해시를 게시하지 않으므로 해시
+  // 대조는 도입할 수 없고, 대신 검사를 표시에 맞춰 올린다: 선두 매직으로 실제 ZIP 인지 본다.
+  it('fallback 다운로드가 ZIP 이 아니면 거부한다 (크기만 통과하는 차단 페이지·HTML 에러)', async () => {
+    const mgr = new OllamaManager();
+    stubLeaves(mgr);
+    // 크기는 충분한데 내용은 HTML — 종전 검사는 이것을 그대로 unzip 에 넘겼다.
+    M.readSync.mockImplementation((_fd: number, buf: Buffer) => { buf.set([0x3c, 0x21, 0x44, 0x4f]); return 4; }); // '<!DO'
+    M.execFile.mockImplementation((...args: unknown[]) => {
+      if (args[0] === 'brew') return cbOf(args)(new Error('brew not found'));
+      return cbOf(args)(null);
+    });
+
+    const promise = priv(mgr).installMac() as Promise<Result>;
+    await vi.runAllTimersAsync();
+    const r = await promise;
+
+    expect(r.success).toBe(false);
+    expect(r.errorKey).toBe('installFailed');
+    expect(r.errorParams?.detail).toContain('ZIP 형식이 아닙니다');
+    // 거부했으면 추출(unzip -l/-o)까지 가지 않는다.
+    expect(M.execFile.mock.calls.find((c) => c[0] === 'unzip')).toBeUndefined();
+    expect(M.unlinkSync).toHaveBeenCalled();
+  });
+
+  it('매직을 읽지 못해도 거부 쪽으로 착지한다 (fd 는 닫는다)', async () => {
+    const mgr = new OllamaManager();
+    stubLeaves(mgr);
+    M.openSync.mockImplementation(() => { throw new Error('EBUSY'); });
+    M.execFile.mockImplementation((...args: unknown[]) => {
+      if (args[0] === 'brew') return cbOf(args)(new Error('brew not found'));
+      return cbOf(args)(null);
+    });
+
+    const promise = priv(mgr).installMac() as Promise<Result>;
+    await vi.runAllTimersAsync();
+    expect((await promise).success).toBe(false);
+  });
+
+  it('정상 ZIP 매직은 통과시킨다 (과잉 차단 금지)', async () => {
+    const mgr = new OllamaManager();
+    stubLeaves(mgr);
+    M.execFile.mockImplementation((...args: unknown[]) => {
+      const cmd = args[0];
+      if (cmd === 'brew') return cbOf(args)(new Error('brew not found'));
+      if (cmd === 'unzip' && (args[1] as string[])[0] === '-l') return cbOf(args)(null, '  Length  Name\n  1234  Ollama.app/Contents/MacOS/ollama\n');
+      return cbOf(args)(null);
+    });
+
+    const promise = priv(mgr).installMac() as Promise<Result>;
+    await vi.runAllTimersAsync();
+    expect(await promise).toEqual({ success: true });
+    expect(M.closeSync, '매직 확인 후 fd 를 닫지 않으면 핸들이 샌다').toHaveBeenCalled();
   });
 });
 

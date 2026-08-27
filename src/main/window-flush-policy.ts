@@ -62,6 +62,17 @@ export interface FlushCandidate {
   isDestroyed: boolean;
   isFlushing: boolean;
   hasFlushed: boolean;
+  /**
+   * 설치를 요청했으나 아직 종료로 이어지지 않은 상태인가 — `CloseState.isInstallPending` 과
+   * **같은 사실**이며 index.ts 에서 같은 식(`updaterService?.isInstalling() === true`)이 온다.
+   *
+   * QA29(A-2): 형제 판정 `decideCloseAction` 은 QA23(B-MED) 이후 이 사실을 받아 `hasFlushed`
+   * 표식을 불신하는데, 여기에는 필드 자체가 없어 무조건 `skip` 이었다. 같은 파일의 두 술어가
+   * 같은 사실에 대해 서로 다른 답을 내던 것이 결함의 본체다. 경로:
+   * 설치 클릭 → flushBeforeInstall 이 전 창을 표식 → quitAndInstall 이 조용히 실패 →
+   * 사용자가 새 요약/Q&A 델타 생성 → 프로그램적 app.quit()/Cmd+Q → 전 창 skip → 델타 소실.
+   */
+  isInstallPending?: boolean;
 }
 
 /** `flushRenderersBeforeQuit` 에서 창별로 취할 동작. */
@@ -78,7 +89,9 @@ export function selectFlushTargets(wins: readonly FlushCandidate[]): FlushTarget
     if (w.isDestroyed) return 'skip';
     // 진행 중인 flush 를 'skip' 으로 처리하면 QA18 B-MED(종료 취소 → darwin 좀비) 가 재발한다.
     if (w.isFlushing) return 'await-inflight';
-    if (w.hasFlushed) return 'skip';
+    // 불변식 4(QA29 A-2) — decideCloseAction 과 동일한 예외. 설치 대기 중에는 표식이 "곧 종료된다"
+    // 는 전제를 잃었으므로 신뢰하지 않고 다시 flush 한다.
+    if (w.hasFlushed && !w.isInstallPending) return 'skip';
     return 'start';
   });
 }

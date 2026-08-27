@@ -7,13 +7,16 @@ import { fileURLToPath, pathToFileURL } from 'url';
 // R38 P1-2: sync `fs` 는 API 키 저장 로직과 함께 api-keys-store.ts 로 이동. 본 파일은 fsp 만 사용.
 import fsp from 'fs/promises';
 // 동기 확인이 필요한 유일한 지점 — updater 의 설치 직전 인스톨러 실재 확인(deps 로 주입).
-import { existsSync, readFileSync, rmSync, statSync, openSync, readSync, closeSync } from 'fs';
+import { existsSync, readFileSync, rmSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { OllamaManager } from './ollama-manager';
 import { decideCloseAction, selectFlushTargets } from './window-flush-policy';
 import { computeDefaultWindowSize, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT } from './window-size';
 import { createUpdaterService, type UpdaterService } from './updater';
-import { AUTO_CHECK_STARTUP_DELAY_MS, isInstallerUsable, type InstallerProbe, type PendingUpdateLike } from './update-policy';
+import { AUTO_CHECK_STARTUP_DELAY_MS, isInstallerUsable, type PendingUpdateLike } from './update-policy';
+// QA29(D-1): 인스톨러 관측(크기 + 선두 매직)은 fs 를 주입받는 별도 모듈로 분리됐다. 여기 인라인
+// 함수로 두었을 때는 export 조차 되지 않아 소스 토큰 스캔 외에는 어떤 테스트도 볼 수 없었다.
+import { probeInstaller } from './installer-probe';
 import type { UpdateState } from '../shared/update-types';
 import { generate, abortGenerate, abortAllRequests, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
 import { MAX_PDF_SIZE_BYTES, isLocalhostHost, isValidOllamaUrl, UPDATER_CACHE_DIR_NAME } from '../shared/constants';
@@ -58,6 +61,8 @@ import {
 } from './session-store';
 // 전체 문서 키워드 검색(순수). session:search 핸들러가 각 세션 본문을 읽어 위임한다.
 import { searchPersistedSession, rankSearchResults, MIN_QUERY_LENGTH } from './session-search';
+// QA29(C-4): 전체 검색의 세션 팬아웃 캡 + 세션 사이 이벤트 루프 양보.
+import { mapWithConcurrency, SESSION_FANOUT_LIMIT } from './async-pool';
 import type { SessionSaveMeta, GlobalSearchResult, SemanticSearchResponse } from '../shared/session-types';
 import { runSemanticSearch } from './semantic-search';
 // multi-doc Phase 3 (module-1): 컬렉션 영속화. collectionsFile 주입으로 electron-free.
@@ -483,6 +488,9 @@ export function flushRenderersBeforeQuit(): Promise<void> {
     isDestroyed: w.isDestroyed(),
     isFlushing: flushingWindows.has(w),
     hasFlushed: flushedWindows.has(w),
+    // QA29(A-2): decideCloseAction 이 받는 것과 **같은 식**이어야 한다. 두 술어가 같은 사실을
+    // 다르게 읽으면 설치 무산 후의 델타가 한쪽 경로에서만 살아남는다.
+    isInstallPending: updaterService?.isInstalling() === true,
   })));
   const pending: Promise<void>[] = [];
   wins.forEach((w, i) => {
@@ -562,31 +570,6 @@ function updaterCacheDir(): string | null {
     return null;
   }
   return target;
-}
-
-/**
- * 인스톨러 파일을 관측한다(크기 + 선두 2바이트). 판정은 update-policy.isInstallerUsable 이 한다.
- *
- * QA28 실기기 검증(2026-08-27): 종전 `existsSync` 만으로는 **0바이트 인스톨러**가 가드를 통과해
- * 앱이 조용히 꺼졌다. 해시 재계산(105MB)은 사전 검사로 과하므로 크기·매직만 본다.
- * 어떤 이유로든 읽지 못하면 `exists:false` — 판정을 거부 쪽으로 착지시킨다.
- */
-function probeInstaller(filePath: string): InstallerProbe {
-  try {
-    const st = statSync(filePath);
-    if (!st.isFile()) return { exists: false, size: 0, magic: '' };
-    let magic = '';
-    const fd = openSync(filePath, 'r');
-    try {
-      const buf = Buffer.alloc(2);
-      magic = readSync(fd, buf, 0, 2, 0) === 2 ? buf.toString('latin1') : '';
-    } finally {
-      closeSync(fd);
-    }
-    return { exists: true, size: st.size, magic };
-  } catch {
-    return { exists: false, size: 0, magic: '' };
-  }
 }
 
 /**
@@ -972,10 +955,17 @@ export function registerIpcHandlers(): void {
     // GlobalSearchResult 계약에 실패 표현을 추가해야 한다(별도 작업으로 남긴다).
     const entries = (await listSessions(sessionsDir)) ?? [];
     // perf: 세션 본문 read 를 병렬화 — 이전엔 순차 await 로 디스크 I/O 레이턴시가 누적됐다.
-    // 결과는 끝에서 rankSearchResults 로 점수 정렬하므로 수집 순서 무관(병렬 안전). read 동시성은
-    // libuv fs 스레드풀(기본 4)이 자연 바운드하고, 본 핸들러는 제출 1회 호출(라이브 아님)·세션 ≤30.
-    const perSession = await Promise.all(
-      entries.map(async (e) => {
+    // 결과는 끝에서 rankSearchResults 로 점수 정렬하므로 수집 순서 무관(병렬 안전).
+    //
+    // QA29(C-4): 종전 주석은 "libuv fs 스레드풀(기본 4)이 자연 바운드" 라고 했지만 그것이 바운드
+    // 하는 것은 **읽기**뿐이다. 그 뒤의 JSON.parse 와 searchPersistedSession 의 매칭 루프는 전부
+    // main 스레드 동기 작업이라, 무캡 Promise.all 은 온디스크 상한(200MB)만큼을 한 덩어리로
+    // 밀어넣는다. 그동안 창 닫기 flush handshake(2s 타임아웃)·업데이터 이벤트·모든 IPC 가 멈춘다.
+    // 팬아웃을 캡하고 세션 사이마다 이벤트 루프에 양보한다(QA19 코사인 루프와 같은 처방).
+    const perSession = await mapWithConcurrency(
+      entries,
+      SESSION_FANOUT_LIMIT,
+      async (e) => {
         // QA: per-session fail-safe — readSessionMeta 는 실제 I/O 오류(EBUSY 등) 시 throw 한다.
         // 격리하지 않으면 세션 1개의 일시 잠금이 Promise.all 전체를 reject 시켜 검색이 통째로
         // 빈 결과가 된다(의미검색 runSemanticSearch 와 동일하게 해당 문서만 skip).
@@ -995,7 +985,7 @@ export function registerIpcHandlers(): void {
         } catch {
           return null;
         }
-      }),
+      },
     );
     const results = perSession.filter((r): r is GlobalSearchResult => r !== null);
     return rankSearchResults(results, 50);

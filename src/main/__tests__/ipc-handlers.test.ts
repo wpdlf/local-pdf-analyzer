@@ -750,6 +750,33 @@ describe('session:* (영속화 핸들러)', () => {
     expect(s.count).toBe(0);
     expect(s.dir).toContain('sessions');
   });
+
+  // QA29(C-4): 전체 검색은 저장된 **모든** 세션을 하나의 Promise.all 로 읽고 JSON.parse 했다.
+  // 온디스크 상한이 200MB 이므로 파싱 스파이크가 통째로 main 에 쌓이고, 그동안 창 닫기 flush
+  // handshake(2s 타임아웃)·업데이터 이벤트·모든 IPC 가 멈춘다. 팬아웃을 캡한다.
+  it('session:search 의 세션 읽기가 동시 4건을 넘지 않는다', async () => {
+    const hashes = Array.from({ length: 12 }, (_, i) => String(i).padStart(64, '0'));
+    const entries = hashes.map((h) => ({
+      docHash: h, fileName: `${h}.pdf`, filePath: `/${h}.pdf`, pageCount: 1,
+      embedModel: null, embedDim: null, chunkCount: 0, byteSize: 0,
+      createdAt: '2026-01-01', lastAccessed: '2026-01-01',
+    }));
+    let inFlight = 0;
+    let peak = 0;
+    H.fsp.readFile.mockImplementation(async (p: string) => {
+      if (String(p).endsWith('manifest.json')) return JSON.stringify({ entries });
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight -= 1;
+      return JSON.stringify({ docHash: 'x', pageTexts: ['검색어가 들어 있는 본문'] });
+    });
+
+    const results = await invoke('session:search', '검색어') as unknown[];
+
+    expect(results.length, '캡을 둬도 전 세션이 검색된다').toBe(12);
+    expect(peak, '캡이 없으면 12건이 한 번에 파싱돼 main 이 그만큼 잡힌다').toBeLessThanOrEqual(4);
+  });
 });
 
 // session-persistence module-4 (L3): file:open-path — 최근목록 재오픈 보안 가드.
