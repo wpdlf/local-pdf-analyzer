@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // v0.18.5 T2 — `_translations` 가 export 되어 런타임 parity 검증이 가능해졌다.
@@ -189,12 +189,16 @@ describe('translateMainProgress / translateMainError', () => {
 // (`mainerr.streamConnectFailed`) 를 그대로 화면에 노출한다. 손유지 목록 없이 main 소스에서
 // errorKey 리터럴을 추출해 사전과 대조한다 (ipc-channel-contract.test.ts 와 동일 패턴).
 describe('errorKey ↔ i18n 사전 계약 가드 (QA11)', () => {
-  const MAIN_SRC = ['ai-service.ts', 'ollama-manager.ts', 'index.ts']
+  // QA28(B2-Low): 손유지 파일 목록(3개)이면 새 main 파일이 errorKey 를 방출할 때 어느 게이트에도
+  // 걸리지 않는다 — 이 저장소의 최다 결함 클래스(열거 → 한 곳 누락). main 디렉터리 전체를 스캔.
+  const MAIN_DIR = resolve(import.meta.dirname, '../../../main');
+  const MAIN_SRC = readdirSync(MAIN_DIR)
+    .filter((f) => f.endsWith('.ts') && !f.endsWith('.d.ts'))
     .map((f) => {
       try {
-        return readFileSync(resolve(import.meta.dirname, '../../../main', f), 'utf-8');
+        return readFileSync(resolve(MAIN_DIR, f), 'utf-8');
       } catch {
-        return ''; // 파일 rename 시 아래 "최소 개수" 테스트가 잡는다
+        return '';
       }
     })
     .join('\n');
@@ -246,6 +250,63 @@ describe('errorKey ↔ i18n 사전 계약 가드 (QA11)', () => {
     for (const key of ['streamConnectFailed', 'streamTooLarge', 'streamLineTooLarge']) {
       expect(emittedKeys).toContain(key);
       expect(dict[`mainerr.${key}`]).toBeDefined();
+    }
+  });
+});
+
+// QA28(D): 정적 키 가드 — `t('key')`/`tr('key')` 리터럴 키가 사전에 없으면 TranslationKey 타입이
+// 잡지만, `as TranslationKey` 캐스트·템플릿 조합(mainprog./mainerr.)은 타입을 우회한다. 반대로
+// 사전에는 있는데 아무 소스도 참조하지 않는 고아 키는 삭제된 기능의 잔재이거나 오타 키다(이번
+// 라운드 ai.serviceUnavailable·app.settingsBlocked·collection.savedEmpty 가 그 예). 둘 다 소스
+// 스캔으로 대조한다. 허용 접두는 **명시적** 목록으로만 둔다.
+describe('i18n 정적 키 가드 (QA28)', () => {
+  const SRC_ROOT = resolve(import.meta.dirname, '../../..');
+  // 동적 조합 키: translateMainProgress(`mainprog.${ev.key}`) / translateMainError(`mainerr.${errorKey}`).
+  // 이 둘은 위 "errorKey ↔ i18n" 가드와 main 의 progress key 계약이 별도로 대조한다.
+  const DYNAMIC_PREFIXES = ['mainprog.', 'mainerr.'];
+  const isDynamic = (k: string) => DYNAMIC_PREFIXES.some((p) => k.startsWith(p));
+
+  function walk(dir: string, out: string[] = []): string[] {
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      if (name.isDirectory()) {
+        if (name.name !== '__tests__' && name.name !== 'node_modules') walk(resolve(dir, name.name), out);
+      } else if (/\.(ts|tsx)$/.test(name.name) && !name.name.endsWith('.d.ts')) {
+        out.push(resolve(dir, name.name));
+      }
+    }
+    return out;
+  }
+  const rendererFiles = walk(resolve(SRC_ROOT, 'renderer'));
+  const allFiles = [...rendererFiles, ...walk(resolve(SRC_ROOT, 'main')), ...walk(resolve(SRC_ROOT, 'preload')), ...walk(resolve(SRC_ROOT, 'shared'))];
+  const I18N_FILE = resolve(SRC_ROOT, 'renderer/lib/i18n.ts');
+  const read = (f: string) => readFileSync(f, 'utf-8');
+
+  it('renderer 의 모든 t()/tr() 리터럴 키가 사전(ko·en)에 있다 (최소 300개)', async () => {
+    const { _translations } = await import('../i18n');
+    const dict = _translations as Record<string, { ko: string; en: string } | undefined>;
+    const used = new Set<string>();
+    // i18n.ts 자신은 제외 — 주석의 `tr('key')` 예시가 잡힌다(런타임 호출은 dispatcher 뿐).
+    for (const f of rendererFiles.filter((x) => x !== I18N_FILE)) {
+      for (const m of read(f).matchAll(/\b(?:t|tr)\(\s*['"]([A-Za-z0-9_.]+)['"]/g)) used.add(m[1]!);
+    }
+    expect(used.size).toBeGreaterThanOrEqual(300);
+    const missing = [...used].filter((k) => !isDynamic(k) && (!dict[k] || !dict[k]!.ko.trim() || !dict[k]!.en.trim()));
+    expect(missing, `사전에 없는 키: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('사전의 모든 키가 소스 어딘가에서 문자열 리터럴로 참조된다 (고아 키 0)', async () => {
+    const { _translations } = await import('../i18n');
+    // i18n.ts 자신은 제외 — 정의 줄이 자기 키를 "참조"하는 것으로 잡히면 가드가 공허해진다.
+    const src = allFiles.filter((f) => f !== I18N_FILE).map(read).join('\n');
+    const orphans = Object.keys(_translations).filter((k) =>
+      !isDynamic(k) && !src.includes(`'${k}'`) && !src.includes(`"${k}"`) && !src.includes(`\`${k}\``));
+    expect(orphans, `어느 소스도 참조하지 않는 키: ${orphans.join(', ')}`).toEqual([]);
+  });
+
+  it('동적 접두 키(mainprog./mainerr.)는 실제로 사전에 존재한다 — 허용 목록이 공허하지 않다', async () => {
+    const { _translations } = await import('../i18n');
+    for (const p of DYNAMIC_PREFIXES) {
+      expect(Object.keys(_translations).some((k) => k.startsWith(p)), `${p} 키가 사전에 없다`).toBe(true);
     }
   });
 });

@@ -17,6 +17,13 @@ export const _translations = {
   'tabs.close': { ko: '{name} 탭 닫기', en: 'Close tab {name}' },
   'tabs.newTab': { ko: '새 문서 열기', en: 'Open a new document' },
   // QA23(D-MED): 세션 저장이 꺼져 있으면 탭 전환이 현재 문서의 요약·Q&A 를 파기한다(저장할 곳이 없다).
+  // QA28(B-Low): 설정 패널의 미저장 편집(커스텀 템플릿 등) 파기 확인.
+  'settings.discardConfirm': {
+    ko: '저장하지 않은 설정 변경이 있습니다. 버리고 닫을까요?',
+    en: 'You have unsaved settings changes. Discard them and close?',
+  },
+  // QA28(B2-Low): 모델 다운로드 취소 요청 자체가 실패했을 때.
+  'settings.cancelPullFail': { ko: '다운로드 취소 요청이 실패했습니다. 잠시 후 다시 시도하세요.', en: 'Failed to cancel the download. Please try again shortly.' },
   'tabs.discardOnSwitchConfirm': {
     ko: '세션 저장이 꺼져 있어 탭을 전환하면 현재 문서의 요약과 Q&A 가 사라집니다. 계속할까요?\n(설정 → 세션 데이터에서 저장을 켤 수 있습니다)',
     en: 'Session saving is off, so switching tabs will discard this document’s summary and Q&A. Continue?\n(You can turn saving on in Settings → Session data.)',
@@ -66,7 +73,6 @@ export const _translations = {
   'ai.summaryTimeout': { ko: '요약 시간이 초과되었습니다. 생성된 부분까지 표시됩니다. 청크 크기를 줄이거나 경량 모델을 사용해보세요.', en: 'Summary timed out. The portion generated so far is shown. Try reducing chunk size or using a lighter model.' },
   'ai.ollamaNotRunning': { ko: 'Ollama가 실행 중이 아닙니다. 설정을 확인해주세요.', en: 'Ollama is not running. Please check your settings.' },
   'ai.apiKeyMissing': { ko: '{provider} API 키가 설정되지 않았습니다. 설정에서 API 키를 입력해주세요.', en: '{provider} API key is not set. Please enter it in Settings.' },
-  'ai.serviceUnavailable': { ko: 'AI 서비스를 사용할 수 없습니다.', en: 'AI service is unavailable.' },
   'ai.noText': { ko: '요약할 내용이 없습니다. PDF에서 유의미한 텍스트를 추출하지 못했습니다.', en: 'Nothing to summarize. No meaningful text could be extracted from the PDF.' },
   'common.save': { ko: '저장', en: 'Save' },
   'common.delete': { ko: '삭제', en: 'Delete' },
@@ -80,7 +86,6 @@ export const _translations = {
   'app.title': { ko: 'PDF 자료 분석기', en: 'PDF Analyzer' },
   'app.logo': { ko: '로고', en: 'Logo' },
   'app.settings': { ko: '설정', en: 'Settings' },
-  'app.settingsBlocked': { ko: '요약 중에는 설정을 열 수 없습니다', en: 'Cannot open settings while summarizing' },
   'app.closeError': { ko: '에러 닫기', en: 'Close error' },
   'app.removeFile': { ko: '현재 문서 닫기', en: 'Close current document' },
   'app.otherFile': { ko: '✕ 문서 닫기', en: '✕ Close document' },
@@ -262,7 +267,8 @@ export const _translations = {
   'collection.evictedNotice': { ko: '보관 한도를 넘어 오래된 컬렉션을 정리했습니다: {names}', en: 'Removed older collections beyond the storage limit: {names}' },
   'collection.saveFail': { ko: '컬렉션 저장에 실패했습니다.', en: 'Failed to save collection.' },
   'collection.savedTitle': { ko: '저장된 컬렉션', en: 'Saved collections' },
-  'collection.savedEmpty': { ko: '저장된 컬렉션이 없습니다.', en: 'No saved collections.' },
+  // QA28(B2-Important): 삭제 실패 고지 — RecentDocuments 의 recent.deleteFail 과 대칭.
+  'collection.deleteFail': { ko: '컬렉션을 삭제하지 못했습니다. 파일이 잠겨 있거나 권한이 없을 수 있습니다.', en: 'Could not delete the collection. The file may be locked or you may lack permission.' },
   'collection.savedEmptyHint': { ko: '여러 PDF를 탭으로 열고 요약한 뒤 "여러 문서에 걸쳐 질문"을 켜면 묶음을 컬렉션으로 저장할 수 있습니다.', en: 'Open several PDFs as tabs, summarize, then turn on "Ask across documents" to save the set as a collection.' },
   'collection.docCount': { ko: '문서 {count}개', en: '{count} documents' },
   'collection.open': { ko: '열기', en: 'Open' },

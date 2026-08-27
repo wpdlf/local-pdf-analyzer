@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore, isDocSwapPending } from '../lib/store';
 import { useT } from '../lib/i18n';
 import { resolveMembers } from '../lib/collection';
@@ -37,6 +37,7 @@ export function CollectionBar() {
 
   const [manifest, setManifest] = useState<SessionManifestEntry[]>([]);
   const [saving, setSaving] = useState(false);     // 이름 입력 표시 여부
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
   const [saveName, setSaveName] = useState('');
 
   // docHash 가 기록된 탭만 컬렉션 멤버 후보 (전환·세션 복원 흐름이 docHash 를 채움)
@@ -104,7 +105,6 @@ export function CollectionBar() {
   const handleSave = async (): Promise<void> => {
     const name = saveName.trim();
     if (!name || memberHashesToSave.length < 2) return;
-    setSaving(false);
     // 저장된 컬렉션에서 연 세트를 **같은 이름으로** 다시 저장하면 그 항목의 갱신(id 재사용).
     // 이름을 바꿨다면 "다른 이름으로 저장" 의도이므로 id 를 넘기지 않아 신규 항목이 된다.
     const savedRef = collection.saved;
@@ -128,8 +128,17 @@ export function CollectionBar() {
     } else {
       // 실패는 setError(닫기 전까지 잔존)로 통일 — notice(자동소멸)면 놓치기 쉬움(R47)
       useAppStore.getState().setError({ code: 'COLLECTION_SAVE_FAIL', message: t('collection.saveFail') });
+      // QA28(B-Low): 실패했는데도 입력 UI 를 닫고 이름을 지우면 재시도에 재입력이 필요하다 —
+      // 입력값·입력 UI 를 유지한다(setSaving(false) 를 await 앞에서 여기로 옮겼다).
+      return;
     }
+    setSaving(false);
     setSaveName('');
+    // QA28(B-Low): 확정 버튼이 언마운트되며 포커스가 <body> 로 유실 — 💾 버튼으로 반환
+    // (SettingsPanel.removeTemplate 의 rAF 이관과 동일 패턴).
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => saveButtonRef.current?.focus());
+    }
   };
 
   return (
@@ -244,6 +253,7 @@ export function CollectionBar() {
             </div>
           ) : (
             <button
+              ref={saveButtonRef}
               onClick={() => { setSaveName(defaultName); setSaving(true); }}
               disabled={memberHashesToSave.length < 2}
               className="mt-2 rounded px-2 py-1 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"

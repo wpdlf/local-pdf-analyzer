@@ -8,7 +8,7 @@
 // 않아 기존 379 tests 의 `vi.stubGlobal('window', ...)` 패턴이 영향받지 않는다.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 // store.ts 는 module init 시 localStorage / window.electronAPI 를 참조한다.
@@ -316,6 +316,25 @@ describe('CitationButton — 교차 문서 인용 (multi-doc Phase 2)', () => {
     (document.body as HTMLElement).focus();
     restoreCitationFocus();
     expect(document.activeElement, '등록이 없으면 포커스가 body 에 남는다').toBe(btn);
+  });
+
+  // QA28(B-MED): React 는 리스너 반환 직후 event.currentTarget 을 null 로 되돌린다 — 교차 문서
+  // 경로는 switchToTab 을 await 한 뒤에 트리거를 읽어 항상 null 을 등록했다(패널 닫힘 → <body>).
+  it('QA28(B-MED): 교차 문서 클릭(비동기 switchToTab) 후에도 포커스 반환 트리거는 버튼이다', async () => {
+    const user = userEvent.setup();
+    // 실제 전환처럼 마이크로태스크 하나를 건넌 뒤 활성 문서를 바꾼다.
+    mockSwitchToTab.mockImplementation(async (fp: string) => {
+      await Promise.resolve();
+      useAppStore.setState((s) => ({ document: { ...s.document!, filePath: fp, fileName: 'Beta.pdf', pageCount: 9 } }));
+    });
+    render(<CitationButton page={8} docName="Beta.pdf" />);
+    const btn = screen.getByRole('button');
+    await user.click(btn);
+    await waitFor(() => expect(useAppStore.getState().citationTarget).toEqual({ page: 8 }));
+
+    (document.body as HTMLElement).focus();
+    restoreCitationFocus();
+    expect(document.activeElement, 'await 이후 currentTarget(null) 을 등록하면 body 에 남는다').toBe(btn);
   });
 
   it('클릭하지 않았으면 복원은 아무것도 하지 않는다 (1회성 소비)', async () => {

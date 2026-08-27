@@ -372,3 +372,46 @@ describe('SettingsPanel — a11y', () => {
     expect(useAppStore.getState().settings.customSummaryTemplates).toHaveLength(0);
   });
 });
+
+// QA28(B-Low): 미저장 편집(커스텀 템플릿 프롬프트 등)이 ✕/Escape 로 무경고 소실됐다 —
+// hasChanges 가 참이면 settings.discardConfirm 으로 묻고, 거절하면 패널을 유지한다.
+describe('SettingsPanel — QA28(B-Low) 미저장 변경 파기 확인', () => {
+  it('QA28(B-Low): 변경 후 ✕ → confirm(settings.discardConfirm) 호출, 거절하면 패널 유지', async () => {
+    window.confirm = vi.fn(() => false);
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.click(screen.getByRole('radio', { name: t('settings.themeDark') })); // hasChanges=true
+    await user.click(screen.getByRole('button', { name: t('settings.closePanel') }));
+    expect(window.confirm).toHaveBeenCalledWith(t('settings.discardConfirm'));
+    expect(useAppStore.getState().view).toBe('settings');
+  });
+
+  it('QA28(B-Low): 변경 후 ✕ → confirm 수락이면 닫힌다', async () => {
+    window.confirm = vi.fn(() => true);
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.click(screen.getByRole('radio', { name: t('settings.themeDark') }));
+    await user.click(screen.getByRole('button', { name: t('settings.closePanel') }));
+    expect(window.confirm).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().view).toBe('main');
+  });
+
+  it('QA28(B-Low): 변경 후 Escape 도 같은 확인 게이트를 탄다 (거절 → 유지)', async () => {
+    window.confirm = vi.fn(() => false);
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.click(screen.getByRole('radio', { name: t('settings.themeDark') }));
+    (document.body as HTMLElement).focus(); // 편집 필드 밖에서 Escape
+    await user.keyboard('{Escape}');
+    expect(window.confirm).toHaveBeenCalledWith(t('settings.discardConfirm'));
+    expect(useAppStore.getState().view).toBe('settings');
+  });
+
+  it('QA28(B-Low): 변경이 없으면 confirm 없이 닫힌다', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await user.click(screen.getByRole('button', { name: t('settings.closePanel') }));
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(useAppStore.getState().view).toBe('main');
+  });
+});

@@ -32,6 +32,7 @@ vi.stubGlobal('window', Object.assign(window, {
 
 import { CollectionsList } from '../CollectionsList';
 import { useAppStore } from '../../lib/store';
+import { t } from '../../lib/i18n';
 
 function coll(id: string, name: string, n: number) {
   return { id, name, docHashes: Array.from({ length: n }, (_, i) => `${id}-${i}`), createdAt: 'x', lastAccessed: 'x' };
@@ -40,6 +41,8 @@ function coll(id: string, name: string, n: number) {
 beforeEach(() => {
   vi.clearAllMocks();
   M.list.mockResolvedValue([coll('c1', '강의 묶음', 3)]);
+  // QA28: clearAllMocks 는 구현을 지우지 않는다 — 실패 케이스의 {ok:false} 가 다음 테스트로 새지 않게 복원
+  M.del.mockResolvedValue({ ok: true });
   M.openCollection.mockResolvedValue({ opened: 2, total: 2 });
   M.blocked.mockReturnValue(false);
   useAppStore.setState({
@@ -225,6 +228,49 @@ describe('CollectionsList', () => {
     const c2Open = screen.getByRole('button', { name: '열기' }); // c2만 '열기'
     expect((c2Open as HTMLButtonElement).disabled).toBe(false);
     release({ opened: 2, total: 2 });
+  });
+
+  // QA28(B2-Important): 삭제 실패는 반환값 {ok:false} 로만 전달된다 — 버리면 refresh 후 항목이
+  // 그대로 재등장해 "클릭이 안 먹혔다" 로 오인된다. RecentDocuments R42 의 형제 누락.
+  it('QA28(B2-Important): 삭제 실패({ok:false}) → COLLECTION_DELETE_FAIL 배너(collection.deleteFail)', async () => {
+    M.del.mockResolvedValue({ ok: false });
+    useAppStore.setState({ collection: { enabled: true, memberHashes: [], saved: { id: 'c1', name: '강의 묶음' } } });
+    const user = userEvent.setup();
+    render(<CollectionsList />);
+    await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: '삭제' }));
+    await waitFor(() => expect(useAppStore.getState().error?.code).toBe('COLLECTION_DELETE_FAIL'));
+    expect(useAppStore.getState().error?.message).toBe(t('collection.deleteFail'));
+    // 실패했으므로 열려 있던 컬렉션의 소속은 끊지 않는다.
+    expect(useAppStore.getState().collection.saved).toEqual({ id: 'c1', name: '강의 묶음' });
+  });
+
+  it('QA28(B2-Important): 삭제 성공({ok:true}) → 에러 없음', async () => {
+    const user = userEvent.setup();
+    render(<CollectionsList />);
+    await waitFor(() => expect(screen.getByText(/강의 묶음/)).toBeTruthy());
+    M.list.mockResolvedValue([]);
+    await user.click(screen.getByRole('button', { name: '삭제' }));
+    await waitFor(() => expect(M.del).toHaveBeenCalledWith('c1'));
+    await waitFor(() => expect(screen.queryByText(/강의 묶음/)).toBeNull());
+    expect(useAppStore.getState().error).toBeNull();
+  });
+
+  // QA28(B2-Low): 삭제한 🗑 버튼이 언마운트되며 포커스가 <body> 로 유실 — 재조회 후 첫 남은
+  // 항목의 버튼으로 반환(rAF).
+  it('QA28(B2-Low): 삭제 후 포커스가 첫 남은 항목의 버튼으로 이동한다', async () => {
+    M.list.mockResolvedValue([coll('c1', '묶음A', 2), coll('c2', '묶음B', 2)]);
+    const user = userEvent.setup();
+    render(<CollectionsList />);
+    await waitFor(() => expect(screen.getByText(/묶음B/)).toBeTruthy());
+    M.list.mockResolvedValue([coll('c2', '묶음B', 2)]); // c1 삭제 후
+    await user.click(screen.getAllByRole('button', { name: '삭제' })[0]!);
+    await waitFor(() => expect(screen.queryByText(/묶음A/)).toBeNull());
+    await waitFor(() => {
+      const first = screen.getAllByRole('button')[0]!; // 남은 c2 행의 첫 버튼(열기)
+      expect(document.activeElement).toBe(first);
+    });
+    expect(document.activeElement).not.toBe(document.body);
   });
 
   it('삭제 → deleteCollection(id) 호출 + 목록 갱신', async () => {

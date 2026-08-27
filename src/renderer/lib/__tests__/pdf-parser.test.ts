@@ -96,6 +96,8 @@ describe('PDF Parser - parsePdf success', () => {
     expect(doc.extractedText.length).toBeGreaterThan(50);
     expect(doc.id).toBeDefined();
     expect(doc.chapters.length).toBeGreaterThan(0);
+    // QA28: 이미지 예산 초과가 없으면 표식도 없다(고지가 텍스트-only 문서에 뜨지 않도록).
+    expect(doc.imageBudgetExceeded).toBeUndefined();
   });
 });
 
@@ -249,6 +251,9 @@ describe('PDF Parser - MAX_TOTAL_IMAGES cap enforcement', () => {
 
       // 추출이 실제로 일어났고(>0) 캡이 정확히 작동했음(===50)을 동시 검증.
       expect(doc.images.length).toBe(50);
+      // QA28(B2-Low → QA22 배선): 신규 이미지가 남은 슬롯보다 많았다는 표식 — handlePdfData 가
+      // `pdf.imageBudgetNotice` 를 띄우는 유일한 근거. 없으면 QA22 문구는 영원히 표시되지 않는다.
+      expect(doc.imageBudgetExceeded).toBe(true);
     } finally {
       g.OffscreenCanvas = origOC;
       g.ImageData = origID;

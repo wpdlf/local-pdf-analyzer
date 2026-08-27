@@ -185,3 +185,51 @@ describe('CollectionBar 동작', () => {
     expect(alphaLabel.textContent).toContain('현재');
   });
 });
+
+// QA28(B-Low): 저장 실패 시 입력 UI 를 닫고 이름을 지우면 재시도에 재입력이 필요하다 —
+// 실패면 입력값·입력 UI 유지, 성공이면 닫고 비운다.
+describe('CollectionBar — QA28(B-Low) 저장 실패 시 입력 유지', () => {
+  beforeEach(() => {
+    seedActive();
+    useAppStore.setState({
+      openTabs: [
+        { filePath: '/a', fileName: 'Alpha.pdf', pageCount: 1, docHash: 'a'.repeat(64) },
+        { filePath: '/b', fileName: 'Beta.pdf', pageCount: 1, docHash: 'b'.repeat(64) },
+      ],
+      document: { id: 'd', fileName: 'Alpha.pdf', filePath: '/a', pageCount: 1, extractedText: 'x', pageTexts: [], chapters: [], images: [], createdAt: new Date() },
+      collection: { enabled: true, memberHashes: ['a'.repeat(64), 'b'.repeat(64)] },
+      error: null,
+    });
+  });
+
+  it('QA28(B-Low): 저장 실패({ok:false}) → 입력 UI 가 열린 채 이름이 유지되고 saveFail 배너', async () => {
+    mockSaveCollection.mockResolvedValueOnce({ ok: false } as never);
+    const user = userEvent.setup();
+    render(<CollectionBar />);
+    await user.click(await screen.findByRole('button', { name: /컬렉션 저장/ }));
+    const input = screen.getByPlaceholderText('컬렉션 이름') as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, '재시도 묶음');
+    await user.click(screen.getByRole('button', { name: '저장' }));
+    await waitFor(() => expect(useAppStore.getState().error?.code).toBe('COLLECTION_SAVE_FAIL'));
+    const still = screen.getByPlaceholderText('컬렉션 이름') as HTMLInputElement; // 입력 UI 잔존
+    expect(still.value).toBe('재시도 묶음');
+    expect(screen.queryByRole('button', { name: /컬렉션 저장/ })).toBeNull(); // 💾 버튼으로 돌아가지 않음
+  });
+
+  it('QA28(B-Low): 저장 성공 → 입력 UI 닫히고 이름 비워짐(다음 열기는 기본 이름)', async () => {
+    mockSaveCollection.mockResolvedValueOnce({ ok: true, id: 'ok-1' } as never);
+    const user = userEvent.setup();
+    render(<CollectionBar />);
+    await user.click(await screen.findByRole('button', { name: /컬렉션 저장/ }));
+    const input = screen.getByPlaceholderText('컬렉션 이름') as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, '성공 묶음');
+    await user.click(screen.getByRole('button', { name: '저장' }));
+    await waitFor(() => expect(screen.queryByPlaceholderText('컬렉션 이름')).toBeNull());
+    const saveBtn = await screen.findByRole('button', { name: /컬렉션 저장/ });
+    expect(useAppStore.getState().error).toBeNull();
+    // 포커스가 💾 버튼으로 반환된다(rAF)
+    await waitFor(() => expect(document.activeElement).toBe(saveBtn));
+  });
+});

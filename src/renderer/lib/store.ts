@@ -166,9 +166,13 @@ function safeRandomId(): string {
  * 실패 모드는 아니지만 영향 범위는 넓어졌다. 복원은 정상 경로에서 수백 ms 안에 끝난다.
  */
 export function isDocSwapPending(
-  s: Pick<AppState, 'isParsing' | 'isTabSwitching' | 'sessionRestorePending'>,
+  s: Pick<AppState, 'isParsing' | 'isTabSwitching' | 'sessionRestorePending' | 'collectionOpenInFlight'>,
 ): boolean {
-  return s.isParsing || s.isTabSwitching || s.sessionRestorePending;
+  // QA28(B-Important): 문서 교체 구간을 잠그는 store 플래그는 **넷**인데 이 술어엔 셋뿐이었다.
+  // openCollection 은 첫 멤버 복원으로 document 를 세운 뒤에도 남은 멤버의 session.load 루프를
+  // 계속 돌고, 그 창에서 sessionRestorePending 은 이미 내려가 있어 요약/Q&A 시작이 통과했다
+  // (isTabSwitchBlocked 는 막는데 이 술어만 안 막는 구간). 두 술어의 "교체 예정" 집합을 일치시킨다.
+  return s.isParsing || s.isTabSwitching || s.sessionRestorePending || s.collectionOpenInFlight;
 }
 
 function abortInFlightAiRequests(...requestIds: (string | null | undefined)[]): void {

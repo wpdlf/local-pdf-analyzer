@@ -309,6 +309,10 @@ export async function parsePdf(
   const seenImageSignatures = new Set<string>();
   // 문서 전체에서 검사한 이미지 수(채택 여부 무관) — 위 shouldExtractMoreImages 의 두 번째 예산.
   const imageStats = { examined: 0 };
+  // QA28(B2-Low → QA22 배선 누락): QA22 가 `pdf.imageBudgetNotice` 문구를 추가하고 "안내도 뜨지
+  // 않았다" 고 적었지만 방출자가 없어 한 번도 표시되지 않았다. 예산 초과(신규 이미지가 남은 슬롯보다
+  // 많음)를 관측해 handlePdfData 가 파싱 완료 후 고지한다.
+  let imageBudgetExceeded = false;
 
   try {
     for (let batchStart = 0; batchStart < pageCount; batchStart += BATCH_SIZE) {
@@ -358,7 +362,12 @@ export async function parsePdf(
                 seenImageSignatures.add(sig);
                 return true;
               });
+              if (fresh.length > remainingSlots) imageBudgetExceeded = true;
               if (fresh.length > 0) allImages.push(...fresh.slice(0, remainingSlots));
+            } else if (pageImages.length > 0 && remainingSlots <= 0) {
+              // 슬롯이 이미 0 인데 이 페이지에 이미지가 있었다 — 중복 여부와 무관하게 예산 초과로 본다
+              // (중복만 남았을 가능성은 있지만 앞서 채택된 50장이 이미 한도라는 사실은 같다).
+              imageBudgetExceeded = true;
             }
 
             // 페이지 내부 리소스 해제 — 대용량 PDF에서 누적 메모리 상승 방지
@@ -438,6 +447,7 @@ export async function parsePdf(
       chapters,
       images: allImages.slice(0, MAX_TOTAL_IMAGES),
       createdAt: new Date(),
+      ...(imageBudgetExceeded ? { imageBudgetExceeded: true } : {}),
     };
   } finally {
     // 파싱 종료 시 PDF 문서 내부 리소스 해제 — 정상/취소/에러 모두 동일
@@ -1124,6 +1134,10 @@ export async function handlePdfData(
     // 새 PDF 로드 성공 시 stale notice (예: 직전 multi-file 드롭 경고) 를 정리하지 않아
     // 다른 단일 파일을 열어도 이전 경고가 잔존하던 lifecycle 갭 해소.
     store.setNotice(null);
+    // QA28: Vision 예산 소진 고지(QA22 문구의 배선) — 위 setNotice(null) **뒤**에 둬야 남는다.
+    if (doc.imageBudgetExceeded) {
+      store.setNotice({ message: t('pdf.imageBudgetNotice', { max: String(MAX_TOTAL_IMAGES) }) });
+    }
   } catch (err) {
     const error = err as Error & { code?: string };
     // 사용자 취소는 에러 배너로 표시하지 않음 (의도적 액션)

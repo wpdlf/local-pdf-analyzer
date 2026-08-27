@@ -56,6 +56,11 @@ export interface PdfDocument {
    * 이 표식이 있으면 "다시 열어야 이미지 분석이 적용된다" 를 정확한 문구로 안내할 수 있다.
    */
   hadImages?: boolean;
+  /**
+   * QA28: 파싱 중 Vision 이미지 예산(MAX_TOTAL_IMAGES)을 넘겨 뒷부분 이미지를 담지 못했다는
+   * 표식(세션에 저장하지 않음 — 파싱 직후 1회 고지 용도).
+   */
+  imageBudgetExceeded?: boolean;
 }
 
 // 챕터 (페이지 기반 분할)
@@ -257,6 +262,7 @@ export type AppErrorCode =
   // 의미와 어긋나 텔레메트리/분기를 오도한다. 실패 출처를 명확히 하도록 전용 코드 분리.
   | 'COLLECTION_OPEN_FAIL'
   | 'COLLECTION_SAVE_FAIL'
+  | 'COLLECTION_DELETE_FAIL'
   | 'COLLECTION_SUMMARY_FAIL';
 
 export interface AppError {

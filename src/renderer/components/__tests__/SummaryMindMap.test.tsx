@@ -98,3 +98,29 @@ describe('SummaryMindMap', () => {
     expect(badge.getAttribute('aria-disabled')).toBe('true'); // 버튼 아닌 비활성 span
   });
 });
+
+// QA28(B2-Low): 노드 id 가 등장 순서(`mm-N`)라 요약이 바뀌어도 React 가 같은 key 의 인스턴스를
+// 재사용해 접어 둔 상태가 전혀 다른 heading 에 붙었다 — 요약 텍스트가 바뀌면 트리를 새로 마운트한다.
+describe('SummaryMindMap — QA28(B2-Low) 요약 변경 시 접힘 상태 초기화', () => {
+  it('QA28(B2-Low): 접은 뒤 같은 형태의 다른 마크다운으로 rerender → 노드가 다시 펼쳐진다', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<SummaryMindMap markdown={MD} />);
+    await user.click(screen.getAllByRole('button', { name: new RegExp(t('mindmap.collapse')) })[0]!); // '문서' 접기
+    expect(screen.queryByText('개요')).toBeNull();
+
+    // heading 개수·계층이 같고(id 시퀀스 동일) 제목만 다른 요약
+    const MD2 = '# 보고서\n\n## 서론\n\n근거 [p.2].\n\n### 동기\n\n## 요약\n\n끝 [p.4].';
+    rerender(<SummaryMindMap markdown={MD2} />);
+    expect(screen.getByText('서론'), '접힘 상태가 다른 heading 에 붙어 하위가 숨으면 안 된다').toBeTruthy();
+    expect(screen.getByText('동기')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: new RegExp(t('mindmap.expand')) })).toBeNull();
+  });
+
+  it('QA28(B2-Low): 같은 마크다운으로 rerender 하면 접힘 상태는 유지된다 (불필요한 리마운트 없음)', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<SummaryMindMap markdown={MD} />);
+    await user.click(screen.getAllByRole('button', { name: new RegExp(t('mindmap.collapse')) })[0]!);
+    rerender(<SummaryMindMap markdown={MD} />);
+    expect(screen.queryByText('개요')).toBeNull();
+  });
+});

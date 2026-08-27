@@ -374,6 +374,14 @@ export function SettingsPanel() {
   };
 
   const handleCancel = () => {
+    // QA28(B-Low): 커스텀 템플릿 프롬프트(수백 자) 등 미저장 편집이 ✕/Escape 로 무경고 소실됐다.
+    // hasChanges 를 이미 정확히 계산해 두고도 묻지 않았다 — tabs 의 confirmDiscardIfNotPersisted
+    // 와 대칭으로 확인 게이트. confirm 이 없는 환경(테스트)은 차단하지 않는다.
+    if (hasChanges) {
+      let ok = true;
+      try { ok = window.confirm(t('settings.discardConfirm')); } catch { ok = true; }
+      if (!ok) return;
+    }
     // draft.theme가 settings.theme와 다르면 동기적으로 저장된 테마를 직접 적용.
     // setDraft + setView('main')으로는 언마운트 중 새 useEffect가 실행되지 않아
     // 프리뷰 테마가 DOM에 남는 문제 방지.
@@ -709,7 +717,9 @@ export function SettingsPanel() {
               { name: 'exaone3.5', desc: t('settings.koreanSpecial') },
               { name: 'llama3.2', desc: t('settings.generalLight') },
               { name: 'phi3', desc: t('settings.ultraLight') },
-            ].filter((m) => !ollamaModels.some((om) => om.startsWith(m.name))).map((m) => (
+            // QA28(B2-Low): R43 F1 이 503행·위저드는 matchesModel(콜론 경계)로 바꿨는데 이 줄만
+            // startsWith 로 남아 `gemma3n:e4b` 만 설치된 사용자에게 `gemma3` 칩이 사라졌다.
+            ].filter((m) => !ollamaModels.some((om) => matchesModel(om, m.name))).map((m) => (
               <button
                 key={m.name}
                 onClick={() => { setPullModelName(m.name); }}
@@ -742,7 +752,13 @@ export function SettingsPanel() {
                 {/* R44 F9: 수동 pull 도 취소 가능 — cancelPull 이 자식 프로세스를 중단하면
                     in-flight pullModel 이 실패로 resolve 되어 handlePullModel 의 finally 가 정리 */}
                 <button
-                  onClick={() => { void window.electronAPI.ollama.cancelPull().catch(() => { /* 무시 */ }); }}
+                  // QA28(B2-Low): 취소 실패가 무음이면 스피너와 이 버튼이 그대로 남아 클릭이
+                  // 반영됐는지 알 수 없다 — pullError 채널로 수렴(위저드는 즉시 화면 전환이라 무해).
+                  onClick={() => {
+                    void window.electronAPI.ollama.cancelPull().catch(() => {
+                      setPullError(t('settings.cancelPullFail'));
+                    });
+                  }}
                   className="shrink-0 px-2 py-0.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
                 >
                   {t('common.cancel')}

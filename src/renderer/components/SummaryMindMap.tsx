@@ -23,9 +23,13 @@ export function SummaryMindMap({ markdown }: { markdown: string }) {
       </div>
     );
   }
+  // QA28(B2-Low): 노드 id 가 등장 순서(`mm-N`)라 요약이 바뀌어도 React 가 같은 key 의 인스턴스를
+  // 재사용해 접어 둔 상태가 전혀 다른 heading 에 붙었다(탭 전환·재요약 시 하위 노드가 이유 없이
+  // 숨음). 요약 텍스트가 바뀌면 트리를 새로 마운트해 접힘 상태를 그 요약에 귀속시킨다.
+  const treeKey = useMemo(() => `${markdown.length}:${roots.map((r) => r.title).join('|')}`, [markdown, roots]);
   return (
     <nav aria-label={t('mindmap.title')} className="not-prose text-sm">
-      <ul>
+      <ul key={treeKey}>
         {roots.map((n) => (
           <MindMapNode key={n.id} node={n} isRoot />
         ))}

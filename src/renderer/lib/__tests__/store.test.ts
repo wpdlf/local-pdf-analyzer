@@ -843,3 +843,19 @@ describe('flushPendingWrites (pagehide 종료 flush)', () => {
     expect(setMock).not.toHaveBeenCalled();
   });
 });
+
+// QA28(B-Important): 문서 교체 구간을 잠그는 store 플래그는 넷인데 isDocSwapPending 은 셋만
+// 봤다 — openCollection 이 첫 멤버 복원 뒤 남은 멤버를 로드하는 창(sessionRestorePending 은
+// 이미 내려간 상태)에서 요약/Q&A 시작이 통과했다. 네 플래그 각각 단독으로 true 를 만든다.
+describe('isDocSwapPending (QA28 B-Important)', () => {
+  it('collectionOpenInFlight 단독으로도 true', async () => {
+    const { isDocSwapPending } = await import('../store');
+    const base = { isParsing: false, isTabSwitching: false, sessionRestorePending: false, collectionOpenInFlight: false };
+    expect(isDocSwapPending(base)).toBe(false);
+    expect(isDocSwapPending({ ...base, collectionOpenInFlight: true })).toBe(true);
+    // 형제 셋도 여전히 단독 true (회귀 방지)
+    expect(isDocSwapPending({ ...base, isParsing: true })).toBe(true);
+    expect(isDocSwapPending({ ...base, isTabSwitching: true })).toBe(true);
+    expect(isDocSwapPending({ ...base, sessionRestorePending: true })).toBe(true);
+  });
+});

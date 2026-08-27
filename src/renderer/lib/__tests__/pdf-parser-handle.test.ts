@@ -233,6 +233,62 @@ describe('handlePdfData — 성공 오케스트레이션', () => {
     expect(useAppStore.getState().document?.images).toEqual([]); // 전량 거절은 종전대로
   });
 
+  // QA28(B2-Low → QA22 배선 누락): `pdf.imageBudgetNotice` 문구는 QA22 가 추가했지만 방출자가
+  // 없어 한 번도 표시되지 않았다. 성공 경로의 stale notice 정리(setNotice(null)) **뒤**에
+  // 고지가 남아야 한다 — 앞에 두면 곧바로 지워져 같은 결함이 된다.
+  it('배선: Vision 이미지 예산(50장) 초과 문서를 열면 파싱 완료 후 imageBudgetNotice 가 남는다', async () => {
+    const W = 64, H = 64;
+    const fakeImage = { width: W, height: H, data: new Uint8ClampedArray(W * H * 4).fill(200) };
+    class FakeImageData {
+      data: Uint8ClampedArray; width: number; height: number;
+      constructor(data: Uint8ClampedArray, width: number, height: number) { this.data = data; this.width = width; this.height = height; }
+    }
+    let blobSeq = 0; // 서로 다른 바이트 → 중복 제거에 접히지 않는 "신규" 이미지
+    class FakeOffscreenCanvas {
+      width: number; height: number;
+      constructor(w: number, h: number) { this.width = w; this.height = h; }
+      getContext() { return { putImageData() {}, drawImage() {} }; }
+      async convertToBlob() {
+        const n = blobSeq++;
+        return { async arrayBuffer() { return new Uint8Array([n & 0xff, (n >> 8) & 0xff, 1, 2, 3, 4, 5, 6]).buffer; } };
+      }
+    }
+    const g = globalThis as unknown as Record<string, unknown>;
+    const origOC = g.OffscreenCanvas, origID = g.ImageData;
+    g.OffscreenCanvas = FakeOffscreenCanvas; g.ImageData = FakeImageData;
+    const setNotice = vi.spyOn(useAppStore.getState(), 'setNotice');
+    try {
+      const page = {
+        getTextContent: () => Promise.resolve({ items: [{ str: 'A'.repeat(80), transform: [12, 0, 0, 12, 0, 700], width: 100 }] }),
+        getOperatorList: vi.fn(() => Promise.resolve({ fnArray: new Array(20).fill(85), argsArray: new Array(20).fill(['img']) })),
+        objs: { get: (_n: string, cb: (o: unknown) => void) => cb(fakeImage) },
+        getViewport: () => ({ width: 600, height: 800 }),
+        render: () => ({ promise: Promise.resolve() }),
+        cleanup: () => {},
+      };
+      // 10페이지 × 페이지당 10장(MAX_IMAGES_PER_PAGE) = 100 신규 > 50 예산
+      P.getDocument.mockReturnValue({
+        promise: Promise.resolve({ numPages: 10, getPage: vi.fn(() => Promise.resolve(page)), destroy: vi.fn(() => Promise.resolve()) }),
+      });
+      useAppStore.setState({ settings: { ...DEFAULT_SETTINGS, provider: 'ollama', enableOcrFallback: false, enableImageAnalysis: true, uiLanguage: 'ko' }, notice: null });
+
+      await handlePdfData(pdfBuf(), 'many.pdf', '/d/many.pdf');
+
+      expect(useAppStore.getState().document?.images.length).toBe(50);
+      const { t } = await import('../i18n');
+      const expected = t('pdf.imageBudgetNotice', { max: '50' });
+      // 마지막 setNotice 가 고지여야 한다(null 정리가 뒤에 오면 즉시 소멸).
+      const calls = setNotice.mock.calls.map((c) => c[0]);
+      expect(calls).toContainEqual(null);
+      expect(calls.at(-1)).toEqual({ message: expected });
+      expect(calls.indexOf(null)).toBeLessThan(calls.length - 1);
+      expect(useAppStore.getState().notice?.message).toBe(expected);
+    } finally {
+      g.OffscreenCanvas = origOC; g.ImageData = origID;
+      setNotice.mockRestore();
+    }
+  });
+
   // QA24(A-I1): 드롭·Ctrl+O·최근 문서·전역 검색은 전부 이 함수로 직행한다. 영속화 OFF 면
   // 새 문서 로드가 현재 요약·Q&A 를 되돌릴 수 없이 파기하는데, 종전에는 탭 전환에만 확인이
   // 있었고 이 경로들은 무경고였다.

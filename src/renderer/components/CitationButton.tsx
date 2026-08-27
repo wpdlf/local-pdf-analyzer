@@ -78,6 +78,10 @@ export function CitationButton({ page, docName }: CitationButtonProps) {
     // 마크다운 안의 링크 등 다른 interactive 요소로 이벤트가 bubble 되지 않도록 차단
     e.preventDefault();
     e.stopPropagation();
+    // QA28(B-MED): React 는 리스너 반환 직후 event.currentTarget 을 null 로 되돌리므로 아래
+    // await 를 건넌 뒤에는 null 이다 — 교차 문서 경로만 포커스 반환이 항상 실패해 패널을 닫으면
+    // 포커스가 <body> 로 갔다(QA14 가 단일 문서 경로에서 고친 것의 형제). 첫 await 전에 캡처.
+    const trigger = e.currentTarget as HTMLElement;
     // 교차 문서면 먼저 해당 탭으로 전환(세션 우선 복원, 즉시) 후 페이지 점프
     if (isCrossDoc && targetTab && targetTab.filePath !== activeFilePath) {
       await switchToTab(targetTab.filePath);
@@ -87,7 +91,7 @@ export function CitationButton({ page, docName }: CitationButtonProps) {
       if (useAppStore.getState().document?.filePath !== targetTab.filePath) return;
     }
     // QA14(D-MED): 패널 닫힘 시 포커스를 이 버튼으로 반환하도록 트리거를 기록.
-    setCitationReturnFocus(e.currentTarget as HTMLElement);
+    setCitationReturnFocus(trigger);
     setCitationTarget({ page: validPage });
   };
 

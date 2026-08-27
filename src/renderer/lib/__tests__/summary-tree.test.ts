@@ -102,3 +102,32 @@ describe('parseSummaryToTree — 요약 마인드맵 파서', () => {
     expect(parseSummaryToTree('## **굵게** 와 *기울임*\n')[0]?.title).toBe('굵게 와 기울임');
   });
 });
+
+// QA28(B2-Low): 펜스 문자 종류·길이를 보지 않고 토글하면 ``` 블록 안의 `~~~` 줄에서 닫힌 것으로
+// 오판 → EOF 가 inFence 로 끝나 dangling 폴백이 코드 안의 `#` 을 전부 노드로 승격시켰다.
+describe('QA28(B2-Low): 코드펜스 닫힘 규칙(같은 문자·같은 길이 이상)', () => {
+  it('``` 블록 안의 ~~~ 줄은 펜스를 닫지 않는다 — 코드 안 # fake 는 노드가 아니다', () => {
+    const md = '# 진짜\n\n```\n~~~\n# fake\n```\n\n## 진짜하위';
+    const t = parseSummaryToTree(md);
+    expect(t).toHaveLength(1);
+    expect(t[0]?.title).toBe('진짜');
+    expect(t[0]?.children.map((c) => c.title)).toEqual(['진짜하위']);
+    expect(JSON.stringify(t)).not.toContain('fake');
+  });
+
+  it('4-backtick 펜스는 ``` 줄로 닫히지 않고 4개 이상 backtick 으로만 닫힌다', () => {
+    const md = '# 진짜\n\n````\n```\n# fake\n```\n# fake2\n````\n\n## 진짜하위';
+    const t = parseSummaryToTree(md);
+    expect(t).toHaveLength(1);
+    expect(t[0]?.children.map((c) => c.title)).toEqual(['진짜하위']);
+    expect(JSON.stringify(t)).not.toContain('fake');
+  });
+
+  it('~~~ 블록은 ~~~ 로 닫힌다', () => {
+    const md = '# 진짜\n\n~~~\n# fake\n~~~\n\n## 진짜하위';
+    const t = parseSummaryToTree(md);
+    expect(t).toHaveLength(1);
+    expect(t[0]?.children.map((c) => c.title)).toEqual(['진짜하위']);
+    expect(JSON.stringify(t)).not.toContain('fake');
+  });
+});

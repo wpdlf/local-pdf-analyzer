@@ -64,12 +64,21 @@ interface RawHeading { level: number; title: string; line: number; }
  */
 function collectHeadings(lines: string[], respectFences: boolean): { heads: RawHeading[]; danglingFence: boolean } {
   const heads: RawHeading[] = [];
-  let inFence = false;
+  // QA28(B2-Low): 펜스 문자 종류·길이를 보지 않고 토글하면 ``` 블록 안의 `~~~` 줄에서 닫힌 것으로
+  // 오판해 EOF 가 inFence=true 로 끝나고, dangling 폴백(펜스 무시 재수집)이 코드 내부 `#` 을 전부
+  // 노드로 승격시킨다. math-normalize 와 같은 규칙(같은 문자·같은 길이 이상)으로 닫는다.
+  let fence: string | null = null;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (line === undefined) continue;
-    if (respectFences && /^\s*(```|~~~)/.test(line)) { inFence = !inFence; continue; }
-    if (inFence) continue;
+    if (respectFences) {
+      const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      if (fence) {
+        if (m && m[1]!.startsWith(fence[0]!) && m[1]!.length >= fence.length) fence = null;
+        continue;
+      }
+      if (m) { fence = m[1]!; continue; }
+    }
     // 닫는 `#` 시퀀스(예: `## 제목 ##`)도 허용, 제목만 캡처.
     // QA18(A-LOW): 선행 공백 0~3칸 허용 — CommonMark 이 3칸까지 heading 으로 인정하므로,
     // 불허하면 텍스트뷰엔 제목으로 렌더되는 줄이 마인드맵에서만 노드로 누락되고 그 본문이
@@ -77,7 +86,7 @@ function collectHeadings(lines: string[], respectFences: boolean): { heads: RawH
     const h = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
     if (h && h[1] && h[2]) heads.push({ level: h[1].length, title: h[2], line: i });
   }
-  return { heads, danglingFence: inFence };
+  return { heads, danglingFence: fence !== null };
 }
 
 /**
