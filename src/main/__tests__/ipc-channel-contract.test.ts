@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripJsComments } from '../../shared/__tests__/helpers/source-scan';
 
 // 자가유지 cross-side IPC 채널 계약 가드 (post-v0.24.4 QA).
 //
@@ -20,11 +21,17 @@ import { resolve } from 'node:path';
 const MAIN_DIR = resolve(import.meta.dirname, '..'); // src/main
 const PRELOAD_DIR = resolve(import.meta.dirname, '../../preload'); // src/preload
 
-/** 디렉터리의 top-level .ts 소스를 연결 (서브디렉터리 __tests__ 는 readdir top-level 이라 자동 제외) */
+/**
+ * 디렉터리의 top-level .ts 소스를 연결 (서브디렉터리 __tests__ 는 readdir top-level 이라 자동 제외).
+ *
+ * QA29(D1-2): 주석은 걷어낸다. 이 가드는 양측 채널 집합의 **일치**를 보므로, 한쪽에서 핸들러를
+ * 지우고 주석에 `ipcMain.handle('session:clear'…)` 같은 예시를 남기면 집합이 그대로여서
+ * 드리프트를 못 잡는다 — 이 가드가 존재하는 이유인 rename 사고와 정확히 같은 모양이다.
+ */
 function readSourceDir(dir: string): string {
   return readdirSync(dir)
     .filter((f) => f.endsWith('.ts') && !f.endsWith('.d.ts'))
-    .map((f) => readFileSync(resolve(dir, f), 'utf-8'))
+    .map((f) => stripJsComments(readFileSync(resolve(dir, f), 'utf-8')))
     .join('\n');
 }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripJsComments } from '../../shared/__tests__/helpers/source-scan';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // QA23(B-LOW → 별도 작업): index.ts 의 **합성 층** 행위 검증.
@@ -263,6 +264,43 @@ describe('flushRenderersBeforeQuit — 대상 선정 (QA18 회귀 가드)', () =
     await flushRenderersBeforeQuit(); // 대상 0개 → 즉시 resolve
     expect(win.webContents.sent).not.toContain('app:flush-before-quit');
   });
+
+  // QA29(A-2): 형제 술어 decideCloseAction 은 QA23(B-MED) 이후 isInstallPending 을 받는데
+  // selectFlushTargets 에는 그 필드가 없어 표식만 보고 무조건 skip 했다. 실경로:
+  // 설치 클릭 → flushBeforeInstall 이 전 창 표식 → quitAndInstall 조용히 실패 → 사용자가 새
+  // 요약/Q&A 생성 → 프로그램적 app.quit()/Cmd+Q → 전 창 skip → 그 델타가 디스크에 닿지 못한다.
+  it('설치 대기 중에는 표식이 있어도 종료 flush 를 다시 보낸다', async () => {
+    const win = createWindow() as unknown as InstanceType<typeof FakeBW>;
+    // 1) 설치 직전 flush 로 표식을 남긴다.
+    const first = flushRenderersBeforeQuit();
+    ackFlush(win);
+    await first;
+    expect(win.webContents.sent.filter((c) => c === 'app:flush-before-quit').length).toBe(1);
+
+    // 2) 설치가 무산돼 앱은 살아 있고 표식만 남은 상태.
+    __setUpdaterServiceForTest({ isInstalling: () => true } as unknown as Parameters<typeof __setUpdaterServiceForTest>[0]);
+
+    // 3) 그 뒤의 종료 경로는 표식을 신뢰하면 안 된다.
+    const second = flushRenderersBeforeQuit();
+    expect(
+      win.webContents.sent.filter((c) => c === 'app:flush-before-quit').length,
+      '표식만 보고 skip 하면 설치 무산 이후의 델타가 소실된다',
+    ).toBe(2);
+    ackFlush(win);
+    await second;
+  });
+
+  it('설치 대기가 아니면 표식이 있는 창을 종전대로 건너뛴다 (이중 flush 방지)', async () => {
+    const win = createWindow() as unknown as InstanceType<typeof FakeBW>;
+    const first = flushRenderersBeforeQuit();
+    ackFlush(win);
+    await first;
+
+    __setUpdaterServiceForTest({ isInstalling: () => false } as unknown as Parameters<typeof __setUpdaterServiceForTest>[0]);
+
+    await flushRenderersBeforeQuit();
+    expect(win.webContents.sent.filter((c) => c === 'app:flush-before-quit').length).toBe(1);
+  });
 });
 
 // 배선 가드: updater 는 installerUsable 을 **주입받아야만** 확인할 수 있다. 순수 판정이 맞아도
@@ -271,8 +309,10 @@ describe('updater 배선 — 인스톨러 실행 가능성 확인 주입', () =>
   // QA27(D-Low): 이 describe 의 단언들은 주석을 걷어내지 않은 소스에 매칭한다. 아래 QA24 사건이
   // 정확히 그것이었다 — 코드를 지운 뒤에도 **주석에 매칭돼** 통과했다. 형제 단언들에도 같은
   // 처리를 적용해, 코드가 사라지면 주석이 남아도 빨개지게 한다.
-  const RAW_SRC = readFileSync(resolve(import.meta.dirname, '../index.ts'), 'utf-8');
-  const MAIN_SRC = RAW_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  // QA29(D1-2): 인라인 제거기(여기와 window-size 두 곳뿐이었다)를 공용 헬퍼로 옮겼다 — 나머지
+  // 8곳의 소스 스캔 가드가 원본에 매칭하고 있었고, 열거로는 매번 형제가 빠졌다. 헬퍼는
+  // 문자열 안의 `https://` 도 지키고 오프셋도 보존한다.
+  const MAIN_SRC = stripJsComments(readFileSync(resolve(import.meta.dirname, '../index.ts'), 'utf-8'));
 
   // QA28 실기기 검증(2026-08-27): 종전 주입은 `existsSync` 뿐이라 **0바이트 인스톨러**가 가드를
   // 통과했고 앱이 그대로 조용히 꺼졌다("존재하면 실행된다"는 전제가 거짓). 판정을 실행 가능성으로
@@ -283,12 +323,22 @@ describe('updater 배선 — 인스톨러 실행 가능성 확인 주입', () =>
     expect(MAIN_SRC).not.toMatch(/installerExists/);
   });
 
-  it('probeInstaller 가 크기와 선두 매직을 함께 관측한다 (existsSync 단독으로 축소 금지)', () => {
-    const fn = MAIN_SRC.match(/function probeInstaller\([\s\S]*?\n\}/);
-    expect(fn, 'probeInstaller 정의를 찾지 못했다').not.toBeNull();
-    expect(fn![0]).toMatch(/statSync\(/);
-    expect(fn![0]).toMatch(/readSync\(/);
-    expect(fn![0]).toMatch(/size:\s*st\.size/);
+  // QA29(D-1): 종전 이 자리의 단언은 index.ts 안 인라인 `probeInstaller` 본문에서 `statSync(`
+  // `readSync(` `size: st.size` **토큰이 존재하는지**만 봤다. 그래서 `readSync(...) === 2` 를
+  // `>= 0` 으로 완화해도(= 텍스트 스텁이 'MZ' 로 통과) 스위트가 그대로 초록이었다. 관측 로직은
+  // installer-probe.ts 로 옮겨 행위 테스트(installer-probe.test.ts)가 직접 검증하고, 여기서는
+  // **배선이 그 모듈을 실제로 쓰는지**만 고정한다 — 소스 스캔이 잘 하는 유일한 일이다.
+  it('probeInstaller 를 installer-probe 모듈에서 가져온다 (index.ts 인라인 재구현 금지)', () => {
+    expect(MAIN_SRC).toMatch(/import\s*\{\s*probeInstaller\s*\}\s*from\s*'\.\/installer-probe'/);
+    // 인라인 재구현이 되살아나면 행위 테스트 밖으로 다시 빠져나간다.
+    expect(MAIN_SRC).not.toMatch(/function probeInstaller\(/);
+  });
+
+  // QA29(A-2): 두 술어가 같은 사실을 **같은 식**으로 읽어야 한다. 한쪽만 갱신되면 설치 무산
+  // 이후의 델타가 창닫기 경로에서만 살아남고 종료 경로에서는 소실된다.
+  it('isInstallPending 을 창닫기·종료 두 경로에 같은 식으로 넘긴다', () => {
+    const occurrences = MAIN_SRC.match(/isInstallPending:\s*updaterService\?\.isInstalling\(\)\s*===\s*true/g) ?? [];
+    expect(occurrences.length, 'decideCloseAction·selectFlushTargets 양쪽 배선이 필요하다').toBe(2);
   });
 
   it('onInstallAborted 는 표식 롤백 함수를 그대로 넘긴다', () => {

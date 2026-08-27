@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripJsComments } from '../../shared/__tests__/helpers/source-scan';
 
 // v0.18.22 Top5 #2 (test coverage): main 측 IPC handler 의 contract drift 가드.
 //
@@ -27,16 +28,19 @@ import { resolve } from 'node:path';
 // 검증기에 **위임**하는지(인라인 재복제 금지)와 import 단일 출처를 지킨다. 이로써 검증
 // 로직의 분기 폭증을 ipc-validators.test 가, 그 연결을 본 테스트가 나눠 가드한다.
 
-const INDEX_SRC = readFileSync(
+// QA29(D1-2): 소스 스캔은 **주석을 걷은 뒤** 한다 — 아래 단언들은 핸들러 등록·위임 배선을
+// 못박는데, 원본을 보면 그 배선을 지워도 그것을 설명하는 주석(이 파일 헤더가 그대로 옮겨져
+// 있는 자리가 여럿이다)에 매칭돼 통과한다. 공용 헬퍼 단일 출처.
+const INDEX_SRC = stripJsComments(readFileSync(
   resolve(import.meta.dirname, '../../../src/main/index.ts'),
   'utf-8',
-);
+));
 
 // R38 P1: model 안전 문자집합 등 단일 출처 리터럴은 ipc-validators.ts 에 산다.
-const VALIDATORS_SRC = readFileSync(
+const VALIDATORS_SRC = stripJsComments(readFileSync(
   resolve(import.meta.dirname, '../../../src/main/ipc-validators.ts'),
   'utf-8',
-);
+));
 
 describe('main IPC contract — ai:* handler shape (Top5 #2)', () => {
   it('필수 ai:* IPC handler 가 모두 등록되어 있다', () => {

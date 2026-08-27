@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripJsComments } from '../../shared/__tests__/helpers/source-scan';
 import { VALID_SETTINGS_KEYS } from '../settings-keys';
 import { DEFAULT_SETTINGS } from '../../renderer/types';
 
@@ -15,17 +16,20 @@ import { DEFAULT_SETTINGS } from '../../renderer/types';
 // ipc-channel-contract.test.ts 와 동일하게 **소스에서 키를 추출**해 대조한다 — 손유지 목록이
 // 없어 rename/추가/삭제에 자가 적응한다.
 
-const MAIN_INDEX_SRC = readFileSync(
+// QA29(D1-2): 주석을 걷고 스캔한다 — 주석에 남은 옛 키 목록이나 `case 'x':` 예시가
+// 실제 코드인 것처럼 잡히면(또는 코드에서 사라진 키를 주석이 대신 만족시키면) 이 드리프트
+// 가드가 조용히 무력화된다. 공용 헬퍼 단일 출처.
+const MAIN_INDEX_SRC = stripJsComments(readFileSync(
   resolve(import.meta.dirname, '../index.ts'),
   'utf-8',
-);
+));
 // QA22(C-LOW): 값 검증 switch 가 index.ts 의 settings:set 핸들러에서 settings-validate.ts 모듈로
 // 이관됐다(읽기 경로 loadSettings 와 규칙 공유). 가드도 그 모듈을 본다 — **이 가드가 리팩터링을
 // 실제로 잡아줬다**(옮긴 직후 case 0개로 red).
-const SETTINGS_VALIDATE_SRC = readFileSync(
+const SETTINGS_VALIDATE_SRC = stripJsComments(readFileSync(
   resolve(import.meta.dirname, '../settings-validate.ts'),
   'utf-8',
-);
+));
 
 /** main/index.ts 의 `const defaultSettings = { ... } as const;` 리터럴에서 top-level 키를 추출. */
 function extractDefaultSettingsKeys(src: string): string[] {

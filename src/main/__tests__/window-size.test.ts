@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripJsComments } from '../../shared/__tests__/helpers/source-scan';
 import {
   computeDefaultWindowSize,
   MIN_WINDOW_WIDTH,
@@ -81,7 +82,8 @@ describe('computeDefaultWindowSize', () => {
 // 배선 가드: createWindow 는 electron 의존이라 단위 테스트로 못 띄운다(ipc-handlers 하네스도
 // BrowserWindow 생성은 다루지 않는다). settings-defaults-drift 와 같은 소스 스캔으로 최소 계약만.
 describe('createWindow 배선 가드', () => {
-  const MAIN_SRC = readFileSync(resolve(import.meta.dirname, '../index.ts'), 'utf-8');
+  // QA29(D1-2): 주석 제거를 공용 헬퍼로 단일화(아래 창 크기 판정도 이제 스캔 전에 걷힌 소스를 본다).
+  const MAIN_SRC = stripJsComments(readFileSync(resolve(import.meta.dirname, '../index.ts'), 'utf-8'));
 
   it('창 크기를 window-size 모듈에서 받아 쓴다', () => {
     expect(MAIN_SRC).toMatch(/computeDefaultWindowSize\(\s*screen\.getPrimaryDisplay\(\)\.workAreaSize\s*\)/);
@@ -94,9 +96,7 @@ describe('createWindow 배선 가드', () => {
     expect(start, 'BrowserWindow 생성부를 찾지 못했다 — 가드가 무력화된 상태다').toBeGreaterThan(-1);
     const end = MAIN_SRC.indexOf('});', start);
     expect(end).toBeGreaterThan(start);
-    const code = MAIN_SRC.slice(start, end)
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/.*$/gm, '');
+    const code = MAIN_SRC.slice(start, end);
     expect(code, '창 크기가 다시 하드코딩됐다').not.toMatch(/\bwidth:\s*\d+/);
     expect(code, '창 크기가 다시 하드코딩됐다').not.toMatch(/\bheight:\s*\d+/);
   });

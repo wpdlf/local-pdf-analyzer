@@ -163,8 +163,29 @@ jobs:
         run: |
           # ⚠️ 파이프 직결 금지 — pipefail + `npm audit` 의 exit 1(권고 존재)이 게이트
           # 판정과 무관하게 스텝을 실패시킨다. test.yml 과 동일 관용구.
-          AUDIT_JSON=$(npm audit --json 2>/dev/null || true)
-          printf '%s' "$AUDIT_JSON" | node scripts/audit-shipped.mjs
+          run_gate() {
+            AUDIT_JSON=$(npm audit --json 2>/dev/null || true)
+            printf '%s' "$AUDIT_JSON" | node scripts/audit-shipped.mjs
+          }
+          set +e
+          run_gate
+          rc=$?
+          if [ "$rc" = "2" ]; then
+            echo "::warning::audit JSON 이 쓸 수 없는 형태였습니다 — 1회 재시도합니다"
+            sleep 10
+            run_gate
+            rc=$?
+          fi
+          set -e
+          # QA29(D2-1): 재시도 후에도 축퇴 입력이면 **실패**시킨다(test.yml 은 여기서 경고로 넘긴다).
+          # 이 스텝은 태그 경로의 **유일한** blocking 공급망 게이트다. 조용히 사라지면 그 릴리즈는
+          # 검사되지 않은 채 자동 업데이트로 전 사용자에게 배포된다. 릴리즈는 드물어서 플레이크
+          # 비용(태그 재푸시)이 무증상 부재의 비용보다 낮다.
+          if [ "$rc" = "2" ]; then
+            echo "::error::유효한 audit JSON 을 얻지 못했습니다 — 릴리즈 경로에서는 공급망 게이트를 건너뛰지 않습니다"
+            exit 1
+          fi
+          exit $rc
 
       - name: Unit tests + coverage gate (ubuntu)
         if: matrix.coverage

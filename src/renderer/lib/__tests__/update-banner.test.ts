@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripJsComments } from '../../../shared/__tests__/helpers/source-scan';
 import { selectUpdateBanner, shouldResetDismiss, type UpdateBanner } from '../update-banner';
 import type { UpdateState, UpdateStatus } from '../../../shared/update-types';
 
@@ -102,7 +103,10 @@ describe('selectUpdateBanner — 어떤 상태에서 배너를 띄우는가', ()
 // App.tsx 는 앱 전체를 끌고 들어와 행위 테스트 하네스가 없으므로(다른 렌더러 컴포넌트와 달리),
 // preload-shape.test 와 같은 **정적 소스 스캔**으로 최소 계약만 못박는다.
 describe('App 배선 가드', () => {
-  const APP_SRC = readFileSync(resolve(import.meta.dirname, '../../App.tsx'), 'utf-8');
+  // QA29(D1-2): 주석을 걷고 본다. 이 가드는 "순수 판정이 맞아도 App 이 안 쓰면 무의미하다" 는
+  // 이유로 존재하는데(자동 업데이트 체인이 실기기에서 첫 칸에 멈춰 있던 그것), 원본을 보던
+  // 동안에는 배선을 통째로 지워도 `update.download()` 를 언급한 설명 주석만 남으면 통과했다.
+  const APP_SRC = stripJsComments(readFileSync(resolve(import.meta.dirname, '../../App.tsx'), 'utf-8'));
 
   it('App 이 배너 판정을 이 모듈에 위임한다', () => {
     expect(APP_SRC).toMatch(/selectUpdateBanner\(/);

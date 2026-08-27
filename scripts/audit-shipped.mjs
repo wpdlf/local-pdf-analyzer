@@ -16,12 +16,50 @@
 // 취약 패키지 자체가 선언 범위 안에서 수정 가능하면 npm 이 `effects` 를 빈 배열로 준다(실측 —
 // js-yaml 4.3.0 케이스에서 `effects: []`, `isDirect: false`). 폐포 계산만이 신뢰 가능하다.
 //
+// QA29(D2-1): 이 게이트는 **축퇴 입력에서 무증상 통과**했다. 워크플로가
+// `AUDIT_JSON=$(npm audit --json 2>/dev/null || true)` 로 종료코드와 stderr 를 함께 삼키므로,
+// 레지스트리 인증 실패·네트워크 플레이크·npm 출력 형식 변경이 전부 빈 문자열이나 `{}` 로
+// 도착한다. 실측: `''`→경고 후 exit 0, `not json`→평문 skip exit 0, `{}`→**출력 한 줄 없이**
+// exit 0, `{"error":{...}}`→평문 skip exit 0. 즉 태그 경로의 유일한 blocking 공급망 게이트가
+// 아무 흔적 없이 사라질 수 있었다. 이제 모든 skip 경로가 `::warning::` 를 내고, 종료코드를
+// 갈라 **정책은 워크플로가** 정한다(test.yml=경고 후 통과 / release.yml=1회 재시도 후 실패).
+//
 // 사용법: `npm audit --json | node scripts/audit-shipped.mjs`
-// 종료 코드: 0 = 배포물에 high/critical 없음, 1 = 있음(또는 설정 오류).
+// 종료 코드: 0 = 배포물에 high/critical 없음, 1 = 있음(또는 설정 오류),
+//            2 = audit JSON 이 쓸 수 없는 형태라 **검사하지 못함**(통과가 아니다).
 
 import fs from 'node:fs';
 
 const NODE_MODULES = 'node_modules/';
+
+/** 검사 불가(축퇴 입력) 종료코드. 0(통과)과 1(위반) 어느 쪽도 아니라는 것이 요지다. */
+export const EXIT_UNUSABLE_INPUT = 2;
+
+/**
+ * audit JSON 원문이 실제로 판정 가능한 형태인지 본다.
+ * `npm audit --json` 은 항상 `vulnerabilities` 객체를 포함한다(권고가 0건이면 `{}`).
+ * 그것이 없다는 것은 실패 응답이거나 출력 형식이 바뀌었다는 뜻이지, "취약점 없음" 이 아니다.
+ *
+ * @returns {{ ok: true, audit: object } | { ok: false, reason: string }}
+ */
+export function parseAuditInput(raw) {
+  if (!raw || !raw.trim()) return { ok: false, reason: 'audit JSON 입력이 비어 있습니다(네트워크·인증 실패 등)' };
+  let audit;
+  try {
+    audit = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: 'audit JSON 파싱 실패 — npm 이 JSON 이 아닌 출력을 냈습니다' };
+  }
+  if (!audit || typeof audit !== 'object') return { ok: false, reason: 'audit JSON 이 객체가 아닙니다' };
+  if (audit.error) {
+    const code = audit.error.code || audit.error.summary || 'unknown';
+    return { ok: false, reason: `npm 측 error 응답(${code})` };
+  }
+  if (!audit.vulnerabilities || typeof audit.vulnerabilities !== 'object') {
+    return { ok: false, reason: 'audit JSON 에 vulnerabilities 필드가 없습니다 — 실패 응답이거나 출력 형식이 바뀌었습니다' };
+  }
+  return { ok: true, audit };
+}
 
 /** package-lock 의 중첩 해석(가까운 node_modules 우선)을 흉내내 의존 경로를 찾는다. */
 export function resolveDep(nodes, fromPath, name) {
@@ -108,22 +146,14 @@ function main() {
     process.exit(1);
   }
 
-  const raw = readStdin();
-  if (!raw.trim()) {
-    console.log('::warning::audit JSON 입력 없음(네트워크 등) — shipped audit 미실행');
-    process.exit(0);
+  const parsed = parseAuditInput(readStdin());
+  if (!parsed.ok) {
+    // 모든 축퇴 경로가 같은 형태로, 반드시 한 줄을 남긴다 — 종전에는 `{}` 가 아무 출력도
+    // 남기지 않아 로그만 보고는 게이트가 돌았는지조차 알 수 없었다.
+    console.log(`::warning::배포물 audit 을 실행하지 못했습니다 — ${parsed.reason}`);
+    process.exit(EXIT_UNUSABLE_INPUT);
   }
-  let audit;
-  try {
-    audit = JSON.parse(raw);
-  } catch {
-    console.log('audit JSON 파싱 실패 — skip');
-    process.exit(0);
-  }
-  if (audit.error) {
-    console.log('npm 측 error 응답 — skip');
-    process.exit(0);
-  }
+  const audit = parsed.audit;
 
   const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
   const { names: reachable, missing } = computeReachable(lock, shipped);

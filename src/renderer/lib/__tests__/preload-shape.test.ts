@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripJsComments } from '../../../shared/__tests__/helpers/source-scan';
 
 // v0.18.19 patch R34 P2: preload contextBridge 노출 surface 의 drift 가드.
 //
@@ -18,10 +19,12 @@ import { resolve } from 'node:path';
 
 // R45 fix: CRLF 정규화 — Windows CI 체크아웃(autocrlf)은 줄당 +1자라 아래 길이 제한 윈도
 // 매칭이 OS 에 따라 갈렸다 (windows-2025 잡만 실패, ubuntu/로컬 LF 는 통과하던 비결정성 제거).
-const PRELOAD_SRC = readFileSync(
-  resolve(import.meta.dirname, '../../../preload/index.ts'),
-  'utf-8',
-).replace(/\r\n/g, '\n');
+// QA29(D1-2): 주석을 걷은 뒤 본다 — 노출 surface/시그니처 가드가 원본에 매칭하면, 배선에서
+// 인자를 지워도 그것을 설명한 주석이 남아 통과한다(QA27 이 타입 선언 블록으로 같은 구멍을
+// 이미 한 번 닫았다). 헬퍼는 `openExternal` 의 `'https:'` 같은 문자열은 건드리지 않는다.
+const PRELOAD_SRC = stripJsComments(
+  readFileSync(resolve(import.meta.dirname, '../../../preload/index.ts'), 'utf-8').replace(/\r\n/g, '\n'),
+);
 
 /**
  * QA27(D-Important): 아래 시그니처 가드들은 파일 **전체**를 대상으로 돌았는데, 모든 키와

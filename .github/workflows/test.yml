@@ -198,9 +198,13 @@ jobs:
         if: always()
         shell: bash
         run: |
+          # QA29(D2-2): 종전에는 `::warning::` + `exit 0` 이었다. npm ci 실패면 잡 자체는 이미
+          # 빨갛지만, **게이트 스텝은 초록으로 남아** "이 실행에서 공급망 검사가 통과했다" 는
+          # 기록을 만든다 — 이 저장소가 반복해 겪은 '조용한 부재' 의 정확한 모양이다.
+          # 이 스텝은 npm ci 뒤에만 도므로 node_modules 부재는 정상 상태가 아니다. 실패시킨다.
           if [ ! -d node_modules ]; then
-            echo "::warning::node_modules 부재 — prod audit 미실행"
-            exit 0
+            echo "::error::node_modules 부재 — prod audit 을 실행할 수 없습니다(게이트를 건너뛰지 않습니다)"
+            exit 1
           fi
           npm audit --omit=dev --audit-level=high
 
@@ -219,15 +223,30 @@ jobs:
         if: always()
         shell: bash
         run: |
+          # QA29(D2-2): 위 스텝과 같은 이유로 실패시킨다 — 게이트가 초록인 채 사라지지 않도록.
           if [ ! -d node_modules ]; then
-            echo "::warning::node_modules 부재 — shipped audit 미실행"
-            exit 0
+            echo "::error::node_modules 부재 — shipped audit 을 실행할 수 없습니다(게이트를 건너뛰지 않습니다)"
+            exit 1
           fi
           # ⚠️ 파이프로 직접 연결하면 안 된다 — 이 스텝은 bash -o pipefail 로 돌고
           # `npm audit` 은 **권고를 하나라도 찾으면 exit 1** 이다(빌드툴 권고는 항상 있다).
           # 그러면 게이트 판정과 무관하게 스텝이 실패한다. 종료코드를 삼키고 본문만 넘긴다.
           AUDIT_JSON=$(npm audit --json 2>/dev/null || true)
+          set +e
           printf '%s' "$AUDIT_JSON" | node scripts/audit-shipped.mjs
+          rc=$?
+          set -e
+          # QA29(D2-1): 종료코드 2 = "audit JSON 이 축퇴 입력이라 검사 자체를 못 했다".
+          # 위 캡처가 종료코드와 stderr 를 함께 삼키므로, 레지스트리 인증 실패·네트워크 플레이크·
+          # npm 출력 형식 변경이 전부 **빈 문자열/`{}`** 로 도착한다. 종전에는 그 전부가 exit 0
+          # 이었고 `{}` 는 로그에 한 줄도 남기지 않았다. push/PR 경로에서는 경고로 넘기되
+          # (플레이크가 개발을 막지 않도록) 반드시 Actions UI 에 보이게 한다.
+          # 릴리즈 태그 경로(release.yml)는 같은 코드를 **실패**로 다룬다.
+          if [ "$rc" = "2" ]; then
+            echo "::warning::배포물 audit 을 건너뜁니다 — 이 실행에는 공급망 신호가 없습니다"
+            exit 0
+          fi
+          exit $rc
 
   coverage:
     # R37 P5-2 (v0.18.23): 커버리지 게이트를 CI 에서 실제 강제 (QA M2).

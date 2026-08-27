@@ -18,6 +18,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { stripYamlComments } from './helpers/source-scan';
 
 /**
  * 자식 프로세스 상한.
@@ -182,13 +183,47 @@ describe('audit-shipped 게이트', { timeout: 30000 }, () => {
     expect(r.err).toContain('shipped 목록이 비어 있다');
   });
 
-  it('audit 입력이 비었으면 skip 한다 (네트워크 실패가 빌드를 막지 않도록)', () => {
+  /**
+   * QA29(D2-1): 축퇴 입력 전수.
+   *
+   * 워크플로는 `AUDIT_JSON=$(npm audit --json 2>/dev/null || true)` 로 **종료코드와 stderr 를
+   * 함께 삼킨다**. 그래서 레지스트리 인증 실패·네트워크 플레이크·npm 출력 형식 변경이 전부
+   * 여기 있는 네 가지 형태로 도착한다. 실측(수정 전): `''`→exit 0, `not json`→평문 skip exit 0,
+   * `{}`→**출력 한 줄 없이** exit 0, `{"error":{…}}`→평문 skip exit 0. 즉 태그 경로의 유일한
+   * blocking 공급망 게이트가 흔적 없이 사라질 수 있었다.
+   *
+   * 이제 넷 다 (a) `::warning::` 를 남기고 (b) 통과(0)도 위반(1)도 아닌 **2**로 끝난다.
+   * 2 를 skip 으로 볼지 실패로 볼지는 워크플로가 정한다(아래 "워크플로 배선" 참조).
+   */
+  const DEGENERATE: [name: string, input: string][] = [
+    ['빈 입력(네트워크·인증 실패)', ''],
+    ['공백만 있는 입력', '   \n  '],
+    ['JSON 이 아닌 출력', 'not json'],
+    ['필드가 빠진 빈 객체 — 종전에는 로그에 한 줄도 남지 않았다', '{}'],
+    ['npm 측 error 응답', '{"error":{"code":"ENETUNREACH"}}'],
+    ['vulnerabilities 가 객체가 아님(형식 변경)', '{"vulnerabilities":"none"}'],
+  ];
+
+  it.each(DEGENERATE)('축퇴 입력 [%s] 은 통과가 아니라 "검사 못 함"(exit 2)이다', (_name, input) => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { a: '^1' } }));
     writeFileSync(join(dir, 'package-lock.json'), JSON.stringify({ packages: {} }));
-    const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, input: '', encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS });
+    const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, input, encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS });
     expect(r.error, '게이트 실행 실패').toBeUndefined();
-    expect(r.status).toBe(0);
-    expect(r.stdout).toContain('입력 없음');
+    expect(r.status, '축퇴 입력이 통과(0)로 끝났다 — 게이트가 무증상으로 사라진다').toBe(2);
+    // Actions UI 에 보이는 형태여야 한다. 평문 로그는 스크롤백에 묻힌다.
+    expect(r.stdout, '경고 주석(::warning::)이 없다 — 로그만 보고는 게이트가 돌았는지 알 수 없다')
+      .toContain('::warning::');
+  });
+
+  it('정상 audit JSON(권고 0건)은 축퇴 입력과 구분된다', () => {
+    // `{}` 를 실패로 보는 판정이 "취약점 없음" 까지 실패로 만들면 게이트가 상시 빨개진다.
+    const r = runGate(
+      { dependencies: {}, shippedDevDependencies: ['bundled-lib'] },
+      { packages: { '': { name: 'app' }, 'node_modules/bundled-lib': { version: '1.0.0' } } },
+      { auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: {} } },
+    );
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain('::warning::');
   });
 
   it('실제 저장소의 프로덕션 트리가 게이트를 통과한다', () => {
@@ -237,14 +272,64 @@ describe('워크플로 배선 (QA25 후속)', () => {
   // 도는데 `npm audit` 은 권고를 하나라도 찾으면 exit 1 이고(빌드툴 권고는 항상 존재한다),
   // 파이프로 직결하면 게이트 판정과 무관하게 그 코드가 스텝의 결과가 된다. 로컬 셸에는
   // pipefail 이 없어 드러나지 않았다. 두 워크플로가 같은 관용구를 쓰는지 고정한다.
+  // QA29(D1-2): 워크플로 스캔도 **주석을 걷고** 한다. 여기서 보는 토큰(`audit-shipped.mjs`)은
+  // 설명 주석에도 여러 번 등장하므로, 스텝을 통째로 지워도 주석만 남으면 통과했다 — 소스 스캔
+  // 가드 8곳과 같은 구멍이 워크플로 쪽에도 있었다. `#` 주석 제거는 공용 헬퍼가 소유한다.
+  const wfSrc = (wf: string) => stripYamlComments(readFileSync(join(REPO_ROOT, wf), 'utf8'));
+  const WORKFLOWS = ['.github/workflows/test.yml', '.github/workflows/release.yml'];
+
   it('두 워크플로 모두 audit 종료코드를 삼키고 본문만 파이프한다', () => {
-    for (const wf of ['.github/workflows/test.yml', '.github/workflows/release.yml']) {
-      const src = readFileSync(join(REPO_ROOT, wf), 'utf8');
-      expect(src).toContain('audit-shipped.mjs');
+    for (const wf of WORKFLOWS) {
+      const src = wfSrc(wf);
+      expect(src, `${wf}: 게이트 호출이 주석에만 남았다`).toContain('node scripts/audit-shipped.mjs');
       // 파이프 직결이 없어야 한다 — 있으면 npm audit 의 exit 1 이 그대로 스텝 결과가 된다.
       expect(src).not.toContain('npm audit --json 2>/dev/null | node scripts/audit-shipped.mjs');
       // 대신 종료코드를 삼킨 캡처 형태여야 한다.
       expect(src).toMatch(/AUDIT_JSON=\$\(npm audit --json[^)]*\|\| true\)/);
+    }
+  });
+
+  // QA29(D2-1): 종료코드 2("검사 못 함")를 두 워크플로가 **서로 다르게** 다루는 것이 이 수정의
+  // 요지다. 한쪽만 반영되면(이 저장소의 최다 결함 클래스=형제 누락) 태그 경로가 다시 조용해진다.
+  it('push/PR 경로(test.yml)는 검사 불가를 경고로 표면화하고 통과시킨다', () => {
+    const src = wfSrc('.github/workflows/test.yml');
+    expect(src).toMatch(/rc=\$\?/);
+    expect(src).toMatch(/if \[ "\$rc" = "2" \]; then/);
+    // 조용한 통과가 아니라 **보이는** 통과여야 한다.
+    const branch = /if \[ "\$rc" = "2" \]; then[\s\S]{0,400}?fi/.exec(src)?.[0] ?? '';
+    expect(branch, '검사 불가 분기를 추출하지 못했다 — 가드가 무력화된 상태다').not.toBe('');
+    expect(branch).toContain('::warning::');
+    expect(branch).toMatch(/exit 0/);
+  });
+
+  it('릴리즈 태그 경로(release.yml)는 재시도 뒤에도 검사 불가면 실패시킨다', () => {
+    const src = wfSrc('.github/workflows/release.yml');
+    // 1회 재시도가 실제로 있어야 한다 — 없이 바로 실패시키면 플레이크로 릴리즈가 막힌다.
+    expect(src, '재시도 호출이 없다').toMatch(/run_gate\(\)\s*\{/);
+    expect((src.match(/^\s*run_gate$/gm) ?? []).length, '재시도(2회 호출)가 아니다').toBeGreaterThanOrEqual(2);
+    // 그리고 최종 판정은 skip 이 아니라 실패여야 한다.
+    const fail = /if \[ "\$rc" = "2" \]; then[\s\S]{0,400}?exit 1/.exec(src)?.[0] ?? '';
+    expect(fail, '태그 경로가 검사 불가를 실패로 다루지 않는다 — 유일한 blocking 공급망 게이트가 무증상으로 사라진다').not.toBe('');
+    expect(fail).toContain('::error::');
+  });
+
+  // QA29(D2-2): 두 blocking audit 스텝은 node_modules 부재 시 `exit 0` 이었다. npm ci 실패면
+  // 잡 자체는 빨갛지만 **게이트 스텝은 초록**으로 남아 "검사가 통과했다" 는 기록을 만든다.
+  it('node_modules 부재를 통과로 처리하지 않는다 (test.yml 의 두 blocking 스텝)', () => {
+    const src = wfSrc('.github/workflows/test.yml');
+    // 같은 잡의 **비차단** advisory 요약 스텝도 같은 가드를 갖고 있고 그쪽은 exit 0 이 맞다
+    // (advisory 는 가시성 목적이라 빌드를 막지 않는다). 스텝 단위로 잘라 blocking 만 본다.
+    const blocking = src
+      .split(/^ {6}- name: /m)
+      .slice(1)
+      .filter((s) => /(?<!non-)blocking\)/.test(s.split('\n')[0]!));
+    expect(blocking.length, 'blocking audit 스텝을 찾지 못했다 — 가드가 무력화된 상태다').toBe(2);
+    for (const step of blocking) {
+      const g = /if \[ ! -d node_modules \]; then[\s\S]{0,300}?fi/.exec(step)?.[0] ?? '';
+      expect(g, 'node_modules 가드를 추출하지 못했다').not.toBe('');
+      expect(g, 'node_modules 부재가 조용한 통과로 남아 있다').not.toMatch(/exit 0/);
+      expect(g).toContain('::error::');
+      expect(g).toMatch(/exit 1/);
     }
   });
 });

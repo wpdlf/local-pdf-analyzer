@@ -16,6 +16,12 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripJsComments } from './helpers/source-scan';
+
+// QA29(D1-2): 스펙 스캔은 주석을 걷은 뒤 한다. 원본을 보면 `requireOllama(` 를 주석에만 남긴
+// 스펙이 "게이트를 쓴다" 로 집계되고(목록은 그대로 초록), 반대로 주석 처리된
+// `test.skip(!!process.env.CI…)` 가 거짓 위반으로 잡힌다.
+const readSpec = (p: string) => stripJsComments(readFileSync(p, 'utf8'));
 
 const E2E_DIR = fileURLToPath(new URL('../../../e2e/', import.meta.url));
 
@@ -43,7 +49,7 @@ function specFiles(): string[] {
 describe('CI 에서 돌지 않는 E2E 목록 (QA25)', () => {
   it('Ollama 게이트를 쓰는 스펙이 승인 목록과 정확히 일치한다', () => {
     const gated = specFiles().filter((f) =>
-      readFileSync(join(E2E_DIR, f), 'utf8').includes('requireOllama('));
+      readSpec(join(E2E_DIR, f)).includes('requireOllama('));
     expect(gated).toEqual(OLLAMA_GATED);
   });
 
@@ -51,14 +57,14 @@ describe('CI 에서 돌지 않는 E2E 목록 (QA25)', () => {
     // 손수 쓴 `test.skip(!!process.env.CI, …)` 는 E2E_OLLAMA_REQUIRED 를 존중하지 않는다 —
     // 그러면 "전제가 깨졌는데 초록" 을 다시 만들 수 있다.
     const offenders = specFiles().filter((f) => {
-      const src = readFileSync(join(E2E_DIR, f), 'utf8');
+      const src = readSpec(join(E2E_DIR, f));
       return /test\.skip\(\s*!!\s*process\.env\.CI/.test(src);
     });
     expect(offenders).toEqual([]);
   });
 
   it('게이트 헬퍼가 REQUIRED 모드에서 skip 대신 실패시킨다', () => {
-    const src = readFileSync(join(E2E_DIR, 'ollama-gate.ts'), 'utf8');
+    const src = readSpec(join(E2E_DIR, 'ollama-gate.ts'));
     // skip 경로마다 REQUIRED 분기가 앞에 있어야 한다.
     expect(src).toContain("process.env.E2E_OLLAMA_REQUIRED === '1'");
     expect(src.match(/throw new Error/g)?.length ?? 0).toBeGreaterThanOrEqual(2);

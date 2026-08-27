@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripJsComments } from '../../../shared/__tests__/helpers/source-scan';
 
 // v0.18.5 T2 — `_translations` 가 export 되어 런타임 parity 검증이 가능해졌다.
 // 이전에는 소스 파일을 regex 로 파싱해 "ko:"/"en:" 존재 여부만 확인했기 때문에
@@ -192,11 +193,14 @@ describe('errorKey ↔ i18n 사전 계약 가드 (QA11)', () => {
   // QA28(B2-Low): 손유지 파일 목록(3개)이면 새 main 파일이 errorKey 를 방출할 때 어느 게이트에도
   // 걸리지 않는다 — 이 저장소의 최다 결함 클래스(열거 → 한 곳 누락). main 디렉터리 전체를 스캔.
   const MAIN_DIR = resolve(import.meta.dirname, '../../../main');
+  // QA29(D1-2): 주석을 걷고 스캔한다 — 주석 안의 `errorKey: 'x'` 예시가 유령 키로 잡히면
+  // 사전에 없는 키를 요구하는 거짓 실패가 나고, 반대로 코드에서 키를 지워도 설명 주석이
+  // 남아 있으면 아래 "회귀 가드" 가 조용히 통과한다.
   const MAIN_SRC = readdirSync(MAIN_DIR)
     .filter((f) => f.endsWith('.ts') && !f.endsWith('.d.ts'))
     .map((f) => {
       try {
-        return readFileSync(resolve(MAIN_DIR, f), 'utf-8');
+        return stripJsComments(readFileSync(resolve(MAIN_DIR, f), 'utf-8'));
       } catch {
         return '';
       }
@@ -279,7 +283,11 @@ describe('i18n 정적 키 가드 (QA28)', () => {
   const rendererFiles = walk(resolve(SRC_ROOT, 'renderer'));
   const allFiles = [...rendererFiles, ...walk(resolve(SRC_ROOT, 'main')), ...walk(resolve(SRC_ROOT, 'preload')), ...walk(resolve(SRC_ROOT, 'shared'))];
   const I18N_FILE = resolve(SRC_ROOT, 'renderer/lib/i18n.ts');
-  const read = (f: string) => readFileSync(f, 'utf-8');
+  // QA29(D1-2): **주석을 걷고** 읽는다. 이 가드가 원본을 보던 동안, 고아 키 판정은 주석 한 줄로
+  // 무력화됐다 — i18n.ts 에 가짜 키 `zzz.probeOrphan` 을 넣으면 빨개지지만(1 failed | 20 passed),
+  // store.ts 주석에 그 문자열만 적으면 다시 초록이었다(21 passed). 아무 코드도 그 키를 쓰지
+  // 않는데도. 반대 방향(주석 처리된 `t('없는키')` 가 거짓 실패를 만드는 것)도 함께 닫힌다.
+  const read = (f: string) => stripJsComments(readFileSync(f, 'utf-8'));
 
   it('renderer 의 모든 t()/tr() 리터럴 키가 사전(ko·en)에 있다 (최소 300개)', async () => {
     const { _translations } = await import('../i18n');
