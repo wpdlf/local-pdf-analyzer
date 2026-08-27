@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
+import path from 'node:path';
 
 /**
  * QA29(A-3) 회귀 넷 — ollama 실행 파일 경로 선택.
@@ -38,8 +39,12 @@ vi.mock('electron', () => ({
 
 import { OllamaManager } from '../ollama-manager';
 
-const PROGRAMS = 'C:\\LA\\Programs\\Ollama\\ollama.exe';
-const APPDATA = 'C:\\UP\\AppData\\Local\\Ollama\\ollama.exe';
+// ⚠️ 소스는 `path.join` 으로 후보 경로를 만들므로 **실행 플랫폼의 구분자**가 쓰인다. 여기서
+// 백슬래시로 하드코딩하면 Windows 로컬에서는 통과하고 **Ubuntu CI 에서만 깨진다**(실제로 v1.2.4
+// 태그의 CI 가 이걸로 빨개졌다 — `C:\LA/Programs/…` 가 되어 fs 목이 매칭되지 않았다).
+// process.platform 은 아래 beforeEach 가 win32 로 고정하지만 path.join 의 구분자는 그대로다.
+const PROGRAMS = path.join('C:\\LA', 'Programs', 'Ollama', 'ollama.exe');
+const APPDATA = path.join('C:\\UP', 'AppData', 'Local', 'Ollama', 'ollama.exe');
 
 let realPlatform: PropertyDescriptor | undefined;
 
