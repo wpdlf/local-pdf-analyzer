@@ -547,7 +547,9 @@ async function summarizeCustom(
     // QA(②A): 단일 패스라 예산 초과 문서는 앞부분만 요약된다 — 무음 절단은 "문서 전체"라는 기대와
     // 어긋나므로 사용자에게 고지(summarizeFull 의 가시적 통합 절단 라벨과 대칭, imagesSkipped 패턴).
     useAppStore.getState().setNotice({ message: t('summary.customTruncated') });
-    text = text.slice(0, CUSTOM_TEMPLATE_CHAR_BUDGET) + '\n\n[...]';
+    // QA28(A-Important): 이 텍스트는 단락마다 `[p.N]` 이 박힌 모델 입력이다 — QA27 이
+    // truncateChunkSummariesForIntegration 에만 넣은 반쪽 인용 제거의 형제 경로.
+    text = stripTrailingPartialCitation(text.slice(0, CUSTOM_TEMPLATE_CHAR_BUDGET)) + '\n\n[...]';
   }
   setProgressInfo({
     percent: progressOffset + 0.1 * progressRange,

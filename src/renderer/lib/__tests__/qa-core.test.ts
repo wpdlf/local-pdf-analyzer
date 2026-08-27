@@ -181,6 +181,49 @@ describe('selectRelevantChunks (L1-C03)', () => {
     expect(result).toContain('LAST');
   });
 
+  // QA28(★ A-Important): 입력은 `[p.N]` 라벨이 박힌 텍스트이고 결과는 모델 입력이다. 8000자
+  // 절단이 `[p.123]` 한가운데 떨어지면 `[p.` 가 남고, 모델이 `[p.123]` 으로 완성하면 범위 안의
+  // 정상 버튼처럼 보이는 오답 인용이 된다. 세 폴백 slice 전부(단일 청크 / 키워드 없음 / 무득점).
+  describe('QA28(★): 절단이 [p.N] 한가운데 떨어져도 반쪽 인용 토큰이 남지 않는다', () => {
+    const DANGLING = /\[[^\]\n]*$/;
+
+    it('단일 청크 폴백', () => {
+      const text = 'A'.repeat(LIMIT - 3) + '[p.123]' + 'B'.repeat(200);
+      const result = selectRelevantChunks('question', text, 50000);
+      expect(result.length).toBeLessThanOrEqual(LIMIT);
+      expect(result).not.toMatch(DANGLING);
+      expect(result).not.toContain('[p.');
+    });
+
+    // 첫+끝 청크 join 의 8000자 위치에 라벨이 걸치도록 끝 청크를 구성한다.
+    const first = `FIRST ${'x'.repeat(4000)}`;                       // 4006자
+    const middle = `MIDDLE ${'y'.repeat(4000)}`;
+    const lastPrefix = `LAST ${'z'.repeat(LIMIT - 3 - (first.length + 2) - 5)}`; // join 후 [ 가 7997 에 오도록
+    const last = `${lastPrefix}[p.123]${'z'.repeat(300)}`;
+    const text = [first, middle, last].join('\n\n');
+
+    it('픽스처 자체 검증: join 의 8000자 절단이 `[p.` 뒤에서 잘린다', () => {
+      const joined = [first, last].join('\n\n');
+      expect(joined.slice(0, LIMIT)).toMatch(/\[p\.$/);
+    });
+
+    it('키워드 없음(stopwords 만) 폴백', () => {
+      const result = selectRelevantChunks('the a an is', text, 1200);
+      expect(result).toContain('FIRST');
+      expect(result).toContain('LAST');
+      expect(result).not.toMatch(DANGLING);
+      expect(result).not.toContain('[p.');
+    });
+
+    it('전 청크 무득점 폴백', () => {
+      const result = selectRelevantChunks('zeta', text, 1200);
+      expect(result).toContain('FIRST');
+      expect(result).toContain('LAST');
+      expect(result).not.toMatch(DANGLING);
+      expect(result).not.toContain('[p.');
+    });
+  });
+
   it('C03-07: 빈 fullText — 8000자 이하로 간주되어 원문 반환', () => {
     expect(selectRelevantChunks('question', '', 1000)).toBe('');
   });

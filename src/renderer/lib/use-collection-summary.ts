@@ -206,7 +206,14 @@ async function gatherMemberBlocks(
     // 전부 **맨 `[p.N]`**(단일 문서 형식)이다. reduce 모델이 그대로 복사하면 출처 없는 인용이
     // 최종 답변에 남아 활성 문서로 점프한다(citation.ts qualifyBareCitations 주석 참조).
     // 지시로 요구하는 대신 입력에서 승격해, 복사돼도 이미 올바른 라벨이 되게 한다.
-    const content = qualifyBareCitations(stripTrailingPartialCitation(capped), m.fileName);
+    const qualified = qualifyBareCitations(stripTrailingPartialCitation(capped), m.fileName);
+    // QA28(A-MED): 승격은 맨 인용마다 라벨(최대 ~110자)을 **더하므로** 캡 이후에 길이가 늘어
+    // 한 블록이 MEMBER_SUMMARY_CHARS·budget 을 둘 다 넘길 수 있다(인용 20개 × 긴 파일명이면
+    // 2배 가까이). R48 MED-1 의 컨텍스트 상한이 그만큼 헐거워지므로 승격 **후** 다시 캡한다 —
+    // 재절단도 임의 오프셋이라 반쪽 인용 제거를 한 번 더 건다.
+    const content = qualified.length > budget
+      ? stripTrailingPartialCitation(qualified.slice(0, budget))
+      : qualified;
     if (!content.trim()) continue; // 예산 절단으로 공백만 남은 블록은 제외(빈 헤더 방지)
     budget -= content.length;
     blocks.push({ fileName: m.fileName, content });

@@ -462,7 +462,11 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
       imagesSkipped: doc.imagesSkipped,
       // QA27(A-Important): 이미지가 **있었다는 사실**을 함께 남긴다 — 복원 문서는 images:[] 라
       // imagesSkipped 만으로는 텍스트-only PDF 와 구분되지 않는다(types/index.ts 주석 참조).
-      hadImages: doc.images.length > 0,
+      // QA28(A-Important): 값을 메모리에서 **재계산만** 하면 복원 문서(images:[])의 첫 전체
+      // 저장이 디스크의 true 를 false 로 덮는다 — imagesSkipped 는 doc 필드를 그대로 싣는데
+      // 같은 커밋이 추가한 이 표식만 파생값이라 왕복이 깨졌다. 인덱스 없는 문서(Ollama 미기동
+      // 등)는 매 자동저장이 전체 저장이라 즉시 소거된다. 복원된 표식을 OR 로 보존한다.
+      hadImages: doc.images.length > 0 || doc.hadImages === true,
       summaries,
       summaryType: s.summaryType,
       qaMessages: safeQaMessages,

@@ -807,6 +807,17 @@ export async function reconcileSessions(
             entry.chunkCount = 0;
             // "chunkMeta 는 있고 blob 은 없는" 상태를 남기지 않는다(writeSession 과 동일).
             try { await fsp.unlink(path.join(sessionDir(sessionsDir, d.name), INDEX_META)); } catch { /* 없으면 무시 */ }
+            // QA28(A-Low): 40줄 아래 고아 재등록 분기는 byteSize 를 디스크 실측으로 재구성하는데
+            // 이 분기는 존재하지 않는 index.bin + 방금 지운 사이드카를 계속 주장했다. LRU
+            // (enforceLru)가 이 합계를 쓰므로 다른 세션이 조기에 evict 된다. 실측으로 교정.
+            let measured = 0;
+            try {
+              const dirPath = sessionDir(sessionsDir, d.name);
+              for (const f of await fsp.readdir(dirPath)) {
+                try { measured += (await fsp.stat(path.join(dirPath, f))).size; } catch { /* 경합 삭제 무시 */ }
+              }
+              entry.byteSize = measured;
+            } catch { /* 디렉터리 자체가 사라졌으면 다음 부팅의 고아 정리로 */ }
             repaired++;
           }
         }

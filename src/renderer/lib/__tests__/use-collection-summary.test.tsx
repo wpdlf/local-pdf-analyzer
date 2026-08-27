@@ -237,6 +237,64 @@ describe('generateCollectionSummary (L2)', () => {
     expect(M.prompt).toContain('## Beta.pdf');
   });
 
+  // QA28(★ A-MED 배선): 블록당 캡(MEMBER_SUMMARY_CHARS=3000)이 `[p.123]` 한가운데에 떨어지면
+  // reduce 프롬프트에 `[p.` 반쪽 인용이 남고, 모델이 `[p.123]` 으로 완성하면 범위 안의 오답
+  // 인용이 된다. stripTrailingPartialCitation 배선(QA27) 자체는 이제까지 무보호였다.
+  it('QA28(★): 블록 캡이 인용 한가운데 떨어져도 reduce 프롬프트에 닫히지 않은 `[` 가 남지 않는다', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    // 2997자 + '[p.123]' → 3000자 캡이 `[p.` 뒤에서 잘린다.
+    const straddling = '요'.repeat(2997) + '[p.123]' + '뒤'.repeat(100);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf',
+        h === 'a'.repeat(64) ? '알파 근거[p.2] 이다.' : straddling, 'fulltext')));
+
+    await generateCollectionSummary('unified');
+
+    expect(M.prompt).toContain('## Beta.pdf');
+    expect(M.prompt, '닫히지 않은 `[` 가 프롬프트 줄 끝에 남아 있다').not.toMatch(/\[[^\]\n]*$/m);
+    expect(M.prompt).not.toContain('[p.123');
+  });
+
+  it('QA28(A-MED): 맨 인용 승격으로 늘어난 블록은 남은 예산으로 다시 캡되고, 재절단도 반쪽 인용을 남기지 않는다', async () => {
+    seedActive();
+    const hA = 'a'.repeat(64), hB = 'b'.repeat(64), hC = 'c'.repeat(64), hD = 'd'.repeat(64);
+    mockSessionList.mockResolvedValue([manifestEntry(hB, MODEL, 3), manifestEntry(hC, MODEL, 3), manifestEntry(hD, MODEL, 3)]);
+    useAppStore.setState({
+      document: { id: 'A', fileName: 'Alpha.pdf', filePath: '/d/Alpha.pdf', pageCount: 5, extractedText: 'x', pageTexts: [], chapters: [], images: [], createdAt: new Date() },
+      openTabs: [
+        { filePath: '/d/Alpha.pdf', fileName: 'Alpha.pdf', pageCount: 5, docHash: hA },
+        { filePath: '/d/Beta.pdf', fileName: 'Beta.pdf', pageCount: 5, docHash: hB },
+        { filePath: '/d/Gamma.pdf', fileName: 'Gamma.pdf', pageCount: 5, docHash: hC },
+        { filePath: '/d/Delta.pdf', fileName: 'Delta.pdf', pageCount: 5, docHash: hD },
+      ],
+      collection: { enabled: true, memberHashes: [hA, hB, hC, hD] },
+      qaMessages: [], qaStream: '', isGenerating: false, isQaGenerating: false, qaRequestId: null,
+      ragState: { isIndexing: false, progress: null, isAvailable: true, model: MODEL, chunkCount: 1, error: null },
+      notice: null, error: null,
+      settings: { ...useAppStore.getState().settings, summaryLanguage: 'ko' },
+    });
+    // 앞 3멤버가 3000자씩 소진 → 4번째 멤버의 남은 예산은 정확히 3000.
+    // 4번째는 맨 인용이 빽빽해(8자 단위 `근거[p.1] `) 승격 시 `[Delta.pdf p.1]` 로 +10자씩 늘어
+    // 3000 → 약 6700자가 된다. 재캡이 없으면 총량 상한(12000)을 그만큼 넘긴다.
+    const dense = '근거[p.1] '.repeat(375); // 3000자
+    mockSessionLoad.mockImplementation((h: string) => {
+      const name = h === hB ? 'Beta.pdf' : h === hC ? 'Gamma.pdf' : h === hD ? 'Delta.pdf' : 'Alpha.pdf';
+      return Promise.resolve(memberSession(name, h === hD ? dense : '요'.repeat(5000), 't'));
+    });
+
+    await generateCollectionSummary('unified');
+
+    const deltaIdx = M.prompt.indexOf('## Delta.pdf\n');
+    expect(deltaIdx).toBeGreaterThan(0);
+    const deltaBlock = M.prompt.slice(deltaIdx + '## Delta.pdf\n'.length);
+    expect(deltaBlock).toContain('[Delta.pdf p.1]');
+    expect(deltaBlock.length, '승격 후 블록이 남은 예산(3000)을 넘겼다').toBeLessThanOrEqual(3000);
+    expect(deltaBlock).not.toMatch(/\[[^\]\n]*$/m);
+    // 총량 상한: 지시문(~150자) + 헤더 4개 + 블록 4×3000 이하.
+    expect(M.prompt.length).toBeLessThanOrEqual(12000 + 400);
+  });
+
   // C5-M5(QA cycle5): gather(인라인 멤버 요약) 단계는 이전엔 취소 수단이 전무했다(모든 탈출
   // 경로가 isCollectionBusy 게이트에 막힘). abortCollectionGather 가 즉시 중단시키고, 끊긴
   // 부분 생성물은 영속화/합성에 쓰지 않으며, 의도적 취소라 안내 배너도 띄우지 않는다.

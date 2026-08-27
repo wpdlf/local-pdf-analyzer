@@ -645,6 +645,76 @@ describe('탭 전환/닫기 재진입 가드 (QA6-C M2)', () => {
     expect(useAppStore.getState().document?.fileName).toBe('A.pdf');
   });
 
+  // QA28(A-Important): QA27 은 게이트 하나만 채웠다 — 형제 3함수(switchToTab·closeTab·
+  // openNewTabView)는 게이트·flush·파기확인 셋을 전부 하는데 이 경로는 활성 문서를 교체하면서도
+  // (a) 디바운스 tail 을 flush 없이 버렸고 (b) 영속화 OFF 면 묻지 않고 파기했다.
+  describe('QA28(A-Important) openFromSessionOnly 형제 정합', () => {
+    const sessionFor = (hash: string, pageCount: number) => ({
+      session: { docHash: hash, extractedText: 'x'.repeat(60), pageTexts: ['x'.repeat(60)], pageCount },
+    });
+
+    it('활성 문서의 미저장 tail 을 restore **전에** flush 한다 (persist → session.load 순서)', async () => {
+      seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+      const order: string[] = [];
+      M.persistCurrentSession.mockImplementation(async () => { order.push('persist'); });
+      M.sessionLoad.mockImplementation(async () => { order.push('load'); return sessionFor('d'.repeat(64), 2); });
+      try {
+        const ok = await openFromSessionOnly({ docHash: 'd'.repeat(64), fileName: 'D.pdf', filePath: '/docs/D.pdf', pageCount: 2 });
+        expect(ok).toBe(true);
+        expect(M.persistCurrentSession).toHaveBeenCalledTimes(1);
+        expect(order).toEqual(['persist', 'load']);
+      } finally {
+        M.persistCurrentSession.mockImplementation(() => Promise.resolve());
+        M.sessionLoad.mockReset();
+        M.sessionLoad.mockResolvedValue(null);
+      }
+    });
+
+    it('영속화 OFF + 잃을 작업 있음 → 확인을 묻고, 취소하면 false 반환 + store 불변', async () => {
+      seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+      useAppStore.setState({
+        settings: { ...useAppStore.getState().settings, persistSessions: false },
+        summary: { id: 's', documentId: 'd', type: 'full', content: '요약본', model: 'm', provider: 'ollama', createdAt: new Date(), durationMs: 1 },
+        summaryStream: '요약본',
+      });
+      const confirmSpy = vi.fn(() => false);
+      vi.stubGlobal('confirm', confirmSpy);
+      try {
+        const ok = await openFromSessionOnly({ docHash: 'e'.repeat(64), fileName: 'E.pdf', filePath: '/docs/E.pdf', pageCount: 1 });
+        expect(ok).toBe(false);
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(M.sessionLoad, '취소했는데 세션 로드가 진행되면 안 된다').not.toHaveBeenCalled();
+        expect(M.persistCurrentSession).not.toHaveBeenCalled();
+        expect(useAppStore.getState().document?.filePath).toBe('/docs/a.pdf');
+        expect(useAppStore.getState().summary?.content).toBe('요약본');
+        expect(useAppStore.getState().isTabSwitching).toBe(false);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('영속화 OFF + 확인하면 종전대로 세션에서 연다', async () => {
+      seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+      useAppStore.setState({
+        settings: { ...useAppStore.getState().settings, persistSessions: false },
+        summary: { id: 's', documentId: 'd', type: 'full', content: '요약본', model: 'm', provider: 'ollama', createdAt: new Date(), durationMs: 1 },
+        summaryStream: '요약본',
+      });
+      const confirmSpy = vi.fn(() => true);
+      vi.stubGlobal('confirm', confirmSpy);
+      M.sessionLoad.mockResolvedValueOnce(sessionFor('f'.repeat(64), 1));
+      try {
+        const ok = await openFromSessionOnly({ docHash: 'f'.repeat(64), fileName: 'F.pdf', filePath: '/docs/F.pdf', pageCount: 1 });
+        expect(ok).toBe(true);
+        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(M.sessionLoad).toHaveBeenCalledTimes(1);
+        expect(useAppStore.getState().document?.fileName).toBe('F.pdf');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  });
+
   it('세션-전용 열기가 실패해도 게이트를 해제한다', async () => {
     seedTabs([], null);
     M.sessionLoad.mockResolvedValueOnce(null); // 세션 부재

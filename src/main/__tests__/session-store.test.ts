@@ -58,6 +58,11 @@ vi.mock('fs/promises', () => {
           else entries.set(rest.slice(0, idx), true);
         }
         if (!found) throw enoent();
+        // QA28(A-Low): withFileTypes 없이 부르면 실제 fs 처럼 **이름 문자열** 배열을 준다
+        // (reconcile 의 byteSize 실측이 이 형태로 부른다 — 객체를 주면 path.join 이 throw).
+        if (!(_opts && typeof _opts === 'object' && (_opts as { withFileTypes?: boolean }).withFileTypes)) {
+          return [...entries.keys()];
+        }
         return [...entries.entries()].map(([name, isDir]) => ({ name, isDirectory: () => isDir }));
       }),
     },
@@ -929,6 +934,33 @@ describe('인덱스 거짓 주장 (QA26)', () => {
     expect(claimsIndex(entry)).toBe(false);
     // "chunkMeta 는 있고 blob 은 없는" 상태를 남기지 않는다(writeSession 과 동일 규칙).
     expect(V.files.has(p(h, 'index.meta.json'))).toBe(false);
+  });
+
+  it('QA28(A-Low): 거짓 주장 회수 시 byteSize 도 남은 파일(session.json)만의 실측으로 교정된다', async () => {
+    // known 분기는 index.bin 부재 + 사이드카 삭제 뒤에도 옛 합계(json+bin+meta)를 그대로 두었다 —
+    // enforceLru 가 이 합계를 쓰므로 존재하지 않는 바이트만큼 다른 세션이 조기 evict 된다.
+    const h = hashOf(96);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: {
+        docHash: h, fileName: 'a.pdf', filePath: '/a.pdf',
+        embedModel: 'nomic-embed-text', embedDim: 3,
+        chunkMeta: [{ text: 'A', index: 0, pageStart: 1 }, { text: 'B', index: 1, pageStart: 2 }],
+      },
+      blob: new ArrayBuffer(4096),
+      now: 1000,
+    });
+    const stale = (await listSessionsOk(DIR))[0]!.byteSize;
+    expect(V.files.has(p(h, 'index.meta.json'))).toBe(true); // 사이드카 존재
+    V.files.delete(p(h, 'index.bin'));
+
+    const r = await reconcileSessions(DIR, 5000);
+    expect(r.repaired).toBe(1);
+    const entry = (await listSessionsOk(DIR))[0]!;
+    const jsonOnly = Buffer.byteLength(V.files.get(p(h, 'session.json')) as string);
+    expect(V.files.has(p(h, 'index.meta.json'))).toBe(false);
+    expect(entry.byteSize).toBe(jsonOnly);
+    expect(entry.byteSize).toBeLessThan(stale);
   });
 
   it('인덱스가 멀쩡하면 건드리지 않는다', async () => {

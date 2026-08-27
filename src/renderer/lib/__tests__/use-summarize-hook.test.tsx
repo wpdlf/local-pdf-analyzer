@@ -228,6 +228,33 @@ describe('useSummarize — 챕터 요약', () => {
     expect(stream).toContain('## 본론');
     expect(M.summarizeCalls.every((c) => c.type === 'chapter')).toBe(true);
   });
+
+  // QA28(A-★ 배선 가드): QA27 이 labelChaptersWithPages 를 summarizeByChapter 에 배선했지만
+  // 순수 함수 테스트만 있어 `const labeledChapters = doc.chapters;` 뮤테이션이 99/99 통과했다.
+  // 훅 레벨에서 모델에 실제로 넘어간 프롬프트에 **절대 페이지 번호**(startPage 오프셋 적용)의
+  // `[p.N]` 이 박혀 있는지 본다 — chapter.text 는 일부러 라벨 없는 원문으로 둔다.
+  it('챕터 프롬프트는 startPage 오프셋이 적용된 절대 페이지 [p.N] 라벨을 담는다 (배선 가드)', async () => {
+    useAppStore.setState({
+      summaryType: 'chapter',
+      document: makeDoc({
+        pageCount: 3,
+        pageTexts: ['첫째 쪽 본문', '둘째 쪽 본문', '셋째 쪽 본문'],
+        chapters: [
+          { index: 0, title: '서론', startPage: 1, endPage: 1, text: '첫째 쪽 본문' },
+          { index: 1, title: '본론', startPage: 2, endPage: 3, text: '둘째 쪽 본문\n\n셋째 쪽 본문' },
+        ],
+      }),
+    });
+    await runSummarize();
+    const chapterCalls = M.summarizeCalls.filter((c) => c.type === 'chapter');
+    expect(chapterCalls).toHaveLength(2);
+    const [intro, body] = chapterCalls;
+    expect(intro!.text).toContain('[p.1] 첫째 쪽 본문');
+    // 두 번째 챕터는 2~3쪽 — 챕터 내부 인덱스(1,2)가 아니라 절대 번호(2,3)여야 한다.
+    expect(body!.text).toContain('[p.2] 둘째 쪽 본문');
+    expect(body!.text).toContain('[p.3] 셋째 쪽 본문');
+    expect(body!.text).not.toContain('[p.1]');
+  });
 });
 
 describe('useSummarize — 이미지 분석', () => {

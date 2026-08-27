@@ -178,6 +178,10 @@ export async function openFromSessionOnly(entry: {
   docHash: string; fileName: string; filePath: string; pageCount: number;
 }): Promise<boolean> {
   if (isTabSwitchBlocked()) return false;
+  // QA28(A-Important): QA27 은 게이트 하나만 채웠다. 형제 3함수는 게이트·flush·파기확인 **셋**을
+  // 전부 하는데 이 경로는 restoreTabFromSession 으로 활성 문서를 교체하면서도 (a) 영속화 OFF 면
+  // 묻지 않고 파기했고 (b) ON 이면 디바운스 tail(방금 끝난 요약/Q&A 델타)을 flush 없이 버렸다.
+  if (!confirmDiscardIfNotPersisted()) return false;
   // QA27(A-MED): 게이트를 **검사만 하고 세우지 않았다** — switchToTab·closeTab·openNewTabView 는
   // 전부 setTabSwitching(true) 로 자기 구간을 잠그는데 이 신규 진입점만 빠진 네 번째 형제였다.
   // isTabSwitching 은 isTabSwitchBlocked 의 입력이므로, 세우지 않으면 두 번째 호출이 같은 창에서
@@ -186,6 +190,8 @@ export async function openFromSessionOnly(entry: {
   // 활성 문서는 A 가 된다(탭은 둘 다 등록된다). QA6-C M2 가 닫은 클래스와 같은 모양이다.
   setTabSwitching(true);
   try {
+    // 현재 문서의 미저장 tail 보존 (switchToTab·closeTab·openNewTabView 와 동일 순서)
+    await persistCurrentSession();
     // restoreTabFromSession 은 세션 부재/손상 시 **store 를 건드리기 전에** false 를 반환하므로,
     // 실패해도 열리지 않은 탭이 남지 않는다(탭 등록은 성공 경로 안에 있다).
     return await restoreTabFromSession({

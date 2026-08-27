@@ -339,6 +339,32 @@ describe('persistCurrentSession (module-3)', () => {
     expect(payload.session.hadImages).toBe(false);
   });
 
+  // QA28(A-Important): 복원 문서는 images:[] 인데 hadImages 를 메모리에서 재계산만 하면 첫
+  // 전체 저장이 디스크의 true 를 false 로 덮어 표식이 왕복을 못 견딘다(인덱스 없는 문서는 매
+  // 자동저장이 전체 저장이라 즉시 소거). 복원된 표식은 OR 로 보존돼야 한다.
+  it('복원 문서(images:[] + hadImages:true)를 다시 저장해도 hadImages 가 true 로 남는다', async () => {
+    const restored: PdfDocument = { ...makeDoc('restored-doc'), images: [], hadImages: true };
+    useAppStore.setState({ document: restored, summary: null, summaryStream: '', qaMessages: [], ragIndex: new VectorStore() });
+    api.session.load.mockResolvedValue(null);
+
+    await persistCurrentSession();
+
+    const payload = api.session.save.mock.calls[0]![0] as { session: PersistedSession };
+    expect(payload.session.hadImages, '복원 표식이 재저장에서 소거되면 안 된다').toBe(true);
+  });
+
+  it('hadImages 가 없는 텍스트-only 문서는 여전히 false (OR 보존이 거짓 양성을 만들지 않는다)', async () => {
+    const textOnly: PdfDocument = { ...makeDoc('text-only-doc'), images: [] };
+    delete textOnly.hadImages;
+    useAppStore.setState({ document: textOnly, summary: null, summaryStream: '', qaMessages: [], ragIndex: new VectorStore() });
+    api.session.load.mockResolvedValue(null);
+
+    await persistCurrentSession();
+
+    const payload = api.session.save.mock.calls[0]![0] as { session: PersistedSession };
+    expect(payload.session.hadImages).toBe(false);
+  });
+
   it('P1: 같은 문서 반복 저장 시 docHash 를 1회만 계산(캐시)하고 결과는 동일', async () => {
     // 고유 doc.id — 모듈 캐시가 다른 테스트로 오염되지 않도록.
     const doc = makeDoc('p1-cache-doc');

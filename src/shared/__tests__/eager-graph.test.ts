@@ -75,6 +75,19 @@ describe('collectEagerFiles — eager 그래프 수집', () => {
     expect(String(r.error)).toContain('modulepreload');
   });
 
+  it('QA28(A-Low): modulepreload 3개 중 1개만 속성 순서가 달라도 부분 추출로 보고 실패한다', () => {
+    // 종전 "0건일 때만" 검사는 일부 링크에만 속성이 끼어든 **부분** 축소를 통과시켰다.
+    const html = '<script src="./assets/index.js"></script>'
+      + '<link rel="modulepreload" href="./assets/a.js">'
+      + '<link href="./assets/b.js" rel="modulepreload">'
+      + '<link rel="modulepreload" href="./assets/c.js">';
+    const r = collectEagerFiles(html, DIR, io({
+      'assets/index.js': '1', 'assets/a.js': '2', 'assets/b.js': '3', 'assets/c.js': '4',
+    }));
+    expect(r.error).toBeTruthy();
+    expect(String(r.error)).toContain('3개 중 2개');
+  });
+
   it('참조된 파일이 없으면 무음 skip 하지 않고 실패한다', () => {
     const html = '<script src="./assets/index.js"></script>';
     const r = collectEagerFiles(html, DIR, io({}));

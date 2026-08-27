@@ -28,10 +28,13 @@ export function collectEagerFiles(html, dir, io = { existsSync, readFileSync }) 
   // Vite 가 순서를 바꾸거나 `as="script"` 를 끼워 넣으면 매칭이 0 이 되고, 게이트는 entry 만
   // 검사한 채 통과한다 — QA26 이 고친 회귀와 글자 그대로 같은 상태다. 조용한 축소를 막는다.
   const preloads = [...html.matchAll(/<link[^>]+rel="modulepreload"[^>]+href="([^"]+)"/g)].map((m) => m[1]);
-  if (preloads.length === 0 && html.includes('modulepreload')) {
+  // QA28(A-Low): "전부 실패" 만 잡으면 일부 링크에만 속성이 끼어든 **부분** 추출 실패는 통과한다.
+  // modulepreload 링크의 개수와 추출 수를 대조해 하나라도 빠지면 실패시킨다.
+  const linkCount = (html.match(/<link\b[^>]*\bmodulepreload\b/g) ?? []).length;
+  if (preloads.length !== linkCount) {
     return {
       files: new Map(),
-      error: 'index.html 에 modulepreload 가 있는데 하나도 추출하지 못했습니다 — 속성 순서가 바뀌었을 가능성(게이트 범위가 조용히 줄어듭니다).',
+      error: `index.html 의 modulepreload 링크 ${linkCount}개 중 ${preloads.length}개만 추출했습니다 — 속성 순서가 바뀌었을 가능성(게이트 범위가 조용히 줄어듭니다).`,
     };
   }
 

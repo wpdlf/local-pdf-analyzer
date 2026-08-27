@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore, whenSettingsCommitted, isDocSwapPending } from './store';
 import { AiClient } from './ai-client';
 import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage } from './chunker';
-import { formatPageLabel, normalizeCitationPlacement, stripCitations, sanitizeDocLabelName } from './citation';
+import { formatPageLabel, normalizeCitationPlacement, stripCitations, sanitizeDocLabelName, stripTrailingPartialCitation } from './citation';
 // QA21(D-MED): 키워드 폴백 컨텍스트의 페이지 라벨 부착 — 요약 경로와 동일한 원천을 공유한다.
 import { labelParagraphsWithPages } from './use-summarize';
 import { t } from './i18n';
@@ -99,12 +99,17 @@ export function selectRelevantChunks(
     return fullText;
   }
 
+  // QA28(A-Important): 입력은 `[p.N]` 라벨이 박힌 텍스트(labelParagraphsWithPages)이고 이 결과는
+  // 모델 입력이다. 임의 오프셋 절단이 `[p.12` 를 남기면 모델이 `[p.12]` 로 완성해 범위 안의
+  // 정상 버튼처럼 보이는 오답 인용이 된다 — QA27 이 통합 요약·컬렉션 합성에만 넣은 방어의
+  // 형제 경로 3곳(아래 세 slice). Q&A 프롬프트는 인용을 명시적으로 지시해 완성 유인이 가장 크다.
+  const cut = (s: string) => stripTrailingPartialCitation(s.slice(0, MAX_QA_CONTEXT_CHARS));
   const chunks = chunkText(fullText, maxChunkSize);
-  if (chunks.length <= 1) return fullText.slice(0, MAX_QA_CONTEXT_CHARS);
+  if (chunks.length <= 1) return cut(fullText);
 
   const keywords = extractKeywords(question);
   if (keywords.length === 0) {
-    return [chunks[0], chunks[chunks.length - 1]].join('\n\n').slice(0, MAX_QA_CONTEXT_CHARS);
+    return cut([chunks[0], chunks[chunks.length - 1]].join('\n\n'));
   }
 
   const scored = chunks.map((chunk, idx) => {
@@ -133,7 +138,7 @@ export function selectRelevantChunks(
   }
 
   if (selected.length === 0) {
-    return [chunks[0], chunks[chunks.length - 1]].join('\n\n').slice(0, MAX_QA_CONTEXT_CHARS);
+    return cut([chunks[0], chunks[chunks.length - 1]].join('\n\n'));
   }
 
   selected.sort((a, b) => a.idx - b.idx);

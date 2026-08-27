@@ -35,7 +35,7 @@ vi.stubGlobal('window', Object.assign(window, {
 }));
 vi.stubGlobal('crypto', { randomUUID: () => 'uuid-fixed' });
 
-import { useSummarize } from '../use-summarize';
+import { useSummarize, labelParagraphsWithPages } from '../use-summarize';
 import { useAppStore } from '../store';
 import { DEFAULT_SETTINGS } from '../../types';
 import type { PdfDocument, SummaryTemplate } from '../../types';
@@ -116,6 +116,30 @@ describe('커스텀 템플릿 — 단일 패스 절단 고지', () => {
     const sent = M.calls[0]!.text;
     expect(sent.endsWith('\n\n[...]')).toBe(true);
     expect(sent.length).toBe(16000 + '\n\n[...]'.length);
+    expect(useAppStore.getState().notice?.message).toContain('앞부분만');
+  });
+
+  // QA28(A-Important): 절단 오프셋이 `[p.N]` 라벨 한가운데 떨어지면 `[p.12` 같은 반쪽 인용이
+  // 모델 입력 끝에 남고, 모델이 `[p.12]` 로 완성해 정상처럼 보이는 오답 인용이 된다 — QA27 이
+  // 통합 요약에만 넣은 stripTrailingPartialCitation 의 형제 경로.
+  it('절단 지점이 [p.N] 라벨 안에 떨어져도 프롬프트 끝에 반쪽 인용이 남지 않는다', async () => {
+    // 절단점(16000)이 라벨 내부에 오도록 첫 페이지 길이를 조정해 전제 조건을 **확인**한다
+    // (전제가 성립하지 않으면 테스트가 공허해지므로 실패시킨다).
+    let pageTexts: string[] | null = null;
+    for (let pad = 0; pad < 60 && !pageTexts; pad++) {
+      const candidate = ['가'.repeat(50 + pad), ...Array.from({ length: 400 }, () => '나'.repeat(40))];
+      if (/\[p\.\d+$/.test(labelParagraphsWithPages(candidate).slice(0, 16000))) pageTexts = candidate;
+    }
+    expect(pageTexts, '절단점이 라벨 안에 오는 입력을 만들지 못했다').not.toBeNull();
+    useTemplate(TPL, makeDoc({ pageTexts: pageTexts!, extractedText: pageTexts!.join('\n\n'), pageCount: pageTexts!.length }));
+    await runSummarize();
+
+    expect(M.calls).toHaveLength(1);
+    const sent = M.calls[0]!.text;
+    expect(sent.endsWith('\n\n[...]')).toBe(true);
+    const body = sent.slice(0, -'\n\n[...]'.length);
+    expect(body).not.toMatch(/\[[^\]\n]*$/);
+    expect(body.length).toBeLessThan(16000);
     expect(useAppStore.getState().notice?.message).toContain('앞부분만');
   });
 
