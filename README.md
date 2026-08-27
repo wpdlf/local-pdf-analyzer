@@ -161,6 +161,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Batched parallel processing with a progress bar; cancel anytime
 - Documents processed via OCR show an `OCR` badge
 - Pages that yield no extractable text — and pages where OCR itself failed — are reported, so a mixed document (a scan whose cover page happens to carry a text layer) can't silently end up with blank pages in its summary, citations, and search
+- If too many pages fail recognition, the result is discarded and the parse fails instead — so a run that died partway through is never saved as "complete", and never overwrites a copy of the same document that was recognized properly before
 
 | Provider | OCR accuracy (Korean) | Notes |
 |----------|----------------------|-------|
@@ -197,6 +198,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Automatic session save & restore — restored by document content hash, LRU-pruned at 30 sessions/200MB (disable or clear in Settings)
 - Per-page corruption resilience — one broken page doesn't stop the rest of the document
 - Render error recovery — unexpected UI errors offer a "Try again" button, no restart needed
+- Interrupted summaries can be kept — if the model goes away or the connection drops mid-generation, the text received so far can be saved with a "Save partial" action. It is never saved automatically: it is stored only when you ask, and marked as incomplete so it is never mistaken for a finished summary
 - Self-updating — new versions are detected on startup and installed with one click; downloads never start without consent, and in-progress work is saved before the app restarts
 
 **Quality assurance**
@@ -221,7 +223,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Summarization is slow | Switch to a lighter model (e.g. phi3) or reduce the chunk size in Settings |
 | Text extraction fails | Make sure "Scanned PDF OCR" is enabled in Settings; a Vision model (llava, Claude, GPT-4o, Gemini) is required |
 | OCR results are inaccurate | Ollama llava has low Korean accuracy; switching to Claude, OpenAI, or Gemini improves it significantly |
-| OCR takes too long | Use the "■ Cancel" button to stop; cloud providers offer faster throughput |
+| OCR takes too long | Use the "■ Cancel" button to stop; cloud providers offer faster throughput. If the Vision model stops responding altogether, the app gives up on its own rather than waiting out every remaining page |
 | PDF exceeds 500 pages | Split the document and upload again; the cap prevents resource exhaustion |
 | Image analysis doesn't work | With Ollama, a Vision model such as llava is required — install it in Settings |
 | API key error | Verify the key format in Settings. Claude: `sk-ant-...`, OpenAI: `sk-...`, Gemini: `AIza...` |
