@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCitations, formatPageLabel, clampCitationPage, CITATION_REGEX, normalizeCitationPlacement, stripCitations, sanitizeDocLabelName, qualifyBareCitations, stripTrailingPartialCitation } from '../citation';
+import { parseCitations, formatPageLabel, clampCitationPage, CITATION_REGEX, normalizeCitationPlacement, stripCitations, sanitizeDocLabelName, qualifyBareCitations, stripTrailingPartialCitation, stripBareCitations } from '../citation';
 
 describe('parseCitations', () => {
   it('단일 인용을 3 세그먼트로 분리한다', () => {
@@ -420,6 +420,41 @@ describe('ReDoS 회귀 가드 (R46)', () => {
 // QA25(C-LOW): 이 파일이 날 NUL 바이트를 품고 있어 ripgrep 이 binary 로 분류했다 — 소스 스캔을
 // 회귀 가드로 쓰는 저장소에서 "검색에 안 잡히는 소스"는 그 가드를 조용히 무력화한다.
 // safe-markdown 이 R29 에서 같은 이유로 고쳤던 것의 형제 누락이었다.
+/**
+ * QA29(B-Important): 컬렉션 Q&A 답변의 **맨 인용** 제거.
+ *
+ * 컬렉션 컨텍스트는 전부 `[문서명 p.N]` 라벨을 달고 들어가는데, refine 규칙이 단일 문서 형식을
+ * 명시해 모델이 출처를 떼어낼 유인이 있었다. 떨어진 `[p.5]` 는 활성 문서 pageCount 로 검증돼
+ * **엉뚱한 문서의 정상 버튼**이 된다. 출력에서는 어느 멤버인지 알 수 없어 승격이 불가능하므로,
+ * 이 저장소가 QA21·QA27 에서 택한 방향대로 제거한다.
+ */
+describe('stripBareCitations (QA29 B-Important)', () => {
+  it('출처 없는 맨 인용만 제거하고 [문서명 p.N] 은 보존한다', () => {
+    const input = '매출은 증가했다[p.5]. 반면 비용은 감소했다[Beta.pdf p.7].';
+    expect(stripBareCitations(input)).toBe('매출은 증가했다. 반면 비용은 감소했다[Beta.pdf p.7].');
+  });
+
+  it('quote 확장 형식의 맨 인용도 제거한다', () => {
+    expect(stripBareCitations('근거[p.12|인용된 문장]')).toBe('근거');
+  });
+
+  it('공백 변형(`[p. 5]`, `[ Beta.pdf  p.7 ]`)도 같은 규칙으로 판정한다', () => {
+    expect(stripBareCitations('a[p. 5]b')).toBe('ab');
+    expect(stripBareCitations('a[Beta.pdf  p.7]b')).toBe('a[Beta.pdf  p.7]b');
+  });
+
+  it('인용이 없거나 빈 문자열이면 원문 그대로', () => {
+    expect(stripBareCitations('')).toBe('');
+    expect(stripBareCitations('인용 없는 문장')).toBe('인용 없는 문장');
+  });
+
+  it('g flag 상태 누수 없이 반복 호출해도 결과가 같다 (stripCitations 와 동일 원리)', () => {
+    const input = 'x[p.1]y[p.2]z';
+    expect(stripBareCitations(input)).toBe('xyz');
+    expect(stripBareCitations(input)).toBe('xyz');
+  });
+});
+
 describe('소스 위생 (QA25)', () => {
   // QA26(B-Low): 근거는 "검색에 안 잡히는 소스는 소스 스캔 가드를 무력화한다" 는 **저장소 전역**
   // 성질인데 검사는 citation.ts 한 파일이었다. 같은 사고가 다른 파일에서 나면 그대로 통과한다.

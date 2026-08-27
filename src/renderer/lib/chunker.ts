@@ -154,6 +154,7 @@ export function chunkText(
  * - text: 최종 청크 문자열 (prevTail 포함, trim 완료)
  * - bodyStart / bodyEnd: prevTail 을 **제외한** body 가 원본에서 차지하는 [start, end) 범위
  * - tailStart: prevTail 이 원본에서 시작하는 위치 (없으면 -1)
+ * - bodyOffset: `text` 안에서 body 가 시작하는 인덱스 = 앞에 붙은 overlap tail 의 길이(없으면 0)
  *
  * 페이지 매핑 시 `tailStart >= 0` 이면 거기부터, 아니면 `bodyStart` 부터 포함.
  */
@@ -162,6 +163,7 @@ interface ChunkOffsetResult {
   bodyStart: number;
   bodyEnd: number;
   tailStart: number;
+  bodyOffset: number;
 }
 
 function chunkTextWithOverlapOffsets(
@@ -177,7 +179,7 @@ function chunkTextWithOverlapOffsets(
   const effectiveMax = maxChars + overlapChars;
 
   if (text.length <= maxChars) {
-    return [{ text, bodyStart: 0, bodyEnd: text.length, tailStart: -1 }];
+    return [{ text, bodyStart: 0, bodyEnd: text.length, tailStart: -1, bodyOffset: 0 }];
   }
 
   // 원본에서 paragraph 경계(start, end) 를 추적 — split 이 위치 정보를 버리므로 matchAll 사용
@@ -202,8 +204,21 @@ function chunkTextWithOverlapOffsets(
     const raw = prevTail ? prevTail + '\n\n' + body : body;
     const trimmed = raw.trim();
     if (!trimmed) return;
+    // QA29(B-6): `trimmed` 안에서 body 가 시작하는 인덱스. tail 은 `prevTail` + 구분자 2자를
+    // 차지하되, 선행 trim 이 그 앞을 깎아낸 만큼 줄어든다(tailAtBoundary 는 경계 **다음** 문자부터
+    // 반환하므로 공백으로 시작할 수 있다). 소비자가 tail 을 배제하고 귀속을 계산할 수 있게 노출.
+    const leadTrim = raw.length - raw.trimStart().length;
+    const bridgeChars = prevTail ? prevTail.length + 2 : 0;
+    const tailLen = Math.max(0, bridgeChars - leadTrim);
+    // 선행 trim 이 tail 을 다 먹고 **body 앞부분까지** 깎아낸 양(공백으로 시작하는 페이지에서만
+    // 0 이 아니다). trimmed 안의 body 첫 글자는 원본의 `bodyStart + bodyLead` 에 대응한다.
+    const bodyLead = Math.max(0, leadTrim - bridgeChars);
     if (trimmed.length <= effectiveMax) {
-      results.push({ text: trimmed, bodyStart, bodyEnd, tailStart: prevTail ? prevTailStart : -1 });
+      results.push({
+        text: trimmed, bodyStart, bodyEnd,
+        tailStart: prevTail ? prevTailStart : -1,
+        bodyOffset: Math.min(tailLen, trimmed.length),
+      });
     } else {
       // 거대한 단일 단락(또는 누적 다중 단락이 effectiveMax 를 넘은 경우) → codepoint 경계 분할.
       //
@@ -217,25 +232,38 @@ function chunkTextWithOverlapOffsets(
       // 분배는 코드포인트 길이 기준 근사치(part 가 거의 균등 길이로 잘리므로 인덱스 비율로 충분).
       const parts = splitByCodepoint(trimmed, effectiveMax);
       const bodyLen = bodyEnd - bodyStart;
+      // QA29(B-7): `trimmed` 안에서 지금까지 소비한 UTF-16 길이. parts 는 `trimmed` 의 연속
+      // 슬라이스이므로 누적 길이가 곧 각 part 의 정확한 시작 오프셋이다.
+      let consumed = 0;
       for (let k = 0; k < parts.length; k++) {
         const rawPart = parts[k];
         if (rawPart === undefined) continue;
+        const partStartInTrimmed = consumed;
+        consumed += rawPart.length;
+        const partEndInTrimmed = consumed;
         // QA23(C-LOW): 오버랩은 **flush 사이**(단락 경계)에만 적용되고 이 codepoint 분할에는
         // 없었다. 빈 줄 없는 긴 페이지(표·OCR 결과의 전형)는 전부 이 경로로 잘리므로, 그 경계에
         // 걸친 문장은 **어느 청크에도 온전히 담기지 않는다** — RAG 가 근거를 못 찾아 "맞아 보이지만
         // 틀린 답"이 된다. 직전 조각의 꼬리를 앞에 붙여 경계를 덮는다(문장/단어 경계 우선).
-        const part = k === 0
-          ? rawPart
-          : tailAtBoundary(parts[k - 1] ?? '', overlapChars) + rawPart;
-        const partBodyStart = bodyStart + Math.floor((k * bodyLen) / parts.length);
-        const partBodyEnd = k === parts.length - 1
-          ? bodyEnd
-          : bodyStart + Math.floor(((k + 1) * bodyLen) / parts.length);
+        const partTail = k === 0 ? '' : tailAtBoundary(parts[k - 1] ?? '', overlapChars);
+        const part = k === 0 ? rawPart : partTail + rawPart;
+        // QA29(B-7): 종전에는 body 길이를 part 개수로 **균등 분배**해 part k 의 body 시작을
+        // `k·(bodyLen/parts.length)` 로 추정했다. 그런데 실제 분할 대상은 `prevTail + '\n\n' + body`
+        // 이므로 part k 의 진짜 body 시작은 `k·effectiveMax − tailLen` 이다 — 추정이 tail 길이
+        // (최대 overlapChars) 만큼 **뒤로 밀려**, 빈 줄 없는 긴 페이지(표·OCR)에서 인용이 한 페이지
+        // 늦게 붙었다. 균등 분배 자체도 근사였으므로, 누적 오프셋에서 tail 을 뺀 **정확한** 값으로
+        // 바꾼다(body 는 trimmed 안에서 tailLen 부터 시작하고 원본과 1:1 대응한다).
+        const relStart = Math.min(Math.max(partStartInTrimmed - tailLen, 0) + bodyLead, bodyLen);
+        const relEnd = Math.min(Math.max(partEndInTrimmed - tailLen, 0) + bodyLead, bodyLen);
+        const partBodyStart = bodyStart + relStart;
+        const partBodyEnd = k === parts.length - 1 ? bodyEnd : bodyStart + relEnd;
         results.push({
           text: part,
           bodyStart: partBodyStart,
           bodyEnd: Math.max(partBodyEnd, partBodyStart + 1),
           tailStart: k === 0 && prevTail ? prevTailStart : -1,
+          // 첫 part 는 flush 진입부의 prevTail 을, 이후 part 는 직전 조각의 꼬리를 앞에 달고 있다.
+          bodyOffset: k === 0 ? Math.min(tailLen, part.length) : partTail.length,
         });
       }
     }
@@ -305,6 +333,17 @@ export interface PageChunk {
   pageStart: number;
   /** 1-based 끝 페이지 (청크가 마지막으로 포함된 페이지) */
   pageEnd: number;
+  /**
+   * QA29(B-6): `text` 안에서 **body** 가 시작하는 인덱스. `[0, bodyOffset)` 구간은 직전 청크의
+   * overlap tail(= 이전 페이지 출신)이며 `pageStart` 가 가리키는 페이지의 내용이 **아니다**.
+   *
+   * R35 이후 `pageStart/pageEnd` 는 body 좌표계로만 산정한다(검색 recall 용 tail 이 인용을 앞
+   * 페이지로 끌어당기지 않도록). 그 대가로, tail 안에 있는 문장을 근거로 인용을 만들면 라벨이
+   * **한 페이지 늦게** 붙는다 — 페이지 경계에 걸친 표 캡션·정의문에서 재현된다. 소비자는
+   * 검색에는 `text` 를 그대로 쓰되, 페이지 라벨을 붙일 본문으로는 `text.slice(bodyOffset)` 를
+   * 쓰면 두 좌표계가 일치한다. tail 이 없으면 0.
+   */
+  bodyOffset: number;
 }
 
 const PAGE_SEPARATOR = '\n\n';
@@ -373,7 +412,7 @@ export function chunkTextWithOverlapByPage(
     const chunkEndChar = Math.max(c.bodyStart, c.bodyEnd - 1);
     const pageStart = offsetToPage(c.bodyStart);
     const pageEnd = Math.max(pageStart, offsetToPage(chunkEndChar));
-    result.push({ text: c.text, pageStart, pageEnd });
+    result.push({ text: c.text, pageStart, pageEnd, bodyOffset: Math.min(c.bodyOffset, c.text.length) });
   }
 
   return result;

@@ -280,3 +280,27 @@ export function clampCitationPage(page: number, maxPage: number): number | null 
   if (page < 1 || page > maxPage) return null;
   return Math.floor(page);
 }
+
+/**
+ * **출처 없는** 맨 인용(`[p.N]`, `[p.N|quote]`)만 제거한다. `[문서명 p.N]` 은 그대로 둔다.
+ *
+ * QA29(B-Important): 컬렉션 Q&A 에서 컨텍스트는 전부 `[문서명 p.N]` 라벨을 달고 들어가는데,
+ * `buildRefinePrompt` 의 규칙이 `[p.N] 인용은 …` 이라는 **단일 문서 형식**을 명시해 모델이
+ * 출처를 떼어낼 유인을 직접 만들었다. 떨어진 `[p.5]` 는 `docName === undefined` → `isCrossDoc=false`
+ * → **활성 문서**의 pageCount 로 검증돼 멀쩡한 클릭 버튼이 된다(QA21 의 동명 모호성·닫힌 문서
+ * 가드를 전부 비껴간다). QA27 은 교차 **요약**의 입력에서 승격해 이 클래스를 닫았지만 Q&A 답변
+ * 경로는 남아 있었다.
+ *
+ * 출력에서는 승격할 수 없다 — 맨 `[p.5]` 가 어느 멤버를 가리키는지 알 방법이 없고, 활성 문서로
+ * 단정하면 그거야말로 확신 있는 오답이다. 이 저장소가 QA21·QA27 에서 반복해 택한 방향(모르면
+ * 비활성/제거)에 맞춰 **지운다** — 인용 하나를 잃는 것이 엉뚱한 페이지로 보내는 것보다 낫다.
+ * 프롬프트 규칙 자체도 함께 고쳐 애초에 떨어지지 않게 한다(use-qa.buildRefinePrompt).
+ */
+export function stripBareCitations(text: string): string {
+  if (text.length === 0) return text;
+  const re = new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags);
+  return text.replace(re, (match, ...rest) => {
+    const groups = rest[rest.length - 1] as { doc?: string } | undefined;
+    return groups?.doc === undefined ? '' : match;
+  });
+}

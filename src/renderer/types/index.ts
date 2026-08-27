@@ -351,6 +351,12 @@ export interface PersistedChunkMeta {
   index: number;
   pageStart?: number;
   pageEnd?: number;
+  /**
+   * QA29(B-6): 청크 앞에 붙은 overlap tail 의 길이. 라벨(`pageStart`)은 **body 기준**이라
+   * tail 을 함께 라벨링하면 한 페이지 뒤를 인용하게 된다. 옵셔널이라 이 필드가 없는 구버전
+   * 사이드카는 0(=tail 없음)으로 자연 폴백한다 — 스키마 상향 불필요.
+   */
+  bodyOffset?: number;
 }
 
 /** VectorStore 직렬화 결과 — 메타는 JSON, 정규화 벡터는 ArrayBuffer(Float32) */

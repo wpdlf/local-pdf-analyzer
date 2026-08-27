@@ -461,6 +461,107 @@ describe('generateCollectionSummary (L2)', () => {
     expect(M.prompt).not.toContain('## Epsilon.pdf');
   });
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // QA29(B-4): pickSummary 의 "첫 항목" 위치 폴백. summaries 의 키는 ActiveSummaryType 이라
+  // `custom:<id>` 까지 포함하므로, 'full' 요청이 남의 **키워드 목록/커스텀 산출물**을 조용히
+  // 받아 갔다. 게다가 non-null 을 돌려주므로 올바른 타입의 **인라인 생성 경로가 죽는다**.
+  // ───────────────────────────────────────────────────────────────────────────
+  function sessionWith(fileName: string, summaries: Record<string, unknown>, text: string, pageTexts?: string[]) {
+    return {
+      session: {
+        schemaVersion: 1, docHash: 'x'.repeat(64), fileName, filePath: `/d/${fileName}`, pageCount: 10,
+        extractedText: text, pageTexts: pageTexts ?? [text], chapters: [],
+        summaries, summaryType: 'full', qaMessages: [], embedModel: MODEL, embedDim: 3, chunkMeta: [],
+      },
+      blob: null,
+    };
+  }
+
+  it('QA29(B-4): 요청 타입이 없으면 다른 타입(keywords/custom)을 대신 쓰지 않고 인라인 생성한다', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) => Promise.resolve(
+      h === 'a'.repeat(64)
+        ? sessionWith('Alpha.pdf', { full: { content: '알파 통합요약', model: 'm', provider: 'ollama' } }, '알파 본문')
+        // Beta 에는 'full' 이 없고 키워드 + 커스텀만 있다 — 위치 폴백이면 이 중 하나가 들어간다.
+        : sessionWith('Beta.pdf', {
+          keywords: { content: '베타키워드목록', model: 'm', provider: 'ollama' },
+          'custom:tpl1': { content: '베타커스텀산출물', model: 'm', provider: 'ollama' },
+        }, '베타 본문')));
+
+    await generateCollectionSummary('unified');
+
+    expect(M.prompt).toContain('## Beta.pdf');
+    expect(M.prompt, '키워드 목록이 통합 요약 입력으로 들어갔다').not.toContain('베타키워드목록');
+    expect(M.prompt, '커스텀 템플릿 산출물이 통합 요약 입력으로 들어갔다 — "커스텀 미적용" 고지와 모순').not.toContain('베타커스텀산출물');
+    // 폴백이 없으므로 인라인 생성 경로가 살아나 'full' 키로 생성·영속화된다.
+    expect(mockSaveSummary).toHaveBeenCalledWith(expect.objectContaining({ type: 'full' }));
+    expect(M.prompt).toContain('통합 결과'); // 인라인 생성 산출물이 블록 본문
+  });
+
+  it('QA29(B-4): 요청 타입이 있으면 그대로 쓰고 재생성하지 않는다 (폴백 제거의 부작용 없음)', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) => Promise.resolve(
+      h === 'a'.repeat(64)
+        ? sessionWith('Alpha.pdf', { full: { content: '알파 통합요약', model: 'm', provider: 'ollama' } }, '알파 본문')
+        : sessionWith('Beta.pdf', {
+          keywords: { content: '베타키워드목록', model: 'm', provider: 'ollama' },
+          full: { content: '베타 통합요약', model: 'm', provider: 'ollama' },
+        }, '베타 본문')));
+
+    await generateCollectionSummary('unified');
+
+    expect(M.prompt).toContain('알파 통합요약');
+    expect(M.prompt).toContain('베타 통합요약');
+    expect(M.prompt).not.toContain('베타키워드목록');
+    expect(mockSaveSummary).not.toHaveBeenCalled(); // 재요약 0 (설계 §2.A)
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // QA29(B-5): reduce 프롬프트는 모든 근거에 `[문서명 p.N]` 을 요구하는데, 발췌 소스였던
+  // session.extractedText 에는 페이지 라벨이 전혀 없다(labelParagraphsWithPages 를 거치지 않음).
+  // 모델은 요구를 이행하려 번호를 지어내고, 범위 안이면 클릭 가능한 오답 인용이 된다.
+  // ───────────────────────────────────────────────────────────────────────────
+  it('QA29(B-5): 발췌는 pageTexts 로 [p.N] 라벨을 달아 넣는다', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    M.throwAfter = true; // 인라인 생성 실패 → 발췌 fallback 경로
+    mockSessionLoad.mockImplementation((h: string) => Promise.resolve(
+      h === 'a'.repeat(64)
+        ? sessionWith('Alpha.pdf', {}, '알파합본', ['알파첫쪽내용', '알파둘째쪽내용'])
+        : sessionWith('Beta.pdf', {}, '베타합본', ['베타첫쪽내용', '베타둘째쪽내용'])));
+
+    await generateCollectionSummary('unified');
+
+    // 라벨은 붙은 뒤 QA27 의 승격을 거쳐 출처까지 달린 형태로 프롬프트에 들어간다.
+    expect(M.prompt).toContain('[Alpha.pdf p.1] 알파첫쪽내용');
+    expect(M.prompt).toContain('[Alpha.pdf p.2] 알파둘째쪽내용');
+    expect(M.prompt).toContain('[Beta.pdf p.1] 베타첫쪽내용');
+    expect(M.prompt).toContain('[Beta.pdf p.2] 베타둘째쪽내용');
+    // 라벨이 있으므로 "페이지 정보 없음" 예외 고지는 붙지 않는다.
+    expect(M.prompt).not.toContain('페이지 정보가 없습니다');
+  });
+
+  it('QA29(B-5): pageTexts 가 없는 레거시 세션의 발췌는 페이지 인용 대상에서 제외한다고 명시', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    M.throwAfter = true;
+    mockSessionLoad.mockImplementation((h: string) => Promise.resolve(
+      h === 'a'.repeat(64)
+        ? sessionWith('Alpha.pdf', {}, '알파 라벨없는 본문', [])
+        : sessionWith('Beta.pdf', {}, '베타 라벨없는 본문', [])));
+
+    await generateCollectionSummary('unified');
+
+    expect(M.prompt).toContain('알파 라벨없는 본문');
+    // 두 블록 모두 "페이지 번호를 쓰지 말라"는 블록 단위 예외가 붙는다.
+    expect(M.prompt.match(/페이지 정보가 없습니다/g) ?? []).toHaveLength(2);
+    expect(M.prompt).toContain('[Alpha.pdf] 형식으로만 인용');
+    // 지어낼 근거가 될 `[p.N]` 은 프롬프트 어디에도 없다.
+    expect(M.prompt).not.toMatch(/\[p\.\s*\d+\]/);
+  });
+
   it('재진입 가드: 동시 2회 호출 시 한 번만 실행', async () => {
     seedActive();
     setStore(['a'.repeat(64), 'b'.repeat(64)]);

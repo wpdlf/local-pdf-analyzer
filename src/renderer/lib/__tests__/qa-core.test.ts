@@ -135,18 +135,18 @@ describe('selectRelevantChunks (L1-C03)', () => {
 
   it('C03-01: fullText <= 8000자 이면 원문 반환', () => {
     const text = 'A'.repeat(5000);
-    expect(selectRelevantChunks('question', text, 1000)).toBe(text);
+    expect(selectRelevantChunks('question', text)).toBe(text);
   });
 
   it('C03-02: 경계값 8000자 정확 — 원문 반환', () => {
     const text = 'A'.repeat(LIMIT);
-    expect(selectRelevantChunks('question', text, 1000)).toBe(text);
+    expect(selectRelevantChunks('question', text)).toBe(text);
   });
 
   it('C03-03: 청크 1개로 쪼개지는 경우 — slice(0, 8000) 반환', () => {
     // chunkText 로 1개 청크만 나오는 크기 — maxChunkSize 크게 하면 긴 텍스트도 1개 청크
     const text = 'A'.repeat(10000);
-    const result = selectRelevantChunks('question', text, 50000);
+    const result = selectRelevantChunks('question', text);
     expect(result.length).toBeLessThanOrEqual(LIMIT);
   });
 
@@ -154,7 +154,7 @@ describe('selectRelevantChunks (L1-C03)', () => {
     // 구분 가능한 고유 prefix 로 청크를 만들고 키워드가 stopwords 만 포함되도록
     const chunk = (prefix: string) => `${prefix} ${'x'.repeat(2000)}`;
     const text = [chunk('FIRST'), chunk('MIDDLE'), chunk('LAST')].join('\n\n');
-    const result = selectRelevantChunks('the a an is', text, 2100);
+    const result = selectRelevantChunks('the a an is', text);
     expect(result).toContain('FIRST');
     expect(result).toContain('LAST');
     expect(result.length).toBeLessThanOrEqual(LIMIT);
@@ -167,7 +167,7 @@ describe('selectRelevantChunks (L1-C03)', () => {
       chunk('MIDDLE', 'orange'),
       chunk('LAST', 'banana'),
     ].join('\n\n');
-    const result = selectRelevantChunks('apple', text, 2000);
+    const result = selectRelevantChunks('apple', text);
     expect(result).toContain('FIRST');
     expect(result).toContain('apple');
   });
@@ -176,7 +176,7 @@ describe('selectRelevantChunks (L1-C03)', () => {
     const chunk = (prefix: string) => `${prefix} ${'x'.repeat(2000)}`;
     const text = [chunk('FIRST'), chunk('MIDDLE'), chunk('LAST')].join('\n\n');
     // 매칭되지 않을 단어
-    const result = selectRelevantChunks('zeta', text, 2100);
+    const result = selectRelevantChunks('zeta', text);
     expect(result).toContain('FIRST');
     expect(result).toContain('LAST');
   });
@@ -189,7 +189,7 @@ describe('selectRelevantChunks (L1-C03)', () => {
 
     it('단일 청크 폴백', () => {
       const text = 'A'.repeat(LIMIT - 3) + '[p.123]' + 'B'.repeat(200);
-      const result = selectRelevantChunks('question', text, 50000);
+      const result = selectRelevantChunks('question', text);
       expect(result.length).toBeLessThanOrEqual(LIMIT);
       expect(result).not.toMatch(DANGLING);
       expect(result).not.toContain('[p.');
@@ -199,7 +199,9 @@ describe('selectRelevantChunks (L1-C03)', () => {
     const first = `FIRST ${'x'.repeat(4000)}`;                       // 4006자
     const middle = `MIDDLE ${'y'.repeat(4000)}`;
     const lastPrefix = `LAST ${'z'.repeat(LIMIT - 3 - (first.length + 2) - 5)}`; // join 후 [ 가 7997 에 오도록
-    const last = `${lastPrefix}[p.123]${'z'.repeat(300)}`;
+    // QA29(B-High): 청크 크기가 예산에서 파생되도록 바뀌면서 4000자 문단은 **여러 청크로 쪼개진다**.
+    // 그래서 첫/끝 청크에 실리는 마커를 문단 양끝에 둔다(끝 청크가 담는 것은 tail 이다).
+    const last = `${lastPrefix}[p.123]${'z'.repeat(300)} LASTTAIL`;
     const text = [first, middle, last].join('\n\n');
 
     it('픽스처 자체 검증: join 의 8000자 절단이 `[p.` 뒤에서 잘린다', () => {
@@ -208,38 +210,44 @@ describe('selectRelevantChunks (L1-C03)', () => {
     });
 
     it('키워드 없음(stopwords 만) 폴백', () => {
-      const result = selectRelevantChunks('the a an is', text, 1200);
+      const result = selectRelevantChunks('the a an is', text);
       expect(result).toContain('FIRST');
-      expect(result).toContain('LAST');
+      expect(result).toContain('LASTTAIL');
       expect(result).not.toMatch(DANGLING);
-      expect(result).not.toContain('[p.');
+      // QA29(B-High): 청크가 예산에서 파생되면서 첫+끝 join 이 예산 아래로 내려가 절단 자체가
+      // 사라졌다 — 그래서 **온전한** `[p.123]` 이 남는 것이 정상이다. 불변식은 "반쪽 토큰이
+      // 남지 않는다"(DANGLING)이지 "인용이 없다"가 아니다. 종전의 not.toContain('[p.') 은 옛
+      // 픽스처에서 유일하게 존재하던 `[p.` 가 반쪽이었기 때문에 성립했던 과잉 단언이다.
     });
 
     it('전 청크 무득점 폴백', () => {
-      const result = selectRelevantChunks('zeta', text, 1200);
+      const result = selectRelevantChunks('zeta', text);
       expect(result).toContain('FIRST');
-      expect(result).toContain('LAST');
+      expect(result).toContain('LASTTAIL');
       expect(result).not.toMatch(DANGLING);
-      expect(result).not.toContain('[p.');
+      // QA29(B-High): 청크가 예산에서 파생되면서 첫+끝 join 이 예산 아래로 내려가 절단 자체가
+      // 사라졌다 — 그래서 **온전한** `[p.123]` 이 남는 것이 정상이다. 불변식은 "반쪽 토큰이
+      // 남지 않는다"(DANGLING)이지 "인용이 없다"가 아니다. 종전의 not.toContain('[p.') 은 옛
+      // 픽스처에서 유일하게 존재하던 `[p.` 가 반쪽이었기 때문에 성립했던 과잉 단언이다.
     });
   });
 
   it('C03-07: 빈 fullText — 8000자 이하로 간주되어 원문 반환', () => {
-    expect(selectRelevantChunks('question', '', 1000)).toBe('');
+    expect(selectRelevantChunks('question', '')).toBe('');
   });
 
   it('C03-08: 결과 길이가 MAX_QA_CONTEXT_CHARS 근처 (join 구분자 오버헤드 허용)', () => {
     // totalLen 체크는 chunk.length 만 합산하므로 join('\n\n') 의 2*(n-1) 바이트는 초과 가능.
     // 실질 LLM 컨텍스트 영향 무시할 수준이나 불변식 경계를 문서화.
     const longText = 'apple '.repeat(5000);
-    const result = selectRelevantChunks('apple', longText, 1000);
+    const result = selectRelevantChunks('apple', longText);
     expect(result.length).toBeLessThanOrEqual(LIMIT + 100);
   });
 
   it('C03-09: 유니코드/이모지 혼합 long text — 정상 처리', () => {
     const chunk = (prefix: string) => `${prefix} 🚀 유니코드 ${'x'.repeat(2000)}`;
     const text = [chunk('FIRST'), chunk('MIDDLE'), chunk('LAST')].join('\n\n');
-    const result = selectRelevantChunks('유니코드', text, 2100);
+    const result = selectRelevantChunks('유니코드', text);
     expect(result.length).toBeLessThanOrEqual(LIMIT);
     expect(result).toMatch(/FIRST|MIDDLE|LAST/);
   });
@@ -251,7 +259,7 @@ describe('selectRelevantChunks (L1-C03)', () => {
       chunk('MIDDLE', 'apple apple'), // score=2
       chunk('LAST', 'apple'),         // score=1
     ].join('\n\n');
-    const result = selectRelevantChunks('apple', text, 1000);
+    const result = selectRelevantChunks('apple', text);
     // 점수 순서로 뽑혀도 최종 출력은 원본 인덱스 오름차순
     const firstIdx = result.indexOf('FIRST');
     const middleIdx = result.indexOf('MIDDLE');
@@ -285,14 +293,121 @@ describe('selectRelevantChunks — 인용 라벨이 스코어링을 오염시키
     ).join(SEP);
     const full = pageA + SEP + pageB;
 
-    const picked = selectRelevantChunks('figure 15 explanation', full, 2000);
+    const picked = selectRelevantChunks('figure 15 explanation', full);
 
     expect(picked, '본문에 근거가 있는 쪽이 선택돼야 한다').toContain('figure 15 shows');
   });
 
   it('반환값에는 라벨이 그대로 남는다 (인용 생성에 필요)', () => {
     const page = '[p.7] ' + 'core content repeats here. '.repeat(400);
-    const picked = selectRelevantChunks('core content', `${page}\n\n${page}`, 4000);
+    const picked = selectRelevantChunks('core content', `${page}\n\n${page}`);
     expect(picked).toContain('[p.7]');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QA29(B-High): 폴백 관련성 선택이 **기본 설정에서 한 번도 성립하지 않던** 결함의 회귀 넷.
+//
+// 종전에는 청크를 `settings.maxChunkSize`(요약용, 기본 4000토큰)로 만들었다. 실측 영문 청크가
+// 15,120자로 예산(8,000자)을 통째로 넘어, 선택 루프가 1위 청크에서 곧바로 break → selected 가
+// 비고 → 문서 **첫 8,000자**로 답했다. 라벨이 붙어 있으니 도입부 페이지로 클릭까지 되는
+// 정상 인용이 달렸고, 이 경로는 환각 검증 2-pass 도 꺼져 있다.
+//
+// ⚠️ 기존 C03 케이스들은 입력이 8,000자 미만이라 `fullText.length <= MAX_QA_CONTEXT_CHARS`
+// 조기 반환에 걸려 **스코어링 루프에 진입조차 하지 않았다** — 그래서 이 결함을 못 잡았다.
+// 아래 케이스는 전부 8,000자를 확실히 넘긴다.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('selectRelevantChunks — 예산 초과 문서의 관련성 선택 (QA29 B-High)', () => {
+  /** 8,000자 예산을 확실히 넘는 문서. 정답 구간은 문서 **끝부분**에 둔다(도입부 폴백과 구분). */
+  const buildLongDoc = (needle: string): string => {
+    const filler = (tag: string) => `${tag} ${'lorem ipsum dolor sit amet consectetur '.repeat(80)}`;
+    return [
+      filler('INTRO'),
+      filler('MIDDLE-A'),
+      filler('MIDDLE-B'),
+      `TARGET ${needle} ${needle} ${needle} ${'tail padding words '.repeat(40)}`,
+    ].join('\n\n');
+  };
+
+  it('정답이 문서 끝에 있어도 도입부가 아니라 그 구간을 고른다', () => {
+    const text = buildLongDoc('kubernetes');
+    expect(text.length).toBeGreaterThan(8000); // 전제 자기검증 — 조기 반환에 걸리면 공허해진다
+    const result = selectRelevantChunks('kubernetes', text);
+    expect(result).toContain('TARGET');
+    expect(result).toContain('kubernetes');
+  });
+
+  it('결과가 컨텍스트 예산(8,000자)을 넘지 않는다', () => {
+    const result = selectRelevantChunks('kubernetes', buildLongDoc('kubernetes'));
+    expect(result.length).toBeLessThanOrEqual(8000);
+  });
+
+  it('점수 있는 청크가 하나도 예산에 안 들어가도 도입부로 강등되지 않는다', () => {
+    // 빈 줄이 없는 단일 거대 문단 — 청커가 쪼개도 각 조각이 크고, 정답은 맨 끝에 있다.
+    const huge = `${'alpha beta gamma delta '.repeat(900)} ZEBRAQUARK ${'omega '.repeat(50)}`;
+    expect(huge.length).toBeGreaterThan(8000);
+    const result = selectRelevantChunks('ZEBRAQUARK', huge);
+    expect(result).toContain('ZEBRAQUARK');
+  });
+
+  it('키워드가 전혀 안 맞으면 종전대로 첫+끝 폴백 (동작 보존)', () => {
+    const result = selectRelevantChunks('zzzznomatchzzzz', buildLongDoc('kubernetes'));
+    expect(result).toContain('INTRO');
+    expect(result.length).toBeLessThanOrEqual(8000);
+  });
+});
+
+describe('selectRelevantChunks — 예산 초과 항목은 건너뛰고 계속 채운다 (QA29 B-High)', () => {
+  // 종전 `break` 는 1위 청크가 예산을 넘는 순간 루프를 끝내, **뒤에 있는 더 작지만 관련 있는**
+  // 청크를 통째로 버렸다. 큰 청크 4개(점수 높음) + 작은 청크 1개(점수 낮음) 구성에서,
+  // 예산이 큰 것 3개로 차면 4번째는 안 들어가지만 5번째 작은 것은 들어갈 자리가 남는다.
+  // 크기 설계: 큰 문단 ~2,400자 · 작은 문단 ~300자. 청커의 문단 병합 한도(예산/3 ≈ 2,666자)보다
+  // `큰 문단 + 작은 문단` 이 커야 작은 문단이 앞 문단에 흡수되지 않고 자기 청크로 남는다.
+  const big = (n: number) => `alpha ${'padding word '.repeat(183)}${' alpha'.repeat(n - 1)}`;
+  const small = `TINYMARK alpha ${'z '.repeat(140)}`;
+  const text = [big(3), big(3), big(3), big(2), small].join('\n\n');
+
+  it('픽스처 자기검증: 예산을 넘고, 작은 문단이 흡수되지 않을 크기다', () => {
+    expect(text.length).toBeGreaterThan(8000);
+    expect(text.endsWith(small)).toBe(true);
+    expect(big(3).length + small.length).toBeGreaterThan(Math.floor(8000 / 3));
+  });
+
+  it('큰 청크로 예산이 거의 찬 뒤에도 남는 자리에 작은 관련 청크가 들어간다', () => {
+    const result = selectRelevantChunks('alpha', text);
+    expect(result).toContain('TINYMARK');
+    expect(result.length).toBeLessThanOrEqual(8000);
+  });
+});
+
+/**
+ * QA29(B-6): overlap tail 이 body 의 페이지 라벨을 뒤집어쓰던 것 — **소비자 배선** 가드.
+ *
+ * chunker 가 `bodyOffset` 을 내고 vector-store 가 그것을 검색 결과까지 전파해도, 라벨을 붙이는
+ * 쪽이 tail 을 떼지 않으면 아무것도 고쳐지지 않는다(이 라운드 A축 주제 = 절반짜리 수정).
+ */
+describe('RAG 라벨 세그먼트가 overlap tail 을 떼어낸다 (QA29 B-6)', () => {
+  const label = (page: number) => `[p.${page}]`;
+
+  /** use-qa 의 세그먼트 조립과 동일한 규칙 — 배선이 바뀌면 이 규칙도 함께 바뀌어야 한다. */
+  const buildSegment = (r: { text: string; pageStart?: number; bodyOffset?: number }): string => {
+    const l = r.pageStart ? label(r.pageStart) : '';
+    const body = l && r.bodyOffset ? r.text.slice(r.bodyOffset) : r.text;
+    return l ? `${l}\n${body}` : r.text;
+  };
+
+  it('tail 문장은 라벨 붙은 세그먼트에 실리지 않는다', () => {
+    const seg = buildSegment({ text: 'TAILSENTENCE BODYSENTENCE', pageStart: 2, bodyOffset: 13 });
+    expect(seg).toBe('[p.2]\nBODYSENTENCE');
+    expect(seg).not.toContain('TAILSENTENCE');
+  });
+
+  it('bodyOffset 이 없으면(구버전 사이드카) 종전대로 원문 전체', () => {
+    expect(buildSegment({ text: 'ALL', pageStart: 2 })).toBe('[p.2]\nALL');
+    expect(buildSegment({ text: 'ALL', pageStart: 2, bodyOffset: 0 })).toBe('[p.2]\nALL');
+  });
+
+  it('라벨이 없으면 잘못 귀속될 여지가 없으므로 tail 을 보존한다 (검색 문맥 유지)', () => {
+    expect(buildSegment({ text: 'TAIL BODY', bodyOffset: 5 })).toBe('TAIL BODY');
   });
 });

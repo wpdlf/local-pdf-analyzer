@@ -562,3 +562,34 @@ describe('verifyAnswerSentences (v0.18)', () => {
     expect(mockAbort).toHaveBeenCalled();
   });
 });
+
+/**
+ * QA29(B-Important): refine 규칙이 컬렉션 모드에서도 단일 문서 형식(`[p.N]`)을 명시해, 모델이
+ * `[Beta.pdf p.5]` 의 출처를 떼어낼 유인을 **프롬프트가 직접 만들고 있었다**. 떨어진 맨 인용은
+ * 활성 문서 pageCount 로 검증돼 엉뚱한 문서의 정상 버튼이 된다(citation.stripBareCitations 참조).
+ */
+describe('buildRefinePrompt — 모드별 인용 규칙 (QA29 B-Important)', () => {
+  it('단일 문서 모드는 종전대로 [p.N] 형식을 요구한다', () => {
+    const out = buildRefinePrompt('질문', '초안', '컨텍스트');
+    expect(out).toContain('[p.N] 인용은 근거 페이지를 찾으면 그대로');
+    expect(out).not.toContain('[문서명 p.N]');
+  });
+
+  it('컬렉션 모드는 문서명을 포함한 채로 유지하라고 요구한다', () => {
+    const out = buildRefinePrompt('질문', '초안', '컨텍스트', true);
+    expect(out).toContain('[문서명 p.N]');
+    expect(out).toContain('문서명을 반드시 포함한 채로');
+    // 출처를 떼라고 읽힐 수 있는 단일 문서 문구가 함께 남아 있으면 안 된다.
+    expect(out).not.toContain('[p.N] 인용은 근거 페이지를 찾으면 그대로');
+  });
+
+  it('두 모드 모두 나머지 규칙과 구조는 동일하다 (문구 드리프트 가드)', () => {
+    const single = buildRefinePrompt('질문', '초안', '컨텍스트');
+    const collection = buildRefinePrompt('질문', '초안', '컨텍스트', true);
+    for (const out of [single, collection]) {
+      expect(out).toContain('[초안 답변]');
+      expect(out).toContain('원문에 명시되지 않은 주장은 제거');
+      expect(out).toContain('새 정보를 추가하지 말고');
+    }
+  });
+});

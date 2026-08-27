@@ -380,3 +380,100 @@ describe('chunkTextWithOverlapByPage', () => {
     expect(zChunk!.pageStart).toBe(2);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QA29(B-6 / B-7): 오버랩 tail 과 페이지 귀속의 좌표계 정합.
+//  B-6 — 청크 `text` 는 직전 청크의 tail(이전 페이지 출신)을 앞에 달고 있는데 `pageStart` 는
+//        body 기준(R35, 의도)이다. tail 안의 문장을 근거로 인용을 만들면 **한 페이지 늦은**
+//        라벨이 붙는다. `bodyOffset` 으로 tail 길이를 노출해 소비자가 배제할 수 있게 한다.
+//  B-7 — codepoint 강제 분할은 `prevTail + '\n\n' + body` 를 자르면서 **body 길이만** 균등
+//        분배해, part k 의 body 시작 추정이 tail 길이만큼 뒤로 밀려 있었다.
+//
+// 두 결함을 하나의 불변식으로 고정한다: **body 는 자기 pageStart..pageEnd 안에 실제로 있다.**
+// (tail 을 포함한 `text` 전체로는 성립하지 않는다 — 아래에서 그 대비도 함께 단언한다.)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('QA29: bodyOffset 과 페이지 귀속의 정합', () => {
+  const SEP = '\n\n';
+  const pagesJoined = (pages: string[], startPage: number, endPage: number) =>
+    pages.slice(startPage - 1, endPage).join(SEP);
+
+  // 페이지마다 고유 토큰 — 반복 패턴이면 어떤 부분문자열도 어디에나 있어 포함 검사가 공허해진다.
+  const uniquePage = (p: number, n: number) =>
+    Array.from({ length: n }, (_, i) => `p${p}항목${String(i).padStart(3, '0')}`).join(' ');
+
+  it('B-6/B-7: 모든 청크의 body(text.slice(bodyOffset))가 자신의 pageStart..pageEnd 안에 실제로 존재한다', () => {
+    const pages = Array.from({ length: 8 }, (_, i) => uniquePage(i + 1, 40));
+    const result = chunkTextWithOverlapByPage(pages, 120, 0.1);
+    expect(result.length).toBeGreaterThan(3);
+    for (const c of result) {
+      const body = c.text.slice(c.bodyOffset);
+      expect(body.length, 'body 가 통째로 사라졌다').toBeGreaterThan(0);
+      expect(
+        pagesJoined(pages, c.pageStart, c.pageEnd).includes(body),
+        `body 가 [p.${c.pageStart}-${c.pageEnd}] 밖에 있다: ${body.slice(0, 40)}…`,
+      ).toBe(true);
+    }
+  });
+
+  it('B-6: tail 을 배제하지 않으면 같은 검사가 실패한다 — bodyOffset 이 공허한 0 이 아님', () => {
+    const pages = Array.from({ length: 8 }, (_, i) => uniquePage(i + 1, 40));
+    const result = chunkTextWithOverlapByPage(pages, 120, 0.1);
+    // tail 이 실제로 붙은 청크가 존재하고,
+    const overlapped = result.filter((c) => c.bodyOffset > 0);
+    expect(overlapped.length, 'tail 이 붙은 청크가 하나도 없다 — 픽스처가 오버랩을 만들지 못했다').toBeGreaterThan(0);
+    // 그 청크는 text 전체로는 자기 페이지 범위 안에 들어가지 않는다(= tail 이 이전 페이지 출신).
+    const leaking = overlapped.filter((c) => !pagesJoined(pages, c.pageStart, c.pageEnd).includes(c.text));
+    expect(leaking.length, 'tail 포함 text 가 전부 자기 페이지 안에 있다 — bodyOffset 이 무의미해진다').toBeGreaterThan(0);
+    // tail 구간의 본문은 pageStart 보다 **앞** 페이지에서 온다.
+    const c0 = leaking[0]!;
+    expect(c0.pageStart).toBeGreaterThan(1);
+    const tail = c0.text.slice(0, c0.bodyOffset).trim();
+    expect(pagesJoined(pages, 1, c0.pageStart - 1).includes(tail.slice(0, 12))).toBe(true);
+  });
+
+  it('B-7: 빈 줄 없는 긴 페이지(표·OCR)의 codepoint 강제 분할에서도 body 귀속이 밀리지 않는다', () => {
+    // 페이지 안에 단락 경계(빈 줄)가 전혀 없어 전부 splitByCodepoint 경로로 잘린다.
+    const pages = Array.from({ length: 5 }, (_, i) => uniquePage(i + 1, 120));
+    const result = chunkTextWithOverlapByPage(pages, 200, 0.1);
+    expect(result.length).toBeGreaterThan(3);
+    for (const c of result) {
+      const body = c.text.slice(c.bodyOffset);
+      expect(
+        pagesJoined(pages, c.pageStart, c.pageEnd).includes(body),
+        `split part 의 body 가 [p.${c.pageStart}-${c.pageEnd}] 밖에 있다: ${body.slice(0, 40)}…`,
+      ).toBe(true);
+    }
+    // 페이지 첫 토큰은 그 페이지를 pageStart 로 갖는 청크의 body 에서 발견돼야 한다
+    // (한 페이지 늦게 귀속되면 pageStart 가 +1 이 된다).
+    for (let p = 1; p <= 5; p++) {
+      const first = `p${p}항목000`;
+      const owner = result.find((c) => c.text.slice(c.bodyOffset).includes(first));
+      expect(owner, `p${p} 첫 토큰을 body 로 갖는 청크가 없다`).toBeDefined();
+      expect(owner!.pageStart, `p${p} 첫 토큰이 p.${owner!.pageStart} 로 귀속됐다`).toBe(p);
+    }
+  });
+
+  // B-7 의 관측 가능한 케이스: **텍스트가 없는 첫 페이지**(스캔 PDF 의 표지 — 파서가 '' 를 낸다).
+  // 이때만 codepoint 강제 분할이 **여러 페이지에 걸친 body** 를 받는다(빈 첫 단락 때문에
+  // `bodyEnd > bodyStart` 가드가 통과하지 못해 body 가 다음 페이지까지 확장된다). 종전 산식은
+  // body 길이를 part 수로 균등 분배해 첫 part 의 body 시작을 원본 0(= 빈 페이지 1)으로 봤고,
+  // 실제로는 2쪽 본문인 청크에 `[p.1-2]` 라는 없는 범위가 붙었다.
+  it('B-7: 첫 페이지가 빈 문서에서도 첫 청크가 실제 본문 페이지로 귀속된다', () => {
+    const pages = ['', uniquePage(2, 200), uniquePage(3, 200)];
+    const result = chunkTextWithOverlapByPage(pages, 200, 0.1);
+    const first = result[0]!;
+    expect(first.text.slice(first.bodyOffset).startsWith('p2항목000')).toBe(true);
+    expect(first.pageStart, '본문이 2쪽인데 빈 1쪽으로 귀속됐다').toBe(2);
+    expect(first.pageEnd, '빈 페이지를 포함한 범위 라벨이 만들어졌다').toBe(2);
+    // 어떤 청크도 텍스트가 없는 1쪽을 근거로 주장하지 않는다.
+    expect(result.every((c) => c.pageStart >= 2)).toBe(true);
+  });
+
+  it('tail 이 없는 청크의 bodyOffset 은 0 이고, 단일 청크 문서도 0', () => {
+    expect(chunkTextWithOverlapByPage(['짧은 한 페이지'], 500, 0.1)[0]!.bodyOffset).toBe(0);
+    const pages = Array.from({ length: 4 }, (_, i) => uniquePage(i + 1, 30));
+    const noOverlap = chunkTextWithOverlapByPage(pages, 100, 0);
+    expect(noOverlap.length).toBeGreaterThan(1);
+    for (const c of noOverlap) expect(c.bodyOffset).toBe(0);
+  });
+});

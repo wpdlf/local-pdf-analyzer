@@ -20,6 +20,14 @@ export interface VectorChunk {
   pageStart?: number;
   /** 1-based 청크 끝 페이지 */
   pageEnd?: number;
+  /**
+   * QA29(B-6): `text` 안에서 **body** 가 시작하는 인덱스. `[0, bodyOffset)` 은 직전 청크에서
+   * 복사해 온 overlap tail 이고, `pageStart` 는 **body 기준**(R35, 의도된 설계)이다. 둘을 그대로
+   * 합치면 tail 안의 문장이 body 의 페이지 라벨을 뒤집어써 한 페이지 뒤를 인용하게 된다
+   * (페이지 경계에 걸친 표 캡션·정의문에서 재현). 라벨을 붙이는 소비자가 tail 을 떼어낼 수 있도록
+   * 전파한다. 옵셔널이라 이 필드가 없는 구버전 사이드카는 종전 동작(0)으로 자연 폴백한다.
+   */
+  bodyOffset?: number;
 }
 
 export interface SearchResult {
@@ -29,6 +37,8 @@ export interface SearchResult {
   // Design Ref: §3.1 — SearchResult 에도 page 전파하여 RAG 컨텍스트 빌더가 사용
   pageStart?: number;
   pageEnd?: number;
+  /** QA29(B-6): VectorChunk.bodyOffset 참조 — 라벨을 붙일 때 tail 을 떼어내는 데 쓴다. */
+  bodyOffset?: number;
 }
 
 /**
@@ -38,6 +48,8 @@ export interface SearchResult {
 export interface ChunkMetadata {
   pageStart?: number;
   pageEnd?: number;
+  /** QA29(B-6): overlap tail 길이 — VectorChunk.bodyOffset 참조. */
+  bodyOffset?: number;
 }
 
 export class VectorStore {
@@ -82,6 +94,7 @@ export class VectorStore {
       index,
       pageStart: metadata?.pageStart,
       pageEnd: metadata?.pageEnd,
+      bodyOffset: metadata?.bodyOffset,
     });
     this._revision++;
   }
@@ -104,7 +117,7 @@ export class VectorStore {
       for (const chunk of this.chunks) {
         const score = dotFloat32(queryNorm, chunk.embedding);
         if (score >= minScore && Number.isFinite(score) && (best === null || score > best.score)) {
-          best = { text: chunk.text, score, index: chunk.index, pageStart: chunk.pageStart, pageEnd: chunk.pageEnd };
+          best = { text: chunk.text, score, index: chunk.index, pageStart: chunk.pageStart, pageEnd: chunk.pageEnd, bodyOffset: chunk.bodyOffset };
         }
       }
       return best ? [best] : [];
@@ -122,6 +135,7 @@ export class VectorStore {
           index: chunk.index,
           pageStart: chunk.pageStart,
           pageEnd: chunk.pageEnd,
+          bodyOffset: chunk.bodyOffset,
         });
       }
     }
@@ -144,7 +158,7 @@ export class VectorStore {
    */
   serializeMeta(): { model: string | null; dimension: number | null; chunkMeta: PersistedChunkMeta[] } {
     const chunkMeta: PersistedChunkMeta[] = this.chunks.map((c) => ({
-      text: c.text, index: c.index, pageStart: c.pageStart, pageEnd: c.pageEnd,
+      text: c.text, index: c.index, pageStart: c.pageStart, pageEnd: c.pageEnd, bodyOffset: c.bodyOffset,
     }));
     return { model: this._model, dimension: this._dimension, chunkMeta };
   }
@@ -163,7 +177,7 @@ export class VectorStore {
     for (let i = 0; i < count; i++) {
       const c = this.chunks[i]!;
       floats.set(c.embedding, i * dim);
-      chunkMeta.push({ text: c.text, index: c.index, pageStart: c.pageStart, pageEnd: c.pageEnd });
+      chunkMeta.push({ text: c.text, index: c.index, pageStart: c.pageStart, pageEnd: c.pageEnd, bodyOffset: c.bodyOffset });
     }
     return { model: this._model, dimension: this._dimension, chunkMeta, buffer };
   }
@@ -195,6 +209,7 @@ export class VectorStore {
         index: m.index,
         pageStart: m.pageStart,
         pageEnd: m.pageEnd,
+        bodyOffset: m.bodyOffset,
       });
     }
     return store;

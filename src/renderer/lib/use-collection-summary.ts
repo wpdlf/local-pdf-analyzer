@@ -3,6 +3,8 @@ import { AiClient } from './ai-client';
 import { resolveMembers } from './collection';
 import { t } from './i18n';
 import { sanitizePromptInput } from './use-qa';
+// QA29(B-5): 발췌/인라인 생성 입력에 `[p.N]` 을 붙이는 단일 구현을 재사용(요약 경로와 동일 규칙).
+import { labelParagraphsWithPages } from './use-summarize';
 import { qualifyBareCitations, stripTrailingPartialCitation } from './citation';
 import { isCustomSummaryType } from '../types';
 import type { PersistedSession, ResolvedMember, SummaryType, AppSettings } from '../types';
@@ -46,7 +48,16 @@ const MIN_BLOCK_CHARS = 200;
  */
 const INLINE_SUMMARY_INPUT_CHARS = 6000;
 
-interface MemberBlock { fileName: string; content: string; }
+interface MemberBlock {
+  fileName: string;
+  content: string;
+  /**
+   * QA29(B-5): 이 블록의 내용에 페이지 라벨(`[p.N]`)이 실제로 들어 있는가. false 면 reduce
+   * 프롬프트가 이 문서에 대해서만 페이지 인용을 요구하지 않는다(미지정은 true 로 간주 —
+   * 기존 호출자·테스트의 `{fileName, content}` 리터럴 호환).
+   */
+  pageCitable?: boolean;
+}
 
 /**
  * 활성 문서의 in-memory 표현(디스크 폴백용). gatherMemberBlocks 는 활성 문서를 디스크-우선으로
@@ -54,7 +65,14 @@ interface MemberBlock { fileName: string; content: string; }
  * 메모리 값으로 폴백해 "화면에 보이는 활성 문서가 컬렉션 요약에서 통째 누락" 되던 결함을 막는다
  * (QA M1). docId 는 gather 도중 탭 전환(문서 교체)을 감지해 이후 멤버 준비를 중단하는 취소 신호.
  */
-interface ActiveDocContext { docHash: string; summary: string | null; text: string | null; docId: string | null; }
+interface ActiveDocContext {
+  docHash: string;
+  summary: string | null;
+  text: string | null;
+  /** QA29(B-5): 활성 문서의 페이지별 본문 — 발췌에 `[p.N]` 라벨을 붙이기 위한 폴백 소스. */
+  pageTexts: string[] | null;
+  docId: string | null;
+}
 
 // C5-M5(QA cycle5): gather 단계 취소 인프라. gather(요약 부재 멤버의 인라인 요약 — 최대 10건
 // 순차 LLM 호출, 로컬 모델이면 분 단위) 동안 isCollectionBusy 가 모든 탈출 경로(탭 전환/새 파일/
@@ -94,12 +112,26 @@ async function generateMemberSummary(client: AiClient, text: string, summaryType
   return out;
 }
 
-/** 세션의 타입별 요약 중 현재 타입 우선, 없으면 첫 항목 선택. 둘 다 없으면 null. */
+/**
+ * 세션에서 **요청된 타입**의 요약만 선택한다. 없으면 null(= 인라인 생성 경로로 넘어간다).
+ *
+ * QA29(B-4): 종전에는 요청 타입이 없으면 `Object.values(session.summaries)[0]` 로 **위치 폴백**
+ * 했다. `summaries` 의 키는 `ActiveSummaryType` 이라 `custom:<id>` 까지 포함하므로, "통합 요약
+ * (full)" 요청이 어떤 멤버의 **키워드 목록**이나 **커스텀 템플릿 산출물**을 조용히 받아 갔다.
+ * 세 가지가 동시에 잘못된다:
+ *  (1) 종류가 다른 산출물이 같은 프롬프트에 섞여 합성 품질이 무음으로 저하된다.
+ *  (2) null 이 아닌 값을 돌려주므로 **올바른 타입의 인라인 생성 경로가 아예 실행되지 않는다** —
+ *      "요약이 없으면 만든다"는 설계(Q-A2)가 그 멤버에서만 죽는다.
+ *  (3) 키워드 요약에는 `[p.N]` 라벨이 없다. reduce 프롬프트는 모든 근거에 페이지 인용을
+ *      요구하므로 모델이 페이지 번호를 **지어내고**, 그 번호가 문서 범위 안이면 클릭 가능한
+ *      오답 인용이 된다(QA27 B-High 와 같은 실패 모드).
+ * 게다가 generateCollectionSummary 는 커스텀 타입일 때 "커스텀 미적용" 을 고지하고(:308-312),
+ * QA12 는 같은 모순을 피하려고 **메모리 폴백을 일부러 비워** 두었다 — 디스크 경로의 이 폴백이
+ * 그 결정을 뒤에서 되돌리고 있었다. 폴백 자체를 없애 두 경로의 규칙을 하나로 만든다.
+ */
 function pickSummary(session: PersistedSession, summaryType: string): string | null {
   const byType = session.summaries?.[summaryType as keyof typeof session.summaries];
-  if (byType?.content) return byType.content;
-  const first = Object.values(session.summaries ?? {})[0];
-  return first?.content ?? null;
+  return byType?.content ?? null;
 }
 
 /**
@@ -130,7 +162,15 @@ export function buildCollectionSummaryPrompt(
     .map((b) => {
       const name = sanitizePromptInput(b.fileName.replace(/[\r\n]+/g, ' '));
       const content = sanitizePromptInput(b.content).replace(/^(\s*)(#{1,6})/gm, '$1\\$2');
-      return `## ${name}\n${content}`;
+      // QA29(B-5): 페이지 라벨이 없는 발췌 블록은 모델이 페이지 번호를 만들 근거가 전혀 없다.
+      // 위 지시문은 **모든** 근거에 `[문서명 p.N]` 을 요구하므로, 그대로 두면 모델은 지어낸다
+      // (QA21 D-MED 가 키워드 폴백에서 고친 것과 같은 거짓 전제). 블록 단위로 예외를 명시한다.
+      const note = b.pageCitable === false
+        ? (ko
+          ? `\n(주의: 아래 발췌에는 페이지 정보가 없습니다 — 이 문서는 [${name}] 형식으로만 인용하고 페이지 번호는 쓰지 마세요.)`
+          : `\n(Note: the excerpt below has no page information — cite this document as [${name}] only and do not write a page number.)`)
+        : '';
+      return `## ${name}${note}\n${content}`;
     })
     .join('\n\n');
   return `${instruction}\n\n${body}`;
@@ -168,23 +208,41 @@ async function gatherMemberBlocks(
     // OFF 로 디스크가 비어 활성 문서가 통째 누락되던 문제). 비활성 멤버는 세션이 없으면 제외.
     let summary = session ? pickSummary(session, summaryType) : null;
     let text = session && typeof session.extractedText === 'string' ? session.extractedText : null;
+    let pages: string[] | null = Array.isArray(session?.pageTexts) && session.pageTexts.length > 0
+      ? session.pageTexts
+      : null;
     if (isActive) {
       if (summary == null) summary = active.summary;
       if (text == null || !text.trim()) text = active.text;
+      if (pages == null) pages = active.pageTexts;
     } else if (!session) {
       continue;
     }
 
+    // QA29(B-5): 본문 소스는 **페이지 라벨이 붙은** 형태를 우선한다. reduce 프롬프트는 모든 근거에
+    // `[문서명 p.N]` 을 요구하는데, 종전 소스인 session.extractedText 는 labelParagraphsWithPages 를
+    // 한 번도 거치지 않아 페이지 정보가 전혀 없다 — 모델은 요구를 이행하려고 번호를 지어냈고,
+    // 그 번호가 문서 범위 안이면 클릭 가능한 오답 인용이 됐다(QA21 D-MED 와 동일한 거짓 전제).
+    // 인라인 생성 입력과 발췌 양쪽에 같은 소스를 써서 두 경로가 갈라지지 않게 한다.
+    const labeled = pages && pages.some((p) => typeof p === 'string' && p.trim())
+      ? (labelParagraphsWithPages(pages) || null)
+      : null;
+    const sourceText = labeled ?? text;
+    // 이 블록의 내용이 라벨 없는 본문에서 파생됐는가 — 프롬프트에서 페이지 인용 요구를 뺀다.
+    // 저장된 요약(디스크/메모리)은 정규 요약 경로가 라벨된 본문으로 만든 산출물이라 해당 없음.
+    let unlabeledOrigin = false;
+
     // 요약 부재 멤버: 본문에서 인라인 생성 → 그 멤버 세션에 영속화(Q-A2 refinement). 생성 실패 시
     // 아래 발췌 fallback 으로 자연 강등. 진행 표시는 첫 생성 시 notice 한 번(map 단계는 스트리밍 X).
-    if (summary == null && typeof text === 'string' && text.trim().length > 0) {
+    if (summary == null && typeof sourceText === 'string' && sourceText.trim().length > 0) {
       useAppStore.getState().setNotice({ message: t('collection.preparingMember', { name: m.fileName }) });
-      const gen = await generateMemberSummary(client, text, summaryType, signal).catch(() => '');
+      const gen = await generateMemberSummary(client, sourceText, summaryType, signal).catch(() => '');
       // C5-M5: 취소로 끊긴 부분 생성물은 사용/영속화하지 않는다 — 부분 요약이 멤버 세션에
       // 완성본처럼 저장되면 다음 합성에서 재사용돼 품질이 조용히 저하된다.
       if (signal.aborted) break;
       if (gen.trim().length > 0) {
         summary = gen;
+        unlabeledOrigin = labeled == null;
         // 영속화는 best-effort — 실패해도 이번 합성에는 생성분을 그대로 사용. saveSummary 부재(구
         // preload) 환경에서도 옵셔널 체이닝으로 안전.
         void window.electronAPI.session.saveSummary?.({
@@ -197,9 +255,15 @@ async function gatherMemberBlocks(
 
     // 요약(저장/생성) 우선(상한 MEMBER_SUMMARY_CHARS) → 없으면 본문 발췌(상한 MEMBER_EXCERPT_CHARS).
     // 무제한 연결로 인한 컨텍스트 초과(R48 MED-1)는 블록당 캡 + 총량 예산으로 이중 차단.
-    const raw = summary != null
-      ? summary.slice(0, MEMBER_SUMMARY_CHARS)
-      : (typeof text === 'string' ? text.slice(0, MEMBER_EXCERPT_CHARS) : null);
+    let raw: string | null;
+    if (summary != null) {
+      raw = summary.slice(0, MEMBER_SUMMARY_CHARS);
+    } else if (typeof sourceText === 'string') {
+      raw = sourceText.slice(0, MEMBER_EXCERPT_CHARS);
+      unlabeledOrigin = labeled == null;
+    } else {
+      raw = null;
+    }
     if (!raw || !raw.trim()) continue;
     const capped = raw.length > budget ? raw.slice(0, budget) : raw;
     // QA27(B-High/B-MED): 예산 절단은 임의 오프셋이라 반쪽 인용을 남기고, 멤버 요약의 인용은
@@ -216,7 +280,7 @@ async function gatherMemberBlocks(
       : qualified;
     if (!content.trim()) continue; // 예산 절단으로 공백만 남은 블록은 제외(빈 헤더 방지)
     budget -= content.length;
-    blocks.push({ fileName: m.fileName, content });
+    blocks.push({ fileName: m.fileName, content, pageCitable: !unlabeledOrigin });
   }
   return blocks;
 }
@@ -267,6 +331,8 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
     docHash: activeDocHash,
     summary: activeSummary,
     text: st.document?.extractedText ?? null,
+    // QA29(B-5): enriched(이미지 설명 포함) 가 있으면 그쪽을 우선 — 요약 경로가 쓰는 소스와 동일.
+    pageTexts: st.enrichedPageTexts ?? st.document?.pageTexts ?? null,
     docId: activeDocId ?? null,
   };
 

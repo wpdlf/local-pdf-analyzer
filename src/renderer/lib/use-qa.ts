@@ -1,8 +1,8 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useAppStore, whenSettingsCommitted, isDocSwapPending } from './store';
 import { AiClient } from './ai-client';
-import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage } from './chunker';
-import { formatPageLabel, normalizeCitationPlacement, stripCitations, sanitizeDocLabelName, stripTrailingPartialCitation } from './citation';
+import { chunkText, chunkTextWithOverlap, chunkTextWithOverlapByPage, estimateCharsPerToken } from './chunker';
+import { formatPageLabel, normalizeCitationPlacement, stripCitations, sanitizeDocLabelName, stripTrailingPartialCitation, stripBareCitations } from './citation';
 // QA21(D-MED): 키워드 폴백 컨텍스트의 페이지 라벨 부착 — 요약 경로와 동일한 원천을 공유한다.
 import { labelParagraphsWithPages } from './use-summarize';
 import { t } from './i18n';
@@ -12,6 +12,8 @@ import type { QaMessage, ResolvedMember, CollectionSearchResult, PersistedSessio
 
 const MAX_QUESTION_LENGTH = 1000;
 const MAX_QA_CONTEXT_CHARS = 8000;
+/** 키워드 폴백 컨텍스트에 들어갈 목표 청크 수 — 청크 크기를 예산에서 역산하는 데 쓴다(QA29 B-High). */
+const FALLBACK_CHUNKS_PER_CONTEXT = 3;
 const RAG_CHUNK_SIZE = 500;       // RAG 청크 토큰 수 (작은 청크)
 const RAG_BATCH_SIZE = 50;        // 임베딩 배치 크기
 const RAG_TOP_K = 5;              // 검색 상위 K개 청크
@@ -93,7 +95,6 @@ export function countKeywordOccurrences(lowerText: string, kw: string): number {
 export function selectRelevantChunks(
   question: string,
   fullText: string,
-  maxChunkSize: number,
 ): string {
   if (fullText.length <= MAX_QA_CONTEXT_CHARS) {
     return fullText;
@@ -104,7 +105,17 @@ export function selectRelevantChunks(
   // 정상 버튼처럼 보이는 오답 인용이 된다 — QA27 이 통합 요약·컬렉션 합성에만 넣은 방어의
   // 형제 경로 3곳(아래 세 slice). Q&A 프롬프트는 인용을 명시적으로 지시해 완성 유인이 가장 크다.
   const cut = (s: string) => stripTrailingPartialCitation(s.slice(0, MAX_QA_CONTEXT_CHARS));
-  const chunks = chunkText(fullText, maxChunkSize);
+  // QA29(B-High): 청크 크기를 `settings.maxChunkSize`(요약용, 기본 4000토큰)에서 가져오면
+  // **청크 하나가 예산을 통째로 넘는다** — 실측 영문 15,120자 / 국문 8,046자 vs 예산 8,000자.
+  // 그러면 아래 선택 루프가 1위 청크에서 곧바로 예산 초과에 걸려 `selected` 가 비고, 질문과
+  // 무관하게 **문서 첫 8,000자**로 답하게 된다. 라벨이 붙어 있으니 도입부 페이지로 클릭까지
+  // 되는 정상 인용이 달리고, 이 경로는 `useVerification` 도 꺼져 환각 검증 2-pass 마저 없다.
+  // 즉 기본 설정에서 관련성 선택이 **한 번도 성립하지 않았다**.
+  // 폴백 컨텍스트의 청크 크기는 요약 설정이 아니라 **예산에서 역산**한다 — 3~4개가 들어가야
+  // 선택이 의미를 갖는다. (sanitizeChunkSize 는 양수 검사만 하므로 작은 값도 그대로 전달된다.)
+  const chunkChars = Math.floor(MAX_QA_CONTEXT_CHARS / FALLBACK_CHUNKS_PER_CONTEXT);
+  const chunkTokens = Math.max(100, Math.round(chunkChars / estimateCharsPerToken(fullText)));
+  const chunks = chunkText(fullText, chunkTokens);
   if (chunks.length <= 1) return cut(fullText);
 
   const keywords = extractKeywords(question);
@@ -131,13 +142,20 @@ export function selectRelevantChunks(
   const selected: { chunk: string; idx: number }[] = [];
   let totalLen = 0;
   for (const item of scored) {
-    if (item.score === 0) break;
-    if (totalLen + item.chunk.length > MAX_QA_CONTEXT_CHARS) break;
+    if (item.score === 0) break; // 내림차순 정렬 — 이후는 전부 0
+    // QA29(B-High): 예산 초과는 **그 항목만 건너뛴다**. break 로 루프를 끝내면 뒤에 있는
+    // 더 작은(그러나 관련 있는) 청크가 통째로 버려진다.
+    if (totalLen + item.chunk.length > MAX_QA_CONTEXT_CHARS) continue;
     selected.push(item);
     totalLen += item.chunk.length;
   }
 
   if (selected.length === 0) {
+    // QA29(B-High): 점수 있는 청크가 하나도 예산에 안 들어간 경우(단일 거대 문단 등)에도
+    // **무관한 도입부로 답하지 않는다** — 최고점 청크를 예산만큼 잘라 넣는다. 잘린 관련 구간이
+    // 관련성 0 인 첫 8,000자보다 언제나 낫다.
+    const best = scored[0];
+    if (best && best.score > 0) return cut(best.chunk);
     return cut([chunks[0], chunks[chunks.length - 1]].join('\n\n'));
   }
 
@@ -363,7 +381,7 @@ export async function buildRagIndex(
         if (text === undefined || emb === undefined) continue;
         // page-aware 모드면 page 메타데이터 동반 — SearchResult 로 전파되어 LLM 프롬프트 라벨링에 사용
         const meta = usePageAware
-          ? { pageStart: pageChunks[i + j]?.pageStart, pageEnd: pageChunks[i + j]?.pageEnd }
+          ? { pageStart: pageChunks[i + j]?.pageStart, pageEnd: pageChunks[i + j]?.pageEnd, bodyOffset: pageChunks[i + j]?.bodyOffset }
           : undefined;
         ragIndex.addChunk(text, emb, i + j, meta);
       }
@@ -442,7 +460,13 @@ async function ragSearch(question: string, signal?: AbortSignal): Promise<string
     // (body 시작 페이지)만 방출(범위 라벨은 파서 미인식).
     const withLabel = results.map((r) => {
       const label = formatPageLabel(r.pageStart);
-      return { index: r.index, segment: label ? `${label}\n${r.text}` : r.text };
+      // QA29(B-6): 청크 앞의 overlap tail 은 **직전 청크에서 복사해 온 텍스트**라 그 문장의 실제
+      // 출처는 이전 페이지인데, `pageStart` 는 body 기준이라 tail 째로 라벨을 붙이면 모델이 한
+      // 페이지 뒤를 인용한다(페이지 경계에 걸친 표 캡션·정의문에서 재현). 라벨 붙은 세그먼트에서는
+      // tail 을 떼어낸다 — 그 문장은 직전 청크의 body 에 원본으로 이미 들어 있다. 라벨이 없으면
+      // 잘못 귀속될 여지도 없으므로 원문 그대로 둔다(검색 품질용 문맥 보존).
+      const body = label && r.bodyOffset ? r.text.slice(r.bodyOffset) : r.text;
+      return { index: r.index, segment: label ? `${label}\n${body}` : r.text };
     });
     // QA14(A): 점수 순(search 반환 순서)으로 예산까지 선택 — late-index 최고점 청크가 앞쪽 저점
     // 청크에 밀려 축출되던 것 방지(이전엔 index 정렬 후 hard-break → 최고점 누락 시 조용한 오답).
@@ -536,6 +560,21 @@ export async function collectionRagSearch(
     }
     const queryEmbedding = embedResult.embeddings[0];
     if (!queryEmbedding) return null;
+
+    // QA29(B-Important): `ragSearch` 에만 있던 질의 임베딩 모델 가드의 **형제 누락**.
+    // `resolveMembers` 의 동질성 게이트는 멤버끼리 embedModel/embedDim 이 같은지만 보고 **질의가
+    // 어느 모델로 임베딩됐는지는 보지 않는다**. 차원이 다르면 search 가 [] 를 반환해 단일 문서
+    // 경로로 내려가 기존 가드에 걸리지만, **차원이 같은 다른 모델**(768: nomic-embed-text ↔ 동차원
+    // 대체 / 1024: mxbai-embed-large ↔ bge-m3 ↔ snowflake-arctic-embed)이면 무의미한 유사도로 전
+    // 멤버에서 청크를 골라 **출처(문서명·페이지)까지 붙은 확신 있는 오답**을 만든다. 게다가
+    // resolveCollectionSearch 가 ragSearch 보다 먼저 돌고 non-null 이면 단일 경로가 아예 실행되지
+    // 않으므로, 기존 가드는 구조적으로 발동할 수 없었다. 단일 경로와 동일 계약으로 표면화한다.
+    // (양쪽 모델명이 모두 확인될 때만 비교 — 미확인에 오탐하지 않는다.)
+    const activeIndexModel = useAppStore.getState().ragIndex.model;
+    if (embedResult.model && activeIndexModel && embedResult.model !== activeIndexModel) {
+      useAppStore.getState().setRagState({ error: 'embedModelChanged' });
+      return null;
+    }
 
     // perf: 멤버 인덱스 로드(비활성 멤버는 디스크 session.load + 역직렬화)를 병렬화한다. 직렬이면
     // cold 멤버 N개에서 N회 순차 디스크 I/O 후에야 검색이 시작됐다. 캐시 키는 멤버별로 달라
@@ -871,7 +910,19 @@ export async function collectRefineAnswer(
  * 주의: LLM 이 refine 지시를 무시하면 초안과 거의 같은 답변이 나올 수 있음.
  * 그 경우에도 사용자 경험상 정상(동일 답변) 이므로 무해.
  */
-export function buildRefinePrompt(question: string, draft: string, context: string): string {
+export function buildRefinePrompt(
+  question: string,
+  draft: string,
+  context: string,
+  isCollection = false,
+): string {
+  // QA29(B-Important): 컬렉션 모드의 컨텍스트는 전부 `[문서명 p.N]` 라벨을 달고 들어가는데
+  // 규칙이 `[p.N]` 이라는 **단일 문서 형식**을 명시하면 모델이 출처를 떼어낼 유인이 된다.
+  // 떨어진 맨 인용은 활성 문서로 검증돼 엉뚱한 페이지의 정상 버튼이 된다(citation.stripBareCitations
+  // 주석 참조). 모드에 맞는 형식을 요구하고, 그래도 떨어지면 커밋 직전에 제거한다(이중 방어).
+  const citationRule = isCollection
+    ? '- [문서명 p.N] 인용은 **문서명을 반드시 포함한 채로** 유지, 근거를 찾을 수 없으면 제거'
+    : '- [p.N] 인용은 근거 페이지를 찾으면 그대로, 찾을 수 없으면 제거';
   return `${context}
 
 [질문]
@@ -884,7 +935,7 @@ ${draft}
 규칙:
 - 원문에 명시되지 않은 주장은 제거하거나 "문서에서 확인되지 않음" 으로 표시
 - 문체와 구조(문단/목록 형식) 는 초안을 그대로 유지
-- [p.N] 인용은 근거 페이지를 찾으면 그대로, 찾을 수 없으면 제거
+${citationRule}
 - 새 정보를 추가하지 말고 초안의 정확성만 개선`;
 }
 
@@ -1140,6 +1191,9 @@ export function useQa() {
       let answerVerifier: RagVerifier | undefined;
       // M3(UX): 컬렉션 강등 여부를 이 답변에 실어 인라인 표시(전역 notice 배너 대체).
       let collectionDegraded = false;
+      // QA29(B-Important): 이 답변이 컬렉션 컨텍스트로 만들어졌는가 — refine 규칙의 인용 형식과
+      // 커밋 직전 맨 인용 제거를 가르는 신호.
+      let usedCollectionContext = false;
 
       // multi-doc Phase 2: 컬렉션 모드면 여러 문서에 걸쳐 검색. ready 멤버가 없으면(전원 제외/
       // 인덱스 없음) null 을 반환해 단일 문서 Q&A 로 자연 강등된다. (배선은 resolveCollectionSearch 로
@@ -1147,6 +1201,7 @@ export function useQa() {
       {
         const collected = await resolveCollectionSearch(trimmed, ragSignal);
         ragResult = collected.ragResult;
+        usedCollectionContext = collected.ragResult !== null;
         answerVerifier = collected.verifier;
         // M3(UX): 강등 여부는 전역 notice 대신 해당 답변 메시지에 실어(아래 addQaMessage) 인라인 표시.
         // 단일 슬롯 notice 는 멀티파일 드롭/컬렉션 저장 알림에 덮여 사라지거나 어느 답변에 해당하는지
@@ -1182,7 +1237,7 @@ export function useQa() {
         const labeled = labelParagraphsWithPages(pageSource);
         // pageTexts 가 비어 라벨을 못 만드는 퇴화 케이스만 원문 폴백(파서·세션복원 모두 채우므로 사실상 없음).
         const fallbackSource = labeled || doc.extractedText;
-        relevantChunks = selectRelevantChunks(trimmed, fallbackSource, settings.maxChunkSize);
+        relevantChunks = selectRelevantChunks(trimmed, fallbackSource);
       }
       // PDF 원문 컨텍스트에 프롬프트 인젝션 방어 적용 (RAG/키워드 양쪽 모두)
       relevantChunks = sanitizePromptInput(relevantChunks);
@@ -1191,7 +1246,11 @@ export function useQa() {
       // R32 P2: summaryText 도 LLM 출력 → 악성 PDF 의 요약이 `\n[질문]\n` / `\n---\n`
       // 마커를 품으면 후속 Q&A 프롬프트 구조가 오염된다. relevantChunks 와 동일하게 sanitize.
       if (summaryText) {
-        contextParts.push(`[요약 내용]\n${sanitizePromptInput(summaryText.slice(0, 3000))}`);
+        // QA29(A-Important): 이 절단은 QA28 이 `selectRelevantChunks` 세 곳에 방어를 넣은 것의
+        // **네 번째 형제**였다. 요약은 `[p.N]`(때로 `[p.N|인용문]`)이 밀집한 텍스트이고 이 결과는
+        // 인용을 명시적으로 요구하는 Q&A 프롬프트의 입력이라, 반쪽 토큰을 모델이 완성하면 범위 안
+        // 번호라 clampCitationPage 를 통과해 엉뚱한 페이지의 정상 버튼이 된다.
+        contextParts.push(`[요약 내용]\n${sanitizePromptInput(stripTrailingPartialCitation(summaryText.slice(0, 3000)))}`);
       }
       contextParts.push(`[원문 관련 부분]\n${relevantChunks}`);
       const context = contextParts.join('\n\n');
@@ -1275,7 +1334,7 @@ export function useQa() {
             const sanitizedQuestion = sanitizePromptInput(trimmed);
             // QA post-v0.31.15: draft(1차 LLM 출력)도 sanitize — LLM 이 `---`/`[질문]` 마커를 뱉으면
             // refine 프롬프트 구조가 오염될 수 있어 "프롬프트 진입 입력은 전부 sanitize"(R32/H1) 불변식 준수.
-            const refinePrompt = buildRefinePrompt(sanitizedQuestion, sanitizePromptInput(draft), `${context}${history}`);
+            const refinePrompt = buildRefinePrompt(sanitizedQuestion, sanitizePromptInput(draft), `${context}${history}`, usedCollectionContext);
             // v0.18.4 H1 fix: 이전에는 for-await 가 인라인되어 있었고 refine 이 0 토큰을 반환하면
             // answer='' → 바깥 `if (answer)` 가드에 걸려 draft 가 통째로 유실됐다.
             // collectRefineAnswer 헬퍼가 빈 응답 시 draft 로 fallback 시켜 불변식 보장.
@@ -1310,7 +1369,12 @@ export function useQa() {
         postState.clearQaStream();
         if (answer) {
           // 인용 배치 정규화 — 괄호/독립 라인 후처리 (use-summarize 와 동일)
-          const normalized = normalizeCitationPlacement(answer);
+          // QA29(B-Important): 컬렉션 컨텍스트로 만든 답변의 **맨 `[p.N]`** 은 어느 멤버를 가리키는지
+          // 알 수 없는데, 그대로 두면 활성 문서 페이지로 점프하는 정상 버튼이 된다. 프롬프트 규칙을
+          // 고쳐 애초에 떨어지지 않게 했고(buildRefinePrompt), 그래도 남으면 여기서 제거한다.
+          const normalized = normalizeCitationPlacement(
+            usedCollectionContext ? stripBareCitations(answer) : answer,
+          );
           // M3: 강등 답변이면 메시지에 표식 — QaChat 이 답변 아래 인라인 안내를 렌더.
           postState.addQaMessage({ role: 'assistant', content: normalized, ...(collectionDegraded ? { degraded: true } : {}) });
         } else {
