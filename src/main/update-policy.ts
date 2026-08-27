@@ -307,3 +307,40 @@ export function isPendingUpdateUsable(
   if (!pending || !pending.sha512 || !offeredSha512) return false;
   return pending.sha512 === offeredSha512;
 }
+
+/**
+ * 설치 직전 인스톨러 사전 판정에 쓰는 디스크 관측치.
+ *
+ * fs 접근은 호출측(index.ts)이 하고 판정만 여기서 한다 — 이 모듈을 순수하게 유지한다.
+ */
+export interface InstallerProbe {
+  exists: boolean;
+  /** 바이트 크기. */
+  size: number;
+  /** 파일 선두 2바이트를 latin1 로 읽은 것(PE 실행 파일이면 'MZ'). 읽지 못했으면 ''. */
+  magic: string;
+}
+
+/**
+ * 정상 NSIS 인스톨러의 하한. 실측 ~105MB 이므로 1MB 는 오검출 여지가 사실상 없는 보수적 값이다.
+ */
+export const MIN_INSTALLER_BYTES = 1_000_000;
+
+/**
+ * 받아둔 인스톨러를 **실행할 수 있는가** 를 종료 전에 판정한다.
+ *
+ * QA28 실기기 검증(2026-08-27): 종전 가드는 `existsSync` 뿐이라 "존재하면 실행된다" 를 전제했는데
+ * 그게 거짓이었다. 인스톨러를 **0바이트로 비우고** 설치를 누르자 가드를 통과한 뒤 quitAndInstall
+ * 이 spawn 성공을 가정하고 `app.quit()` 을 예약해 **앱이 조용히 꺼졌다**(spawn 실패는 비동기라
+ * 그때는 이미 프로세스가 없고, 15초 백스톱 타이머도 함께 죽어 실패를 표면화할 주체가 사라진다).
+ * v1.0.0 이 닫은 것은 "파일이 사라진 경우" 뿐이고, 백신 격리는 삭제 외에 **0바이트/스텁 대체**로도
+ * 흔히 일어난다.
+ *
+ * 해시 재계산은 105MB 를 다시 훑어야 하므로 사전 검사로는 과하다. 크기 하한 + PE 매직 두 가지면
+ * 실행 불가 파일을 사실상 전부 거른다(updater 는 win32 패키징에서만 supported 라 PE 로 단정 가능).
+ */
+export function isInstallerUsable(probe: InstallerProbe | null | undefined): boolean {
+  if (!probe || !probe.exists) return false;
+  if (probe.magic !== 'MZ') return false;
+  return probe.size >= MIN_INSTALLER_BYTES;
+}

@@ -6,7 +6,9 @@ import {
   canInstall,
   classifyUpdateError,
   createInitialState,
+  isInstallerUsable,
   isUpdateSupported,
+  MIN_INSTALLER_BYTES,
   nextUpdateState,
   shouldAutoCheck,
 } from '../update-policy';
@@ -268,5 +270,47 @@ describe('nextUpdateState — 순서가 뒤바뀐 이벤트 방어', () => {
     expect(nextUpdateState(prev, { type: 'progress', percent: Number.NaN })).toBe(prev);
     expect(nextUpdateState(prev, { type: 'progress', percent: -5 }).percent).toBe(0);
     expect(nextUpdateState(prev, { type: 'progress', percent: 250 }).percent).toBe(100);
+  });
+});
+
+/**
+ * QA28 실기기 검증(2026-08-27)이 잡은 결함의 회귀 넷.
+ *
+ * 인스톨러를 **0바이트로 비우고** 설치를 누르자 종전 가드(`existsSync`)를 통과했고, 그대로
+ * quitAndInstall → app.quit() 예약 → **앱이 조용히 꺼졌다**(spawn 실패는 비동기라 그때는 이미
+ * 프로세스가 없고, 15초 백스톱 타이머도 함께 죽는다). v1.0.0 이 닫은 것은 "파일이 사라진 경우"
+ * 뿐이었고, 백신 격리는 삭제 외에 0바이트/스텁 대체로도 흔하다.
+ */
+describe('isInstallerUsable — 설치 직전 실행 가능성 사전 판정 (QA28)', () => {
+  const ok = { exists: true, size: 105_630_181, magic: 'MZ' };
+
+  it('정상 인스톨러는 통과한다', () => {
+    expect(isInstallerUsable(ok)).toBe(true);
+  });
+
+  it('0바이트 파일은 거부한다 — 이 라운드가 실기기에서 재현한 바로 그 조건', () => {
+    expect(isInstallerUsable({ exists: true, size: 0, magic: '' })).toBe(false);
+  });
+
+  it('크기는 정상인데 PE 매직이 아니면 거부한다 (백신 스텁·텍스트 대체)', () => {
+    expect(isInstallerUsable({ ...ok, magic: '<!' })).toBe(false);
+    expect(isInstallerUsable({ ...ok, magic: '' })).toBe(false);
+  });
+
+  it('매직은 맞아도 하한 미만이면 거부한다 (잘린 다운로드)', () => {
+    expect(isInstallerUsable({ exists: true, size: MIN_INSTALLER_BYTES - 1, magic: 'MZ' })).toBe(false);
+    expect(isInstallerUsable({ exists: true, size: MIN_INSTALLER_BYTES, magic: 'MZ' })).toBe(true);
+  });
+
+  it('부재·관측 실패는 거부한다 (probe 가 exists:false 로 착지시킨다)', () => {
+    expect(isInstallerUsable({ exists: false, size: 0, magic: '' })).toBe(false);
+    expect(isInstallerUsable(null)).toBe(false);
+    expect(isInstallerUsable(undefined)).toBe(false);
+  });
+
+  it('하한이 실제 인스톨러(~105MB)보다 충분히 낮아 오검출 여지가 없다', () => {
+    // 하한을 실측 크기 근처로 올리면 빌드가 작아질 때 정상 설치를 막는다 — 그 방향의 드리프트 가드.
+    expect(MIN_INSTALLER_BYTES).toBeLessThan(10_000_000);
+    expect(MIN_INSTALLER_BYTES).toBeGreaterThan(0);
   });
 });

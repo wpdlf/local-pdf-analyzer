@@ -7,13 +7,13 @@ import { fileURLToPath, pathToFileURL } from 'url';
 // R38 P1-2: sync `fs` 는 API 키 저장 로직과 함께 api-keys-store.ts 로 이동. 본 파일은 fsp 만 사용.
 import fsp from 'fs/promises';
 // 동기 확인이 필요한 유일한 지점 — updater 의 설치 직전 인스톨러 실재 확인(deps 로 주입).
-import { existsSync, readFileSync, rmSync } from 'fs';
+import { existsSync, readFileSync, rmSync, statSync, openSync, readSync, closeSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { OllamaManager } from './ollama-manager';
 import { decideCloseAction, selectFlushTargets } from './window-flush-policy';
 import { computeDefaultWindowSize, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT } from './window-size';
 import { createUpdaterService, type UpdaterService } from './updater';
-import { AUTO_CHECK_STARTUP_DELAY_MS, type PendingUpdateLike } from './update-policy';
+import { AUTO_CHECK_STARTUP_DELAY_MS, isInstallerUsable, type InstallerProbe, type PendingUpdateLike } from './update-policy';
 import type { UpdateState } from '../shared/update-types';
 import { generate, abortGenerate, abortAllRequests, checkAvailability, analyzeImage, analyzeImageForOcr, generateEmbeddings, checkEmbeddingAvailability, cleanupAiService, registerEmbedRequest, unregisterEmbedRequest, GEMINI_EMBED_MODEL } from './ai-service';
 import { MAX_PDF_SIZE_BYTES, isLocalhostHost, isValidOllamaUrl, UPDATER_CACHE_DIR_NAME } from '../shared/constants';
@@ -565,6 +565,31 @@ function updaterCacheDir(): string | null {
 }
 
 /**
+ * 인스톨러 파일을 관측한다(크기 + 선두 2바이트). 판정은 update-policy.isInstallerUsable 이 한다.
+ *
+ * QA28 실기기 검증(2026-08-27): 종전 `existsSync` 만으로는 **0바이트 인스톨러**가 가드를 통과해
+ * 앱이 조용히 꺼졌다. 해시 재계산(105MB)은 사전 검사로 과하므로 크기·매직만 본다.
+ * 어떤 이유로든 읽지 못하면 `exists:false` — 판정을 거부 쪽으로 착지시킨다.
+ */
+function probeInstaller(filePath: string): InstallerProbe {
+  try {
+    const st = statSync(filePath);
+    if (!st.isFile()) return { exists: false, size: 0, magic: '' };
+    let magic = '';
+    const fd = openSync(filePath, 'r');
+    try {
+      const buf = Buffer.alloc(2);
+      magic = readSync(fd, buf, 0, 2, 0) === 2 ? buf.toString('latin1') : '';
+    } finally {
+      closeSync(fd);
+    }
+    return { exists: true, size: st.size, magic };
+  } catch {
+    return { exists: false, size: 0, magic: '' };
+  }
+}
+
+/**
  * `pending/` 에 staged 된 인스톨러 정보를 읽는다(실기기 검증 2026-08-20).
  *
  * update-info.json 의 sha512 와 **파일 실재**를 함께 확인한다 — 정보만 남고 파일이 사라진
@@ -683,7 +708,7 @@ function getUpdaterService(): UpdaterService {
       onInstallAborted: revertFlushMarks,
       // 설치 직전 인스톨러 실재 확인(2026-08-07 실기기 검증에서 발견한 무음 종료 차단).
       // 동기 확인이어야 한다 — quitAndInstall 호출 전에 결론이 나야 하기 때문.
-      installerExists: (filePath: string) => existsSync(filePath),
+      installerUsable: (filePath: string) => isInstallerUsable(probeInstaller(filePath)),
       // 체크섬 실패 = 디스크의 것을 믿을 수 없다 → 손상된 캐시를 비워 다음 시도가 전체
       // 다운로드로 깨끗하게 받게 한다(2026-08-07 실기기: 어긋난 차등 캐시가 손상본을 만들었다).
       clearUpdaterCache,

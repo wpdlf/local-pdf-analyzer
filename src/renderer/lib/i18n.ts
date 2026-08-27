@@ -583,9 +583,10 @@ export const _translations = {
   'mainerr.updateUnknown': { ko: '업데이트에 실패했습니다.', en: 'The update failed.' },
   // 2026-08-07 실기기 검증: 받아둔 인스톨러가 사라지면(백신 격리 등) 앱이 조용히 꺼졌다.
   // 이제 종료 전에 막고 이 문구로 알린다 — 회복 수단(재다운로드)까지 함께 안내.
+  // QA28: 판정이 "존재"에서 "실행 가능"으로 넓어졌다(0바이트·손상 파일도 여기 착지) — 문구도 함께.
   'mainerr.updateInstallerMissing': {
-    ko: '받아둔 설치 파일을 찾을 수 없습니다(백신이 격리했을 수 있습니다). 다시 다운로드해주세요.',
-    en: 'The downloaded installer is missing (antivirus may have quarantined it). Please download it again.',
+    ko: '받아둔 설치 파일이 없거나 손상되었습니다(백신이 격리했을 수 있습니다). 다시 다운로드해주세요.',
+    en: 'The downloaded installer is missing or corrupted (antivirus may have quarantined it). Please download it again.',
   },
   'mainerr.updateInstallFailed': {
     ko: '설치를 시작하지 못했습니다. 내려받은 설치 파일이 백신에 격리되었거나 삭제되었을 수 있습니다 — 다시 다운로드하거나 릴리즈 페이지에서 직접 설치해주세요.',

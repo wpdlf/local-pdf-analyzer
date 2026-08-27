@@ -95,15 +95,20 @@ export interface UpdaterDeps {
    */
   onInstallAborted?: () => void;
   /**
-   * 받아둔 인스톨러가 디스크에 실재하는지(기본 fs.existsSync 주입).
+   * 받아둔 인스톨러를 **실행할 수 있는지**(존재 + 크기 하한 + PE 매직 — isInstallerUsable 주입).
    *
    * 실기기 검증(2026-08-07)에서 발견: 파일이 사라진 상태로 설치를 누르면 **앱이 그냥 꺼지고 아무
    * 설명이 남지 않는다**. electron-updater 는 경로만 읽고 존재를 확인하지 않은 채 spawn 하는데,
    * spawn 실패는 비동기라 `install()` 은 이미 성공을 반환하고 `app.quit()` 이 예약되기 때문이다.
    * 앱이 죽어버리면 이 모듈의 실패 처리(에러 표시·재시도·표식 롤백)가 개입할 여지가 없다 —
    * **종료 전에** 막아야 한다. 백신 격리로 실제로 흔한 시나리오다.
+   *
+   * QA28 실기기 검증(2026-08-27): 그 가드가 `existsSync` 뿐이라 **"존재하면 실행된다"** 를
+   * 전제했는데 거짓이었다. 인스톨러를 0바이트로 비우고 설치를 누르자 가드를 통과해 그대로
+   * 앱이 조용히 꺼졌다 — 백신 격리는 삭제 외에 0바이트/스텁 대체로도 흔하다. 판정을 존재에서
+   * **실행 가능성**으로 넓힌다(update-policy.isInstallerUsable).
    */
-  installerExists?: (filePath: string) => boolean;
+  installerUsable?: (filePath: string) => boolean;
   /**
    * 업데이터 캐시(받아둔 인스톨러·blockmap·update-info)를 비운다.
    *
@@ -400,12 +405,12 @@ export function createUpdaterService(deps: UpdaterDeps): UpdaterService {
 
   async function install(): Promise<UpdateState> {
     if (!supported || !canInstall(state.status) || installing) return state;
-    // 종료를 시작하기 **전에** 인스톨러 실재를 확인한다. quitAndInstall 은 파일이 없어도
-    // app.quit() 을 예약하므로(spawn 실패는 비동기), 여기서 막지 않으면 앱이 조용히 꺼지고
-    // 사용자는 "설치를 눌렀는데 다시 켜니 구버전" 만 겪는다(실기기 검증 2026-08-07).
+    // 종료를 시작하기 **전에** 인스톨러가 실행 가능한지 확인한다. quitAndInstall 은 파일이
+    // 없거나 실행 불가여도 app.quit() 을 예약하므로(spawn 실패는 비동기), 여기서 막지 않으면 앱이
+    // 조용히 꺼지고 사용자는 "설치를 눌렀는데 다시 켜니 구버전" 만 겪는다(실기기 2026-08-07·08-27).
     // 경로를 못 얻은 경우(downloadedFile 미제공)에는 확인을 건너뛴다 — 확인 불가를 이유로
     // 설치를 막으면 그게 더 나쁜 회귀다.
-    if (downloadedFilePath && deps.installerExists && !deps.installerExists(downloadedFilePath)) {
+    if (downloadedFilePath && deps.installerUsable && !deps.installerUsable(downloadedFilePath)) {
       try {
         deps.onInstallAborted?.(); // flush 표식 롤백 — 설치 대기 상태로 남지 않도록
       } catch (err) {

@@ -265,17 +265,30 @@ describe('flushRenderersBeforeQuit — 대상 선정 (QA18 회귀 가드)', () =
   });
 });
 
-// 배선 가드: updater 는 installerExists 를 **주입받아야만** 확인할 수 있다. 순수 판정이 맞아도
+// 배선 가드: updater 는 installerUsable 을 **주입받아야만** 확인할 수 있다. 순수 판정이 맞아도
 // index.ts 가 주입하지 않으면 실기기에서는 그대로 앱이 조용히 꺼진다(2026-08-07 에 겪은 그것).
-describe('updater 배선 — 인스톨러 실재 확인 주입', () => {
+describe('updater 배선 — 인스톨러 실행 가능성 확인 주입', () => {
   // QA27(D-Low): 이 describe 의 단언들은 주석을 걷어내지 않은 소스에 매칭한다. 아래 QA24 사건이
   // 정확히 그것이었다 — 코드를 지운 뒤에도 **주석에 매칭돼** 통과했다. 형제 단언들에도 같은
   // 처리를 적용해, 코드가 사라지면 주석이 남아도 빨개지게 한다.
   const RAW_SRC = readFileSync(resolve(import.meta.dirname, '../index.ts'), 'utf-8');
   const MAIN_SRC = RAW_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
-  it('installerExists 를 실제 파일 확인으로 주입한다', () => {
-    expect(MAIN_SRC).toMatch(/installerExists:\s*\(filePath: string\) =>\s*existsSync\(filePath\)/);
+  // QA28 실기기 검증(2026-08-27): 종전 주입은 `existsSync` 뿐이라 **0바이트 인스톨러**가 가드를
+  // 통과했고 앱이 그대로 조용히 꺼졌다("존재하면 실행된다"는 전제가 거짓). 판정을 실행 가능성으로
+  // 넓힌 뒤, 존재 확인만 하던 옛 계약으로 되돌아가는 회귀를 여기서 막는다.
+  it('installerUsable 을 isInstallerUsable(probeInstaller(...)) 로 주입한다', () => {
+    expect(MAIN_SRC).toMatch(/installerUsable:\s*\(filePath: string\) =>\s*isInstallerUsable\(probeInstaller\(filePath\)\)/);
+    // 존재 확인만 하던 옛 이름·계약이 남아 있으면 안 된다.
+    expect(MAIN_SRC).not.toMatch(/installerExists/);
+  });
+
+  it('probeInstaller 가 크기와 선두 매직을 함께 관측한다 (existsSync 단독으로 축소 금지)', () => {
+    const fn = MAIN_SRC.match(/function probeInstaller\([\s\S]*?\n\}/);
+    expect(fn, 'probeInstaller 정의를 찾지 못했다').not.toBeNull();
+    expect(fn![0]).toMatch(/statSync\(/);
+    expect(fn![0]).toMatch(/readSync\(/);
+    expect(fn![0]).toMatch(/size:\s*st\.size/);
   });
 
   it('onInstallAborted 는 표식 롤백 함수를 그대로 넘긴다', () => {

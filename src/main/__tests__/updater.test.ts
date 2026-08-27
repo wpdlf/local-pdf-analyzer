@@ -478,14 +478,14 @@ describe('install — 데이터 손실 방어', () => {
     // 다시 켜면 구버전" 을 겪는다. 종료 **전에** 막아야 한다.
     describe('인스톨러 파일이 사라진 경우', () => {
       it('quitAndInstall 을 호출하지 않는다 (앱이 조용히 죽지 않도록)', async () => {
-        const ctx = setup({ installerExists: () => false });
+        const ctx = setup({ installerUsable: () => false });
         await toDownloaded(ctx);
         await ctx.service.install();
         expect(ctx.au.quitAndInstall, '파일이 없는데 종료를 시작하면 무음 실패가 된다').not.toHaveBeenCalled();
       });
 
       it('사유를 남기고 재다운로드가 가능한 상태로 되돌린다', async () => {
-        const ctx = setup({ installerExists: () => false });
+        const ctx = setup({ installerUsable: () => false });
         await toDownloaded(ctx);
         await ctx.service.install();
         const s = ctx.service.getState();
@@ -495,14 +495,14 @@ describe('install — 데이터 손실 방어', () => {
 
       it('flush 표식을 되돌린다 (설치 대기 상태로 남지 않도록)', async () => {
         const onInstallAborted = vi.fn();
-        const ctx = setup({ installerExists: () => false, onInstallAborted });
+        const ctx = setup({ installerUsable: () => false, onInstallAborted });
         await toDownloaded(ctx);
         await ctx.service.install();
         expect(onInstallAborted).toHaveBeenCalledTimes(1);
       });
 
       it('파일이 있으면 종전대로 설치를 진행한다 (과잉 차단 방지)', async () => {
-        const ctx = setup({ installerExists: () => true });
+        const ctx = setup({ installerUsable: () => true });
         await toDownloaded(ctx);
         await ctx.service.install();
         expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
@@ -510,7 +510,7 @@ describe('install — 데이터 손실 방어', () => {
 
       it('경로를 못 얻은 경우(구버전 이벤트 등)에는 차단하지 않는다', async () => {
         // downloadedFile 을 싣지 않는 피드/버전에서 설치가 막히면 그게 더 나쁜 회귀다.
-        const ctx = setup({ installerExists: () => false });
+        const ctx = setup({ installerUsable: () => false });
         await toDownloadedWithoutPath(ctx);
         await ctx.service.install();
         expect(ctx.au.quitAndInstall).toHaveBeenCalledTimes(1);
@@ -520,7 +520,7 @@ describe('install — 데이터 손실 방어', () => {
       // 직전(이미 사라진) 경로가 그대로 남아 설치가 영구히 막혔다 — 백신이 인스톨러를 격리한 뒤
       // 재시도하는 시나리오에서 사용자는 재다운로드를 반복해도 같은 실패만 본다.
       it('재다운로드 시 직전 인스톨러 경로가 남아 설치를 영구 차단하지 않는다', async () => {
-        const ctx = setup({ installerExists: () => false }); // 옛 경로는 이제 존재하지 않는다
+        const ctx = setup({ installerUsable: () => false }); // 옛 경로는 이제 존재하지 않는다
         // 1차: 경로를 받은 정상 다운로드
         await toDownloaded(ctx);
         // 2차 재다운로드는 **이벤트 없이** 완료되는 경우를 본다(주석 참조) — 자동 발화를 끈다.
@@ -674,15 +674,15 @@ describe('createUpdaterService — 재기동 시 staged 인스톨러 (실기기 
   });
 
   it('복원된 상태에서 설치하면 그 파일 경로로 실재 확인을 한다', async () => {
-    const installerExists = vi.fn(() => true);
-    const ctx = setup({ readPendingUpdate: () => PENDING, installerExists });
+    const installerUsable = vi.fn(() => true);
+    const ctx = setup({ readPendingUpdate: () => PENDING, installerUsable });
     await ctx.service.check('manual');
     ctx.emit('update-available', { version: '1.1.2', files: [{ sha512: 'AAAA==' }] });
     await ctx.service.install();
 
-    // 경로를 복원하지 못했다면 확인 자체를 건너뛰어(installerExists 미호출) 파일이 사라진
+    // 경로를 복원하지 못했다면 확인 자체를 건너뛰어(installerUsable 미호출) 파일이 사라진
     // 경우에도 앱이 조용히 꺼지는 예전 결함으로 되돌아간다.
-    expect(installerExists).toHaveBeenCalledWith(PENDING.filePath);
+    expect(installerUsable).toHaveBeenCalledWith(PENDING.filePath);
     expect(ctx.au.quitAndInstall).toHaveBeenCalled();
   });
 });
