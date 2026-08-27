@@ -11,6 +11,14 @@ on:
 permissions:
   contents: read
 
+# QA28(D-Low): 같은 브랜치에 push 가 연달아 오면 앞선 런은 이미 낡은 커밋을 검증하고 있다 —
+# 취소해 러너 시간을 아낀다(release.yml 은 태그 자산이 걸려 있어 cancel-in-progress: false 로
+# 직렬화만 하는 것과 대칭). event_name 을 group 에 넣는 이유: 야간 schedule(shuffle·package-smoke)
+# 도 ref 는 refs/heads/main 이라 ref 만으로 묶으면 무관한 push 가 야간 잡을 죽인다.
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     # R37 P4-3 (v0.18.23): Node matrix 도입.
@@ -45,7 +53,12 @@ jobs:
     timeout-minutes: 20
     steps:
       # Node 24 호환, v0.18.11 R29 #1 마이그레이션
+      # QA28(D-Low): persist-credentials:false — release.yml 의 QA20(B-MED) 조치(npm ci 가 돌리는
+      # 서드파티 스크립트에 .git/config 토큰을 남기지 않는다)가 test.yml 의 push/PR 잡 3곳에는
+      # 미적용이었다(형제 누락). 토큰은 contents:read 지만 표면을 남길 이유가 없다.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       # Node 24 호환
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -230,6 +243,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false # QA28(D-Low): test 잡과 동일 사유
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -268,6 +283,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false # QA28(D-Low): test 잡과 동일 사유
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:

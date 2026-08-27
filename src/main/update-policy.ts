@@ -117,7 +117,7 @@ export function shouldAutoCheck({ isPackaged, platform, enabled, lastCheckedAt, 
 /**
  * 업데이트 실패 errorKey 전체 집합 — i18n 사전과의 계약 단일 출처.
  *
- * ai-service / ollama-manager 의 errorKey 는 `errorKey: 'x'` 리터럴이라 i18n drift 가드
+ * ai-service / ollama-manager 의 errorKey 는 문자열 리터럴 우변이라 i18n drift 가드
  * (i18n.test.ts)가 소스 스캔으로 잡지만, 본 모듈은 분류 함수의 **반환값**이라 그 정규식에
  * 걸리지 않는다. 배열로 export 해 테스트가 런타임으로 대조하게 한다(번역 누락 시 사용자는
  * `mainerr.updateNetwork` 같은 raw 키를 보게 되므로 가드가 필요).

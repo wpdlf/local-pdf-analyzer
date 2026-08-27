@@ -115,6 +115,25 @@ describe('audit-shipped 게이트', { timeout: 30000 }, () => {
     expect(r.err).toContain('helper');
   });
 
+  it('QA28(D1-4): optionalDependencies 로만 도달하는 취약 패키지도 폐포에 든다', () => {
+    // optional 의존은 설치 실패 시 빠질 뿐, 설치되면 번들·asar 에 똑같이 실린다(pdfjs 의
+    // @napi-rs/canvas 가 그 예). dependencies 만 따라가면 이 경로가 조용히 검사 밖이 된다.
+    const r = runGate(
+      { dependencies: {}, shippedDevDependencies: ['bundled-lib'] },
+      {
+        packages: {
+          '': { name: 'app' },
+          'node_modules/bundled-lib': { version: '1.0.0', optionalDependencies: { 'opt-native': '^1.0.0' } },
+          'node_modules/opt-native': { version: '1.0.0', optional: true },
+        },
+      },
+      { vulnerabilities: { 'opt-native': highVuln('optional 경유 취약점') } },
+    );
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('opt-native');
+    expect(r.err).toContain('optional 경유 취약점');
+  });
+
   it('배포되지 않는 빌드툴의 취약점은 통과시킨다 (노이즈 차단이 이 게이트의 존재 이유)', () => {
     const r = runGate(
       { dependencies: { 'root-pkg': '^1.0.0' }, shippedDevDependencies: [] },
@@ -296,6 +315,7 @@ describe('배포 분류 드리프트 가드 (QA26 D-High/D-Important)', () => {
     'electron-builder',        // 패키징 도구
     'electron-vite',
     'happy-dom',
+    'pdf-lib',                 // QA28(D-Low): e2e 픽스처 전용(src 에 import 0건) — shipped 목록에 있던 오분류
     'tailwindcss',
     'typescript',
     'vite',

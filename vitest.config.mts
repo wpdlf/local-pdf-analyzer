@@ -44,9 +44,11 @@ export default defineConfig({
     // 의미 있는 비율이 나오도록 한다.
     coverage: {
       provider: 'v8',
-      // QA27(D-MED): json-summary 를 추가한다 — coverage-drift.test.ts 가 이 파일을 읽어
-      // "게이트가 실측에 뒤처졌는가" 를 자동 판정한다(종전에는 라운드마다 사람이 대조했고
-      // QA13·QA22·QA24·QA27 에서 매번 뒤처진 채 발견됐다).
+      // QA27(D-MED): json-summary 를 추가한다 — scripts/coverage-drift.mjs(`posttest:coverage`)가
+      // 이 파일을 읽어 "게이트가 실측에 뒤처졌는가" 를 자동 판정한다(종전에는 라운드마다 사람이
+      // 대조했고 QA13·QA22·QA24·QA27 에서 매번 뒤처진 채 발견됐다). QA28(D-High): 판정을 스위트
+      // 안(테스트)에 두면 coverage.clean 이 실행 시작 시 이 파일을 지워 항상 skip 이었다 — 스위트
+      // 밖 post-step 으로 옮겼다.
       reporter: ['text', 'lcov', 'json-summary'],
       // R31 (v0.18.18 patch): exclude 정책 명확화.
       //   1) 표준 인프라/빌드 산출물: node_modules, out, dist, test, scripts, *.config, *.d.ts
@@ -196,13 +198,15 @@ export default defineConfig({
       //   이 라운드가 붙인 회귀 넷들이 분모를 더 올리므로 상향해도 여유가 남는다.
       //
       //   ⚠️ 이 재정렬은 **라운드마다 사람이 대조**해 왔고 QA13·QA22·QA24·QA27 에서 매번
-      //   뒤처진 채 발견됐다. 드리프트 자체를 자동으로 잡는 가드는 coverage-drift.test.ts 가
-      //   소유한다(측정치와 게이트의 간격이 5pp 를 넘으면 실패).
+      //   뒤처진 채 발견됐다. 드리프트 자체를 자동으로 잡는 가드는 scripts/coverage-drift.mjs
+      //   (posttest:coverage)가 소유한다(측정치와 게이트의 간격이 5pp 를 넘으면 실패).
+      // QA28: 실측 83.87/76.01/83.75/86.91 → 80/72/80/83 (post-step 가드가 첫 실행에서 branches
+      //   마진 5.01pp 를 잡았다 — 이 가드가 실제로 도는 첫 라운드).
       thresholds: {
-        statements: 79,
-        branches: 71,
-        functions: 79,
-        lines: 82,
+        statements: 80,
+        branches: 72,
+        functions: 80,
+        lines: 83,
       },
     },
   },
