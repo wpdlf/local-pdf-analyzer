@@ -159,8 +159,11 @@ export class OllamaManager {
           const out = String(stdout).trim();
           if (out.startsWith('OK:')) {
             const subject = out.slice('OK:'.length);
-            // 발행자 CN 에 "Ollama" 포함 (대소문자 무관). 여러 법인명 변형(Ollama, Ollama Inc, Ollama, Inc.) 수용.
-            const isOllama = /CN=[^,]*Ollama/i.test(subject);
+            // 발행자 CN 값 **전체**가 Ollama 법인명이어야 한다(대소문자 무관): Ollama / Ollama Inc /
+            // Ollama Inc. / "Ollama, Inc." QA28(C-Low): 종전 "포함" 매칭은 "Ollama Fans" 류 임의 CA
+            // 발급 인증서도 통과시켰다(접두 매칭도 `\b` 가 공백 앞에서 성립해 같은 구멍) — 값 전체로
+            // 좁힌다(다운로드는 https://ollama.com 고정이라 실효 위험은 MITM/CA 침해 전제).
+            const isOllama = /CN="?Ollama(?:,? Inc\.?)?"?(?:\s*,|\s*$)/i.test(subject);
             if (isOllama) {
               resolve({ valid: true, subject });
             } else {

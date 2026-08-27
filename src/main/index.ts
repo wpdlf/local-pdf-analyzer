@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, screen, session } from 'electron';
 // 자동 업데이트: electron-updater 는 main 전용(production dependency 로 asar 에 동봉된다 —
 // electron-builder 는 files 패턴과 무관하게 production 의존성을 수집한다).
 import { autoUpdater } from 'electron-updater';
@@ -1128,8 +1128,15 @@ export function registerIpcHandlers(): void {
       ? apiKeyStore.load(request.provider)
       : undefined;
 
+    // QA28(C-Low): R39 가 ai:check-available 에서만 닫은 포트-스캔 오라클의 형제 경로 —
+    // isLocalhostHost 는 포트를 보지 않고, ECONNREFUSED 와 그 외 에러가 서로 다른 errorKey 를
+    // 갖는다. embeddings/vision/check-available 과 동일하게 저장된 설정의 정규 URL 만 쓴다.
+    const effective = request.provider === 'ollama'
+      ? { ...request, ollamaBaseUrl: ((await loadSettings()).ollamaBaseUrl as string) || request.ollamaBaseUrl }
+      : request;
+
     try {
-      await generate(requestId, request, apiKey, win);
+      await generate(requestId, effective, apiKey, win);
       return { success: true };
     } catch (err) {
       const error = err as Error & { code?: string; errorKey?: string; errorParams?: Record<string, string> };
@@ -1425,11 +1432,24 @@ export function registerIpcHandlers(): void {
       await fsp.writeFile(tmpHtml, html, 'utf-8');
       // 잠금 렌더 컨텍스트: node 차단 + sandbox + JS 비활성(새니타이즈된 정적 HTML 이라 스크립트
       // 불필요) + 격리. 인쇄 외 어떤 능력도 노출하지 않는다.
+      // QA28(C-MED): 이 창은 렌더러 CSP(`connect-src 'self'`·`img-src 'self' data:`) **밖**이다.
+      // main 은 html 의 타입·길이만 보고 내용은 신뢰하므로, 침해된 렌더러가 `<img src="https://…?
+      // <탈취데이터>">` 나 `<iframe src="file:///…">` 를 실어 보내면 사용자가 저장을 승인하는 순간
+      // 렌더러 안에서는 CSP 로 막혀 있던 외부 요청·로컬 파일 로드가 여기서 실행된다(유일한 exfil
+      // 채널). 격리 세션 + 임시 HTML 자신 외 모든 요청 차단 + 창 열기/내비게이션 거부로 닫는다.
+      // PRINT_CSS·폰트는 전부 인라인이라 출력은 바뀌지 않는다.
+      const exportSession = session.fromPartition(`export-${randomUUID()}`);
+      const selfUrl = pathToFileURL(tmpHtml).href;
+      exportSession.webRequest.onBeforeRequest((details, cb) => {
+        cb({ cancel: details.url !== selfUrl });
+      });
       win = new BrowserWindow({
         show: false,
-        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, javascript: false },
+        webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, javascript: false, session: exportSession },
       });
       const w = win;
+      w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      w.webContents.on('will-navigate', (e) => e.preventDefault());
       // 병리적 콘텐츠로 loadFile/printToPDF 가 무한 hang 시 오프스크린 창 누수 + 렌더러 영구
       // 대기(버튼 비활성 고착)를 막는 타임아웃 — reject 시 finally 가 창을 파괴하고 계약은 null 반환.
       const pdf = await Promise.race([

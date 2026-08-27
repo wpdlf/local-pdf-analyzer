@@ -207,6 +207,29 @@ describe('verifyInstallerSignature — Authenticode 검증', () => {
     expect(r).toEqual({ valid: false, subject: 'CN=Microsoft Corporation, O=Microsoft', reason: '서명자가 Ollama 가 아님' });
   });
 
+  it('QA28(C-Low): CN 이 "Ollama" 를 중간에 포함만 하는 서명자(Fans of Ollama)는 invalid — 접두 매칭', async () => {
+    // 종전 `/CN=[^,]*Ollama/i` 는 이 subject 를 통과시켰다.
+    mockPs('OK:CN=Fans of Ollama, O=Evil');
+    const r = await verify(new OllamaManager())('C:\\Temp\\x.exe');
+    expect(r.valid).toBe(false);
+    expect(r.reason).toBe('서명자가 Ollama 가 아님');
+  });
+
+  // QA28(C-Low): 접두 매칭(`/CN="?Ollama\b/`)은 `\b` 가 공백 앞에서 성립해 "Ollama Fans" 도
+  // 통과시켰다 — CN 값 전체를 Ollama 법인명으로 좁혀 닫았다.
+  it('QA28(C-Low): "Ollama Fans" 는 invalid', async () => {
+    mockPs('OK:CN=Ollama Fans, O=Evil');
+    const r = await verify(new OllamaManager())('C:\\Temp\\x.exe');
+    expect(r.valid).toBe(false);
+  });
+
+  it('QA28(C-Low): 법인명 변형 — 따옴표 CN("Ollama, Inc.")·"Ollama Inc" 는 valid', async () => {
+    mockPs('OK:CN="Ollama, Inc.", O=Ollama');
+    expect((await verify(new OllamaManager())('C:\\Temp\\x.exe')).valid).toBe(true);
+    mockPs('OK:CN=Ollama Inc');
+    expect((await verify(new OllamaManager())('C:\\Temp\\x.exe')).valid).toBe(true);
+  });
+
   it('STATUS:NotSigned → invalid (서명 상태)', async () => {
     mockPs('STATUS:NotSigned');
     const r = await verify(new OllamaManager())('C:\\Temp\\x.exe');

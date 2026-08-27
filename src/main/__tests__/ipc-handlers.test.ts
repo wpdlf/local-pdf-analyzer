@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { pathToFileURL } from 'node:url';
 
 // R38 P2 (test coverage): IPC 핸들러 "행위" 검증 — electron 모킹 + 핸들러 캡처/invoke.
 //
@@ -56,6 +57,16 @@ const H = vi.hoisted(() => ({
     // session-store(module-2) 가 사용하는 추가 메서드
     rename: vi.fn(), mkdir: vi.fn(), rm: vi.fn(), unlink: vi.fn(),
   },
+  // QA28(C-MED): file:export-pdf 의 격리 세션·오프스크린 창 관측용.
+  exportWin: {
+    partitions: [] as string[],
+    onBeforeRequest: null as null | ((details: { url: string }, cb: (r: { cancel: boolean }) => void) => void),
+    ctorOpts: null as null | Record<string, unknown>,
+    setWindowOpenHandler: vi.fn(),
+    on: vi.fn(),
+    loadFile: vi.fn(),
+    printToPDF: vi.fn(),
+  },
 }));
 
 vi.mock('electron', () => ({
@@ -76,6 +87,28 @@ vi.mock('electron', () => ({
   BrowserWindow: class {
     static getAllWindows(): unknown[] { return []; }
     static fromWebContents(): unknown { return { isDestroyed: () => false }; }
+    // QA28(C-MED): file:export-pdf 가 만드는 오프스크린 창 — 생성 옵션·webContents 호출을 캡처.
+    webContents = {
+      setWindowOpenHandler: H.exportWin.setWindowOpenHandler,
+      on: H.exportWin.on,
+      printToPDF: H.exportWin.printToPDF,
+    };
+    constructor(opts: Record<string, unknown>) { H.exportWin.ctorOpts = opts; }
+    loadFile = H.exportWin.loadFile;
+    isDestroyed(): boolean { return false; }
+    destroy(): void { /* no-op */ }
+  },
+  session: {
+    fromPartition: (name: string) => {
+      H.exportWin.partitions.push(name);
+      return {
+        webRequest: {
+          onBeforeRequest: (fn: (details: { url: string }, cb: (r: { cancel: boolean }) => void) => void) => {
+            H.exportWin.onBeforeRequest = fn;
+          },
+        },
+      };
+    },
   },
   ipcMain: { handle: (ch: string, fn: (...a: unknown[]) => unknown) => { H.handlers.set(ch, fn); } },
   dialog: H.dialog,
@@ -348,6 +381,77 @@ describe('ai:generate (errorKey 전파 — QA7 i18n)', () => {
     expect(r.success).toBe(false);
     expect(r.error).toBe('boom');
     expect(r.errorKey).toBeUndefined();
+  });
+});
+
+describe('QA28(C-Low): ai:generate 의 ollamaBaseUrl 은 저장 설정의 정규 URL 만 쓴다 (포트-스캔 오라클 형제 경로)', () => {
+  const base = { text: 'hi', type: 'full' as const, model: 'llama3', ollamaBaseUrl: 'http://127.0.0.1:1' };
+
+  it("provider 'ollama' — 렌더러가 보낸 URL 을 버리고 settings-store 의 URL 로 generate 한다", async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama', ollamaBaseUrl: 'http://localhost:23456' });
+    H.ai.generate.mockResolvedValueOnce(undefined);
+    const r = await invoke('ai:generate', 'req-o', { ...base, provider: 'ollama' }) as { success: boolean };
+    expect(r.success).toBe(true);
+    expect(H.ai.generate).toHaveBeenCalledTimes(1);
+    const passed = H.ai.generate.mock.calls[0]![1] as { ollamaBaseUrl: string; provider: string };
+    expect(passed.ollamaBaseUrl).toBe('http://localhost:23456');
+    expect(passed.ollamaBaseUrl).not.toBe('http://127.0.0.1:1');
+  });
+
+  it("provider 'claude' — 요청 객체가 그대로(동일 참조) 전달된다", async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama', ollamaBaseUrl: 'http://localhost:23456' });
+    H.ai.generate.mockResolvedValueOnce(undefined);
+    const req = { ...base, provider: 'claude', model: 'claude-sonnet-4-20250514' };
+    await invoke('ai:generate', 'req-c', req);
+    expect(H.ai.generate.mock.calls[0]![1]).toBe(req);
+  });
+});
+
+describe('QA28(C-MED): file:export-pdf 는 격리 세션에서 임시 HTML 자신 외 모든 요청을 차단한다', () => {
+  beforeEach(() => {
+    H.exportWin.partitions.length = 0;
+    H.exportWin.onBeforeRequest = null;
+    H.exportWin.ctorOpts = null;
+    H.exportWin.loadFile.mockResolvedValue(undefined);
+    H.exportWin.printToPDF.mockResolvedValue(Buffer.from('%PDF'));
+    H.dialog.showSaveDialog.mockResolvedValue({ filePath: '/tmp/out.pdf' });
+  });
+
+  it('export-* 파티션 세션이 창에 주입되고, 외부 URL 은 cancel·자기 파일 URL 은 통과', async () => {
+    const r = await invoke('file:export-pdf', '<p>hi</p>', 'out.pdf');
+    expect(r).toBe('/tmp/out.pdf');
+    expect(H.exportWin.partitions).toHaveLength(1);
+    expect(H.exportWin.partitions[0]).toMatch(/^export-/);
+    // 세션이 실제로 BrowserWindow 의 webPreferences 로 들어갔다(만들기만 하고 안 쓰면 무의미).
+    const prefs = H.exportWin.ctorOpts?.webPreferences as Record<string, unknown>;
+    expect(prefs.session).toBeDefined();
+    expect(prefs.javascript).toBe(false);
+
+    const tmpHtml = H.fsp.writeFile.mock.calls[0]![0] as string;
+    expect(tmpHtml).toMatch(/pdf-export-.*\.html$/);
+    const selfUrl = pathToFileURL(tmpHtml).href;
+    const listener = H.exportWin.onBeforeRequest;
+    expect(listener).toBeTypeOf('function');
+    const decide = (url: string) => {
+      let out: { cancel: boolean } | null = null;
+      listener!({ url }, (res) => { out = res; });
+      return out;
+    };
+    expect(decide('https://evil.example/?exfil=1')).toEqual({ cancel: true });
+    expect(decide('file:///C:/Windows/win.ini')).toEqual({ cancel: true });
+    expect(decide(selfUrl)).toEqual({ cancel: false });
+  });
+
+  it('창 열기는 deny, will-navigate 는 차단 리스너 등록', async () => {
+    await invoke('file:export-pdf', '<p>hi</p>', 'out.pdf');
+    expect(H.exportWin.setWindowOpenHandler).toHaveBeenCalledTimes(1);
+    const handler = H.exportWin.setWindowOpenHandler.mock.calls[0]![0] as () => { action: string };
+    expect(handler()).toEqual({ action: 'deny' });
+    const nav = H.exportWin.on.mock.calls.find(([ev]) => ev === 'will-navigate');
+    expect(nav).toBeDefined();
+    const e = { preventDefault: vi.fn() };
+    (nav![1] as (e: unknown) => void)(e);
+    expect(e.preventDefault).toHaveBeenCalled();
   });
 });
 
