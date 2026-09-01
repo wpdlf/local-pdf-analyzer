@@ -1,7 +1,7 @@
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import type { PdfDocument, Chapter, PageImage, AppError } from '../types';
 import { useAppStore } from './store';
-import { t } from './i18n';
+import { t, translateMainError } from './i18n';
 import { restoreSessionForDocument, persistCurrentSession } from './use-session';
 import { confirmDiscardIfNotPersisted } from './discard-policy';
 import { MAX_PDF_SIZE_BYTES } from '../../shared/constants';
@@ -618,7 +618,11 @@ async function ocrFallback(
 
   // QA30(A-F4): per-page 로 삼키면 안 되는 코드 — 한 페이지의 사고가 아니라 **모든 페이지에
   // 똑같이 재현될 조건**이다. 열거를 두 catch 가 공유해 한쪽만 갱신되는 drift 를 막는다.
-  const OCR_FATAL_CODES = new Set(['ABORTED', 'API_KEY_INVALID']);
+  // QA30 후속: 모델 미설치·메모리 부족은 **페이지 단위 실패가 아니다.** 남은 페이지를 태워도
+  // 결과가 같고, '' 로 삼키면 최종 안내가 "OCR로도 텍스트를 추출할 수 없습니다. PDF 품질을
+  // 확인해주세요" 가 된다 — 실제 해결책은 `ollama pull <model>` 인데 사용자를 PDF 쪽으로
+  // 보낸다(스모크에서 실제로 이 안내를 받고 원인을 찾지 못했다).
+  const OCR_FATAL_CODES = new Set(['ABORTED', 'API_KEY_INVALID', 'OLLAMA_MODEL_NOT_FOUND', 'OLLAMA_OOM']);
 
   // QA29(C-1): **무진전 회로차단기.** per-page catch 와 배치 catch 가 ABORTED 외 모든 실패를
   // '' 로 삼켜서, 루프는 실패를 한 번도 세지 않고 언제나 pageCount 까지 완주했다. Ollama 가
@@ -668,6 +672,14 @@ async function ocrFallback(
             // 남은 페이지를 계속 태울 이유도 없으므로 즉시 상위로 올린다.
             if (!result.success && result.code === 'API_KEY_INVALID') {
               throw Object.assign(new Error(t('uploader.ocrAuthFail')), { code: 'API_KEY_INVALID' });
+            }
+            // 환경 문제(모델 미설치·메모리 부족)는 main 이 붙인 errorKey 를 그대로 번역해
+            // 올린다 — 어떤 모델을 받아야 하는지가 메시지에 들어 있어야 사용자가 움직일 수 있다.
+            if (!result.success && OCR_FATAL_CODES.has(result.code ?? '')) {
+              throw Object.assign(
+                new Error(translateMainError(result, t('uploader.ocrFail'))),
+                { code: result.code },
+              );
             }
             return (result.success && result.text) ? result.text : '';
           } finally {

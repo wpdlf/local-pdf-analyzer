@@ -242,6 +242,36 @@ describe('analyzeImage (callVision → httpPost)', () => {
     errSpy.mockRestore();
   });
 
+  // QA30 후속(A-F2 형제 누락, 실기기 스모크에서 발견): Vision/OCR 은 httpPost 를 쓰는데
+  // A-F2 의 매퍼가 generateOllama 에만 붙어, 모델 미설치가 `HTTP 404` 로 뭉개졌다. 그러면
+  // pdf-parser 의 per-page catch 가 '' 로 삼켜 최종 안내가 "PDF 품질을 확인해주세요" 가 된다 —
+  // 실제 해결책은 `ollama pull llava` 인데 사용자를 PDF 쪽으로 보낸다.
+  it('ollama vision 404(model not found) → OLLAMA_MODEL_NOT_FOUND + 모델명', async () => {
+    respond(M.httpRequest, 404, { error: "model 'llava' not found" });
+    await expect(analyzeImage('img', 'ollama', 'llava', 'http://localhost:11434', undefined))
+      .rejects.toMatchObject({ code: 'OLLAMA_MODEL_NOT_FOUND', errorKey: 'ollamaModelNotFound', errorParams: { model: 'llava' } });
+  });
+
+  // visionModel 미설정 시 코드가 'llava' 를 기본값으로 쓰므로, 매퍼에도 그 이름이 실려야 한다.
+  it('ollama vision 404 — 모델명 미지정이면 기본값 llava 가 안내에 실린다', async () => {
+    respond(M.httpRequest, 404, { error: "model 'llava' not found" });
+    await expect(analyzeImage('img', 'ollama', '', 'http://localhost:11434', undefined))
+      .rejects.toMatchObject({ errorParams: { model: 'llava' } });
+  });
+
+  it('ollama vision 500(메모리 부족) → OLLAMA_OOM', async () => {
+    respond(M.httpRequest, 500, { error: 'model requires more system memory (9.2 GiB) than is available (5.1 GiB)' });
+    await expect(analyzeImage('img', 'ollama', 'llava', 'http://localhost:11434', undefined))
+      .rejects.toMatchObject({ code: 'OLLAMA_OOM', errorKey: 'ollamaOutOfMemory' });
+  });
+
+  // 매퍼가 못 알아보는 에러까지 삼키면 안 된다 — 종전 generic 으로 남아야 한다.
+  it('ollama vision 400(매칭되지 않는 바디) → 종전 generic 유지', async () => {
+    respond(M.httpRequest, 400, { error: 'something unexpected' });
+    await expect(analyzeImage('img', 'ollama', 'llava', 'http://localhost:11434', undefined))
+      .rejects.toThrow(/Vision API 요청 실패: HTTP 400/);
+  });
+
   it('claude vision — apiKey 없으면 throw', async () => {
     await expect(analyzeImage('img', 'claude', 'm', 'x', undefined)).rejects.toThrow(/Claude API 키가 필요/);
   });

@@ -240,6 +240,41 @@ describe('parsePdf OCR 배선 — 회로차단기와 실패 판정', () => {
     expect(P.ocrPage).toHaveBeenCalledTimes(3);
   });
 
+  // QA30 후속 — **실기기 스모크가 잡은 것**. Vision 모델이 설치돼 있지 않으면 OCR 이 페이지마다
+  // 404 를 받는데, 그것을 '' 로 삼키면 최종 안내가 "OCR로도 텍스트를 추출할 수 없습니다.
+  // PDF 품질을 확인해주세요" 가 된다. 실제 해결책은 `ollama pull llava` 이므로, 사용자를
+  // 엉뚱한 곳(PDF 품질)으로 보내는 조용한 오답이다.
+  it('OLLAMA_MODEL_NOT_FOUND 는 PDF 품질 문제로 둔갑하지 않고 모델명과 함께 전파된다', async () => {
+    mockPdf(9);
+    P.ocrPage.mockResolvedValue({
+      success: false, code: 'OLLAMA_MODEL_NOT_FOUND',
+      errorKey: 'ollamaModelNotFound', errorParams: { model: 'llava' },
+      error: 'Vision API 요청 실패: HTTP 404',
+    });
+    const err = await parsePdf(pdfBuf(), 'scan.pdf', '/d/scan.pdf', { enableOcrFallback: true })
+      .then(() => null, (e: unknown) => e as Error & { code?: string });
+    expect(err?.code).toBe('OLLAMA_MODEL_NOT_FOUND');
+    // 어떤 모델을 받아야 하는지가 메시지에 있어야 사용자가 움직일 수 있다.
+    expect(err?.message).toContain('llava');
+    expect(err?.message).not.toContain('PDF 품질');
+    // 모든 페이지에 똑같이 재현될 조건이므로 남은 페이지를 태우지 않는다.
+    expect(P.ocrPage).toHaveBeenCalledTimes(3);
+  });
+
+  it('OLLAMA_OOM 도 같은 계약 — 메모리 사유가 그대로 올라온다', async () => {
+    mockPdf(9);
+    P.ocrPage.mockResolvedValue({
+      success: false, code: 'OLLAMA_OOM',
+      errorKey: 'ollamaOutOfMemory', errorParams: { detail: 'requires more system memory (9.2 GiB)' },
+      error: 'Vision API 요청 실패: HTTP 500',
+    });
+    const err = await parsePdf(pdfBuf(), 'scan.pdf', '/d/scan.pdf', { enableOcrFallback: true })
+      .then(() => null, (e: unknown) => e as Error & { code?: string });
+    expect(err?.code).toBe('OLLAMA_OOM');
+    expect(err?.message).toContain('9.2 GiB');
+    expect(P.ocrPage).toHaveBeenCalledTimes(3);
+  });
+
   it('그 외 실패는 종전대로 페이지 단위로 삼켜 나머지를 계속 OCR 한다 (과잉 전파 방지)', async () => {
     mockPdf(12);
     let n = 0;

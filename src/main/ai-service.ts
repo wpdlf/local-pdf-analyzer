@@ -1277,7 +1277,21 @@ async function callVision(
         stream: false,
         keep_alive: OLLAMA_KEEP_ALIVE,
       });
-      const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, config.timeoutMs, signal);
+      // QA30 후속(A-F2 형제): 요약 경로와 같은 매퍼를 Vision/OCR 에도 물린다. 없으면 모델
+      // 미설치·메모리 부족이 `HTTP 404`/`HTTP 500` 으로 뭉개지고, pdf-parser 의 per-page
+      // catch 가 그것을 '' 로 삼켜 최종 안내가 "PDF 품질을 확인해주세요" 가 된다 —
+      // 실제 해결책은 `ollama pull <model>` 인데 사용자를 엉뚱한 곳으로 보낸다.
+      const visionModel = model || 'llava';
+      let result: string;
+      try {
+        result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, config.timeoutMs, signal);
+      } catch (err) {
+        const e = err as Error & { status?: number; detail?: string };
+        const mapped = typeof e?.status === 'number'
+          ? mapOllamaHttpError(e.status, e.detail ?? e.message ?? '', visionModel)
+          : null;
+        throw mapped ?? err;
+      }
       return finalizeVisionResult(parseVisionResponse('ollama', JSON.parse(result)), config.sanitize);
     }
     case 'claude': {
@@ -1478,6 +1492,10 @@ function httpPost(
           // **키 문제가 "OCR 실패" 로 둔갑**했다.
           safeReject(Object.assign(new Error(`Vision API 요청 실패: HTTP ${errStatus}`), {
             status: errStatus,
+            // QA30 후속: 판독한 바디를 호출자에게도 넘긴다. 종전엔 여기서 로그만 찍고 버려서,
+            // Ollama 가 준 `model 'llava' not found` 같은 진짜 사유를 프로바이더별 매퍼가
+            // 볼 수 없었다(A-F2 가 요약 경로에만 매퍼를 붙인 것의 형제 누락).
+            detail,
             retryAfterMs: parseRetryAfterMs(res.headers['retry-after']),
             ...(errStatus === 401 ? { code: 'API_KEY_INVALID', errorKey: 'apiKeyInvalid' } : {}),
           }));

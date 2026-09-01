@@ -169,8 +169,8 @@ export type ElectronAPI = {
       customPrompt?: string;
     }) => Promise<{ success: boolean; error?: string; code?: string; errorKey?: string; errorParams?: Record<string, string> }>;
     abort: (requestId: string) => Promise<{ success: boolean; error?: string }>;
-    analyzeImage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; description?: string; error?: string; code?: string }>;
-    ocrPage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; text?: string; error?: string; code?: string }>;
+    analyzeImage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; description?: string; error?: string; code?: string; errorKey?: string; errorParams?: Record<string, string> }>;
+    ocrPage: (imageBase64: string, requestId?: string) => Promise<{ success: boolean; text?: string; error?: string; code?: string; errorKey?: string; errorParams?: Record<string, string> }>;
     embed: (texts: string[], requestId?: string) => Promise<{ success: boolean; embeddings?: number[][]; model?: string; error?: string }>;
     checkEmbedModel: () => Promise<{ available: boolean; model?: string }>;
     checkAvailable: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', ollamaBaseUrl: string) => Promise<boolean>;
