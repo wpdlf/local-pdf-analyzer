@@ -202,7 +202,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Self-updating — new versions are detected on startup and installed with one click; downloads never start without consent, and in-progress work is saved before the app restarts
 
 **Quality assurance**
-- 2212 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
+- 2345 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -221,18 +221,23 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | The Summarize button is greyed out | Ollama isn't running or has no installed model — use the **Open settings** link next to the button to fix it, or switch to a cloud provider |
 | Poor Korean summary quality | Install and select the Korean-specialized model (exaone3.5) under Settings → Model Management. It is an optional install during first-run setup and produces better Korean summaries than the base model (gemma3) |
 | Summarization is slow | Switch to a lighter model (e.g. phi3) or reduce the chunk size in Settings |
+| The summary ends mid-sentence | The model hit its output limit. A note is appended at the end of the summary when that happens, so a cut-off summary is never saved as if it were complete. Reduce the chunk size in Settings, or use a model with a larger output budget |
+| Ollama summarization fails with an HTTP number | The real reason is now surfaced instead: a model that is configured but no longer installed (`ollama pull <model>`, or pick another under Settings → Model Management), or not enough memory to load it (choose a smaller model, or close other applications) |
 | Text extraction fails | Make sure "Scanned PDF OCR" is enabled in Settings; a Vision model (llava, Claude, GPT-4o, Gemini) is required |
 | OCR results are inaccurate | Ollama llava has low Korean accuracy; switching to Claude, OpenAI, or Gemini improves it significantly |
 | OCR takes too long | Use the "■ Cancel" button to stop; cloud providers offer faster throughput. If the Vision model stops responding altogether, the app gives up on its own rather than waiting out every remaining page |
 | PDF exceeds 500 pages | Split the document and upload again; the cap prevents resource exhaustion |
 | Image analysis doesn't work | With Ollama, a Vision model such as llava is required — install it in Settings |
+| Image analysis reports a failure instead of skipping | A Vision request that comes back empty, or that a provider's safety filter blocked, is now reported rather than dropped silently — previously those images vanished from the summary while you were still billed for them. Try another Vision model, or turn off image analysis in Settings |
 | API key error | Verify the key format in Settings. Claude: `sk-ant-...`, OpenAI: `sk-...`, Gemini: `AIza...` |
 | Claude/OpenAI/Gemini unavailable | Save the API key first, then select the provider |
+| Settings shows "Cannot verify key" | The key file could not be read at that moment — usually antivirus or a search indexer holding it briefly. The key has not been lost; reopen Settings in a moment. This is deliberately distinct from "no key saved" so a locked file never looks like a missing key |
 | Gemini "response was blocked" error | Gemini's safety filter blocked the document content, or the output budget was exhausted. Try another model (e.g. gemini-2.5-pro) or split the document |
 | Gemini "rate limit exceeded" | The free tier has a low per-minute request limit. The app automatically lowers concurrency and retries up to twice with backoff; if it persists, retry shortly or disable image analysis for image-heavy PDFs |
 | Q&A can't answer | If the RAG badge is missing, install the embedding model with `ollama pull nomic-embed-text`. In keyword mode, include specific terms in your question |
 | RAG indexing doesn't run | Make sure first-run setup completed (nomic-embed-text auto-install). Manual install: `ollama pull nomic-embed-text` |
 | The header says the search index doesn't match the embedding model | The index was built with a different embedding model than the one now in use (typically an Ollama embedding model installed or removed while the app was open). Reopen the document to rebuild the index with the current model |
+| Semantic search says some documents were skipped | Their search index is damaged or missing (an interrupted save, or files removed underneath the app). Those documents used to disappear from results with no notice at all, which read as "nothing relevant here" — reopen each one to rebuild its index |
 | Some pages are missing from the summary/search | If the document is a scan whose cover page carries a text layer, the rest is skipped by text extraction; enable "Scanned PDF OCR" in Settings and reopen it. Pages with no extractable text are reported when this happens |
 | The Ollama address is rejected when saving | The address must be a full URL including the scheme, e.g. `http://localhost:11434`. It is validated at save time — previously a malformed address appeared to save, then every request failed while the status bar still showed "connected" |
 | Answers seem to generate twice | Answer verification triggers one extra LLM call when grounding is weak; you can turn off the "Answer verification" toggle in Settings |
@@ -265,7 +270,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Markdown · math | react-markdown + remark-gfm; KaTeX in MathML-only output (no webfonts, no CSP relaxation) — shared by the on-screen renderer and PDF export |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
 | Auto-update | electron-updater (GitHub Releases feed) — check on startup, download and install only on user consent, renderer flush before install |
-| Testing | Vitest, 2212 unit tests / 113 files (renderer·shared 1432 + main 780) + Playwright E2E (10 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (80/72/80/83) |
+| Testing | Vitest, 2345 unit tests / 114 files (renderer·shared 1474 + main 871) + Playwright E2E (10 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (81/74/81/84) |
 | i18n | In-house (i18n.ts) — 400+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -318,7 +323,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (2212, 113 files)
+    │   └── __tests__/         # Unit tests (2345, 114 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -513,9 +518,9 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **2212 unit tests / 113 files** — renderer·shared 1432 + main 780. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 17 components, the app shell itself, and core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
+- **2345 unit tests / 114 files** — renderer·shared 1474 + main 871. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 17 components, the app shell itself, and core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
 - **Playwright E2E** — 10 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, session/settings persistence across restart, upload-error paths, and the browser engine's mathematical layout that formula rendering depends on), all AI-independent; multi-tab restore and summarize/Q&A/collection flows are covered by local-only Ollama specs
-- **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (80/72/80/83), lockfile version sync check, tag ↔ `package.json` version match, two blocking `npm audit` gates (the whole production tree, plus a lockfile-closure check that covers the transitive dependencies of everything actually shipped), a build-time check that the math chunk never leaks into the eager bundle, Node 22/24 matrix plus a Windows unit-test leg
+- **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (81/74/81/84), lockfile version sync check, tag ↔ `package.json` version match, two blocking `npm audit` gates (the whole production tree, plus a lockfile-closure check that covers the transitive dependencies of everything actually shipped), a build-time check that the math chunk never leaks into the eager bundle, Node 22/24 matrix plus a Windows unit-test leg
 - **Packaged-app gate (release only)** — the release workflow launches the actual packaged binary before uploading any asset, and verifies that the renderer boots and parses a real PDF **from inside the asar alone**, plus an asar size ceiling. Every other E2E spec runs the source tree's `out/`, where the repo's `node_modules` is still visible — so none of them can catch a packaging regression
 - **4-agent parallel QA** — a full-codebase QA round on every release, each agent taking a different axis (recent code, concurrency, persistence, packaging/CI, …). Zero blocking findings for 50+ consecutive rounds; what the rounds actually surface now is the expensive-but-quiet class — data that disappears without an error, and answers that look correct but aren't. Two examples fixed in v0.31.42: on documents whose first pages are a table of contents, those contents lines consumed the chapter numbers and every real chapter after them was suppressed — chapter summaries lost all but one; and opening a document while Ollama was not running deleted its stored search index, so reopening meant re-embedding the whole file. The rounds are also, by design, where regressions introduced by earlier fixes surface: of the findings in that round, five traced back to fixes shipped in the two rounds before it — which is why each fix now lands with a test that reproduces the defect first
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
