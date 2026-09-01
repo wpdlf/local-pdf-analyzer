@@ -9,7 +9,7 @@ vi.stubGlobal('window', {
 });
 vi.stubGlobal('crypto', { randomUUID: () => 'test-uuid' });
 
-import { sanitizePromptInput, extractKeywords, selectRelevantChunks, countKeywordOccurrences } from '../use-qa';
+import { sanitizePromptInput, extractKeywords, selectRelevantChunks, countKeywordOccurrences, buildLabeledSegment } from '../use-qa';
 
 // ─── L1-C01: sanitizePromptInput ─────────────────────────────────────────
 describe('sanitizePromptInput (L1-C01)', () => {
@@ -384,30 +384,36 @@ describe('selectRelevantChunks — 예산 초과 항목은 건너뛰고 계속 �
  * QA29(B-6): overlap tail 이 body 의 페이지 라벨을 뒤집어쓰던 것 — **소비자 배선** 가드.
  *
  * chunker 가 `bodyOffset` 을 내고 vector-store 가 그것을 검색 결과까지 전파해도, 라벨을 붙이는
- * 쪽이 tail 을 떼지 않으면 아무것도 고쳐지지 않는다(이 라운드 A축 주제 = 절반짜리 수정).
+ * 쪽이 tail 을 떼지 않으면 아무것도 고쳐지지 않는다.
+ *
+ * ⚠️ QA30(B-2): 이 describe 는 종전에 **테스트 안에 규칙을 복제한 로컬 `buildSegment`** 를
+ * 검사하는 동어반복이었다. 그래서 프로덕션의 tail 제거를 통째로 되돌려도 전 스위트가 통과했고
+ * (D축 실측 2212/2212), 그 사이 컬렉션 경로는 아예 미수정으로 남아 있었다. 이제 프로덕션이
+ * 실제로 호출하는 `buildLabeledSegment` 를 직접 구동한다 — 규칙이 사라지면 여기서 빨개진다.
+ * (배선 자체, 즉 "그 함수가 정말 호출되는가" 는 qa-handleask-collection.test.tsx 가 가드한다.)
  */
-describe('RAG 라벨 세그먼트가 overlap tail 을 떼어낸다 (QA29 B-6)', () => {
-  const label = (page: number) => `[p.${page}]`;
-
-  /** use-qa 의 세그먼트 조립과 동일한 규칙 — 배선이 바뀌면 이 규칙도 함께 바뀌어야 한다. */
-  const buildSegment = (r: { text: string; pageStart?: number; bodyOffset?: number }): string => {
-    const l = r.pageStart ? label(r.pageStart) : '';
-    const body = l && r.bodyOffset ? r.text.slice(r.bodyOffset) : r.text;
-    return l ? `${l}\n${body}` : r.text;
-  };
-
+describe('RAG 라벨 세그먼트가 overlap tail 을 떼어낸다 (QA29 B-6 / QA30 B-2)', () => {
   it('tail 문장은 라벨 붙은 세그먼트에 실리지 않는다', () => {
-    const seg = buildSegment({ text: 'TAILSENTENCE BODYSENTENCE', pageStart: 2, bodyOffset: 13 });
+    const seg = buildLabeledSegment('TAILSENTENCE BODYSENTENCE', '[p.2]', 13);
     expect(seg).toBe('[p.2]\nBODYSENTENCE');
     expect(seg).not.toContain('TAILSENTENCE');
   });
 
+  it('컬렉션 라벨(`[문서명 p.N]`)도 같은 규칙 — 단일/컬렉션이 한 구현을 공유한다', () => {
+    const seg = buildLabeledSegment('TAILSENTENCE BODYSENTENCE', '[Report.pdf p.3]', 13);
+    expect(seg).toBe('[Report.pdf p.3]\nBODYSENTENCE');
+  });
+
   it('bodyOffset 이 없으면(구버전 사이드카) 종전대로 원문 전체', () => {
-    expect(buildSegment({ text: 'ALL', pageStart: 2 })).toBe('[p.2]\nALL');
-    expect(buildSegment({ text: 'ALL', pageStart: 2, bodyOffset: 0 })).toBe('[p.2]\nALL');
+    expect(buildLabeledSegment('ALL', '[p.2]')).toBe('[p.2]\nALL');
+    expect(buildLabeledSegment('ALL', '[p.2]', 0)).toBe('[p.2]\nALL');
   });
 
   it('라벨이 없으면 잘못 귀속될 여지가 없으므로 tail 을 보존한다 (검색 문맥 유지)', () => {
-    expect(buildSegment({ text: 'TAIL BODY', bodyOffset: 5 })).toBe('TAIL BODY');
+    expect(buildLabeledSegment('TAIL BODY', '', 5)).toBe('TAIL BODY');
+  });
+
+  it('bodyOffset 이 텍스트 길이를 넘어도 body 가 음수 슬라이스로 뒤집히지 않는다', () => {
+    expect(buildLabeledSegment('SHORT', '[p.9]', 999)).toBe('[p.9]\n');
   });
 });

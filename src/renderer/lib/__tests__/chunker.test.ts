@@ -477,3 +477,123 @@ describe('QA29: bodyOffset 과 페이지 귀속의 정합', () => {
     for (const c of noOverlap) expect(c.bodyOffset).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QA30(B-1): **빈 표지 문서의 첫 청크가 항상 `[p.1]` 로 귀속되던 것.**
+//
+// QA29(B-7)의 `bodyLead` 보정이 codepoint 강제 분할 분기에만 들어가, 단락 사이에 빈 줄이 있는
+// **보통 문서**(= flush 비분할 분기)와 문서 전체가 한 청크인 경우(= 조기 반환 분기)는 선행 빈
+// 페이지가 그대로 `bodyStart` 에 남았다. 위 QA29 가드는 이름과 주석이 "첫 페이지가 빈 문서"를
+// 닫았다고 말하지만 픽스처가 `uniquePage(2, 200)` — **빈 줄이 하나도 없는 단일 거대 단락**이라
+// split 경로로만 진입했다. 세 분기를 **하나의 불변식**으로 묶는다:
+//   "텍스트가 없는 페이지를 pageStart 로 갖는 청크는 존재하지 않는다."
+//
+// 빈 표지·간지는 이 저장소가 정상으로 규정한 형태다(pdf-parser 의 countEmptyPages 주석). 그
+// 문서의 첫 청크(초록·서론)가 `[p.1]` 로 프롬프트에 들어가면 모델의 인용이 clampCitationPage 를
+// 통과해 정상 버튼이 되고, 클릭하면 글자 없는 표지로 점프한다.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('QA30: 빈 표지 문서의 페이지 귀속 — 세 분기 공통 불변식 (B-1)', () => {
+  const SEP = '\n\n';
+  const pagesJoined = (pages: string[], startPage: number, endPage: number) =>
+    pages.slice(startPage - 1, endPage).join(SEP);
+  /** 라틴 토큰(cpt=4.0 고정) — 페이지마다 고유해 포함 검사가 공허해지지 않는다. */
+  const token = (p: number, i: number) => `p${p}item${String(i).padStart(3, '0')}`;
+  const para = (p: number, from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => token(p, from + i)).join(' ');
+  /** 단락 3개(각 ~500자)로 이루어진 페이지 — 페이지 안에 빈 줄이 있어 flush 비분할 경로를 탄다. */
+  const multiParaPage = (p: number) => [para(p, 0, 50), para(p, 50, 50), para(p, 100, 50)].join(SEP);
+
+  /** maxChunkSize=500 · 라틴(cpt 4.0) → maxChars 2000 / effectiveMax 2200. */
+  const CHUNK = 500;
+
+  const assertNoEmptyPageAttribution = (pages: string[], label: string) => {
+    const result = chunkTextWithOverlapByPage(pages, CHUNK, 0.1);
+    expect(result.length, `${label}: 청크가 만들어지지 않았다`).toBeGreaterThan(0);
+    for (const c of result) {
+      const body = c.text.slice(c.bodyOffset);
+      expect(body.length, `${label}: body 가 통째로 사라졌다`).toBeGreaterThan(0);
+      // ① 빈 페이지를 근거 페이지로 주장하는 청크가 하나도 없다.
+      expect(
+        (pages[c.pageStart - 1] ?? '').trim().length,
+        `${label}: 텍스트가 없는 p.${c.pageStart} 가 인용 라벨이 된다`,
+      ).toBeGreaterThan(0);
+      // ② 그리고 body 는 실제로 그 페이지 범위 안에 있다(①이 우연히 맞는 것을 배제).
+      expect(
+        pagesJoined(pages, c.pageStart, c.pageEnd).includes(body),
+        `${label}: body 가 [p.${c.pageStart}-${c.pageEnd}] 밖에 있다: ${body.slice(0, 40)}…`,
+      ).toBe(true);
+    }
+    return result;
+  };
+
+  it('픽스처 자기검증: 세 픽스처가 실제로 서로 다른 분기로 들어간다', () => {
+    // (a) 조기 반환 — 전체가 maxChars(2000) 이하라 청크가 1개.
+    const early = chunkTextWithOverlapByPage(['', para(2, 0, 50)], CHUNK, 0.1);
+    expect(early).toHaveLength(1);
+
+    // (b) flush 비분할 — 청크 경계가 **단락 경계**에 정확히 떨어진다(split 이면 단락 중간에서 잘린다).
+    const pages = ['', multiParaPage(2), multiParaPage(3), multiParaPage(4)];
+    const paras = pages.join(SEP).split(/\n\n+/).filter((s) => s.length > 0);
+    const flushed = chunkTextWithOverlapByPage(pages, CHUNK, 0.1);
+    expect(flushed.length).toBeGreaterThan(1);
+    for (const c of flushed) {
+      const body = c.text.slice(c.bodyOffset);
+      expect(paras.some((p) => body.startsWith(p)), 'body 가 단락 시작에서 출발하지 않는다').toBe(true);
+      expect(paras.some((p) => body.endsWith(p)), 'body 가 단락 끝에서 멈추지 않는다').toBe(true);
+    }
+
+    // (c) split — 빈 줄 없는 단일 거대 단락 하나가 여러 청크로 쪼개진다(QA29 가드가 유일하게 본 형태).
+    const splitPages = ['', para(2, 0, 400)];
+    expect(splitPages.join(SEP).split(/\n\n+/).filter((s) => s.length > 0)).toHaveLength(1);
+    expect(chunkTextWithOverlapByPage(splitPages, CHUNK, 0.1).length).toBeGreaterThan(1);
+  });
+
+  it('빈 표지 × 조기 반환: 짧은 본문도 실제 본문 페이지로 귀속된다', () => {
+    const pages = ['', para(2, 0, 50)];
+    const result = assertNoEmptyPageAttribution(pages, 'early-return');
+    expect(result[0]!.pageStart, '본문이 2쪽인데 빈 1쪽으로 귀속됐다').toBe(2);
+    expect(result[0]!.pageEnd).toBe(2);
+  });
+
+  it('빈 표지 × flush 비분할: 단락 사이에 빈 줄이 있는 보통 문서', () => {
+    const pages = ['', multiParaPage(2), multiParaPage(3), multiParaPage(4)];
+    const result = assertNoEmptyPageAttribution(pages, 'flush-비분할');
+    expect(result[0]!.pageStart, '본문이 2쪽인데 빈 1쪽으로 귀속됐다').toBe(2);
+    expect(result[0]!.text.slice(result[0]!.bodyOffset).startsWith(token(2, 0))).toBe(true);
+  });
+
+  it('빈 표지 2장 × flush 비분할: 오차도 2페이지가 된다', () => {
+    const pages = ['', '', multiParaPage(3), multiParaPage(4)];
+    const result = assertNoEmptyPageAttribution(pages, '빈표지2장');
+    expect(result[0]!.pageStart, '본문이 3쪽인데 빈 1쪽으로 귀속됐다').toBe(3);
+  });
+
+  it('빈 표지 × split: QA29 가 이미 닫은 경로도 같은 불변식을 지킨다 (회귀)', () => {
+    const result = assertNoEmptyPageAttribution(['', para(2, 0, 400)], 'split');
+    expect(result[0]!.pageStart).toBe(2);
+  });
+
+  it('대조군: 빈 페이지가 없으면 첫 청크는 그대로 p.1', () => {
+    const pages = [multiParaPage(1), multiParaPage(2), multiParaPage(3)];
+    const result = assertNoEmptyPageAttribution(pages, '대조군');
+    expect(result[0]!.pageStart).toBe(1);
+  });
+
+  // 대칭 결함: 문서 **끝**의 빈 페이지는 후행 공백으로 body 에 딸려 들어와 pageEnd 를 부풀린다.
+  // 조기 반환(짧은 문서)과 flush(긴 문서) 두 분기 모두에서 성립해야 한다.
+  it.each([
+    ['조기 반환', [multiParaPage(1), '', ''], 1],
+    ['flush', [multiParaPage(1), multiParaPage(2), multiParaPage(3), '', ''], 2],
+  ] as const)('문서 끝의 빈 페이지가 pageEnd 를 부풀리지 않는다 — %s (후행 trim 대칭)', (_label, pages, minChunks) => {
+    const result = chunkTextWithOverlapByPage([...pages], CHUNK, 0.1);
+    // 픽스처 자기검증: 의도한 분기로 들어갔다(1개면 조기 반환, 2개 이상이면 flush).
+    expect(result.length).toBeGreaterThanOrEqual(minChunks);
+    if (minChunks === 1) expect(result).toHaveLength(1);
+    for (const c of result) {
+      expect(
+        (pages[c.pageEnd - 1] ?? '').trim().length,
+        `텍스트가 없는 p.${c.pageEnd} 까지 범위가 늘어났다`,
+      ).toBeGreaterThan(0);
+    }
+  });
+});

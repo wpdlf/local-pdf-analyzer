@@ -179,7 +179,14 @@ function chunkTextWithOverlapOffsets(
   const effectiveMax = maxChars + overlapChars;
 
   if (text.length <= maxChars) {
-    return [{ text, bodyStart: 0, bodyEnd: text.length, tailStart: -1, bodyOffset: 0 }];
+    // QA30(B-1): 문서가 공백으로 시작하면(스캔 PDF 의 이미지 표지·간지 = 파서가 '' 를 내는
+    // 정상 형태) `bodyStart: 0` 이 그 **빈 페이지**를 가리켜 첫 청크가 항상 `[p.1]` 로 귀속됐다.
+    // QA29(B-7)가 도입한 보정은 codepoint 강제 분할 분기에만 들어가 이 조기 반환과 아래 flush
+    // 비분할 분기는 무보정으로 남아 있었다(가드 픽스처가 빈 줄 없는 단일 거대 단락이라 split
+    // 경로로만 진입했다). 선행 trim 만큼 bodyStart 를 전진시켜 세 경로를 같은 규칙으로 묶는다.
+    const trimmed = text.trim();
+    const lead = text.length - text.trimStart().length;
+    return [{ text: trimmed, bodyStart: lead, bodyEnd: lead + trimmed.length, tailStart: -1, bodyOffset: 0 }];
   }
 
   // 원본에서 paragraph 경계(start, end) 를 추적 — split 이 위치 정보를 버리므로 matchAll 사용
@@ -213,9 +220,17 @@ function chunkTextWithOverlapOffsets(
     // 선행 trim 이 tail 을 다 먹고 **body 앞부분까지** 깎아낸 양(공백으로 시작하는 페이지에서만
     // 0 이 아니다). trimmed 안의 body 첫 글자는 원본의 `bodyStart + bodyLead` 에 대응한다.
     const bodyLead = Math.max(0, leadTrim - bridgeChars);
+    // QA30(B-1): 이 보정은 종전에 **아래 split 분기에서만** 쓰였다. 그래서 단락 사이에 빈 줄이
+    // 있는 보통 문서(= flush 비분할 분기)는 선행 공백/빈 페이지가 그대로 bodyStart 에 남아
+    // 첫 청크의 pageStart 가 1 로 고정됐다. 귀속 좌표를 여기서 한 번 계산해 두 분기가 공유한다.
+    // 후행 trim 도 같은 이유로 반영한다 — 문서 끝의 빈 페이지가 pageEnd 를 부풀리는 대칭 결함.
+    const trailTrim = raw.length - raw.trimEnd().length;
+    const attrStart = bodyStart + bodyLead;
+    // body 가 공백뿐이고 tail 만 내용을 가진 경우(희소) 역전을 막는 하한.
+    const attrEnd = Math.max(attrStart + 1, bodyEnd - trailTrim);
     if (trimmed.length <= effectiveMax) {
       results.push({
-        text: trimmed, bodyStart, bodyEnd,
+        text: trimmed, bodyStart: attrStart, bodyEnd: attrEnd,
         tailStart: prevTail ? prevTailStart : -1,
         bodyOffset: Math.min(tailLen, trimmed.length),
       });
@@ -231,7 +246,9 @@ function chunkTextWithOverlapOffsets(
       // page 범위만 보고하도록 한다. tail 은 첫 part 에만 부여 — 이후 part 는 순수 body 슬라이스.
       // 분배는 코드포인트 길이 기준 근사치(part 가 거의 균등 길이로 잘리므로 인덱스 비율로 충분).
       const parts = splitByCodepoint(trimmed, effectiveMax);
-      const bodyLen = bodyEnd - bodyStart;
+      // QA30(B-1): 좌표계 기준점을 attrStart/attrEnd 로 통일 — 종전에는 `bodyStart` 에서 출발해
+      // relStart 에 bodyLead 를 더했다(수치는 동일하나 보정이 이 분기에만 존재했다).
+      const bodyLen = attrEnd - attrStart;
       // QA29(B-7): `trimmed` 안에서 지금까지 소비한 UTF-16 길이. parts 는 `trimmed` 의 연속
       // 슬라이스이므로 누적 길이가 곧 각 part 의 정확한 시작 오프셋이다.
       let consumed = 0;
@@ -253,10 +270,10 @@ function chunkTextWithOverlapOffsets(
         // (최대 overlapChars) 만큼 **뒤로 밀려**, 빈 줄 없는 긴 페이지(표·OCR)에서 인용이 한 페이지
         // 늦게 붙었다. 균등 분배 자체도 근사였으므로, 누적 오프셋에서 tail 을 뺀 **정확한** 값으로
         // 바꾼다(body 는 trimmed 안에서 tailLen 부터 시작하고 원본과 1:1 대응한다).
-        const relStart = Math.min(Math.max(partStartInTrimmed - tailLen, 0) + bodyLead, bodyLen);
-        const relEnd = Math.min(Math.max(partEndInTrimmed - tailLen, 0) + bodyLead, bodyLen);
-        const partBodyStart = bodyStart + relStart;
-        const partBodyEnd = k === parts.length - 1 ? bodyEnd : bodyStart + relEnd;
+        const relStart = Math.min(Math.max(partStartInTrimmed - tailLen, 0), bodyLen);
+        const relEnd = Math.min(Math.max(partEndInTrimmed - tailLen, 0), bodyLen);
+        const partBodyStart = attrStart + relStart;
+        const partBodyEnd = k === parts.length - 1 ? attrEnd : attrStart + relEnd;
         results.push({
           text: part,
           bodyStart: partBodyStart,

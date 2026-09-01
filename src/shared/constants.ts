@@ -30,6 +30,28 @@ export const MAX_TEMPLATE_ID_LEN = 64;
 export const MAX_SUMMARY_TYPE_LEN = 'custom:'.length + MAX_TEMPLATE_ID_LEN; // 71
 
 /**
+ * RAG 검색의 최소 코사인 유사도 — 이보다 낮은 청크는 약한 근거로 보고 버린다.
+ *
+ * QA30(B-7): 같은 값이 `src/main/semantic-search.ts`(의미 검색)와 `src/renderer/lib/use-qa.ts`
+ * (Q&A RAG)에 **각각 리터럴 0.3 으로** 있었고 둘을 잇는 것은 "renderer 와 일치" 라는 **주석뿐**
+ * 이었다. 한쪽만 조정하면 같은 문서·같은 질의어에서 검색 결과와 Q&A 근거가 갈리는데, 양쪽 다
+ * "결과 없음" 으로 보일 뿐이라 사용자도 테스트도 어긋남을 관측할 수 없다(조용한 드리프트).
+ * 값 자체의 튜닝은 별개 문제이고, 여기서는 **단일 출처**만 만든다.
+ */
+export const RAG_MIN_SCORE = 0.3;
+
+/**
+ * 단일 AI 요청의 절대 상한(폭주 백스톱) — main 의 TTL 스위퍼와 렌더러 요약 감시견의 공통 값.
+ *
+ * QA30(A-F1/C-추가3): 같은 3시간이 `main/ai-service.ts`(MAX_AI_REQUEST_DURATION_MS)와
+ * `renderer/lib/use-summarize.ts`(MAX_TOTAL_MS)에 **각각 리터럴로** 있었고, 일치는 테스트의
+ * 런타임 비교 가드로만 유지됐다. main 이 더 짧으면 렌더러가 명문화한 "토큰이 흐르는 한 규모와
+ * 무관하게 완주" 계약을 뒤에서 깬다(사용자에겐 정상 요약이 갑자기 죽는 것으로 보인다).
+ * 지금은 main 만 이 상수를 쓰고, 렌더러 배선은 별도로 남아 있다(use-summarize.ts).
+ */
+export const MAX_AI_REQUEST_DURATION_MS = 3 * 60 * 60 * 1000;
+
+/**
  * Ollama / 로컬 HTTP 엔드포인트 SSRF 방어용 허용 호스트.
  *
  * 4곳에 동일한 리터럴 배열 `['localhost', '127.0.0.1', '::1']` 이 중복 정의되어 있었고

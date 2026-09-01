@@ -337,6 +337,13 @@ export interface CollectionSearchResult {
   index: number;
   pageStart?: number;
   pageEnd?: number;
+  /**
+   * QA30(B-2): `SearchResult.bodyOffset` 의 형제 필드. QA29(B-6)가 단일 문서 경로에만 overlap
+   * tail 제거를 넣으면서 컬렉션 경로는 **필드 자체가 없어** tail 을 뗄 수단조차 없었다 —
+   * `[문서명 p.N]` 라벨 아래에 이전 페이지 본문이 실려 교차 문서 인용이 한 페이지 뒤로 간다.
+   * 옵셔널이라 이 값을 채우지 않는 호출자는 종전대로 tail 포함 원문을 쓴다.
+   */
+  bodyOffset?: number;
   docHash: string;
   fileName: string;
 }

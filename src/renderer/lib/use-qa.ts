@@ -8,6 +8,7 @@ import { labelParagraphsWithPages } from './use-summarize';
 import { t } from './i18n';
 import { VectorStore } from './vector-store';
 import { mergeSearchResults, resolveMembers, MAX_COLLECTION_MEMBERS } from './collection';
+import { RAG_MIN_SCORE } from '../../shared/constants';
 import type { QaMessage, ResolvedMember, CollectionSearchResult, PersistedSession } from '../types';
 
 const MAX_QUESTION_LENGTH = 1000;
@@ -17,10 +18,15 @@ const FALLBACK_CHUNKS_PER_CONTEXT = 3;
 const RAG_CHUNK_SIZE = 500;       // RAG 청크 토큰 수 (작은 청크)
 const RAG_BATCH_SIZE = 50;        // 임베딩 배치 크기
 const RAG_TOP_K = 5;              // 검색 상위 K개 청크
-const RAG_MIN_SCORE = 0.3;        // 최소 유사도 점수
-// 컬렉션 Q&A(multi-doc Phase 2): 멤버별로 RAG_TOP_K 만큼 뽑아 전역 병합 후 이 수로 컷.
-// 단일 문서(RAG_TOP_K=5)보다 약간 넉넉하게 — 여러 문서의 근거를 함께 담되 컨텍스트는 동일 상한.
-const COLLECTION_TOP_K = 8;
+// QA30(B-7): 최소 유사도 임계(RAG_MIN_SCORE)는 main 의 의미 검색과 **같은 값이어야 하므로**
+// shared/constants 에서 가져온다 — 종전에는 양쪽에 리터럴 0.3 이 각각 있고 "renderer 와 일치"
+// 라는 주석만이 둘을 이었다(드리프트해도 양쪽 다 "결과 없음" 으로 보여 관측 불가).
+//
+// 컬렉션 Q&A(multi-doc Phase 2): 멤버별로 RAG_TOP_K 만큼 뽑아 전역 병합한다.
+// QA30(B-3): 병합 뒤의 고정 컷(`COLLECTION_TOP_K = 8`)은 제거됐다 — 컨텍스트에 실제로 들어가는
+// 개수는 예산(MAX_QA_CONTEXT_CHARS)이 정하고, 라틴 문자 문서에서는 그 수가 3~4개라 8 이 한 번도
+// 도달하지 못했다. 고정 컷을 남겨두면 예산에 자리가 남아도 9위 이하의 작은 청크가 버려진다.
+// 상세는 collectionRagSearch 의 mergeSearchResults 호출부 주석 참조.
 const RAG_BATCH_TIMEOUT_MS = 120000; // 배치당 타임아웃 2분
 
 // ─── 답변 검증(Hallucination 감지) 파라미터 ───
@@ -413,6 +419,31 @@ export async function buildRagIndex(
 }
 
 /**
+ * 검색 청크를 **페이지 라벨이 붙은 프롬프트 세그먼트**로 조립한다(순수).
+ *
+ * QA30(B-2): QA29(B-6)가 도입한 "라벨을 붙일 때 overlap tail 을 떼어낸다" 규칙이 단일 문서
+ * 경로(`ragSearch`)에만 인라인으로 들어가 **컬렉션 경로에는 형제 누락**이었다. 컬렉션은
+ * `` `${label}\n${r.text}` `` 로 tail 포함 원문에 출처 라벨을 붙였고, 그 tail 은 직전 청크에서
+ * 복사해 온 **이전 페이지 본문**이다. 모델이 그 문장을 근거로 답하면 `[문서명 p.N]` 인용이
+ * 붙는데 docName 이 열린 탭과 일치하므로 QA21 의 동명 모호성·닫힌 문서 가드를 전부 통과해
+ * **클릭되는 교차 문서 인용**이 되고, 클릭하면 한 페이지 뒤로 간다.
+ *
+ * 열거(두 곳에 같은 규칙을 복사)로 끝내지 않고 두 경로가 **같은 함수**를 호출하게 한다 —
+ * 이 라운드에서 반복 확인된 "형제 누락" 클래스를 구조적으로 닫기 위함.
+ *
+ * @param text  청크 원문(검색 recall 용 tail 포함)
+ * @param label `[p.N]` 또는 `[문서명 p.N]`. 빈 문자열이면 라벨 없음.
+ * @param bodyOffset `text` 안에서 body 가 시작하는 인덱스(= tail 길이). 없으면 0.
+ * @returns 라벨이 있으면 `label\n<body>`, 없으면 원문 그대로(잘못 귀속될 여지가 없으므로
+ *          검색 문맥용 tail 을 보존한다).
+ */
+export function buildLabeledSegment(text: string, label: string, bodyOffset?: number): string {
+  if (!label) return text;
+  const offset = bodyOffset && bodyOffset > 0 ? Math.min(bodyOffset, text.length) : 0;
+  return `${label}\n${text.slice(offset)}`;
+}
+
+/**
  * RAG 시맨틱 검색으로 관련 컨텍스트 추출.
  * 질문을 임베딩하고 벡터 스토어에서 유사 청크 검색.
  *
@@ -460,13 +491,10 @@ async function ragSearch(question: string, signal?: AbortSignal): Promise<string
     // (body 시작 페이지)만 방출(범위 라벨은 파서 미인식).
     const withLabel = results.map((r) => {
       const label = formatPageLabel(r.pageStart);
-      // QA29(B-6): 청크 앞의 overlap tail 은 **직전 청크에서 복사해 온 텍스트**라 그 문장의 실제
-      // 출처는 이전 페이지인데, `pageStart` 는 body 기준이라 tail 째로 라벨을 붙이면 모델이 한
-      // 페이지 뒤를 인용한다(페이지 경계에 걸친 표 캡션·정의문에서 재현). 라벨 붙은 세그먼트에서는
-      // tail 을 떼어낸다 — 그 문장은 직전 청크의 body 에 원본으로 이미 들어 있다. 라벨이 없으면
-      // 잘못 귀속될 여지도 없으므로 원문 그대로 둔다(검색 품질용 문맥 보존).
-      const body = label && r.bodyOffset ? r.text.slice(r.bodyOffset) : r.text;
-      return { index: r.index, segment: label ? `${label}\n${body}` : r.text };
+      // QA29(B-6) + QA30(B-2): overlap tail 은 직전 청크에서 복사해 온 **이전 페이지** 텍스트라
+      // 라벨과 함께 실으면 모델이 한 페이지 뒤를 인용한다. 그 제거 규칙은 buildLabeledSegment
+      // 단일 구현이 소유한다(컬렉션 경로와 공유 — 한쪽만 고쳐지는 형제 누락을 구조적으로 차단).
+      return { index: r.index, segment: buildLabeledSegment(r.text, label, r.bodyOffset) };
     });
     // QA14(A): 점수 순(search 반환 순서)으로 예산까지 선택 — late-index 최고점 청크가 앞쪽 저점
     // 청크에 밀려 축출되던 것 방지(이전엔 index 정렬 후 hard-break → 최고점 누락 시 조용한 오답).
@@ -535,21 +563,29 @@ async function loadMemberIndex(
  * Design Ref: docs/02-design/features/multi-doc-collection-qa.design.md §2.2
  *
  * 흐름: ready 멤버만 대상 → 질문 1회 임베딩 → 멤버별 search(메모리/세션 인덱스) →
- *       전역 score 병합(COLLECTION_TOP_K) → "[문서명 p.N] 본문" 컨텍스트(상한 컷).
+ *       전역 score 병합 → "[문서명 p.N] 본문" 컨텍스트(컷은 예산 하나만 — QA30 B-3).
  * ready 멤버가 0이면 null 반환(호출자가 단일 문서 Q&A 로 강등).
  *
  * @param question 사용자 질문
  * @param members resolveMembers 산출 멤버 목록(내부에서 status==='ready' 만 사용)
  * @param activeDocHash 활성 문서 docHash(메모리 인덱스 식별)
  * @param signal 취소 시그널(임베딩 abort)
+ * @returns 컨텍스트 문자열과 **예산에 밀려 한 글자도 기여하지 못한 문서 수**(QA30 B-3).
+ *          검색이 성립하지 않으면 null(호출자가 단일 문서 Q&A 로 강등).
  */
+export interface CollectionContext {
+  context: string;
+  /** 후보에는 있었지만 컨텍스트 예산에 밀려 근거를 하나도 싣지 못한 문서 수 */
+  droppedDocs: number;
+}
+
 export async function collectionRagSearch(
   question: string,
   members: ResolvedMember[],
   activeDocHash: string,
   signal?: AbortSignal,
   cache: Map<string, VectorStore> = new Map(),
-): Promise<string | null> {
+): Promise<CollectionContext | null> {
   const ready = members.filter((m) => m.status === 'ready');
   if (ready.length === 0) return null;
 
@@ -600,12 +636,22 @@ export async function collectionRagSearch(
         index: h.index,
         pageStart: h.pageStart,
         pageEnd: h.pageEnd,
+        // QA30(B-2): 이 전파가 없어 컬렉션 세그먼트는 tail 을 뗄 수단조차 없었다(형제 누락).
+        bodyOffset: h.bodyOffset,
         docHash: member.docHash,
         fileName: member.fileName,
       })));
     }
 
-    const merged = mergeSearchResults(perMember, COLLECTION_TOP_K);
+    // QA30(B-3): 종전에는 고정 개수(COLLECTION_TOP_K=8)로 **먼저** 자르고 아래 예산 루프가 다시
+    // 잘랐다. 그런데 8 은 라틴 문자 문서에서 도달 불가능한 숫자다 — 실측(RAG_CHUNK_SIZE=500,
+    // 영문 cpt 4.00)으로 청크 평균 1,911자라 예산 8,000자에는 3~4개만 들어간다(국문은 cpt 2.24
+    // → 961자라 8개가 들어간다. 주석의 "단일 문서(5)보다 약간 넉넉하게" 는 국문에서만 참이었다).
+    // 그 상태의 선행 고정 컷은 순수한 손실이다: 9위의 **작은** 청크가 예산에 들어갈 자리가
+    // 남았는데도 병합 단계에서 이미 사라진다(QA29 가 selectRelevantChunks 의 break 를 continue 로
+    // 바꾼 것과 같은 계열). 컷은 예산 하나만 담당하게 하고 병합은 후보를 전부 넘긴다 — 후보 수는
+    // 멤버 상한(MAX_COLLECTION_MEMBERS) × RAG_TOP_K 로 이미 유계다.
+    const merged = mergeSearchResults(perMember, 0);
     if (merged.length === 0) return null;
 
     // 컨텍스트: 출처(문서명+페이지)를 라벨로 명시해 LLM 이 교차 문서 인용을 하도록 유도.
@@ -618,7 +664,9 @@ export async function collectionRagSearch(
       // 해석이 **같은 함수**를 써야 라벨↔탭 매칭이 어긋나지 않는다(그 함수의 주석 참조).
       const safeName = sanitizeDocLabelName(r.fileName);
       const label = safeName ? `[${safeName}${page}]` : (pageLabel || '');
-      return { r, segment: `${label}\n${r.text}` };
+      // QA30(B-2): 단일 문서 경로와 **같은 함수**로 조립한다 — 종전 인라인 조립은 overlap tail 을
+      // 떼지 않아 `[문서명 p.N]` 라벨 아래에 이전 페이지 본문이 실렸다(형제 누락).
+      return { r, segment: buildLabeledSegment(r.text, label, r.bodyOffset) };
     });
     // QA14(A-MED): 예산 초과 시 점수 순(mergeSearchResults 의 global top-K 순서)으로 선택 —
     // 최고점 교차문서 청크가 다른 문서의 저점 청크에 밀려 프롬프트에서 누락되던 것 방지(이전엔
@@ -635,7 +683,18 @@ export async function collectionRagSearch(
       if (a.r.docHash !== b.r.docHash) return a.r.docHash < b.r.docHash ? -1 : 1;
       return a.r.index - b.r.index;
     });
-    return kept.length > 0 ? kept.map((ws) => ws.segment).join('\n\n') : null;
+    if (kept.length === 0) return null;
+    // QA30(B-3): 예산에 밀려 **한 글자도 기여하지 못한 문서**를 센다. CollectionBar 는 manifest
+    // 기준으로 "N개 문서에서 검색" 을 계속 표시하므로, 근거를 낸 문서가 그보다 적으면 사용자는
+    // 실제보다 넓게 본 답변으로 오해한다. QA21 은 **멤버 수** 잘림만 degraded 로 고지했고 예산에
+    // 의한 **청크** 잘림에는 고지 경로가 없었다(mergeSearchResults 는 점수 내림차순이라 채택분이
+    // 한 문서에 몰릴 수 있다). 호출자가 이 값을 degraded 에 합류시킨다.
+    const candidateDocs = new Set(merged.map((r) => r.docHash)).size;
+    const contributingDocs = new Set(kept.map((ws) => ws.r.docHash)).size;
+    return {
+      context: kept.map((ws) => ws.segment).join('\n\n'),
+      droppedDocs: Math.max(0, candidateDocs - contributingDocs),
+    };
   } catch {
     return null;
   }
@@ -715,9 +774,9 @@ export async function resolveCollectionSearch(
     : members;
   // 검색·검증이 같은 cache 공유 → 멤버 인덱스 1회만 로드(설계 §12-5)
   const cache = new Map<string, VectorStore>();
-  const ragResult = await collectionRagSearch(question, effectiveMembers, activeDocHash, signal, cache);
+  const searched = await collectionRagSearch(question, effectiveMembers, activeDocHash, signal, cache);
   // 강등 판정: 컬렉션을 켰는데 교차 결과가 없으면(단일 폴백) 강등.
-  if (!ragResult) return { ragResult: null, degraded: true };
+  if (!searched) return { ragResult: null, degraded: true };
   const stores = await loadReadyMemberStores(effectiveMembers, activeDocHash, cache);
   // #9: 강등 기준을 manifest 'ready' 수가 아니라 **실제 index.bin 로드 성공 store 수**로 한다.
   // manifest 는 ready 지만 index.bin 이 손상/IO 실패로 로드 안 된 멤버를 과대계상하면, 실제로는
@@ -730,8 +789,15 @@ export async function resolveCollectionSearch(
   // 기대치(ready 로 판정된 멤버 수)에 **미달하면** 강등으로 본다. `< 2` 도 유지 —
   // ready 가 1개뿐이라 기대치는 채웠지만 교차가 성립하지 않는 경우를 계속 잡기 위함.
   const expectedReady = effectiveMembers.filter((m) => m.status === 'ready').length;
-  const degraded = stores.length < 2 || stores.length < expectedReady || truncated;
-  return { ragResult, verifier: stores.length > 0 ? collectionVerifier(stores) : undefined, degraded };
+  // QA30(B-3): `droppedDocs` 는 **검색에는 참여했는데 컨텍스트 예산에 밀려 근거를 한 글자도
+  // 싣지 못한 문서**의 수다. 멤버 수 잘림(truncated)·인덱스 로드 실패(stores)와 사용자에게
+  // 미치는 결과가 같다 — "N개 문서에서 검색" 표시와 실제 답변 근거가 어긋난다.
+  const degraded = stores.length < 2 || stores.length < expectedReady || truncated || searched.droppedDocs > 0;
+  return {
+    ragResult: searched.context,
+    verifier: stores.length > 0 ? collectionVerifier(stores) : undefined,
+    degraded,
+  };
 }
 
 // ─── 답변 검증 (v0.18.0) ───

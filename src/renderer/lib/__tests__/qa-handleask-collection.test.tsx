@@ -350,3 +350,130 @@ describe('handleAsk — 컬렉션 글루 (CI 통합)', () => {
     expect(useAppStore.getState().qaMessages.at(-1)).toMatchObject({ role: 'assistant' });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QA30(B-2): **컬렉션 Q&A 는 overlap tail 을 떼지 않았다** — QA29(B-6)의 형제 누락.
+//
+// 단일 문서 경로는 `r.text.slice(r.bodyOffset)` 로 tail 을 뗐지만, 컬렉션은 tail 을 포함한
+// 원문에 `[문서명 p.N]` 라벨을 붙였다(그 전에 `CollectionSearchResult` 에는 bodyOffset 필드
+// 자체가 없었다). tail 은 **직전 청크에서 복사해 온 이전 페이지 본문**이므로, 모델이 그 문장을
+// 근거로 답하면 docName 이 열린 탭과 일치하는 **클릭되는 교차 문서 인용**이 되고 클릭하면 한
+// 페이지 뒤로 간다. 컬렉션 모드에서는 모든 답변이 항상 이 경로다.
+//
+// 이 스펙은 **실제 검색 경로를 구동**해 프롬프트 문자열을 검사한다 — 규칙을 테스트 안에 복제한
+// 동어반복(qa-core 의 종전 buildSegment)으로는 프로덕션 배선이 빠져도 초록이었다.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('overlap tail 이 라벨 붙은 세그먼트에 실리지 않는다 (QA30 B-2)', () => {
+  const ALPHA_TAIL = 'ALPHATAIL 앞 페이지에서 넘어온 꼬리 문장입니다. ';
+  const BETA_TAIL = 'BETATAIL 앞 페이지에서 넘어온 꼬리 문장입니다. ';
+
+  function activeWithTail(): VectorStore {
+    const vs = new VectorStore();
+    vs.setModel(MODEL);
+    vs.addChunk(`${ALPHA_TAIL}ALPHABODY 활성 문서 2쪽 본문`, [1, 0, 0], 0,
+      { pageStart: 2, pageEnd: 2, bodyOffset: ALPHA_TAIL.length });
+    return vs;
+  }
+
+  function betaBlobWithTail() {
+    const vs = new VectorStore();
+    vs.setModel(MODEL);
+    vs.addChunk(`${BETA_TAIL}BETABODY 비활성 멤버 7쪽 본문`, [0.9, 0.1, 0], 0,
+      { pageStart: 7, pageEnd: 7, bodyOffset: BETA_TAIL.length });
+    const s = vs.serialize();
+    return {
+      session: {
+        schemaVersion: 1, docHash: 'b'.repeat(64), fileName: 'Beta.pdf', filePath: '/d/Beta.pdf',
+        pageCount: 10, extractedText: 't', pageTexts: ['p'], chapters: [], summaries: {},
+        summaryType: 'full', qaMessages: [], embedModel: s.model, embedDim: s.dimension, chunkMeta: s.chunkMeta,
+      },
+      blob: s.buffer,
+    };
+  }
+
+  it('픽스처 자기검증: tail 이 실제로 인덱스 안에 있고 사이드카 왕복에서도 보존된다', () => {
+    const hit = activeWithTail().search([1, 0, 0], 1, 0)[0]!;
+    expect(hit.text).toContain('ALPHATAIL');           // 검색 recall 용으로는 tail 이 남아 있어야 하고
+    expect(hit.bodyOffset).toBe(ALPHA_TAIL.length);    // bodyOffset 이 공허한 0/undefined 가 아니다
+    // 비활성 멤버는 index.bin 왕복을 거치므로 bodyOffset 이 직렬화/복원을 통과해야 의미가 있다.
+    const restored = VectorStore.restore({
+      model: MODEL, dimension: 3,
+      chunkMeta: betaBlobWithTail().session.chunkMeta,
+      buffer: betaBlobWithTail().blob,
+    });
+    expect(restored.search([0.9, 0.1, 0], 1, 0)[0]!.bodyOffset).toBe(BETA_TAIL.length);
+  });
+
+  it('단일 문서 경로: [p.N] 아래에 tail 문장이 실리지 않는다 (QA29 배선 회귀)', async () => {
+    seed(false);
+    useAppStore.setState({ ragIndex: activeWithTail() });
+    const { result } = renderHook(() => useQa());
+    await act(async () => { await result.current.handleAsk('2쪽 내용?'); });
+
+    expect(M.prompt).toContain('[p.2]');
+    expect(M.prompt).toContain('ALPHABODY');            // 근거 본문은 들어가고
+    expect(M.prompt).not.toContain('ALPHATAIL');        // 이전 페이지 꼬리는 빠진다
+  });
+
+  it('컬렉션 경로: [문서명 p.N] 세그먼트도 tail 을 떼어낸다 (형제 누락)', async () => {
+    seed(true);
+    useAppStore.setState({ ragIndex: activeWithTail() });
+    mockSessionLoad.mockResolvedValue(betaBlobWithTail());
+    const { result } = renderHook(() => useQa());
+    await act(async () => { await result.current.handleAsk('두 문서 핵심?'); });
+
+    expect(M.prompt).toContain('[Alpha.pdf p.2]');
+    expect(M.prompt).toContain('[Beta.pdf p.7]');
+    expect(M.prompt).toContain('ALPHABODY');
+    expect(M.prompt).toContain('BETABODY');
+    expect(M.prompt, '활성 문서 청크의 tail 이 남았다').not.toContain('ALPHATAIL');
+    expect(M.prompt, '비활성 멤버 청크의 tail 이 남았다 — 컬렉션 경로 미수정').not.toContain('BETATAIL');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QA30(B-3): 예산에 밀려 **한 글자도 기여하지 못한 문서**를 고지한다.
+//
+// QA21 은 멤버 수 잘림(MAX_COLLECTION_MEMBERS)만 degraded 로 고지했고, 컨텍스트 예산에 의한
+// 청크 잘림에는 고지 경로가 없었다. mergeSearchResults 는 점수 내림차순이라 채택분이 한 문서에
+// 몰릴 수 있고, 그러면 CollectionBar 는 "N개 문서에서 검색" 을 계속 표시하는데 실제 답변은 그중
+// 하나만 보고 쓴 것이 된다.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('예산에 밀려 기여하지 못한 멤버를 강등으로 고지한다 (QA30 B-3)', () => {
+  /** 활성 문서 하나가 컨텍스트 예산(8,000자)을 거의 다 먹는 상황 */
+  function hugeActiveIndex(): VectorStore {
+    const vs = new VectorStore();
+    vs.setModel(MODEL);
+    vs.addChunk(`ALPHAHUGE ${'a'.repeat(7700)}`, [1, 0, 0], 0, { pageStart: 2, pageEnd: 2 });
+    return vs;
+  }
+  function betaChunkBlob() {
+    const vs = new VectorStore();
+    vs.setModel(MODEL);
+    vs.addChunk(`BETAEVIDENCE ${'b'.repeat(500)}`, [0.9, 0.1, 0], 0, { pageStart: 7, pageEnd: 7 });
+    const s = vs.serialize();
+    return {
+      session: {
+        schemaVersion: 1, docHash: 'b'.repeat(64), fileName: 'Beta.pdf', filePath: '/d/Beta.pdf',
+        pageCount: 10, extractedText: 't', pageTexts: ['p'], chapters: [], summaries: {},
+        summaryType: 'full', qaMessages: [], embedModel: s.model, embedDim: s.dimension, chunkMeta: s.chunkMeta,
+      },
+      blob: s.buffer,
+    };
+  }
+
+  it('검색에는 참여했지만 컨텍스트에 못 들어간 멤버가 있으면 degraded 표식을 단다', async () => {
+    seed(true);
+    useAppStore.setState({ ragIndex: hugeActiveIndex() });
+    mockSessionLoad.mockResolvedValue(betaChunkBlob());
+    const { result } = renderHook(() => useQa());
+    await act(async () => { await result.current.handleAsk('두 문서 핵심?'); });
+
+    // 픽스처 자기검증: 활성 문서는 들어갔고 Beta 는 예산에 밀려 통째로 빠졌다.
+    expect(M.prompt).toContain('ALPHAHUGE');
+    expect(M.prompt, '픽스처가 예산을 넘기지 못했다 — 이 스펙이 공허해진다').not.toContain('BETAEVIDENCE');
+    // 두 멤버 모두 index 로드에는 성공했으므로 종전 강등 조건(stores.length)으로는 잡히지 않는다.
+    const last = useAppStore.getState().qaMessages.at(-1);
+    expect(last).toMatchObject({ role: 'assistant', degraded: true });
+  });
+});
