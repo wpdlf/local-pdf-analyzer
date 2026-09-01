@@ -7,6 +7,7 @@ import { chunkText, chunkChapters, estimateCharsPerToken } from './chunker';
 import { normalizeCitationPlacement, stripTrailingPartialCitation, CITATION_REGEX } from './citation';
 import { enrichDocumentWithImages } from './enrich-doc';
 import { slicePdfDocumentByPageRange, isFullRange } from './page-range';
+import { MAX_AI_REQUEST_DURATION_MS } from '../../shared/constants';
 
 // QA19(B-MED): 요약 완주 타임아웃 판정(순수). 무진전(마지막 진전 이후 idleMs) 또는 절대 백스톱
 // (총 maxTotalMs) 중 하나라도 넘으면 중단한다. 인라인이 아니라 순수 함수로 둬 감시견(setTimeout
@@ -22,6 +23,18 @@ export function isSummaryTimedOut(
 ): boolean {
   return (now - lastProgressAt > idleMs) || (now - startTime > maxTotalMs);
 }
+
+/** 마지막 진전 이후 무진전 상한 — main 스트림 idle(60초)의 renderer 백업. */
+export const SUMMARY_IDLE_TIMEOUT_MS = 120000;
+
+/**
+ * 요약 run 의 절대 백스톱. 정상 종료는 사용자 취소이고, 이 값은 폭주(무한 루프) 방어다.
+ *
+ * QA30(A-F1): 이전엔 main 이 뒤에서 10분 절대 상한(activeRequests TTL)을 걸고 있어, 여기
+ * 명문화된 "토큰이 흐르는 한 완주" 계약이 렌더러가 모르는 사이 깨졌다. 두 값이 각자 리터럴로
+ * 있는 한 drift 는 테스트의 런타임 비교로만 막을 수 있어, shared 상수를 **단일 출처**로 삼는다.
+ */
+export const MAX_TOTAL_MS = MAX_AI_REQUEST_DURATION_MS;
 
 /**
  * 페이지별 텍스트 배열을 받아, 각 단락 앞에 `[p.N] ` inline 마커를 붙여 단일 문자열로 반환.
@@ -745,8 +758,9 @@ export function useSummarize() {
     // (ai-service.ts IDLE_TIMEOUT_MS=60초)이 이미 res.destroy() 로 끊으므로, renderer 는 그보다
     // 넉넉한 "마지막 토큰 이후 무진전" 상한 + 폭주(무한 루프)만 막는 절대 백스톱만 둔다.
     // 토큰이 흐르는 한 요약은 규모와 무관하게 완주한다(사용자는 언제든 중지 가능).
-    const IDLE_TIMEOUT_MS = 120000;            // 마지막 진전 이후 2분 — main 60초의 renderer 백업
-    const MAX_TOTAL_MS = 3 * 60 * 60 * 1000;   // 절대 백스톱 3시간 — 정상은 사용자 취소, 이건 폭주 방어
+    // QA30(A-F1): 두 상한은 모듈 상수로 승격됐다(위 정의 참조) — main 의 절대 상한과 값이
+    // 어긋나지 않도록 테스트가 대조할 수 있어야 하기 때문.
+    const IDLE_TIMEOUT_MS = SUMMARY_IDLE_TIMEOUT_MS;
     let timedOut = false;
     // 무진전 판정의 기준 — guardedAppend(토큰 수신)마다 갱신된다.
     let lastProgressAt = startTime;
@@ -1023,17 +1037,38 @@ export function useSummarize() {
       }
       // ownership 가드: Stop→재요약 race 에서 stale run 이 새 run 의 summary 를 덮어쓰거나,
       // abort 된 부분 콘텐츠를 "완료된" 요약으로 커밋하는 것을 방지(use-qa 의 stillOurs 와 동형).
-      if (!timedOut && finalContent && clientRef.current === runClient) {
-        setSummary({
-          id: crypto.randomUUID(),
-          documentId: doc.id,
-          type: currentSummaryType,
-          content: finalContent,
-          model: currentSettings.model,
-          provider: currentSettings.provider,
-          createdAt: new Date(),
-          durationMs,
-        });
+      if (!timedOut && clientRef.current === runClient) {
+        // QA30(A-F8): 판정을 truthy → **공백 아님** 으로 바꾸고, 빈 경우를 조용히 넘기지 않는다.
+        // main 이 공백 토큰만 흘리고 정상 종료(ai:done)하면 여기 finalContent 가 비는데,
+        // 이전 코드는 setSummary 를 건너뛰기만 해서 **요약도 에러도 없이 스피너만 사라졌다**.
+        // (main 쪽 형제 수정: streamRequest 의 0토큰 판정도 공백 기준으로 교정 — 그쪽이
+        //  먼저 걸리면 emptyResponse 로 reject 되고, 그래도 새는 경로를 여기가 받는다.)
+        if (finalContent.trim()) {
+          // QA30(A-F5): 출력 상한에 걸려 잘린 본문은 완주본과 구분되어야 한다. 표식은 이 파일의
+          // 기존 규약(INTEGRATION_LABELS.truncated / summary.partialMarker)과 같은 자리·형식 —
+          // 본문 말미의 대괄호 한 줄. 배지가 아니라 본문에 넣는 이유는 **저장본만 봐도** 미완성
+          // 임을 알 수 있어야 하기 때문이다(세션에서 다시 연 요약에는 UI 상태가 남지 않는다).
+          const committed = runClient.lastTruncated
+            ? `${finalContent.trimEnd()}
+
+${t('summary.outputLimitMarker')}`
+            : finalContent;
+          if (committed !== finalContent) {
+            useAppStore.getState().replaceSummaryStream(committed);
+          }
+          setSummary({
+            id: crypto.randomUUID(),
+            documentId: doc.id,
+            type: currentSummaryType,
+            content: committed,
+            model: currentSettings.model,
+            provider: currentSettings.provider,
+            createdAt: new Date(),
+            durationMs,
+          });
+        } else {
+          setError({ code: 'GENERATE_FAIL', message: t('ai.emptySummary') });
+        }
       }
     } catch (err) {
       const rawCode = (err instanceof Error && 'code' in err ? (err as Error & { code?: string }).code : undefined);

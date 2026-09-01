@@ -56,6 +56,9 @@ export const _translations = {
   'outline.toggle': { ko: '목차 열기/닫기', en: 'Toggle contents' },
   'outline.jumpToPage': { ko: '{page}쪽으로 이동', en: 'Jump to page {page}' },
   'ai.generateFail': { ko: '요약 생성에 실패했습니다.', en: 'Failed to generate summary.' },
+  // QA30(A-F8): 스트림이 공백만 흘리고 정상 종료하면 finalContent 가 비어 setSummary 를
+  // 건너뛰었고, 그러면 요약도 에러도 없이 스피너만 사라졌다(무음 실패). 명시 에러로 표면화.
+  'ai.emptySummary': { ko: 'AI가 빈 요약을 반환했습니다. 모델을 바꾸거나 잠시 후 다시 시도해주세요.', en: 'The AI returned an empty summary. Try a different model or try again in a moment.' },
   'ai.requestFail': { ko: '요약 요청에 실패했습니다.', en: 'Failed to send summary request.' },
   'ai.streamInterrupted': { ko: 'AI 응답 수신이 중단되었습니다. 네트워크 연결과 AI 서비스 상태를 확인해주세요.', en: 'AI response stream interrupted. Please check your network connection and AI service status.' },
   // QA: use-summarize 가 직접 setError/throw 하던 하드코딩 한국어 → i18n(영어 UI 미번역 해소)
@@ -74,6 +77,7 @@ export const _translations = {
   'summary.partialRecoveryHint': { ko: '지금까지 생성된 부분은 저장할 수 있습니다.', en: 'You can still save the portion generated so far.' },
   'summary.partialRecoverAction': { ko: '생성된 부분까지 저장', en: 'Save what was generated' },
   'summary.partialMarker': { ko: '[... 이하 생략 — 요약이 중단되어 여기까지만 저장되었습니다]', en: '[... truncated — the summary was interrupted, so only this much was saved]' },
+  'summary.outputLimitMarker': { ko: '[... 이하 생략 — AI 출력 한도에 도달해 요약이 여기서 잘렸습니다]', en: '[... truncated — the summary hit the AI output limit and was cut off here]' },
   'summary.partialSaved': { ko: '중단된 요약을 생성된 부분까지 저장했습니다.', en: 'Saved the interrupted summary up to the portion that was generated.' },
   // Vision 실패 시 전체 요약을 막지 않고 텍스트 전용으로 강등할 때의 비차단 안내.
   'ai.imageAnalysisSkipped': { ko: '이미지 분석을 건너뛰고 텍스트만 요약했습니다 (Vision 모델 없음/실패 — llava 등 설치 시 이미지 포함).', en: 'Skipped image analysis and summarized text only (no/failed Vision model — install e.g. llava to include images).' },
@@ -156,6 +160,8 @@ export const _translations = {
   'uploader.emptyPdf': { ko: 'PDF에 페이지가 없습니다.', en: 'The PDF has no pages.' },
   'uploader.noText': { ko: 'PDF에서 텍스트를 추출할 수 없습니다. 설정에서 "스캔 PDF OCR"을 활성화하면 이미지 기반 PDF를 분석할 수 있습니다.', en: 'No text could be extracted from the PDF. Enable "Scanned PDF OCR" in Settings to analyze image-based PDFs.' },
   'uploader.ocrFail': { ko: 'OCR로도 텍스트를 추출할 수 없습니다. PDF 품질을 확인해주세요.', en: 'Text could not be extracted even with OCR. Please check the PDF quality.' },
+  // QA30(A-F4): 401 은 "OCR 실패" 가 아니라 키 문제다 — per-page catch 가 삼키던 것을 표면화.
+  'uploader.ocrAuthFail': { ko: 'API 키가 유효하지 않아 OCR을 진행할 수 없습니다. 설정에서 API 키를 확인해주세요.', en: 'OCR could not run because the API key is not valid. Please check your API key in Settings.' },
   'uploader.cancelParse': { ko: 'PDF 처리 취소', en: 'Cancel PDF processing' },
   'uploader.cancelBtn': { ko: '■ 취소', en: '■ Cancel' },
   'uploader.ocrProgress': { ko: '스캔 PDF 텍스트 인식 중...', en: 'Recognizing scanned PDF text...' },
@@ -481,6 +487,7 @@ export const _translations = {
   'mainerr.cloudRateLimit': { ko: '{provider} 요청 한도를 초과했습니다 (rate limit). 잠시 후 다시 시도해주세요.', en: '{provider} rate limit exceeded. Please try again in a moment.' },
   'mainerr.cloudOverloaded': { ko: '{provider} 서버가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요.', en: '{provider} servers are temporarily overloaded. Please try again in a moment.' },
   'mainerr.apiKeyMissing': { ko: '{provider} API 키가 설정되지 않았습니다.', en: 'No {provider} API key is configured.' },
+  'mainerr.settingsReadFailed': { ko: '설정을 읽을 수 없어 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.', en: 'Could not read your settings, so the request was not processed. Please try again in a moment.' },
   'mainerr.apiKeyInvalid': { ko: 'API 키가 유효하지 않습니다.', en: 'The API key is not valid.' },
   'mainerr.responseBlocked': { ko: 'AI 응답이 차단되었습니다 (사유: {reason}). 문서 내용 또는 출력 한도를 확인해주세요.', en: 'The AI response was blocked (reason: {reason}). Check the document content or output limits.' },
   // QA8(B-MED): 토큰 0개로 정상 종료(HTTP 200)한 스트림 — Gemini 는 blockReason 으로 잡혔지만
@@ -493,6 +500,13 @@ export const _translations = {
   'mainerr.streamTooLarge': { ko: 'AI 응답이 너무 커서 중단했습니다 (50MB 초과). 문서 범위를 좁히거나 다른 모델을 시도해주세요.', en: 'The AI response was too large and was stopped (over 50MB). Narrow the document range or try a different model.' },
   'mainerr.streamLineTooLarge': { ko: 'AI 응답이 손상되어 중단했습니다 (비정상적으로 큰 데이터). 잠시 후 다시 시도해주세요.', en: 'The AI response was malformed and was stopped (abnormally large data). Please try again in a moment.' },
   'mainerr.apiHttpError': { ko: 'API 요청 실패: HTTP {status}', en: 'API request failed: HTTP {status}' },
+  // QA30(A-F1): TTL 스위퍼가 회수한 요청 — 사용자 취소(코드 ABORTED, 배너 억제)와 달리
+  // 반드시 설명이 떠야 한다. 이전엔 둘이 같은 코드라 스피너만 사라지고 아무 안내가 없었다.
+  'mainerr.streamStalled': { ko: 'AI 응답이 10분 동안 아무 진전이 없어 중단되었습니다. AI 서버 상태를 확인한 뒤 다시 시도해주세요.', en: 'The AI response stalled with no progress for 10 minutes and was stopped. Check your AI server and try again.' },
+  'mainerr.streamMaxDuration': { ko: 'AI 요청이 최대 허용 시간(3시간)을 초과해 중단되었습니다. 문서 범위를 좁히거나 더 가벼운 모델을 사용해보세요.', en: 'The AI request exceeded the maximum allowed duration (3 hours) and was stopped. Narrow the document range or try a lighter model.' },
+  // QA30(A-F2): 기본 프로바이더 Ollama 만 에러 바디를 읽지 않아 버려지던 두 사유.
+  'mainerr.ollamaModelNotFound': { ko: 'Ollama 에 모델 "{model}" 이 설치되어 있지 않습니다. 설정에서 모델을 내려받은 뒤 다시 시도해주세요.', en: 'The model "{model}" is not installed in Ollama. Download it in Settings and try again.' },
+  'mainerr.ollamaOutOfMemory': { ko: '모델을 메모리에 올릴 수 없습니다 ({detail}). 더 작은 모델을 선택하거나 다른 프로그램을 종료한 뒤 다시 시도해주세요.', en: 'The model could not be loaded into memory ({detail}). Choose a smaller model or close other applications, then try again.' },
 
   // ─── 세션 영속화 (session-persistence) ───
   'recent.title': { ko: '최근 문서', en: 'Recent Documents' },
@@ -522,6 +536,8 @@ export const _translations = {
   'search.modeHint': { ko: '키워드: 정확한 단어 / 의미: 비슷한 내용까지 (임베딩)', en: 'Keyword: exact terms / Semantic: similar meaning (embeddings)' },
   'search.noEmbedModel': { ko: '의미 검색은 임베딩 모델이 필요합니다 — Ollama에서 nomic-embed-text를 설치하거나 키워드 검색을 사용하세요.', en: 'Semantic search needs an embedding model — install nomic-embed-text in Ollama or use keyword search.' },
   'search.embedFailed': { ko: '질의 임베딩에 실패했습니다. 잠시 후 다시 시도하세요.', en: 'Failed to embed the query. Please try again.' },
+  'settings.keyUnknown': { ko: '키 확인 불가 (잠시 후 다시 열어주세요)', en: 'Cannot verify key (please reopen in a moment)' },
+  'search.corrupted': { ko: '색인이 손상된 {count}개 문서는 검색되지 않았습니다. 해당 문서를 다시 열면 색인이 재생성됩니다.', en: '{count} document(s) were skipped because their index is damaged. Reopen them to rebuild the index.' },
   'search.excluded': { ko: '임베딩 모델이 다른 {count}개 문서는 제외됨', en: '{count} document(s) excluded (different embedding model)' },
   'search.cloudEmbedBadge': { ko: '🌐 {provider}로 전송', en: '🌐 Sent to {provider}' },
   'search.cloudEmbedTooltip': { ko: '의미 검색은 검색어와 문서 내용을 임베딩하기 위해 {provider} 서버로 전송합니다. 로컬에서만 처리하려면 Ollama 임베딩 모델을 사용하세요.', en: 'Semantic search sends your query and document text to {provider} servers for embedding. Use an Ollama embedding model to keep it fully local.' },

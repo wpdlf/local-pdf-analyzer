@@ -2,7 +2,7 @@ import http from 'http';
 import https from 'https';
 import { StringDecoder } from 'string_decoder';
 import { BrowserWindow } from 'electron';
-import { isLocalhostHost } from '../shared/constants';
+import { isLocalhostHost, MAX_AI_REQUEST_DURATION_MS } from '../shared/constants';
 
 interface GenerateRequest {
   text: string;
@@ -85,8 +85,78 @@ export async function retryOn429<T>(
   }
 }
 
-const activeRequests = new Map<string, { abort: () => void; createdAt: number; startedAt: number }>();
+/**
+ * activeRequests 엔트리를 끊는 **사유**. 시스템 판단과 사용자 의도를 코드로 구분하기 위한 것.
+ *
+ * QA30(A-F1): 이전엔 사용자 취소도 TTL 회수도 똑같이 `code:'ABORTED'` 로 나갔다. 렌더러는
+ * `rawCode !== 'ABORTED'` 로 "사용자가 스스로 멈춘 것" 을 걸러내므로(use-summarize),
+ * TTL 이 죽인 요청은 **에러 배너도 부분 복구 제안도 건너뛰고** 스피너만 사라졌다.
+ */
+export type AbortReason = 'user' | 'stalled' | 'maxAge';
+
+interface ActiveRequestEntry {
+  abort: (reason?: AbortReason) => void;
+  createdAt: number;
+  startedAt: number;
+  /**
+   * 마지막 **진전**(응답 데이터 수신) 시각. TTL 판정의 기준은 수명(startedAt)이 아니라 이 값이다.
+   * 등록 시점엔 startedAt 과 같고, streamRequest 가 데이터를 받을 때마다 갱신한다.
+   */
+  lastProgressAt: number;
+}
+
+const activeRequests = new Map<string, ActiveRequestEntry>();
 let nextRequestSeq = 0; // 단조 증가 카운터 — 같은 requestId 구별용
+
+/**
+ * QA30(A-F10): **스트리밍 생성 경로의 429 재시도.** vision/embed 는 R44/R45 에서 재시도와
+ * Retry-After 존중을 갖췄는데 생성 스트림만 없어 경로 간 비대칭이 남아 있었다(같은 429 인데
+ * 이미지 설명은 자가 회복하고 요약은 즉시 실패). 이미 방출된 토큰이 있으면 재시도가 응답을
+ * 중복시키므로 **첫 토큰 방출 전(=HTTP 4xx 응답 단계)에 한해서만** 재시도한다 — streamRequest
+ * 는 `status` 를 4xx/5xx 응답 핸들러에서만 부착하므로 이 조건은 구조적으로 보장된다.
+ *
+ * 재시도는 1회로 제한한다: 백오프 대기(Retry-After 최대 60초) 동안 렌더러로는 아무 진전
+ * 신호가 가지 않는데, 렌더러 감시견의 무진전 상한이 120초이기 때문이다.
+ *
+ * 대기 중에도 사용자 취소가 닿도록 activeRequests 에 대기 전용 entry 를 재등록한다
+ * (streamRequest 가 실패하며 자기 entry 를 지운 뒤라 그냥 두면 ai:abort 가 no-op 이 된다).
+ */
+async function retryStreamOn429(
+  fn: () => Promise<void>,
+  requestId: string,
+  retries = 1,
+  baseDelayMs = 2000,
+): Promise<void> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      const e = err as Error & { status?: number; retryAfterMs?: number };
+      if (e?.status !== 429 || attempt >= retries) throw err;
+      const controller = new AbortController();
+      const now = Date.now();
+      const waitEntry: ActiveRequestEntry = {
+        abort: () => controller.abort(),
+        createdAt: ++nextRequestSeq,
+        startedAt: now,
+        lastProgressAt: now,
+      };
+      activeRequests.set(requestId, waitEntry);
+      const delay = e.retryAfterMs !== undefined
+        ? e.retryAfterMs
+        : baseDelayMs * Math.pow(2, attempt) * (1 + Math.random() * 0.25);
+      try {
+        await sleepWithAbort(delay, controller.signal);
+      } catch {
+        if (activeRequests.get(requestId) === waitEntry) activeRequests.delete(requestId);
+        throw abortErrorFor('user');
+      }
+      if (activeRequests.get(requestId) === waitEntry) activeRequests.delete(requestId);
+      attempt++;
+    }
+  }
+}
 
 // R29 (v0.18.15): Ollama keep_alive 튜닝.
 // 기본값 5분이 지나면 모델이 GPU/메모리에서 unload 되어, 다음 호출 시 cold load 페널티
@@ -103,18 +173,78 @@ const OLLAMA_KEEP_ALIVE = '30m';
 // (Ollama 는 로컬이라 상한 미적용 — num_predict 무제한이 기존 동작.)
 const GENERATE_MAX_OUTPUT_TOKENS = 4096;
 
-// activeRequests TTL 정리 (10분 초과 항목 자동 제거)
+/**
+ * activeRequests 회수 TTL — **무진전 10분**.
+ *
+ * QA30(A-F1): 이전엔 `startedAt`(수명) 기준이라, 토큰이 활발히 흐르는 정상 스트림도 10분에
+ * 죽었다. Ollama 생성 경로는 출력 상한이 없고 maxChunkSize 는 16000토큰(≈60,000자)까지
+ * 허용하므로 10분 초과가 정상 범위다(실측: 30초당 토큰 1개 스트림이 660초에 사망, 토큰 21개
+ * 수신, `ai:done` 없음). 렌더러는 use-summarize 에서 "무진전 120초만 끊고 절대 상한 3시간"
+ * 을 명문화해 뒀는데 main 이 뒤에서 10분 절대 상한을 걸던 설계 모순이었다 —
+ * QA20 이 렌더러에서 고친 "수명 ≠ 고착" 오판의 main 쪽 형제.
+ *
+ * 스트리밍 요청은 응답 헤더 도착 후 60초 idle timer 가 더 짧은 보호막이므로, 이 TTL 의 실제
+ * 역할은 **고아 entry 회수**(embed/vision 이 등록만 되고 unregister 를 못 탄 경우)다.
+ */
 const ACTIVE_REQUEST_TTL_MS = 600000;
+
+/**
+ * 단일 AI 요청의 절대 상한(폭주 백스톱).
+ *
+ * 렌더러 요약 감시견의 `MAX_TOTAL_MS`(use-summarize.ts)와 **같은 값이어야 한다** — main 이
+ * 더 짧으면 렌더러가 명문화한 "토큰이 흐르는 한 규모와 무관하게 완주" 계약을 뒤에서 깬다.
+ *
+ * QA30(C-추가3): 값 자체는 `shared/constants.ts` 로 승격했다 — 리터럴 두 벌을 테스트의 런타임
+ * 비교로 붙들던 것을 단일 출처로 바꾼다(RAG_MIN_SCORE 와 같은 처리). 여기서는 기존 import
+ * 경로를 유지하기 위해 재수출만 한다. 렌더러(use-summarize.ts)의 배선은 아직 남아 있어
+ * ai-service-ttl.test.ts 의 drift 가드는 그대로 유효하다.
+ */
+export { MAX_AI_REQUEST_DURATION_MS };
+
+/**
+ * TTL 스위퍼의 회수 판정 — 순수 함수(테스트 노출용 export).
+ * @returns 회수 사유, 회수 대상이 아니면 null
+ */
+export function shouldReclaimRequest(
+  now: number,
+  entry: { startedAt: number; lastProgressAt: number },
+): AbortReason | null {
+  if (now - entry.lastProgressAt > ACTIVE_REQUEST_TTL_MS) return 'stalled';
+  if (now - entry.startedAt > MAX_AI_REQUEST_DURATION_MS) return 'maxAge';
+  return null;
+}
+
 const ttlCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [id, entry] of activeRequests) {
-    if (now - entry.startedAt > ACTIVE_REQUEST_TTL_MS) {
-      entry.abort();
+    const reason = shouldReclaimRequest(now, entry);
+    if (reason) {
+      entry.abort(reason);
       activeRequests.delete(id);
     }
   }
 }, 60000);
 ttlCleanupInterval.unref(); // Node.js 이벤트루프 블로킹 방지
+
+/**
+ * 취소 사유별 에러 — 렌더러가 "사용자가 멈춤" 과 "시스템이 죽임" 을 구분할 수 있어야 한다.
+ * `code:'ABORTED'` 는 **사용자 의도 전용**이다(렌더러가 배너를 억제하는 유일한 코드).
+ */
+function abortErrorFor(reason: AbortReason): Error {
+  if (reason === 'stalled') {
+    return Object.assign(
+      new Error('AI 요청이 10분 동안 아무 진전이 없어 중단되었습니다.'),
+      { code: 'STALLED', errorKey: 'streamStalled' },
+    );
+  }
+  if (reason === 'maxAge') {
+    return Object.assign(
+      new Error('AI 요청이 최대 허용 시간(3시간)을 초과해 중단되었습니다.'),
+      { code: 'STALLED', errorKey: 'streamMaxDuration' },
+    );
+  }
+  return Object.assign(new Error('요청이 중단되었습니다.'), { code: 'ABORTED' });
+}
 
 /**
  * @internal 테스트 전용 — activeRequests 누수 검증용.
@@ -185,10 +315,7 @@ export function abortGenerate(requestId: string): void {
 // R29 (v0.18.13): owner 식별을 위해 controller 자체를 entry 에 저장.
 // 같은 requestId 가 in-flight 중 재진입할 때, 이전 요청의 finally 가 새 요청의
 // entry 를 무차별 삭제하지 않도록 unregister 시 controller identity 를 확인한다.
-interface EmbedRequestEntry {
-  abort: () => void;
-  createdAt: number;
-  startedAt: number;
+interface EmbedRequestEntry extends ActiveRequestEntry {
   controller: AbortController;
 }
 
@@ -203,6 +330,7 @@ export function registerEmbedRequest(requestId: string, controller: AbortControl
     abort: () => controller.abort(),
     createdAt: now,
     startedAt: now,
+    lastProgressAt: now,
     controller,
   };
   activeRequests.set(requestId, entry);
@@ -234,40 +362,50 @@ export async function generate(
     activeRequests.delete(requestId);
   }
 
-  // v0.18.19 patch R32 P3: streamRequest 가 자기 controller 를 set 하기까지 한 틱 간격이
-  // 있어 그 사이에 도착한 ai:abort(sameId) 가 no-op 으로 떨어지던 결함. placeholder entry 를
-  // 즉시 등록하여 그 갭에 도착한 abort 도 잡는다 (Surface 2 P5).
-  // streamRequest 진입 시 자기 entry 로 덮어쓴다 (line 542 부근).
-  //
   // R34 P1 (R33 회귀 fix): 동기 throw (validateOllamaUrl / new URL() / API_KEY_MISSING) 시
-  // placeholder 가 activeRequests 에 남아 10분 TTL 까지 leak 되던 결함. try 블록으로 감싸
-  // sync throw 도 cleanup 보장. streamRequest 도착 후엔 자기 entry 로 덮어써 정상 흐름.
-  const placeholderController = new AbortController();
+  // entry 가 activeRequests 에 남아 TTL 까지 leak 되던 결함. try 블록으로 감싸 sync throw 도
+  // cleanup 을 보장한다. streamRequest 도착 후엔 자기 entry 로 덮어써 정상 흐름.
+  //
+  // QA30(A-F6): 이 sentinel 의 `abort` 는 **도달 불가**하다 — v0.18.19 R32 P3 주석은 "한 틱
+  // 간격" 을 말했지만 generate→generateXxx→streamRequest 사이에 await 지점이 없어 등록과
+  // 교체가 같은 동기 틱에 일어난다(net.test.ts 의 abortGenerate 테스트가 그 사이에 끼어들지
+  // 못하고 언제나 streamRequest 의 자기 entry 를 잡는 것으로 증명). 따라서 no-op 으로 두고
+  // "entry 가 있다 = 취소 가능하다" 는 거짓 불변식을 남기지 않는다. TTL 누수 방어만이 존재 이유.
   const placeholderNow = Date.now();
-  const placeholderEntry = {
-    abort: () => placeholderController.abort(),
+  const placeholderEntry: ActiveRequestEntry = {
+    abort: () => { /* 도달 불가 — 위 주석 참조. 이 entry 는 TTL 누수 sentinel 전용. */ },
     createdAt: placeholderNow,
     startedAt: placeholderNow,
+    lastProgressAt: placeholderNow,
   };
   activeRequests.set(requestId, placeholderEntry);
 
   try {
     // R34 P1 준수: buildPrompt 의 동기 throw(커스텀 빈 프롬프트 등)도 catch 의 placeholder 정리를
-    // 거치도록 try 안에서 호출한다(이전엔 try 밖이라 throw 시 placeholder 가 10분 TTL 까지 leak 가능).
+    // 거치도록 try 안에서 호출한다(이전엔 try 밖이라 throw 시 placeholder 가 TTL 까지 leak 가능).
     const prompt = buildPrompt(request.text, request.type, request.language, request.customPrompt);
-    switch (request.provider) {
-      case 'ollama':
-        return await generateOllama(requestId, prompt, request, win);
-      case 'claude':
-        if (!apiKey) throw Object.assign(new Error('Claude API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING', errorKey: 'apiKeyMissing', errorParams: { provider: 'Claude' } });
-        return await generateClaude(requestId, prompt, request, apiKey, win);
-      case 'openai':
-        if (!apiKey) throw Object.assign(new Error('OpenAI API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING', errorKey: 'apiKeyMissing', errorParams: { provider: 'OpenAI' } });
-        return await generateOpenAi(requestId, prompt, request, apiKey, win);
-      case 'gemini':
-        if (!apiKey) throw Object.assign(new Error('Gemini API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING', errorKey: 'apiKeyMissing', errorParams: { provider: 'Gemini' } });
-        return await generateGemini(requestId, prompt, request, apiKey, win);
-    }
+    const attempt = (): Promise<void> => {
+      switch (request.provider) {
+        case 'ollama':
+          return generateOllama(requestId, prompt, request, win);
+        case 'claude':
+          if (!apiKey) throw Object.assign(new Error('Claude API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING', errorKey: 'apiKeyMissing', errorParams: { provider: 'Claude' } });
+          return generateClaude(requestId, prompt, request, apiKey, win);
+        case 'openai':
+          if (!apiKey) throw Object.assign(new Error('OpenAI API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING', errorKey: 'apiKeyMissing', errorParams: { provider: 'OpenAI' } });
+          return generateOpenAi(requestId, prompt, request, apiKey, win);
+        case 'gemini':
+          if (!apiKey) throw Object.assign(new Error('Gemini API 키가 설정되지 않았습니다.'), { code: 'API_KEY_MISSING', errorKey: 'apiKeyMissing', errorParams: { provider: 'Gemini' } });
+          return generateGemini(requestId, prompt, request, apiKey, win);
+        default: {
+          // QA30(A-F6): exhaustive 가드 — 프로바이더가 추가됐는데 분기를 빠뜨리면 이전엔
+          // switch 가 조용히 undefined 를 돌려주고 요약이 "성공" 으로 끝났다.
+          const unreachable: never = request.provider;
+          throw new Error(`지원하지 않는 AI 프로바이더입니다: ${String(unreachable)}`);
+        }
+      }
+    };
+    return await retryStreamOn429(attempt, requestId);
   } catch (err) {
     // sync 또는 async throw 시 placeholder 가 streamRequest 의 자기 entry 로 아직 교체되지
     // 않았을 수 있다. identity 비교로 placeholder 만 정리 (이미 streamRequest 가 교체했다면
@@ -310,6 +448,34 @@ export async function checkAvailability(
 
 // ─── Ollama ───
 
+/**
+ * QA30(A-F2): **기본 프로바이더인 Ollama 만 에러 바디를 아예 읽지 않던 것**의 매퍼.
+ *
+ * streamRequest 는 `mapHttpError` 가 없으면 바디를 판독하지 않고 즉시 generic 으로 거부했고,
+ * generateOllama 만 이 매퍼가 없었다(실측: `ollama 404 → "API 요청 실패: HTTP 404"`,
+ * `ollama 500 → "HTTP 500"`. 대조군 `claude 503 → cloudOverloaded` 안내). 그래서 사용자가
+ * 실제로 필요한 두 정보가 버려졌다:
+ *   - `model "X" not found, try pulling it first` (모델 미설치 — 가장 흔한 첫 실행 실패)
+ *   - `model requires more system memory (9.2 GiB) than is available (5.1 GiB)` (로드 OOM)
+ * OOM 은 HTTP 500 으로 오므로 상태코드가 아니라 **바디 문구**로 먼저 가른다.
+ * @internal 테스트 노출용 export
+ */
+export function mapOllamaHttpError(status: number, detail: string, model: string): Error | null {
+  if (/requires more system memory|out of memory|cudaMalloc|insufficient memory/i.test(detail)) {
+    return Object.assign(
+      new Error(`모델을 메모리에 올릴 수 없습니다: ${detail}`),
+      { code: 'OLLAMA_OOM', errorKey: 'ollamaOutOfMemory', errorParams: { detail } },
+    );
+  }
+  if (status === 404 || /not found, try pulling it first|model ['"].*['"] not found/i.test(detail)) {
+    return Object.assign(
+      new Error(`Ollama 에 모델 '${model}' 이 없습니다. 먼저 다운로드해주세요.`),
+      { code: 'OLLAMA_MODEL_NOT_FOUND', errorKey: 'ollamaModelNotFound', errorParams: { model } },
+    );
+  }
+  return null;
+}
+
 async function generateOllama(
   requestId: string,
   prompt: string,
@@ -334,6 +500,10 @@ async function generateOllama(
     headers: { 'Content-Type': 'application/json' },
     body,
     extractToken: (parsed) => parsed.response || null,
+    // QA30(A-F5): Ollama 는 num_predict 를 보내지 않아 출력 상한이 없지만, 모델이 자체 컨텍스트
+    // 상한에 걸리면 done_reason:'length' 로 끝난다 — 다른 세 프로바이더와 같은 자리에 채운다.
+    detectTruncation: (parsed) => parsed.done === true && parsed.done_reason === 'length',
+    mapHttpError: (status, detail) => mapOllamaHttpError(status, detail, request.model || 'llama3.2'),
   }, win);
 }
 
@@ -404,6 +574,10 @@ async function generateClaude(
       return null;
     },
     checkAuthError: (statusCode) => statusCode === 401,
+    // QA30(A-F5): Claude 의 잘림 신호는 message_delta 의 stop_reason 이다 — 이전엔 추적조차
+    // 하지 않아 4096 토큰에 잘린 요약이 "완료" 로 커밋됐다(한국어는 토큰당 ~1.5자라 4096토큰
+    // ≈ 6,000자로 장문 full 요약에서 실제로 도달한다).
+    detectTruncation: (parsed) => parsed.type === 'message_delta' && parsed.delta?.stop_reason === 'max_tokens',
     mapHttpError: (status, detail) => mapCloudHttpError('Claude', status, detail),
   }, win);
 }
@@ -440,6 +614,8 @@ async function generateOpenAi(
     isSSE: true,
     extractToken: (parsed) => parsed.choices?.[0]?.delta?.content || null,
     checkAuthError: (statusCode) => statusCode === 401,
+    // QA30(A-F5): OpenAI 의 잘림 신호는 finish_reason:'length'.
+    detectTruncation: (parsed) => parsed.choices?.[0]?.finish_reason === 'length',
     mapHttpError: (status, detail) => mapCloudHttpError('OpenAI', status, detail),
   }, win);
 }
@@ -493,6 +669,10 @@ async function generateGemini(
       const fr = parsed.candidates?.[0]?.finishReason;
       return fr && fr !== 'STOP' ? fr : null;
     },
+    // QA30(A-F5): 잘림은 **차단과 별개 신호**다. blockReason 은 0토큰일 때만 소비되므로
+    // (토큰이 나왔으면 과차단 방지를 위해 정상 완료 — net.test.ts 가 그 의도를 고정),
+    // MAX_TOKENS 로 잘린 사실은 여기서 따로 추적해 ai:done 페이로드로 표식만 남긴다.
+    detectTruncation: (parsed) => parsed.candidates?.[0]?.finishReason === 'MAX_TOKENS',
     mapHttpError: (status, detail) => {
       if (status === 400 && /api key/i.test(detail)) {
         return Object.assign(new Error('API 키가 유효하지 않습니다.'), { code: 'API_KEY_INVALID', errorKey: 'apiKeyInvalid' });
@@ -511,14 +691,21 @@ interface StreamChunk {
   // Ollama
   response?: string;
   done?: boolean;
+  done_reason?: string;
   // Claude
   type?: string;
-  delta?: { text?: string };
+  delta?: { text?: string; stop_reason?: string };
   // OpenAI
-  choices?: { delta?: { content?: string } }[];
+  choices?: { delta?: { content?: string }; finish_reason?: string }[];
   // Gemini
   candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
   promptFeedback?: { blockReason?: string };
+}
+
+/** ai:done 과 함께 렌더러로 가는 완료 메타 — 지금은 출력 상한 잘림 표식만 싣는다. */
+export interface StreamDoneMeta {
+  /** 모델이 출력 상한(max_tokens/컨텍스트)에 걸려 **문장 중간에서** 끝났는가. */
+  truncated: true;
 }
 
 /**
@@ -552,11 +739,22 @@ interface StreamConfig {
    */
   detectBlockReason?: (parsed: StreamChunk) => string | null;
   /**
-   * R43 I-1: 4xx 응답 바디 기반 provider 별 에러 매핑 (예: Gemini 400 'API key not valid'
-   * → API_KEY_INVALID, 429 → rate limit 안내). 미지정 시 기존처럼 바디를 읽지 않고
-   * 즉시 generic 에러로 거부 (행위 보존).
+   * QA30(A-F5): 출력 상한 도달로 응답이 **잘렸는가**. 차단(detectBlockReason)과 달리 거부
+   * 사유가 아니라 **표식**이다 — 토큰이 나왔으면 정상 완료로 두되(과차단 방지, net.test.ts
+   * 가 고정한 의도), 잘린 사실을 ai:done 페이로드에 실어 렌더러가 배지를 붙일 수 있게 한다.
+   * 이전엔 Gemini 의 MAX_TOKENS 만 (그것도 0토큰 분기에서만) 소비됐고 Claude/OpenAI 는
+   * 추적조차 없어, 잘린 요약이 4프로바이더 모두 "완료" 로 커밋됐다.
    */
-  mapHttpError?: (statusCode: number, detail: string) => Error | null;
+  detectTruncation?: (parsed: StreamChunk) => boolean;
+  /**
+   * R43 I-1: 4xx 응답 바디 기반 provider 별 에러 매핑 (예: Gemini 400 'API key not valid'
+   * → API_KEY_INVALID, 429 → rate limit 안내).
+   *
+   * QA30(A-F2): **필수 필드다.** 이전엔 optional 이라 미지정 프로바이더(=기본값 Ollama)가
+   * 바디를 읽지 않고 즉시 generic 으로 거부했고, 그 사실이 타입으로 드러나지 않았다.
+   * 새 프로바이더가 매퍼를 빠뜨리면 컴파일에서 걸리도록 required 로 올린다(열거 → 구조 종결).
+   */
+  mapHttpError: (statusCode: number, detail: string) => Error | null;
 }
 
 /**
@@ -600,6 +798,9 @@ function streamRequest(
     let streamAborted = false;
     // abort 시 idle timer 정리용 — 응답 콜백 내부에서 설정됨
     let clearIdleTimerFn: (() => void) | null = null;
+    // QA30(A-F1): TTL 스위퍼가 보는 진전 시각을 갱신하기 위한 자기 entry 참조.
+    // (등록은 req 생성 이후이고 응답 콜백은 그보다 뒤에 실행되므로 null 가드로 충분)
+    let myEntry: ActiveRequestEntry | null = null;
     // 이 요청의 고유 시퀀스 번호 — 같은 requestId로 새 요청이 등록된 경우 구별용
     const myCreatedAt = ++nextRequestSeq;
 
@@ -653,13 +854,12 @@ function streamRequest(
 
         if (res.statusCode && res.statusCode >= 400) {
           const errStatus = res.statusCode;
-          if (!config.mapHttpError) {
-            safeDeleteRequest();
-            safeReject(Object.assign(new Error(`API 요청 실패: HTTP ${errStatus}`), { errorKey: 'apiHttpError', errorParams: { status: String(errStatus) } }));
-            res.destroy();
-            return;
-          }
-          // R43 I-1: provider 가 매퍼를 제공하면 에러 바디를 읽어 구체 에러로 변환.
+          // QA30(A-F10): 이 시점엔 토큰이 하나도 방출되지 않았음이 구조적으로 보장된다
+          // (상태코드 검사가 data 핸들러 등록보다 앞). 그래서 여기서만 status/Retry-After 를
+          // 에러에 부착한다 — retryStreamOn429 가 "첫 토큰 전 429" 만 재시도하도록.
+          const retryAfterMs = parseRetryAfterMs(res.headers['retry-after']);
+          const withRetryMeta = (e: Error): Error => Object.assign(e, { status: errStatus, retryAfterMs });
+          // R43 I-1: provider 매퍼로 에러 바디를 읽어 구체 에러로 변환.
           // httpPost 의 finalizeError 와 동일한 64KB 캡 + redaction 패턴.
           const errChunks: Buffer[] = [];
           let errBytes = 0;
@@ -680,10 +880,10 @@ function streamRequest(
             // 않도록 가드 — 실패 시 generic HTTP 에러로 fallback.
             let mapped: Error | null = null;
             try {
-              mapped = config.mapHttpError!(errStatus, String(detail));
+              mapped = config.mapHttpError(errStatus, String(detail));
             } catch { /* 매퍼 결함 — generic fallback */ }
             safeDeleteRequest();
-            safeReject(mapped ?? Object.assign(new Error(`API 요청 실패: HTTP ${errStatus}`), { errorKey: 'apiHttpError', errorParams: { status: String(errStatus) } }));
+            safeReject(withRetryMeta(mapped ?? Object.assign(new Error(`API 요청 실패: HTTP ${errStatus}`), { errorKey: 'apiHttpError', errorParams: { status: String(errStatus) } })));
           };
           // R44 I-2: 에러 바디 수집에 전용 타이머 — 서버가 4xx 헤더만 보내고 바디를 멈추면
           // 기존엔 req.setTimeout(300s)/renderer IPC 타임아웃(120s)까지 generic 에러로
@@ -710,9 +910,15 @@ function streamRequest(
 
         let buffer = '';
         const decoder = new StringDecoder('utf8');
-        // R43 H-1: 토큰 0개 + 차단 사유로 끝난 스트림을 명시 실패 처리하기 위한 추적
-        let emittedTokens = 0;
+        // R43 H-1: 토큰 0개 + 차단 사유로 끝난 스트림을 명시 실패 처리하기 위한 추적.
+        // QA30(A-F8): 판정 기준은 "토큰이 truthy 였는가" 가 아니라 **공백 아닌 문자를
+        // 방출했는가** 다. 이전 기준이면 `{"response":"   "}` 만 흘려도 ai:token + ai:done 으로
+        // "성공" 완료했고, 렌더러는 빈 finalContent 에서 setSummary 를 건너뛰어 요약도 에러도
+        // 없이 스피너만 사라졌다(무음 실패).
+        let emittedVisibleText = false;
         let blockReason: string | null = null;
+        // QA30(A-F5): 출력 상한 도달 표식 (거부 사유 아님 — ai:done 페이로드로 전달).
+        let truncated = false;
 
         const createIdleTimeout = () => setTimeout(() => {
           if (!streamAborted) {
@@ -726,6 +932,8 @@ function streamRequest(
         // idle timeout: 마지막 data 이벤트 이후 60초간 데이터 없으면 스트림 종료
         let idleTimer: ReturnType<typeof setTimeout> | null = createIdleTimeout();
         const resetIdleTimer = () => {
+          // QA30(A-F1): 데이터 수신은 **진전** 신호다 — TTL 스위퍼는 수명이 아니라 이 시각을 본다.
+          if (myEntry) myEntry.lastProgressAt = Date.now();
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = createIdleTimeout();
         };
@@ -734,6 +942,31 @@ function streamRequest(
         };
         // abort 클로저에서 idle timer를 정리할 수 있도록 Promise 스코프에 노출
         clearIdleTimerFn = clearIdleTimer;
+
+        /**
+         * 한 JSON 라인의 소비 — 토큰 방출 + 차단/잘림 신호 추적.
+         * QA30(A-F5/F8): 이전엔 data 핸들러와 end 핸들러에 **같은 블록이 두 벌** 복제돼 있어,
+         * 새 신호(detectTruncation)를 한쪽에만 넣으면 마지막 버퍼에서 조용히 유실됐다.
+         * 단일 함수로 종결한다.
+         */
+        const consumeChunk = (jsonStr: string): void => {
+          let parsed: StreamChunk;
+          try {
+            parsed = JSON.parse(jsonStr);
+          } catch {
+            return; // JSON 파싱 실패 무시
+          }
+          const token = config.extractToken(parsed);
+          if (token) {
+            if (token.trim()) emittedVisibleText = true;
+            safeSend('ai:token', requestId, token);
+          }
+          if (config.detectBlockReason) {
+            const reason = config.detectBlockReason(parsed);
+            if (reason) blockReason = reason;
+          }
+          if (config.detectTruncation?.(parsed)) truncated = true;
+        };
 
         res.on('data', (chunk: Buffer) => {
           if (streamAborted) return;
@@ -789,20 +1022,7 @@ function streamRequest(
               if (jsonStr === '[DONE]') continue;
             }
 
-            try {
-              const parsed = JSON.parse(jsonStr);
-              const token = config.extractToken(parsed);
-              if (token) {
-                emittedTokens++;
-                safeSend('ai:token', requestId, token);
-              }
-              if (config.detectBlockReason) {
-                const reason = config.detectBlockReason(parsed);
-                if (reason) blockReason = reason;
-              }
-            } catch {
-              // JSON 파싱 실패 무시
-            }
+            consumeChunk(jsonStr);
           }
         });
 
@@ -825,18 +1045,7 @@ function streamRequest(
                 jsonStr = jsonStr.slice(6);
                 if (jsonStr === '[DONE]') continue;
               }
-              try {
-                const parsed = JSON.parse(jsonStr);
-                const token = config.extractToken(parsed);
-                if (token) {
-                  emittedTokens++;
-                  safeSend('ai:token', requestId, token);
-                }
-                if (config.detectBlockReason) {
-                  const reason = config.detectBlockReason(parsed);
-                  if (reason) blockReason = reason;
-                }
-              } catch { /* 파싱 실패 무시 */ }
+              consumeChunk(jsonStr);
             }
           }
           // R43 H-1: 토큰을 하나도 방출하지 못한 채 정상 종료(HTTP 200)한 스트림은 성공이 아니다 —
@@ -845,7 +1054,8 @@ function streamRequest(
           // QA8(B-MED): 이전엔 blockReason(Gemini 전용) 이 있을 때만 거부해, Claude/OpenAI 가
           // content_filter/빈 delta 로 0토큰 종료하면 무음 no-op 이 됐다. blockReason 유무와 무관하게
           // 0토큰이면 거부하되, 사유가 있으면 responseBlocked, 없으면 generic emptyResponse 로 매핑.
-          if (emittedTokens === 0) {
+          // QA30(A-F8): "토큰이 하나라도 있었나" 가 아니라 "공백 아닌 글자가 있었나" 로 판정.
+          if (!emittedVisibleText) {
             safeDeleteRequest();
             if (blockReason) {
               safeReject(Object.assign(
@@ -861,7 +1071,14 @@ function streamRequest(
             return;
           }
           safeDeleteRequest();
-          safeSend('ai:done', requestId);
+          // QA30(A-F5): 정상 완료는 그대로 두고, 잘린 경우에만 메타를 덧붙인다(인자 개수가
+          // 늘지 않으므로 기존 렌더러/preload 계약은 그대로 동작한다 — 표식만 추가).
+          if (truncated) {
+            const meta: StreamDoneMeta = { truncated: true };
+            safeSend('ai:done', requestId, meta);
+          } else {
+            safeSend('ai:done', requestId);
+          }
           safeResolve();
         });
 
@@ -893,11 +1110,13 @@ function streamRequest(
       safeReject(withTransportErrorKey(err));
     });
 
-    // v0.18.19 patch R32 P3: 5분 전체 요청 타임아웃 (응답 헤더 도착 전 단계 보호).
-    // 응답이 들어오면 idle timer (60s) 가 더 짧은 보호막으로 동작 → 본 타임아웃은 사실상
-    // dormant 상태. `settled` 가드와 idle timer 의 res.destroy() 가 본 callback 의 실제
-    // 작동을 막아 누수는 없으나, 유지 비용 0이 아닌 timer 참조를 살려두는 것은 noise.
-    // 향후 idle timer 진입 시 `req.setTimeout(0)` 로 명시 해제 검토 (Surface 2 P5).
+    // v0.18.19 patch R32 P3: 응답 헤더 도착 전 단계 보호.
+    //
+    // QA30(A-F9) 주석 정정: `req.setTimeout` 은 "5분 전체 요청 타임아웃" 이 **아니다** —
+    // Node 의 소켓 **무활동(inactivity)** 타이머다. 소켓에 읽기/쓰기가 있는 한 계속 리셋되므로
+    // 5분을 넘는 정상 스트림도 여기서 죽지 않는다. 응답이 들어오면 idle timer (60s) 가 더 짧은
+    // 보호막이 되어 본 타이머는 사실상 dormant 다. 사용자 메시지의 "(5분)" 표기도 그래서
+    // 실제로는 "5분간 소켓 무활동" 을 뜻한다.
     req.setTimeout(300000, () => {
       if (settled) return;
       streamAborted = true; // 타임아웃 후 응답 콜백 도착 시 idle timer 생성/데이터 처리 차단
@@ -908,20 +1127,24 @@ function streamRequest(
 
     // abort를 write 전에 등록하여 race condition 방지
     // response 스트림도 함께 파괴하여 generator 무한 대기 방지
-    activeRequests.set(requestId, {
-      abort: () => {
+    const registeredAt = Date.now();
+    myEntry = {
+      // QA30(A-F1): 사유를 받아 사용자 취소(ABORTED)와 TTL 회수(STALLED)를 다른 코드로 낸다.
+      abort: (reason: AbortReason = 'user') => {
         streamAborted = true;
         if (clearIdleTimerFn) clearIdleTimerFn();
         safeDeleteRequest();
         // settle을 destroy보다 먼저 수행: destroy()가 동기적으로 error 이벤트를 발생시키면
         // 'socket hang up' 같은 실제 에러가 ABORTED 코드를 덮어써 호출자가 의도를 구분할 수 없어짐
-        safeReject(Object.assign(new Error('요청이 중단되었습니다.'), { code: 'ABORTED' }));
+        safeReject(abortErrorFor(reason));
         if (responseStream && !responseStream.destroyed) responseStream.destroy();
         if (!req.destroyed) req.destroy();
       },
       createdAt: myCreatedAt,
-      startedAt: Date.now(),
-    });
+      startedAt: registeredAt,
+      lastProgressAt: registeredAt,
+    };
+    activeRequests.set(requestId, myEntry);
 
     req.write(config.body);
     req.end();
@@ -960,6 +1183,78 @@ interface VisionConfig {
   sanitize: (text: string) => string;
 }
 
+/** 비스트리밍 Vision 응답의 파싱 결과 — 본문과 종료 사유를 분리해 공통 후처리로 넘긴다. */
+interface VisionRaw {
+  text: string;
+  /** 정상(`stop`/`end_turn`/`STOP`) 이 아닌 종료 사유. 없으면 null. */
+  blockReason: string | null;
+}
+
+/**
+ * QA30(A-F3): provider 별 비스트리밍 Vision 응답에서 **본문과 종료 사유**를 뽑는다.
+ *
+ * 대조군인 생성 스트림은 `detectBlockReason` + 0토큰 판정으로 빈 응답/차단을 명시 거부하는데
+ * (streamRequest), 비스트리밍 Vision/OCR 은 4프로바이더 전부 `|| ''` 로 뭉개 **빈 문자열을
+ * success 로 반환**했다. 실측: ollama/claude/openai/gemini 빈 응답과 gemini SAFETY 차단이
+ * 전부 `''` 성공. Gemini 응답에는 `promptFeedback.blockReason` 이 실려 오는데 판독 코드가
+ * 스트리밍 분기에만 있었다. 스트리밍의 계약을 여기에도 동일하게 둔다(구조 종결).
+ * @internal 테스트 노출용 export
+ */
+export function parseVisionResponse(
+  provider: 'ollama' | 'claude' | 'openai' | 'gemini',
+  parsed: {
+    response?: string; done_reason?: string;
+    content?: { text?: string }[]; stop_reason?: string;
+    choices?: { message?: { content?: string }; finish_reason?: string }[];
+    candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+    promptFeedback?: { blockReason?: string };
+  },
+): VisionRaw {
+  const abnormal = (value: string | undefined | null, normal: string[]): string | null =>
+    value && !normal.includes(value) ? value : null;
+  switch (provider) {
+    case 'ollama':
+      return { text: parsed.response || '', blockReason: abnormal(parsed.done_reason, ['stop']) };
+    case 'claude':
+      return { text: parsed.content?.[0]?.text || '', blockReason: abnormal(parsed.stop_reason, ['end_turn', 'stop_sequence']) };
+    case 'openai':
+      return {
+        text: parsed.choices?.[0]?.message?.content || '',
+        blockReason: abnormal(parsed.choices?.[0]?.finish_reason, ['stop']),
+      };
+    case 'gemini': {
+      const parts = parsed.candidates?.[0]?.content?.parts;
+      const text = Array.isArray(parts) ? parts.map((p) => p?.text || '').join('') : '';
+      const reason = parsed.promptFeedback?.blockReason
+        ?? abnormal(parsed.candidates?.[0]?.finishReason, ['STOP']);
+      return { text, blockReason: reason ?? null };
+    }
+  }
+}
+
+/**
+ * QA30(A-F3): Vision/OCR 응답의 공통 후처리 — 스트리밍의 0토큰 계약과 동형.
+ *
+ * sanitize 후 **공백만 남으면** 성공이 아니다. 사유가 있으면 BLOCKED(차단), 없으면
+ * EMPTY_RESPONSE. 반대로 본문이 있으면 종료 사유가 비정상(max_tokens/length 등)이어도
+ * 정상 반환한다 — 스트리밍이 `net.test.ts` 에서 고정한 "과차단 방지" 판단과 같은 규칙.
+ * @internal 테스트 노출용 export
+ */
+export function finalizeVisionResult(raw: VisionRaw, sanitize: (t: string) => string): string {
+  const sanitized = sanitize(raw.text);
+  if (sanitized.trim()) return sanitized;
+  if (raw.blockReason) {
+    throw Object.assign(
+      new Error(`이미지 분석 응답이 차단되었습니다 (사유: ${raw.blockReason}).`),
+      { code: 'BLOCKED', errorKey: 'responseBlocked', errorParams: { reason: raw.blockReason } },
+    );
+  }
+  throw Object.assign(
+    new Error('이미지 분석이 빈 응답을 반환했습니다.'),
+    { code: 'EMPTY_RESPONSE', errorKey: 'emptyResponse' },
+  );
+}
+
 async function callVision(
   config: VisionConfig,
   imageBase64: string,
@@ -983,7 +1278,7 @@ async function callVision(
         keep_alive: OLLAMA_KEEP_ALIVE,
       });
       const result = await httpPost(url.toString(), { 'Content-Type': 'application/json' }, body, config.timeoutMs, signal);
-      return config.sanitize(JSON.parse(result).response || '');
+      return finalizeVisionResult(parseVisionResponse('ollama', JSON.parse(result)), config.sanitize);
     }
     case 'claude': {
       if (!apiKey) throw new Error('Claude API 키가 필요합니다.');
@@ -1010,8 +1305,7 @@ async function callVision(
         }, body, config.timeoutMs, signal),
         signal,
       );
-      const parsed = JSON.parse(result);
-      return config.sanitize(parsed.content?.[0]?.text || '');
+      return finalizeVisionResult(parseVisionResponse('claude', JSON.parse(result)), config.sanitize);
     }
     case 'openai': {
       if (!apiKey) throw new Error('OpenAI API 키가 필요합니다.');
@@ -1034,8 +1328,7 @@ async function callVision(
         }, body, config.timeoutMs, signal),
         signal,
       );
-      const parsed = JSON.parse(result);
-      return config.sanitize(parsed.choices?.[0]?.message?.content || '');
+      return finalizeVisionResult(parseVisionResponse('openai', JSON.parse(result)), config.sanitize);
     }
     case 'gemini': {
       if (!apiKey) throw new Error('Gemini API 키가 필요합니다.');
@@ -1057,10 +1350,7 @@ async function callVision(
         }, body, config.timeoutMs, signal),
         signal,
       );
-      const parsed = JSON.parse(result);
-      const parts = parsed.candidates?.[0]?.content?.parts;
-      const text = Array.isArray(parts) ? parts.map((p: { text?: string }) => p?.text || '').join('') : '';
-      return config.sanitize(text);
+      return finalizeVisionResult(parseVisionResponse('gemini', JSON.parse(result)), config.sanitize);
     }
   }
 }
@@ -1180,9 +1470,16 @@ function httpPost(
           console.error(`Vision API error: HTTP ${errStatus}${truncated ? ' (body truncated)' : ''}`, detail);
           // R44: status 부착 — retryOn429 가 429 만 선별 재시도할 수 있도록.
           // R45: Retry-After 헤더도 함께 부착 — 서버 지정 대기 시간 존중.
+          //
+          // QA30(A-F4): 401 은 code/errorKey 를 붙여 auth 실패로 구분한다. 이전엔 Vision/OCR
+          // 경로만 `code=undefined, errorKey=undefined` 였고(대조군 generate 401 →
+          // API_KEY_INVALID/apiKeyInvalid), 그 결과 키를 회수·만료한 채 스캔 PDF 를 열면
+          // OCR 이 페이지마다 401 을 받는데 pdf-parser 의 per-page catch 가 '' 로 삼켜
+          // **키 문제가 "OCR 실패" 로 둔갑**했다.
           safeReject(Object.assign(new Error(`Vision API 요청 실패: HTTP ${errStatus}`), {
             status: errStatus,
             retryAfterMs: parseRetryAfterMs(res.headers['retry-after']),
+            ...(errStatus === 401 ? { code: 'API_KEY_INVALID', errorKey: 'apiKeyInvalid' } : {}),
           }));
         };
         // 에러 바디 사이즈는 바이트 기준으로 제한 — chunk 개수 기준은 공격적/버그 서버가
@@ -1227,6 +1524,10 @@ function httpPost(
     });
 
     req.on('error', (err) => safeReject(err));
+    // QA30(A-F9): `req.setTimeout` 은 전체 요청 상한이 아니라 **소켓 무활동** 타이머다.
+    // Vision/OCR 은 스트리밍이 아니고(`stream:false`) 별도 idle timer 도 없으므로 여기서는
+    // timeoutMs 가 곧 무활동 상한이자 사실상의 호출 상한이 된다. 특히 로컬 Ollama OCR 은
+    // 응답을 한 번에 보내므로 모델이 느리면 90초 무활동으로 끊긴다(이 값이 유일한 상한).
     req.setTimeout(timeoutMs, () => {
       if (responseStream && !responseStream.destroyed) responseStream.destroy();
       req.destroy();
@@ -1276,7 +1577,11 @@ export async function generateEmbeddings(
   if (provider === 'claude') {
     try {
       return await embedOllama(texts, ollamaBaseUrl, embeddingModel, signal);
-    } catch {
+    } catch (err) {
+      // QA30(A-F7): **사용자 취소는 "프로바이더 미지원" 이 아니다.** 이전엔 catch 가 전부
+      // null 로 뭉개서, RAG 재빌드를 중단시킨 abort 가 "임베딩 불가 → 키워드 모드로 강등"
+      // 으로 보고됐다(대조군 provider='ollama' 는 같은 상황에서 'Aborted' 로 reject).
+      if (signal?.aborted || (err as Error)?.message === 'Aborted') throw err;
       return null; // Ollama도 불가 → keyword fallback
     }
   }

@@ -17,6 +17,7 @@ const M = vi.hoisted(() => ({
   // preflight analyzeImage 호출 시 실행할 훅(테스트에서 abort 등 store 변경 주입용).
   onAnalyzeImage: null as null | (() => void),
   reqCounter: 0,
+  truncated: false,
   // Stop→재요약 race 테스트용: 첫 summarize 호출만 이 promise 에서 일시정지시켜
   // stale run 의 finally 가 새 run 보다 늦게 도달하는 상황을 결정적으로 재현.
   gate: null as Promise<void> | null,
@@ -38,6 +39,8 @@ const M = vi.hoisted(() => ({
 vi.mock('../ai-client', () => ({
   AiClient: class {
     constructor(_settings: unknown) { /* noop */ }
+    // QA30(A-F5): 실제 AiClient 는 ai:done 의 잘림 표식을 run 단위 sticky 플래그로 노출한다.
+    get lastTruncated() { return M.truncated; }
     async isAvailable() { return M.available; }
     prepareSummarize() { return `req-${++M.reqCounter}`; }
     // 실제 시그니처: summarize(text, type, requestId?) — 계약 패리티를 위해 3번째 인자 포함.
@@ -71,6 +74,7 @@ vi.stubGlobal('crypto', { randomUUID: () => `uuid-${Math.random()}` });
 
 import { useSummarize } from '../use-summarize';
 import { useAppStore } from '../store';
+import { t } from '../i18n';
 import { DEFAULT_SETTINGS } from '../../types';
 import type { PdfDocument, PageImage } from '../../types';
 
@@ -95,6 +99,7 @@ beforeEach(() => {
   M.imageCalls = 0;
   M.onAnalyzeImage = null;
   M.reqCounter = 0;
+  M.truncated = false;
   M.gate = null;
   M.imageGate = null;
   M.onToken = null;
@@ -190,6 +195,25 @@ describe('useSummarize — 전체 요약', () => {
     expect(st.progress).toBe(100);
     expect(st.isGenerating).toBe(false);
     expect(M.summarizeCalls.every((c) => c.type === 'full')).toBe(true);
+  });
+
+  // QA30(A-F5): 출력 토큰 상한(4096)에 걸려 잘린 요약이 4프로바이더 모두 "완료" 로 커밋되고
+  // 있었다(한국어는 토큰당 ~1.5자라 장문 full 요약에서 도달). main 은 과차단 방지를 위해
+  // 이것을 거부가 아니라 표식으로 다루므로, 잘림을 사용자에게 전달할 책임은 여기에 있다.
+  it('출력 상한 잘림 → 저장 본문 말미에 잘림 마커가 붙는다', async () => {
+    M.truncated = true;
+    await runSummarize();
+    const st = useAppStore.getState();
+    expect(st.summary?.content).toContain('핵심 요약');
+    // 배지가 아니라 본문에 넣는다 — 세션에서 다시 연 요약에는 UI 상태가 남지 않기 때문.
+    expect(st.summary?.content).toContain(t('summary.outputLimitMarker'));
+    // 화면(summaryStream)과 저장본이 갈리면 사용자가 본 것과 저장된 것이 달라진다.
+    expect(st.summaryStream).toContain(t('summary.outputLimitMarker'));
+  });
+
+  it('정상 완주 → 잘림 마커가 붙지 않는다', async () => {
+    await runSummarize();
+    expect(useAppStore.getState().summary?.content).not.toContain(t('summary.outputLimitMarker'));
   });
 
   it('유의미한 텍스트 없음 → PDF_NO_TEXT', async () => {
@@ -661,5 +685,27 @@ describe('useSummarize — 중단된 부분 요약의 승인 저장 (QA29 C-3)',
     expect(ok).toBe(false);
     expect(useAppStore.getState().summary).toBeNull();
     expect(useAppStore.getState().summaryStreamComplete).toBe(false);
+  });
+});
+
+// QA30(A-F8): main 이 공백 토큰만 흘리고 정상 종료(ai:done)하면 finalContent 가 비는데,
+// 이전 코드는 setSummary 를 **건너뛰기만** 해서 요약도 에러도 없이 스피너만 사라졌다.
+describe('QA30 A-F8: 빈 요약은 조용히 넘어가지 않는다', () => {
+  it('공백 토큰만 받고 정상 종료 → 명시 에러 + 요약 미커밋', async () => {
+    M.tokens = ['   ', '  	 '];
+    await runSummarize();
+    const st = useAppStore.getState();
+    expect(st.summary).toBeNull();
+    expect(st.error?.code).toBe('GENERATE_FAIL');
+    expect(st.error?.message).toBeTruthy();
+    expect(st.isGenerating).toBe(false);
+  });
+
+  it('실제 글자가 하나라도 있으면 종전대로 커밋된다 (과잉 에러 방지)', async () => {
+    M.tokens = ['  ', '요약본'];
+    await runSummarize();
+    const st = useAppStore.getState();
+    expect(st.summary?.content).toContain('요약본');
+    expect(st.error).toBeNull();
   });
 });

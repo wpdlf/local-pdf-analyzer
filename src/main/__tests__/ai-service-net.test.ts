@@ -20,6 +20,7 @@ import {
   checkAvailability,
   generateEmbeddings,
   analyzeImage,
+  analyzeImageForOcr,
   generate,
   abortGenerate,
   cleanupAiService,
@@ -27,6 +28,9 @@ import {
   retryOn429,
   parseRetryAfterMs,
   mapCloudHttpError,
+  mapOllamaHttpError,
+  parseVisionResponse,
+  finalizeVisionResult,
 } from '../ai-service';
 
 function makeReq() {
@@ -490,12 +494,11 @@ describe('generate → streamRequest (스트리밍)', () => {
     ).rejects.toMatchObject({ code: 'API_KEY_INVALID' });
   });
 
-  it('HTTP 500 → API 요청 실패', async () => {
-    M.httpRequest.mockImplementation((_opts: unknown, cb: (r: unknown) => void) => {
-      const req = makeReq();
-      queueMicrotask(() => { const res = makeRes({ statusCode: 500 }); cb(res); });
-      return req;
-    });
+  // QA30(A-F2): ollama 도 이제 mapHttpError 를 갖는다 → 4xx/5xx 바디를 읽고 매퍼가 null 이면
+  // 종전 generic 으로 fallback. 바디를 흘려주도록 목을 갱신(이전엔 헤더만 보내 8초 errBodyTimer
+  // 를 태웠다 — 매퍼 부재로 바디를 안 읽던 시절의 목이었음).
+  it('HTTP 500 (매칭되지 않는 바디) → generic API 요청 실패', async () => {
+    respond(M.httpRequest, 500, { error: 'something unexpected' });
     await expect(
       generate('r3', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never),
     ).rejects.toThrow(/API 요청 실패: HTTP 500/);
@@ -701,8 +704,11 @@ describe('generate → streamRequest (스트리밍)', () => {
       return req;
     });
     const win = makeWin();
+    // QA30(A-F5): 원 의도(토큰이 나왔으면 **정상 완료** — 과차단 방지)는 그대로 유지된다.
+    // reject 하지 않고 ai:done 을 보낸다. 달라진 것은 잘림 **표식**이 페이로드로 붙는 것뿐.
     await generate('g3', { text: 'x', type: 'full', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', win as never);
-    expect(win.webContents.send).toHaveBeenCalledWith('ai:done', 'g3');
+    expect(win.webContents.send).toHaveBeenCalledWith('ai:done', 'g3', { truncated: true });
+    expect(win.webContents.send).toHaveBeenCalledWith('ai:token', 'g3', '부분 응답');
   });
 
   // R43 I-1: 400 키 오류가 바디 기반으로 API_KEY_INVALID 매핑 + 키 redaction
@@ -713,11 +719,20 @@ describe('generate → streamRequest (스트리밍)', () => {
     ).rejects.toMatchObject({ code: 'API_KEY_INVALID' });
   });
 
-  it('gemini 429 → rate limit 안내 메시지', async () => {
-    respond(M.httpsRequest, 429, { error: { message: 'Resource has been exhausted' } });
-    await expect(
-      generate('g5', { text: 'x', type: 'qa', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', makeWin() as never),
-    ).rejects.toThrow(/요청 한도를 초과/);
+  it('gemini 429 → rate limit 안내 메시지 (재시도 1회 소진 후)', async () => {
+    // QA30(A-F10): 스트리밍 429 도 1회 재시도한다 — 재시도까지 실패하면 종전 안내로 거부.
+    // 백오프(2s+jitter)를 fake timer 로 전진시켜 실시간 대기를 없앤다.
+    vi.useFakeTimers();
+    try {
+      respond(M.httpsRequest, 429, { error: { message: 'Resource has been exhausted' } });
+      const p = generate('g5', { text: 'x', type: 'qa', provider: 'gemini', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'gkey', makeWin() as never);
+      const assertion = expect(p).rejects.toThrow(/요청 한도를 초과/);
+      await vi.advanceTimersByTimeAsync(2600);
+      await assertion;
+      expect(M.httpsRequest).toHaveBeenCalledTimes(2); // 최초 1 + 재시도 1
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('gemini 400 일반 오류(키 무관) → generic HTTP 에러 (오분류 방지)', async () => {
@@ -749,7 +764,303 @@ describe('generate → streamRequest (스트리밍)', () => {
     expect(__activeRequestCount()).toBe(1); // in-flight 등록됨
     abortGenerate('rabort'); // streamRequest 가 동기로 등록한 entry 를 취소
     await expect(p).rejects.toMatchObject({ code: 'ABORTED' });
-    // R34 P1: abort 후 entry 즉시 제거 — 10분 TTL leak 없음
+    // R34 P1: abort 후 entry 즉시 제거 — TTL leak 없음
     expect(__activeRequestCount()).toBe(0);
+  });
+});
+
+// ─── QA30 A축 회귀 넷 ───
+
+/** 200 스트림 목 — 주어진 본문을 한 번에 흘리고 종료. */
+function stream(mock: ReturnType<typeof vi.fn>, body: string) {
+  mock.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+    const req = makeReq();
+    queueMicrotask(() => {
+      const res = makeRes({ statusCode: 200 });
+      cb(res);
+      queueMicrotask(() => { res.emit('data', Buffer.from(body)); res.emit('end'); });
+    });
+    return req;
+  });
+}
+
+// QA30(A-F2): 기본 프로바이더인 Ollama 만 mapHttpError 가 없어 4xx/5xx 바디를 **아예 읽지
+// 않았다**. 실측 대조: `ollama 404 → "API 요청 실패: HTTP 404"` vs `claude 503 → cloudOverloaded`.
+// 버려지던 사유는 모델 미설치와 로드 OOM — 둘 다 사용자가 바로 조치할 수 있는 정보다.
+describe('QA30 A-F2: Ollama 에러 바디 판독', () => {
+  it('404 + "not found, try pulling it first" → 모델 미설치 안내 (모델명 포함)', async () => {
+    respond(M.httpRequest, 404, { error: 'model "qwen3.5:4b" not found, try pulling it first' });
+    await expect(
+      generate('o404', { text: 'x', type: 'full', provider: 'ollama', model: 'qwen3.5:4b', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never),
+    ).rejects.toMatchObject({ code: 'OLLAMA_MODEL_NOT_FOUND', errorKey: 'ollamaModelNotFound', errorParams: { model: 'qwen3.5:4b' } });
+  });
+
+  it('500 + 메모리 부족 문구 → OOM 안내 (실제 용량 문구 보존)', async () => {
+    respond(M.httpRequest, 500, { error: 'model requires more system memory (9.2 GiB) than is available (5.1 GiB)' });
+    const err = await generate('ooom', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never)
+      .then(() => null, (e: unknown) => e as Error & { code?: string; errorKey?: string; errorParams?: Record<string, string> });
+    expect(err?.code).toBe('OLLAMA_OOM');
+    expect(err?.errorKey).toBe('ollamaOutOfMemory');
+    expect(err?.errorParams?.detail).toContain('9.2 GiB');
+  });
+
+  it('mapOllamaHttpError — OOM 은 상태코드와 무관하게 먼저 가른다 / 무관한 에러는 null', () => {
+    expect(mapOllamaHttpError(500, 'model requires more system memory (9 GiB)', 'm')).toMatchObject({ errorKey: 'ollamaOutOfMemory' });
+    expect(mapOllamaHttpError(404, 'model requires more system memory (9 GiB)', 'm')).toMatchObject({ errorKey: 'ollamaOutOfMemory' });
+    expect(mapOllamaHttpError(400, 'invalid options', 'm')).toBeNull();
+    expect(mapOllamaHttpError(503, 'server busy', 'm')).toBeNull();
+  });
+});
+
+// QA30(A-F3): 비스트리밍 Vision/OCR 이 4프로바이더 전부 빈 응답·차단을 success 로 반환하던 것.
+// 대조군인 생성 스트림은 0토큰이면 EMPTY_RESPONSE/BLOCKED 로 거부한다(streamRequest).
+describe('QA30 A-F3: Vision/OCR 빈 응답·차단 감지', () => {
+  it.each([
+    ['ollama 빈 response', 'ollama', false, { response: '' }],
+    ['claude content 없음', 'claude', true, { content: [] }],
+    ['openai 빈 message.content', 'openai', true, { choices: [{ message: { content: '' } }] }],
+    ['gemini parts 없음', 'gemini', true, { candidates: [{ content: { parts: [] } }] }],
+  ] as const)('%s → EMPTY_RESPONSE throw (success 반환 금지)', async (_l, provider, https, body) => {
+    respond(https ? M.httpsRequest : M.httpRequest, 200, body);
+    await expect(analyzeImage('img', provider, 'm', 'http://localhost:11434', 'key'))
+      .rejects.toMatchObject({ code: 'EMPTY_RESPONSE', errorKey: 'emptyResponse' });
+  });
+
+  it('gemini SAFETY 차단 → BLOCKED + 사유 전달 (모델/키 오해 방지)', async () => {
+    respond(M.httpsRequest, 200, { promptFeedback: { blockReason: 'SAFETY' } });
+    await expect(analyzeImage('img', 'gemini', 'm', 'x', 'gkey'))
+      .rejects.toMatchObject({ code: 'BLOCKED', errorKey: 'responseBlocked', errorParams: { reason: 'SAFETY' } });
+  });
+
+  it('OCR 경로도 동일 계약 — 공백만 남는 응답은 EMPTY_RESPONSE', async () => {
+    respond(M.httpRequest, 200, { response: '   \n  ' });
+    await expect(analyzeImageForOcr('img', 'ollama', 'llava', 'http://localhost:11434', undefined))
+      .rejects.toMatchObject({ code: 'EMPTY_RESPONSE' });
+  });
+
+  it('본문이 있으면 종료 사유가 비정상(length)이어도 정상 반환 — 스트리밍의 과차단 방지와 대칭', async () => {
+    respond(M.httpsRequest, 200, { choices: [{ message: { content: '차트 설명' }, finish_reason: 'length' }] });
+    expect(await analyzeImage('img', 'openai', 'gpt-4o', 'x', 'key')).toBe('차트 설명');
+  });
+
+  it('parseVisionResponse — provider 별 본문/종료사유 추출 (정상 종료는 사유 없음)', () => {
+    expect(parseVisionResponse('ollama', { response: 'a', done_reason: 'stop' })).toEqual({ text: 'a', blockReason: null });
+    expect(parseVisionResponse('claude', { content: [{ text: 'b' }], stop_reason: 'end_turn' })).toEqual({ text: 'b', blockReason: null });
+    expect(parseVisionResponse('claude', { content: [], stop_reason: 'refusal' })).toEqual({ text: '', blockReason: 'refusal' });
+    expect(parseVisionResponse('openai', { choices: [{ message: { content: '' }, finish_reason: 'content_filter' }] })).toEqual({ text: '', blockReason: 'content_filter' });
+    expect(parseVisionResponse('gemini', { candidates: [{ content: { parts: [{ text: 'c' }] }, finishReason: 'STOP' }] })).toEqual({ text: 'c', blockReason: null });
+    expect(parseVisionResponse('gemini', { promptFeedback: { blockReason: 'SAFETY' } })).toEqual({ text: '', blockReason: 'SAFETY' });
+  });
+
+  it('finalizeVisionResult — sanitize 결과가 공백뿐이면 거부 (sanitize 가 본문을 날린 경우 포함)', () => {
+    expect(finalizeVisionResult({ text: '  ok  ', blockReason: null }, (x) => x)).toBe('  ok  ');
+    // URL 만 있던 응답이 sanitize 로 비워지는 경우도 성공으로 새면 안 된다.
+    expect(() => finalizeVisionResult({ text: 'https://x', blockReason: null }, () => '')).toThrow(/빈 응답/);
+  });
+});
+
+// QA30(A-F4): Vision/OCR 경로의 401 이 code/errorKey 없이 나가 "OCR 실패" 로 둔갑하던 것.
+describe('QA30 A-F4: Vision/OCR 401 은 auth 로 구분된다', () => {
+  it('claude vision 401 → API_KEY_INVALID + apiKeyInvalid (generate 401 과 동일 계약)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    respond(M.httpsRequest, 401, { error: { message: 'invalid x-api-key' } });
+    await expect(analyzeImage('img', 'claude', 'm', 'x', 'stale-key'))
+      .rejects.toMatchObject({ code: 'API_KEY_INVALID', errorKey: 'apiKeyInvalid', status: 401 });
+    errSpy.mockRestore();
+  });
+
+  it('401 이 아닌 4xx 에는 auth 코드가 붙지 않는다 (오분류 방지)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    respond(M.httpsRequest, 400, { error: { message: 'bad image' } });
+    const err = await analyzeImage('img', 'claude', 'm', 'x', 'key')
+      .then(() => null, (e: unknown) => e as Error & { code?: string });
+    expect(err?.code).toBeUndefined();
+    errSpy.mockRestore();
+  });
+});
+
+// QA30(A-F5): 출력 상한 도달로 잘린 응답이 4프로바이더 모두 "완료" 로 커밋되던 것.
+// 거부가 아니라 **표식**이다 — 정상 완료는 유지하고 ai:done 페이로드로만 알린다.
+describe('QA30 A-F5: 잘림 표식이 ai:done 에 실린다', () => {
+  it.each([
+    ['claude', true, 'data: {"type":"content_block_delta","delta":{"text":"부분"}}\ndata: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}\n'],
+    ['openai', true, 'data: {"choices":[{"delta":{"content":"부분"}}]}\ndata: {"choices":[{"delta":{},"finish_reason":"length"}]}\n'],
+    ['ollama', false, '{"response":"부분"}\n{"done":true,"done_reason":"length"}\n'],
+  ] as const)('%s 잘림 → ai:done 에 { truncated: true }', async (provider, https, body) => {
+    stream(https ? M.httpsRequest : M.httpRequest, body);
+    const win = makeWin();
+    await generate('tr1', { text: 'x', type: 'full', provider, model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'key', win as never);
+    expect(win.webContents.send).toHaveBeenCalledWith('ai:done', 'tr1', { truncated: true });
+  });
+
+  it('정상 종료에는 메타를 붙이지 않는다 (기존 계약 보존)', async () => {
+    stream(M.httpRequest, '{"response":"완결"}\n{"done":true,"done_reason":"stop"}\n');
+    const win = makeWin();
+    await generate('tr2', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never);
+    expect(win.webContents.send).toHaveBeenCalledWith('ai:done', 'tr2');
+    expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'tr2', { truncated: true });
+  });
+});
+
+// QA30(A-F6): switch 에 exhaustive default 가 없어, 프로바이더 분기를 빠뜨리면 undefined 를
+// 돌려주고 요약이 "성공" 으로 끝났다.
+describe('QA30 A-F6: provider switch exhaustive 가드', () => {
+  it('알 수 없는 provider → 명시 throw + activeRequests 누수 없음', async () => {
+    await expect(
+      generate('bad1', { text: 'x', type: 'full', provider: 'nope' as never, model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never),
+    ).rejects.toThrow(/지원하지 않는 AI 프로바이더/);
+    expect(__activeRequestCount()).toBe(0);
+  });
+});
+
+// QA30(A-F7): Claude 임베딩 폴백의 catch 가 **사용자 취소까지** null 로 뭉개
+// "프로바이더 미지원 → 키워드 모드" 로 보고하던 것.
+describe('QA30 A-F7: Claude 임베딩 폴백은 취소를 삼키지 않는다', () => {
+  it('이미 abort 된 signal → null 이 아니라 Aborted 로 reject (ollama 경로와 동형)', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(generateEmbeddings(['a'], 'claude', 'http://localhost:11434', 'key', undefined, controller.signal))
+      .rejects.toThrow('Aborted');
+  });
+
+  it('취소가 아닌 실패는 종전대로 null (키워드 fallback 보존)', async () => {
+    respond(M.httpRequest, 500, 'boom');
+    expect(await generateEmbeddings(['a'], 'claude', 'http://localhost:11434', 'key')).toBeNull();
+  });
+});
+
+// QA30(A-F8): 0토큰 판정이 truthy 기준이라 공백만 흘려도 ai:done 으로 "성공" 했다.
+describe('QA30 A-F8: 공백만 방출한 스트림은 성공이 아니다', () => {
+  it('ollama 가 공백 토큰만 흘리고 종료 → EMPTY_RESPONSE reject + ai:done 미전송', async () => {
+    stream(M.httpRequest, '{"response":"   "}\n{"response":"\\n\\n"}\n');
+    const win = makeWin();
+    await expect(
+      generate('ws1', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never),
+    ).rejects.toMatchObject({ code: 'EMPTY_RESPONSE', errorKey: 'emptyResponse' });
+    expect(win.webContents.send).not.toHaveBeenCalledWith('ai:done', 'ws1');
+    expect(__activeRequestCount()).toBe(0);
+  });
+
+  it('공백 뒤에 실제 글자가 오면 정상 완료 (과차단 방지)', async () => {
+    stream(M.httpRequest, '{"response":"  "}\n{"response":"본문"}\n');
+    const win = makeWin();
+    await generate('ws2', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never);
+    expect(win.webContents.send).toHaveBeenCalledWith('ai:done', 'ws2');
+  });
+});
+
+// QA30(A-F10): 스트리밍만 429 재시도도 Retry-After 도 없던 경로 간 비대칭.
+describe('QA30 A-F10: 스트리밍 429 는 첫 토큰 전에 한해 재시도한다', () => {
+  it('ollama 429 1회 → 백오프 재시도로 성공', async () => {
+    vi.useFakeTimers();
+    try {
+      M.httpRequest
+        .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+          const req = makeReq();
+          queueMicrotask(() => {
+            const res = makeRes({ statusCode: 429 });
+            cb(res);
+            queueMicrotask(() => { res.emit('data', Buffer.from('{"error":"rate"}')); res.emit('end'); });
+          });
+          return req;
+        })
+        .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+          const req = makeReq();
+          queueMicrotask(() => {
+            const res = makeRes({ statusCode: 200 });
+            cb(res);
+            queueMicrotask(() => { res.emit('data', Buffer.from('{"response":"재시도 성공"}\n')); res.emit('end'); });
+          });
+          return req;
+        });
+      const win = makeWin();
+      const p = generate('rt1', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never);
+      await vi.advanceTimersByTimeAsync(2600);
+      await p;
+      expect(M.httpRequest).toHaveBeenCalledTimes(2);
+      expect(win.webContents.send).toHaveBeenCalledWith('ai:token', 'rt1', '재시도 성공');
+      expect(__activeRequestCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Retry-After 헤더가 있으면 그 값을 존중한다 (지수 백오프보다 우선)', async () => {
+    vi.useFakeTimers();
+    try {
+      M.httpsRequest
+        .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+          const req = makeReq();
+          queueMicrotask(() => {
+            const res = makeRes({ statusCode: 429, headers: { 'retry-after': '30' } });
+            cb(res);
+            queueMicrotask(() => { res.emit('data', Buffer.from('{"error":{"message":"rate"}}')); res.emit('end'); });
+          });
+          return req;
+        })
+        .mockImplementationOnce((_o: unknown, cb: (r: unknown) => void) => {
+          const req = makeReq();
+          queueMicrotask(() => {
+            const res = makeRes({ statusCode: 200 });
+            cb(res);
+            queueMicrotask(() => { res.emit('data', Buffer.from('data: {"choices":[{"delta":{"content":"ok"}}]}\n')); res.emit('end'); });
+          });
+          return req;
+        });
+      const p = generate('rt2', { text: 'x', type: 'full', provider: 'openai', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, 'key', makeWin() as never);
+      // 지수 백오프(2s)만 봤다면 여기서 이미 2회차가 떠 있어야 한다 — 아직 1회여야 정상.
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(M.httpsRequest).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(28000);
+      await p;
+      expect(M.httpsRequest).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('토큰이 흐른 뒤의 실패는 재시도하지 않는다 (응답 중복 방지)', async () => {
+    M.httpRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200, complete: false });
+        cb(res);
+        queueMicrotask(() => {
+          res.emit('data', Buffer.from('{"response":"앞부분"}\n'));
+          res.emit('close');
+        });
+      });
+      return req;
+    });
+    const win = makeWin();
+    await expect(
+      generate('rt3', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never),
+    ).rejects.toMatchObject({ errorKey: 'streamDisconnected' });
+    expect(M.httpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('백오프 대기 중 ai:abort → 재시도하지 않고 ABORTED 로 끝난다 (취소가 닿는다)', async () => {
+    vi.useFakeTimers();
+    try {
+      M.httpRequest.mockImplementation((_o: unknown, cb: (r: unknown) => void) => {
+        const req = makeReq();
+        queueMicrotask(() => {
+          const res = makeRes({ statusCode: 429 });
+          cb(res);
+          queueMicrotask(() => { res.emit('data', Buffer.from('{"error":"rate"}')); res.emit('end'); });
+        });
+        return req;
+      });
+      const p = generate('rt4', { text: 'x', type: 'full', provider: 'ollama', model: 'm', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never);
+      const assertion = expect(p).rejects.toMatchObject({ code: 'ABORTED' });
+      await vi.advanceTimersByTimeAsync(100); // 1회 실패 → 백오프 대기 진입
+      abortGenerate('rt4');
+      await vi.advanceTimersByTimeAsync(3000);
+      await assertion;
+      expect(M.httpRequest).toHaveBeenCalledTimes(1); // 재시도 미발생
+      expect(__activeRequestCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

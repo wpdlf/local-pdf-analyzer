@@ -4,9 +4,27 @@ import { t, translateMainError } from './i18n';
 export class AiClient {
   private settings: AppSettings;
   private _lastRequestId: string | null = null;
+  private _lastTruncated = false;
 
   get lastRequestId(): string | null {
     return this._lastRequestId;
+  }
+
+  /**
+   * 직전 summarize() 스트림이 **출력 토큰 상한에 걸려 잘렸는지**. QA30(A-F5).
+   *
+   * main 은 잘림을 거부가 아니라 **표식**으로 다룬다(과차단 방지 — 토큰이 나온 뒤의
+   * MAX_TOKENS/length 는 정상 완료로 resolve 한다). 그래서 잘린 본문은 `ai:done` 을 타고
+   * 여기까지 오며, 이 플래그가 없으면 호출자는 문장 중간에서 끊긴 요약을 완주본과
+   * 구분할 수 없다(사용자에게는 재요약 외에 신호가 없었다).
+   *
+   * **run 단위로 sticky 다.** `AiClient` 는 요약 run 마다 새로 만들어지고(use-summarize.ts:803)
+   * 한 run 안에서 `summarize()` 는 **청크마다** 호출되므로, 호출마다 리셋하면 10청크 중 3번째가
+   * 잘렸을 때 마지막 청크가 그 사실을 덮어써 표식이 사라진다. 생성 시 false 로 시작해 한 번
+   * true 가 되면 run 이 끝날 때까지 유지한다 = "이 run 에서 한 번이라도 상한에 걸렸는가".
+   */
+  get lastTruncated(): boolean {
+    return this._lastTruncated;
   }
 
   constructor(settings: AppSettings) {
@@ -47,8 +65,9 @@ export class AiClient {
         resolver?.();
       });
 
-      unsubDone = window.electronAPI.ai.onDone((id) => {
+      unsubDone = window.electronAPI.ai.onDone((id, meta) => {
         if (id !== requestId) return;
+        if (meta?.truncated) this._lastTruncated = true;
         done = true;
         resolver?.();
       });

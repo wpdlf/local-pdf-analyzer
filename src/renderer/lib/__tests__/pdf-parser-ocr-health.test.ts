@@ -227,4 +227,30 @@ describe('parsePdf OCR 배선 — 회로차단기와 실패 판정', () => {
     // 첫 배치에서 즉시 중단 — OCR_FAIL 로 강등되지 않는다.
     expect(P.ocrPage).toHaveBeenCalledTimes(3);
   });
+
+  // QA30(A-F4): 401 은 **모든 페이지에 똑같이 재현될 조건**이라 페이지 단위 사고가 아니다.
+  // 이전엔 per-page catch 가 '' 로 삼켜 회로차단기가 "OCR_FAIL(PDF 품질 문제)" 로 보고했고,
+  // 사용자는 키를 회수·만료한 사실을 끝내 알 수 없었다.
+  it('API_KEY_INVALID 는 OCR_FAIL 로 둔갑하지 않고 즉시 전파된다', async () => {
+    mockPdf(9);
+    P.ocrPage.mockResolvedValue({ success: false, code: 'API_KEY_INVALID', error: 'HTTP 401' });
+    await expect(parsePdf(pdfBuf(), 'scan.pdf', '/d/scan.pdf', { enableOcrFallback: true }))
+      .rejects.toMatchObject({ code: 'API_KEY_INVALID' });
+    // 남은 페이지를 태우지 않는다(클라우드면 페이지마다 왕복 비용).
+    expect(P.ocrPage).toHaveBeenCalledTimes(3);
+  });
+
+  it('그 외 실패는 종전대로 페이지 단위로 삼켜 나머지를 계속 OCR 한다 (과잉 전파 방지)', async () => {
+    mockPdf(12);
+    let n = 0;
+    P.ocrPage.mockImplementation(() => {
+      n++;
+      return n <= 2
+        ? Promise.resolve({ success: false, error: '일시적 IPC 오류' })
+        : Promise.resolve({ success: true, text: LONG });
+    });
+    const doc = await parsePdf(pdfBuf(), 'scan.pdf', '/d/scan.pdf', { enableOcrFallback: true });
+    expect(P.ocrPage).toHaveBeenCalledTimes(12);
+    expect(doc.pageTexts).toHaveLength(12);
+  });
 });

@@ -616,6 +616,10 @@ async function ocrFallback(
   // 대용량 PDF: 50+ 페이지 시 scale 자동 축소
   const scale = pageCount > 100 ? 1.0 : pageCount > 50 ? 1.5 : 2.0;
 
+  // QA30(A-F4): per-page 로 삼키면 안 되는 코드 — 한 페이지의 사고가 아니라 **모든 페이지에
+  // 똑같이 재현될 조건**이다. 열거를 두 catch 가 공유해 한쪽만 갱신되는 drift 를 막는다.
+  const OCR_FATAL_CODES = new Set(['ABORTED', 'API_KEY_INVALID']);
+
   // QA29(C-1): **무진전 회로차단기.** per-page catch 와 배치 catch 가 ABORTED 외 모든 실패를
   // '' 로 삼켜서, 루프는 실패를 한 번도 세지 않고 언제나 pageCount 까지 완주했다. Ollama 가
   // 고착되면(서비스는 살아 있고 runner 만 멈춘 상태 — 모델 교체 중에 흔하다) 페이지마다
@@ -658,15 +662,22 @@ async function ocrFallback(
             if (!result.success && result.code === 'ABORTED') {
               throw Object.assign(new Error('OCR 취소'), { code: 'ABORTED' });
             }
+            // QA30(A-F4): **키 문제는 페이지 단위 실패가 아니다.** 키를 회수·만료한 채 스캔
+            // PDF 를 열면 모든 페이지가 401 을 받는데, 아래 per-page catch 가 그것을 '' 로
+            // 삼켜 "OCR로도 텍스트를 추출할 수 없습니다"(PDF 품질 문제) 로 둔갑했다.
+            // 남은 페이지를 계속 태울 이유도 없으므로 즉시 상위로 올린다.
+            if (!result.success && result.code === 'API_KEY_INVALID') {
+              throw Object.assign(new Error(t('uploader.ocrAuthFail')), { code: 'API_KEY_INVALID' });
+            }
             return (result.success && result.text) ? result.text : '';
           } finally {
             if (signal) signal.removeEventListener('abort', onAbort);
           }
         }).catch((err: unknown) => {
-          // 방어적 re-throw: ABORTED 는 상위로 전파되어 parsePdf finally의 정리 경로를 탐.
-          // 다른 에러(렌더링 실패, IPC 실패)는 페이지 단위로 무음 처리하여 나머지 페이지를
-          // 계속 OCR 하도록 허용.
-          if ((err as { code?: string })?.code === 'ABORTED') throw err;
+          // 방어적 re-throw: ABORTED/API_KEY_INVALID 는 상위로 전파되어 parsePdf finally의
+          // 정리 경로를 탄다. 다른 에러(렌더링 실패, IPC 실패)는 페이지 단위로 무음 처리하여
+          // 나머지 페이지를 계속 OCR 하도록 허용.
+          if (OCR_FATAL_CODES.has((err as { code?: string })?.code ?? '')) throw err;
           return '';
         }),
       );
@@ -676,7 +687,7 @@ async function ocrFallback(
     // 배치 크기만큼 빈 문자열을 넣어 페이지 인덱스 정렬이 깨지지 않도록 방어.
     const expectedBatchSize = Math.min(i + BATCH_SIZE, pageCount) - i;
     const results = await Promise.all(batch).catch((err: unknown) => {
-      if ((err as { code?: string })?.code === 'ABORTED') throw err;
+      if (OCR_FATAL_CODES.has((err as { code?: string })?.code ?? '')) throw err;
       console.warn('[pdf-parser] OCR 배치 실패, 해당 페이지 공란 처리:', err);
       return new Array(expectedBatchSize).fill('') as string[];
     });

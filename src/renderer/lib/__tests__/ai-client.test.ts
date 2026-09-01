@@ -9,7 +9,7 @@ const mockElectronAPI = {
     abort: vi.fn(),
     checkAvailable: vi.fn(),
     onToken: vi.fn((_cb: (id: string, token: string) => void) => vi.fn()),
-    onDone: vi.fn((_cb: (id: string) => void) => vi.fn()),
+    onDone: vi.fn((_cb: (id: string, meta?: { truncated?: true }) => void) => vi.fn()),
     analyzeImage: vi.fn(),
   },
 };
@@ -257,5 +257,64 @@ describe('AiClient', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  // QA30(A-F5): main 은 출력 상한 도달을 거부가 아니라 **표식**으로 다룬다(토큰이 나온 뒤의
+  // MAX_TOKENS/length 는 정상 완료로 resolve — 과차단 방지). 그 표식이 `ai:done` 의 두 번째
+  // 인자로 오는데, 종전엔 preload 브리지와 이 클라이언트가 그것을 버려 호출자가 문장 중간에서
+  // 끊긴 요약을 완주본과 구분할 수 없었다.
+  it('summarize() 가 ai:done 의 truncated 표식을 lastTruncated 로 노출한다', async () => {
+    let tokenCallback: ((id: string, token: string) => void) | null = null;
+    let doneCallback: ((id: string, meta?: { truncated?: true }) => void) | null = null;
+    mockElectronAPI.ai.onToken.mockImplementation((cb) => { tokenCallback = cb; return vi.fn(); });
+    mockElectronAPI.ai.onDone.mockImplementation((cb) => { doneCallback = cb; return vi.fn(); });
+    mockElectronAPI.ai.generate.mockImplementation(async (requestId: string) => {
+      setTimeout(() => {
+        tokenCallback?.(requestId, '잘린 본문');
+        doneCallback?.(requestId, { truncated: true });
+      }, 50);
+      return { success: true };
+    });
+
+    const client = new AiClient(DEFAULT_SETTINGS);
+    const tokens: string[] = [];
+    for await (const token of client.summarize('test text', 'full')) tokens.push(token);
+
+    // 잘려도 스트림 자체는 정상 완료다(거부가 아니라 표식) — 그 계약을 함께 못박는다.
+    expect(tokens).toEqual(['잘린 본문']);
+    expect(client.lastTruncated).toBe(true);
+  });
+
+  it('lastTruncated 는 run 단위로 sticky — 중간 청크가 잘리면 이후 청크가 덮지 않는다', async () => {
+    // AiClient 는 요약 run 마다 새로 만들어지고(use-summarize.ts:803) 한 run 안에서 summarize()
+    // 는 **청크마다** 호출된다. 호출마다 리셋하면 10청크 중 3번째가 잘렸을 때 마지막 청크가
+    // 그 사실을 덮어써 사용자는 잘린 요약을 완주본으로 보게 된다.
+    let tokenCallback: ((id: string, token: string) => void) | null = null;
+    let doneCallback: ((id: string, meta?: { truncated?: true }) => void) | null = null;
+    mockElectronAPI.ai.onToken.mockImplementation((cb) => { tokenCallback = cb; return vi.fn(); });
+    mockElectronAPI.ai.onDone.mockImplementation((cb) => { doneCallback = cb; return vi.fn(); });
+
+    const client = new AiClient(DEFAULT_SETTINGS);
+    const chunk = async (truncated: boolean): Promise<void> => {
+      mockElectronAPI.ai.generate.mockImplementation(async (requestId: string) => {
+        setTimeout(() => {
+          tokenCallback?.(requestId, '본문');
+          doneCallback?.(requestId, truncated ? { truncated: true } : undefined);
+        }, 50);
+        return { success: true };
+      });
+      // 실제 호출부와 같은 형태: prepareSummarize() 로 id 를 먼저 받고 넘긴다.
+      const requestId = client.prepareSummarize();
+      for await (const _ of client.summarize('chunk', 'full', requestId)) { /* consume */ }
+    };
+
+    await chunk(false);
+    expect(client.lastTruncated).toBe(false);
+    await chunk(true);          // 중간 청크가 상한에 걸림
+    expect(client.lastTruncated).toBe(true);
+    await chunk(false);         // 이후 청크는 정상 — 그래도 잘림 사실은 남아야 한다
+    expect(client.lastTruncated).toBe(true);
+
+    // 새 run = 새 client 이므로 표식은 따라오지 않는다.
+    expect(new AiClient(DEFAULT_SETTINGS).lastTruncated).toBe(false);
   });
 });
