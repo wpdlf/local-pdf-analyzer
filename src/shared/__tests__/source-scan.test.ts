@@ -190,19 +190,33 @@ describe('소스 스캔 가드는 전부 공용 제거기를 쓴다 (열거 금�
    * `index.html` 을 원본으로 읽어 주석 처리된 옛 CSP 를 검사하고 있었고(실물이 'unsafe-inline'
    * 이어도 2/2 통과), 확장자 하나 차이로 이 도출 밖이었다. 이번엔 보안 컨트롤 위였다.
    */
+  const SRC_EXT = String.raw`(?:[mc]?tsx?|[mc]?jsx?|ya?ml|html?)`;
+  const READ_CALL = String.raw`(?:readFileSync|\.readFile)\(`;
+  const PATH_LITERAL = String.raw`['"\`][^'"\`]*\.` + SRC_EXT + String.raw`['"\`]`;
+  /** 읽기 호출 **뒤**에 경로 리터럴이 오는 형태 — `readFileSync('a/b.ts')`. */
+  const LITERAL_AFTER = new RegExp(READ_CALL + String.raw`[\s\S]{0,240}?\.` + SRC_EXT + String.raw`['"\`]`);
+  /** 읽기 호출 **앞**에 오는 형태 — `const f = join(..., 'x.ts'); readFileSync(f)`. */
+  const LITERAL_BEFORE = new RegExp(PATH_LITERAL + String.raw`[\s\S]{0,240}?` + READ_CALL);
+
   function scansSource(src: string): boolean {
-    if (/readFileSync\([\s\S]{0,240}?\.(?:[mc]?tsx?|ya?ml|html?)['"`]/.test(src)) return true;
+    if (LITERAL_AFTER.test(src) || LITERAL_BEFORE.test(src)) return true;
     return src.includes('readdirSync') && src.includes('readFileSync') && /endsWith\(['"]\.tsx?['"]\)/.test(src);
   }
 
   const rel = (f: string) => f.slice(SRC_ROOT.length + 1).split('\\').join('/');
-  const derived = () => walk(SRC_ROOT).filter((f) => scansSource(readFileSync(f, 'utf8')));
+  // 이 파일(메타 가드)만 제외한다 — 제거기 자체를 검증하려면 **원본을 그대로** 읽어야 하고,
+  // derived() 기계도 원본을 읽는다. 자기 자신을 파생 집합에 넣으면 그 read 사이트들이 위반으로
+  // 잡힌다(QA31 에서 실제로 밟았다). 예외는 여기 한 곳뿐이며 이름으로 못박는다.
+  const META_GUARD = 'shared/__tests__/source-scan.test.ts';
+  const derived = () => walk(SRC_ROOT)
+    .filter((f) => rel(f) !== META_GUARD)
+    .filter((f) => scansSource(readFileSync(f, 'utf8')));
 
   it('소스를 텍스트로 읽는 테스트는 예외 없이 source-scan 헬퍼를 임포트한다', () => {
     const files = derived();
     // 도출이 0건이 되면(정규식이 낡으면) 이 가드는 조용히 공허해진다 — 하한을 먼저 못박는다.
     expect(files.length, '소스 스캔 가드를 한 건도 찾지 못했다 — 이 가드가 무력화된 상태다')
-      .toBeGreaterThanOrEqual(12);
+      .toBeGreaterThanOrEqual(15);
     const offenders = files
       .filter((f) => !readFileSync(f, 'utf8').includes('helpers/source-scan'))
       .map(rel);
@@ -225,14 +239,16 @@ describe('소스 스캔 가드는 전부 공용 제거기를 쓴다 (열거 금�
    *    아래 규칙은 그 6곳에도 이미 동일하게 적용되고 있다(전부 감싼 형태).
    */
   it('파생된 가드의 모든 readFileSync 는 제거기(또는 JSON.parse)를 거친다 (파일당 1회로는 부족)', () => {
-    const WRAPPED = /(?:stripJsComments|stripYamlComments|stripHtmlComments|JSON\.parse)\(\s*$/;
+    // 제거기 호출이 읽기 **직전**에 와야 한다(원본 변수를 남기면 재사용될 여지가 생긴다).
+    // QA31: promises 판(`await fs.readFile`)을 위해 `await` 와 객체 이름까지만 허용한다.
+    const WRAPPED = /(?:stripJsComments|stripYamlComments|stripHtmlComments|JSON\.parse)\(\s*(?:await\s+)?[\w.]*$/;
     const offenders: string[] = [];
     let sites = 0;
     for (const f of derived()) {
       // 자기 자신의 주석은 걷고 본다 — 주석 처리된 예시 코드가 거짓 실패를 만들지 않도록.
       const src = stripJsComments(readFileSync(f, 'utf8'));
       const lines = src.split('\n');
-      for (const m of src.matchAll(/readFileSync\(/g)) {
+      for (const m of src.matchAll(/readFileSync\(|\.readFile\(/g)) {
         sites += 1;
         if (WRAPPED.test(src.slice(0, m.index))) continue;
         const line = src.slice(0, m.index).split('\n').length;

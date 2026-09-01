@@ -20,6 +20,7 @@ vi.mock('../session-store', () => ({
 
 import { runSemanticSearch } from '../semantic-search';
 import { RAG_MIN_SCORE } from '../../shared/constants';
+import { stripJsComments } from '../../shared/__tests__/helpers/source-scan';
 
 const DIR = '/sessions';
 
@@ -318,9 +319,11 @@ describe('QA30(B-7): 의미검색 임계값은 shared 상수를 따른다', () =
     const url = await import('node:url');
     const path = await import('node:path');
     const here = path.dirname(url.fileURLToPath(import.meta.url));
-    const src = await fs.readFile(path.join(here, '..', 'semantic-search.ts'), 'utf-8');
     // QA29(D축)의 교훈: 소스 스캔 가드는 **주석에 매칭돼 통과**할 수 있다. 코드만 남기고 본다.
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    // 즉시 감싼다 — 원본 변수를 남기면 파생 가드의 read-site 규칙이 잡는다(의도된 계약).
+    const code = stripJsComments(
+      await fs.readFile(path.join(here, '..', 'semantic-search.ts'), 'utf-8'),
+    );
     expect(code).toContain('RAG_MIN_SCORE');
     expect(code, '임계 리터럴이 코드에 재도입됐다 — shared/constants 단일 출처를 쓸 것').not.toMatch(/\b0\.3\b/);
   });

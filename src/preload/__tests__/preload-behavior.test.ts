@@ -37,6 +37,7 @@ vi.mock('electron', () => ({
 
 // 모듈 side-effect(exposeInMainWorld) 실행 → H.exposed 채워짐
 import '../index';
+import { stripJsComments } from '../../shared/__tests__/helpers/source-scan';
 
 function getApi(): ElectronAPI {
   if (!H.exposed) throw new Error('preload 가 electronAPI 를 노출하지 않음');
@@ -291,9 +292,11 @@ describe('QA30(C-11): preload 계약 선언에 evicted 가 포함된다', () => 
     const url = await import('node:url');
     const path = await import('node:path');
     const here = path.dirname(url.fileURLToPath(import.meta.url));
-    const src = await fs.readFile(path.join(here, '..', 'index.ts'), 'utf-8');
     // 주석은 제거하고 본다 — QA29(D축)에서 소스 스캔 가드가 주석에 매칭돼 통과한 전례가 있다.
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    // 즉시 감싼다 — 원본 변수를 남기면 파생 가드의 read-site 규칙이 잡는다(의도된 계약).
+    const code = stripJsComments(
+      await fs.readFile(path.join(here, '..', 'index.ts'), 'utf-8'),
+    );
     // 같은 토큰이 구현(contextBridge 래퍼)과 타입 선언 양쪽에 나온다 — 계약을 보려면
     // `Promise<` 를 포함한 **선언 줄**을 골라야 한다(구현 줄을 보면 가드가 공허해진다).
     const lines = code.split(String.fromCharCode(10));
