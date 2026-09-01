@@ -10,6 +10,7 @@ import { ProgressBar } from './ProgressBar';
 import { QaChat } from './QaChat';
 import { PdfViewerPanel } from './PdfViewer';
 import { ResizeHandle } from './ResizeHandle';
+import { Toast } from './Toast';
 
 interface SummaryViewerProps {
   onAbort?: () => void;
@@ -33,6 +34,10 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   // 요약 마인드맵: 텍스트 / 마인드맵 뷰 전환.
   const [viewMode, setViewMode] = useState<'text' | 'mindmap'>('text');
+  // 복사 성공은 화면상 아무 변화가 없어 사용자가 눌렸는지조차 알 수 없었다(실패만 배너로 보였다).
+  // QaChat 의 답변 복사와 동형 — 1.5s 간 라벨을 '복사됨' 으로 바꾼다.
+  const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // QA15(D-LOW): 뷰 전환 시 citation-focus 홀더를 클리어 — 인용 패널이 열린 채 뷰를 바꾸면
   // 홀더가 가리키던(언마운트될) 요소가 무효화돼 패널 닫을 때 포커스가 body 로 유실됐다.
   const switchView = (mode: 'text' | 'mindmap') => {
@@ -43,7 +48,10 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    return () => { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = undefined; } };
+    return () => {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = undefined; }
+      if (copiedTimerRef.current) { clearTimeout(copiedTimerRef.current); copiedTimerRef.current = null; }
+    };
   }, []);
 
   // 스트리밍 렌더 throttle — leading edge + 150ms 윈도우.
@@ -126,6 +134,9 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
     if (!summaryStream) return;
     try {
       await navigator.clipboard.writeText(summaryStream);
+      setCopied(true);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       setError({ code: 'EXPORT_FAIL', message: t('viewer.copyFail') });
     }
@@ -290,6 +301,8 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
           </div>
         </>
       )}
+      {/* 복사 확인 알림 — 소멸 타이머는 handleCopy 가 소유(copiedTimerRef). */}
+      <Toast message={copied ? t('viewer.copied') : null} />
     </div>
   );
 }

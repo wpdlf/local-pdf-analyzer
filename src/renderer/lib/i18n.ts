@@ -205,6 +205,7 @@ export const _translations = {
   'viewer.export': { ko: '💾 .md 내보내기', en: '💾 Export .md' },
   'viewer.exportAria': { ko: '마크다운 파일로 내보내기', en: 'Export as markdown file' },
   'viewer.copy': { ko: '📋 복사', en: '📋 Copy' },
+  'viewer.copied': { ko: '✓ 복사됨', en: '✓ Copied' },
   'viewer.copyAria': { ko: '클립보드에 복사', en: 'Copy to clipboard' },
   'viewer.exportPdf': { ko: '📄 PDF', en: '📄 PDF' },
   'viewer.exportPdfAria': { ko: 'PDF 파일로 내보내기', en: 'Export as PDF file' },

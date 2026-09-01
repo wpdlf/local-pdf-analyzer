@@ -144,6 +144,27 @@ describe('SummaryViewer', () => {
     expect(M.writeText).toHaveBeenCalledWith('복사할 텍스트');
   });
 
+  it('복사 성공 → 토스트가 떴다가 1.5s 후 사라진다', async () => {
+    // 성공이 화면상 무반응이라 사용자가 눌렸는지조차 알 수 없던 회귀(v1.2.6 실기기 피드백).
+    // 리전은 항상 마운트돼 있고(SR 이 변경을 감지하려면 필요) 내용만 바뀐다 → 내용으로 판정.
+    setState({ stream: '본문' });
+    render(<SummaryViewer />);
+    expect(screen.getByRole('status').textContent).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: '클립보드에 복사' }));
+    await vi.waitFor(() => expect(screen.getByRole('status').textContent).toBe('✓ 복사됨'));
+    // 사라짐 — 고착되면 두 번째 복사 때 "떴다" 는 신호가 안 보인다.
+    await vi.waitFor(() => expect(screen.getByRole('status').textContent).toBe(''), { timeout: 3000 });
+  });
+
+  it('복사 실패 → 성공 피드백이 뜨지 않는다', async () => {
+    M.writeText.mockRejectedValueOnce(new Error('denied'));
+    setState({ stream: '본문' });
+    render(<SummaryViewer />);
+    fireEvent.click(screen.getByRole('button', { name: '클립보드에 복사' }));
+    await vi.waitFor(() => expect(useAppStore.getState().error?.code).toBe('EXPORT_FAIL'));
+    expect(screen.getByRole('status').textContent).toBe('');
+  });
+
   it('복사 실패 → EXPORT_FAIL 배너', async () => {
     M.writeText.mockRejectedValueOnce(new Error('denied'));
     setState({ stream: '본문' });
