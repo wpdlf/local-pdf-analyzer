@@ -202,7 +202,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Self-updating — new versions are detected on startup and installed with one click; downloads never start without consent, and in-progress work is saved before the app restarts
 
 **Quality assurance**
-- 2345 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
+- 2351 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -270,7 +270,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Markdown · math | react-markdown + remark-gfm; KaTeX in MathML-only output (no webfonts, no CSP relaxation) — shared by the on-screen renderer and PDF export |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
 | Auto-update | electron-updater (GitHub Releases feed) — check on startup, download and install only on user consent, renderer flush before install |
-| Testing | Vitest, 2345 unit tests / 114 files (renderer·shared 1474 + main 871) + Playwright E2E (10 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (81/74/81/84) |
+| Testing | Vitest, 2351 unit tests / 114 files (renderer·shared 1476 + main 875) + Playwright E2E (10 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (81/74/81/84) |
 | i18n | In-house (i18n.ts) — 400+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -323,7 +323,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (2345, 114 files)
+    │   └── __tests__/         # Unit tests (2351, 114 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -518,7 +518,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **2345 unit tests / 114 files** — renderer·shared 1474 + main 871. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 17 components, the app shell itself, and core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
+- **2351 unit tests / 114 files** — renderer·shared 1476 + main 875. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 17 components, the app shell itself, and core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
 - **Playwright E2E** — 10 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, session/settings persistence across restart, upload-error paths, and the browser engine's mathematical layout that formula rendering depends on), all AI-independent; multi-tab restore and summarize/Q&A/collection flows are covered by local-only Ollama specs
 - **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (81/74/81/84), lockfile version sync check, tag ↔ `package.json` version match, two blocking `npm audit` gates (the whole production tree, plus a lockfile-closure check that covers the transitive dependencies of everything actually shipped), a build-time check that the math chunk never leaks into the eager bundle, Node 22/24 matrix plus a Windows unit-test leg
 - **Packaged-app gate (release only)** — the release workflow launches the actual packaged binary before uploading any asset, and verifies that the renderer boots and parses a real PDF **from inside the asar alone**, plus an asar size ceiling. Every other E2E spec runs the source tree's `out/`, where the repo's `node_modules` is still visible — so none of them can catch a packaging regression
