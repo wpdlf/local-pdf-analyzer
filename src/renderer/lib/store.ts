@@ -363,6 +363,14 @@ interface AppState {
   // 문서 로드 직후 true, 복원 hit(인덱스 주입)/miss(정상 빌드) 결정 후 false.
   sessionRestorePending: boolean;
   setSessionRestorePending: (v: boolean) => void;
+  // QA31(C-High): 복원이 **실패**했음을 남기는 파생 상태. sessionRestorePending 은 "복원이
+  // 진행 중" 만 뜻하고 성공/실패를 구분하지 않아서, api.load 가 throw 하면 게이트만 열린 채
+  // 메모리는 빈 상태(qaMessages=[])로 남았다. 그 뒤 자동저장이 디스크를 덮어쓰는데 요약은
+  // loadMeta 머지가 살리고 qaMessages 는 머지 대상이 아니라 **대화만 조용히 소실**됐다.
+  // preserveDiskIndex 가 인덱스에 대해 하는 일(메모리가 진실이 아닐 때 디스크를 보존)을
+  // 세션 전체에 대해 한다. 복원 시도마다 false 로 리셋되고, 실패 시에만 true 가 된다.
+  sessionRestoreFailed: boolean;
+  setSessionRestoreFailed: (v: boolean) => void;
   // 복원된 인덱스 마커 — useRagBuilder 가 같은 doc+provider 면 재빌드를 skip (재임베딩 0 보장).
   restoredSession: { docId: string; provider: string; embedModel: string | null } | null;
   setRestoredSession: (v: { docId: string; provider: string; embedModel: string | null } | null) => void;
@@ -639,6 +647,8 @@ export const useAppStore = create<AppState>((set) => ({
       // handlePdfData 는 setDocument 직후 다시 sessionRestorePending=true 로 설정한다.
       restoredSession: null,
       sessionRestorePending: false,
+      // 이전 문서의 복원 실패가 새 문서의 저장을 막지 않도록 함께 내린다.
+      sessionRestoreFailed: false,
     });
   },
 
@@ -724,6 +734,8 @@ export const useAppStore = create<AppState>((set) => ({
   setRagIndex: (ragIndex) => set({ ragIndex }),
   sessionRestorePending: false,
   setSessionRestorePending: (sessionRestorePending) => set({ sessionRestorePending }),
+  sessionRestoreFailed: false,
+  setSessionRestoreFailed: (sessionRestoreFailed) => set({ sessionRestoreFailed }),
   restoredSession: null,
   setRestoredSession: (restoredSession) => set({ restoredSession }),
 

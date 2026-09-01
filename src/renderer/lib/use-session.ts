@@ -35,6 +35,8 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
     if (useAppStore.getState().document?.id === doc.id) store.setSessionRestorePending(false);
     return;
   }
+  // 이 시도의 결과로 판정한다 — 직전 시도의 실패가 남아 저장을 영영 막지 않도록.
+  store.setSessionRestoreFailed(false);
   try {
     const docHash = await hashDocumentText(doc.extractedText);
     // multi-doc Phase 1: 탭에 콘텐츠 해시 기록 — 파일 재읽기가 불가능한 탭(이름-경로/파일
@@ -174,6 +176,16 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
     store.setSessionRestorePending(false);
   } catch {
     if (useAppStore.getState().document?.id === doc.id) {
+      // QA31(C-High): 이전엔 게이트만 열었다. 그러면 메모리는 qaMessages=[] 인 채로 자동저장이
+      // 발화해 디스크의 대화를 통째로 지웠다 — 요약은 loadMeta 머지가 살리지만 qaMessages 는
+      // 머지 대상이 아니다(use-session.ts 상단 schemaMismatch 주석이 이 메커니즘을 이미
+      // 서술하고 있었는데, QA11 은 그 경로 하나만 고치고 이 catch 를 남겼다 = 형제 누락).
+      //
+      // 복원 실패는 "디스크에 무엇이 있는지 모른다" 는 뜻이므로 **덮어쓰지 않는 쪽**을 택한다.
+      // 대가로 이 세션의 새 작업도 저장되지 않으므로 반드시 알린다(조용한 데이터 손실보다
+      // 시끄러운 미저장이 낫다). 다음 열기에서 복원이 성공하면 표식은 위에서 내려간다.
+      useAppStore.getState().setSessionRestoreFailed(true);
+      useAppStore.getState().setNotice({ message: t('session.restoreFailedNotice') });
       useAppStore.getState().setSessionRestorePending(false);
     }
   }
@@ -232,6 +244,9 @@ async function doPersistCurrentSession(flush = false): Promise<void> {
   if (!doc || !s.settings.persistSessions || !api) return;
   // 복원 대기 중(문서 불일치)은 어떤 경로에서도 skip — 아직 이 문서의 진실이 메모리에 없다.
   if (s.sessionRestorePending) return;
+  // QA31(C-High): 복원이 실패한 문서도 같다 — 메모리가 비어 있는데 디스크에는 대화가 있을 수
+  // 있다. flush 경로(savePartial=patchSession)도 qaMessages 를 통째로 실으므로 함께 막는다.
+  if (s.sessionRestoreFailed) return;
   // isCollectionBusy(컬렉션 gather) 중에는 활성 문서 자동저장을 보류 — 머지 read(mutex 밖)와
   // 컬렉션 인라인 요약 cross-write 의 TOCTOU lost-update 방지.
   // QA18(B-MED, 데이터손실): 단 종료/새로고침 flush 까지 통째로 skip 하면, 컬렉션 통합요약

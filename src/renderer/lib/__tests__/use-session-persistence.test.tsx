@@ -94,7 +94,7 @@ beforeEach(() => {
 });
 
 describe('restoreSessionForDocument — 미커버 분기', () => {
-  it('load 가 throw → 게이트만 해제(에러 삼킴)', async () => {
+  it('load 가 throw → 게이트 해제 + 복원실패 표식 + 통지 (에러를 삼키되 조용하지 않다)', async () => {
     const doc = makeDoc();
     resetStore({ document: doc, sessionRestorePending: true });
     api.session.load.mockRejectedValue(new Error('IPC 실패'));
@@ -102,6 +102,67 @@ describe('restoreSessionForDocument — 미커버 분기', () => {
     const s = useAppStore.getState();
     expect(s.summary).toBeNull();
     expect(s.sessionRestorePending).toBe(false);
+    // QA31(C-High): 이 테스트는 예전에 위 두 줄만 단언해, 뒤이은 자동저장이 디스크의 대화를
+    // 지우는 결함 동작을 **사양으로 굳히고** 있었다(회귀넷이 아니라 차폐막).
+    expect(s.sessionRestoreFailed, '복원 실패가 표식으로 남아야 저장을 막을 수 있다').toBe(true);
+    expect(s.notice?.message ?? '').toContain('불러오지 못했습니다');
+  });
+
+  it('복원 실패 후 자동저장이 디스크의 Q&A 를 덮어쓰지 않는다 (C-High 회귀)', async () => {
+    // 재현: 문서에 요약·대화가 저장돼 있는데 index.bin EBUSY 한 번으로 session:load 가 throw
+    // → 메모리는 qaMessages=[] → RAG 빌더가 인덱스를 만들며 hasContent 가 참이 되어 자동저장
+    // 발화 → 요약은 loadMeta 머지가 살고 **대화만** 소실. 저장 트리거를 그대로 재현한다.
+    const doc = makeDoc();
+    resetStore({ document: doc, sessionRestorePending: true });
+    // **일시적** 실패여야 한다. 영구 실패면 저장 시점의 머지 read 도 throw 해서 use-session:411
+    // 의 기존 방어("머지 read 실패 → 파괴적 쓰기 대신 skip")가 이미 막는다. 노출된 창은
+    // AV/인덱서가 index.bin 을 순간 잠갔다 푸는 경우 — 복원은 실패하고 이후 읽기는 성공한다.
+    api.session.load.mockRejectedValueOnce(new Error('EBUSY: index.bin'));
+    await restoreSessionForDocument(doc);
+    expect(useAppStore.getState().qaMessages, '복원 실패 후 메모리는 비어 있다').toEqual([]);
+    // 잠금이 풀렸다 — 디스크에는 대화가 그대로 있고, 자동저장의 머지 read 는 이제 성공한다.
+    const disk = fixture(doc, true);
+    disk.session.qaMessages = [
+      { id: 'q', role: 'user', content: '기존 질문' },
+      { id: 'a', role: 'assistant', content: '기존 답변' },
+    ] as PersistedSession['qaMessages'];
+    api.session.load.mockImplementation(async (h: string) => { disk.session.docHash = h; return disk; });
+
+    // 복원 실패 뒤 인덱스가 빌드돼 저장 트리거가 성립한 상태.
+    // 복원이 실패한 줄 모르는 사용자가 새로 요약한다 — 그 저장이 디스크의 대화를 지운다.
+    const vs = new VectorStore();
+    vs.setModel('nomic-embed-text');
+    vs.addChunk('청크', [1, 0, 0], 0, { pageStart: 1, pageEnd: 1 });
+    useAppStore.setState({
+      ragIndex: vs,
+      ragState: { ...useAppStore.getState().ragState, chunkCount: 1, model: 'nomic-embed-text' },
+      summaryStream: '새로 만든 요약', summaryStreamType: 'full', summaryStreamComplete: true,
+    });
+    api.session.save.mockClear();
+    api.session.savePartial.mockClear();
+
+    // 디스크에 **아무것도 쓰지 않아야** 한다 — 전체저장(save)이든 부분저장(savePartial)이든
+    // 둘 다 qaMessages 를 통째로 싣기 때문이다. 한쪽만 단언하면 다른 쪽으로 새는 것을 놓친다.
+    await persistCurrentSession();
+    expect(api.session.save, '복원 실패 문서는 전체저장을 하지 않는다').not.toHaveBeenCalled();
+    expect(api.session.savePartial, '복원 실패 문서는 부분저장도 하지 않는다').not.toHaveBeenCalled();
+
+    await persistCurrentSession(true);
+    expect(api.session.save, 'flush 에서도 전체저장하지 않는다').not.toHaveBeenCalled();
+    expect(api.session.savePartial, 'flush 에서도 부분저장하지 않는다').not.toHaveBeenCalled();
+  });
+
+  it('복원이 다시 성공하면 표식이 내려가 저장이 재개된다 (실패가 영구 고착되지 않는다)', async () => {
+    const doc = makeDoc();
+    resetStore({ document: doc, sessionRestorePending: true });
+    api.session.load.mockRejectedValue(new Error('IPC 실패'));
+    await restoreSessionForDocument(doc);
+    expect(useAppStore.getState().sessionRestoreFailed).toBe(true);
+
+    api.session.load.mockImplementation(async (h: string) => { const f = fixture(doc, true); f.session.docHash = h; return f; });
+    resetStore({ document: doc, sessionRestorePending: true, sessionRestoreFailed: true });
+    await restoreSessionForDocument(doc);
+    expect(useAppStore.getState().sessionRestoreFailed, '성공한 복원은 표식을 내려야 한다').toBe(false);
   });
 
   it('embedCheck.available=false → 인덱스 미복원(요약은 복원), 마커 없음', async () => {
