@@ -1113,6 +1113,121 @@ describe('QA30(C-1): 새 인덱스 저장이 실패하면 manifest 의 인덱스
     expect(e?.chunkCount).toBe(2);
   }
 
+  /** manifest.json 쓰기만 1회 실패시킨다 — 인덱스를 지운 **뒤** 실패하는 창을 모사. */
+  function failManifestWriteOnce() {
+    const real = vi.mocked(fsp.writeFile).getMockImplementation()!;
+    let fired = false;
+    vi.mocked(fsp.writeFile).mockImplementation((async (p: unknown, data: unknown, opts?: unknown) => {
+      if (!fired && String(p).includes('manifest.json')) {
+        fired = true;
+        throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' });
+      }
+      return (real as unknown as (a: unknown, b: unknown, c?: unknown) => Promise<void>)(p, data, opts);
+    }) as unknown as typeof fsp.writeFile);
+  }
+
+  it('blob 없이 갱신하다 manifest 기록 실패 → 엔트리가 사라진 인덱스를 계속 주장하지 않는다', async () => {
+    // QA31(B): indexCleared 대입 3곳 중 이 분기(:481, blob===null 선삭제)는 **무보호**였다 —
+    // 대입을 지워도 2359/2359 가 통과했다. 회수(clearIndexClaim)가 끊겨도 아무도 모른다.
+    const h = hashOf(11);
+    await seedIndexed(h);
+    failManifestWriteOnce();
+
+    const r = await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'doc.pdf', filePath: '/x/doc.pdf', chunkMeta: [] },
+      blob: null,
+      now: 2000,
+    });
+
+    expect(r.ok).toBe(false);
+    expect(r.indexMissing, '렌더러가 시그니처를 무효화해 전체 저장으로 회복해야 한다').toBe(true);
+    expect(V.files.has(pathOf(h, 'index.bin')), '선삭제 정책상 인덱스는 실제로 사라졌다').toBe(false);
+    const entry = (await loadManifest(DIR)).entries.find((e) => e.docHash === h);
+    expect(entry?.embedModel, 'manifest 가 없는 인덱스를 주장하면 안 된다').toBeNull();
+    expect(entry?.chunkCount).toBe(0);
+  });
+
+  it('keepIndex 인데 디스크에 blob 이 없다 + manifest 기록 실패 → 주장을 회수한다', async () => {
+    // QA31(B): indexCleared 대입 3곳 중 이 분기(:451, keepIndex + blobBytes===0)도 무보호였다.
+    const h = hashOf(12);
+    await seedIndexed(h);
+    // keepIndex 경로가 참조할 디스크 blob 을 제거해 blobBytes===0 상태를 만든다.
+    V.files.delete(pathOf(h, 'index.bin'));
+    failManifestWriteOnce();
+
+    const r = await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'doc.pdf', filePath: '/x/doc.pdf', chunkMeta: [{ text: 'a' }] },
+      blob: null,
+      keepIndex: true,
+      now: 3000,
+    });
+
+    expect(r.ok).toBe(false);
+    expect(r.indexMissing).toBe(true);
+    const entry = (await loadManifest(DIR)).entries.find((e) => e.docHash === h);
+    expect(entry?.embedModel, 'manifest 가 없는 인덱스를 주장하면 안 된다').toBeNull();
+    expect(entry?.chunkCount).toBe(0);
+  });
+
+  it('LRU 축출 직후 manifest 기록이 실패해도 사라진 세션을 계속 주장하지 않는다 (다섯 번째 생산자)', async () => {
+    // QA31(B): rm(세션 디렉터리)이 saveManifest 보다 **먼저** 실행된다. saveManifest 가 실패하면
+    // 인메모리 엔트리 제거가 통째로 유실되고, 디스크 manifest 는 방금 지워진 세션을 계속
+    // 주장한다 — 인덱스 주장(C-1)보다 넓다: 세션 자체가 없는데 있다고 말한다.
+    // 파급: 의미검색이 무집계로 제외 · 컬렉션 ready 배지 점등 · enforceLru 가 사라진 byteSize 를
+    // 계속 합산해 살아있는 세션을 조기 축출.
+    const N = 31; // SESSION_MAX_COUNT(30) 초과 → 가장 오래된 1건 축출
+    for (let i = 0; i < N - 1; i++) {
+      const r = await writeSession(DIR, {
+        meta: metaOf(hashOf(200 + i)),
+        session: { docHash: hashOf(200 + i), fileName: `d${i}.pdf`, filePath: `/x/d${i}.pdf`, chunkMeta: [] },
+        blob: null,
+        now: 1000 + i,
+      });
+      expect(r.ok).toBe(true);
+    }
+    const oldest = hashOf(200);
+    expect((await loadManifest(DIR)).entries.some((e) => e.docHash === oldest)).toBe(true);
+
+    failManifestWriteOnce();
+    await writeSession(DIR, {
+      meta: metaOf(hashOf(200 + N - 1)),
+      session: { docHash: hashOf(200 + N - 1), fileName: 'new.pdf', filePath: '/x/new.pdf', chunkMeta: [] },
+      blob: null,
+      now: 9000,
+    });
+
+    // 불변식: manifest 는 **디스크에 없는 세션을 주장하지 않는다**. 어느 쪽으로 끝나든
+    // (지워졌으면 엔트리도 없어야 하고, 엔트리가 남았으면 디렉터리도 남아 있어야 한다).
+    const dirGone = !V.files.has(pathOf(oldest, 'session.json'));
+    const claimed = (await loadManifest(DIR)).entries.some((e) => e.docHash === oldest);
+    expect(
+      dirGone && claimed,
+      'manifest 가 디스크에 없는 세션을 주장한다 — 검색 무집계 제외·컬렉션 ready 배지·LRU byteSize 과다 합산. '
+      + 'reconcile 은 디렉터리→manifest 방향만 보므로 이 불일치는 영구히 남는다',
+    ).toBe(false);
+    // 이 수정의 구체적 결과: manifest 확정이 실패했으니 **아무것도 지우지 않았다**.
+    expect(dirGone, 'manifest 기록이 실패하면 축출을 수행하지 않는다').toBe(false);
+    expect(claimed, '엔트리는 보존돼 다음 저장에서 재시도된다').toBe(true);
+  });
+
+  it('정상 LRU 축출은 디렉터리와 엔트리를 함께 제거한다 (수정이 축출 자체를 막지 않았다)', async () => {
+    const N = 31;
+    for (let i = 0; i < N; i++) {
+      const r = await writeSession(DIR, {
+        meta: metaOf(hashOf(300 + i)),
+        session: { docHash: hashOf(300 + i), fileName: `e${i}.pdf`, filePath: `/x/e${i}.pdf`, chunkMeta: [] },
+        blob: null,
+        now: 1000 + i,
+      });
+      expect(r.ok).toBe(true);
+    }
+    const oldest = hashOf(300);
+    expect(V.files.has(pathOf(oldest, 'session.json')), '가장 오래된 세션이 삭제된다').toBe(false);
+    expect((await loadManifest(DIR)).entries.some((e) => e.docHash === oldest)).toBe(false);
+  });
+
   it('session.json 기록 실패(ENOSPC) → 인덱스는 사라졌는데 엔트리가 계속 주장하지 않는다', async () => {
     const h = hashOf(1);
     await seedIndexed(h);

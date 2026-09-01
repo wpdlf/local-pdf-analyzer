@@ -512,6 +512,7 @@ export async function writeSession(
     const next: SessionManifestEntry[] = [...others, entry];
 
     const evictedNames: string[] = [];
+    let evictedSet = new Set<string>();
     const evict = enforceLru(next, SESSION_MAX_COUNT, SESSION_MAX_TOTAL_BYTES, pinnedHashes);
     if (evict.length > 0) {
       // QA21(C-MED, 데이터손실): **열린 탭의 세션은 evict 하지 않는다(pin).**
@@ -536,23 +537,42 @@ export async function writeSession(
       // 디렉토리를 잡고 있을 때 — 읽기는 write mutex 밖에서 돈다)으로 실패하면 디렉토리는 디스크에
       // 남는데 manifest 엔트리는 사라져 영구 고아가 됐다(LRU·stats 가 manifest 만 보므로 다시는
       // 제거·집계 안 됨, 디스크 누수). 실패분은 manifest 에 남겨 다음 저장에서 재시도된다.
-      const removed = new Set<string>();
-      for (const h of evictSet) {
-        try {
-          await fsp.rm(sessionDir(sessionsDir, h), { recursive: true, force: true });
-          removed.add(h);
-          // 삭제 **성공분만** 통지 대상 — rm 실패분은 엔트리가 보존돼 다음 저장에서 재시도되므로
-          // 아직 사라진 것이 아니다.
-          const gone = next.find((e) => e.docHash === h);
-          if (gone?.fileName) evictedNames.push(gone.fileName);
-        } catch { /* rm 실패 → 엔트리 보존, 다음 저장에서 재시도 */ }
-      }
-      manifest.entries = next.filter((e) => !removed.has(e.docHash));
+      // QA31(B, 다섯 번째 생산자): 이전엔 rm 을 **먼저** 돌고 성공분을 manifest 에서 뺐다.
+      // 그 사이 saveManifest 가 실패하면 인메모리 제거가 통째로 유실돼, 디스크 manifest 가
+      // 방금 지워진 세션을 계속 주장한다 — 인덱스 주장(QA30 C-1)보다 넓다: **세션 자체가
+      // 없는데 있다고 말한다**. 그리고 reconcile 은 디렉터리→manifest 방향만 보므로(:950 주석)
+      // 디렉터리가 아예 없는 엔트리는 순회 대상이 아니라 **영구히** 남는다. 전파는 전부 무음:
+      // 의미검색 무집계 제외 · 컬렉션 ready 배지 · enforceLru 가 사라진 byteSize 를 계속 합산해
+      // 살아있는 세션을 조기 축출 · QA21 의 evicted 통지는 ok:true 경로에만 실려 전달도 안 된다.
+      //
+      // 순서를 뒤집는다: manifest 를 먼저 확정하고 그 뒤에 지운다. saveManifest 가 실패하면
+      // throw 되어 **아무것도 지우지 않으므로** 디스크와 manifest 가 어긋나지 않는다.
+      evictedSet = evictSet;
+      manifest.entries = next.filter((e) => !evictSet.has(e.docHash));
     } else {
       manifest.entries = next;
     }
     manifest.schemaVersion = SESSION_SCHEMA_VERSION;
     await saveManifest(sessionsDir, manifest);
+    if (evictedSet.size > 0) {
+      // manifest 가 확정된 뒤 디렉터리를 지운다.
+      const rmFailed: string[] = [];
+      for (const h of evictedSet) {
+        try {
+          await fsp.rm(sessionDir(sessionsDir, h), { recursive: true, force: true });
+          // 삭제 성공분만 통지 대상.
+          const gone = next.find((e) => e.docHash === h);
+          if (gone?.fileName) evictedNames.push(gone.fileName);
+        } catch { rmFailed.push(h); }
+      }
+      if (rmFailed.length > 0) {
+        // rm 실패분(Windows AV·동시 읽기의 EBUSY/EPERM)은 디스크에 그대로 남아 있다 — 엔트리를
+        // 되살려 다음 저장에서 재시도되게 한다(종전 의미 보존). 이 복구 쓰기가 실패해도 남는 것은
+        // "디렉터리는 있는데 엔트리가 없는" 고아뿐이고, 그쪽은 reconcile 이 재등록한다.
+        manifest.entries = [...manifest.entries, ...next.filter((e) => rmFailed.includes(e.docHash))];
+        try { await saveManifest(sessionsDir, manifest); } catch { /* 고아는 다음 부팅 reconcile 이 재등록 */ }
+      }
+    }
     return {
       ok: true,
       ...(evictedNames.length > 0 ? { evicted: evictedNames } : {}),
