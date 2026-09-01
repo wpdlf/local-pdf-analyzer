@@ -26,7 +26,19 @@ const H = vi.hoisted(() => {
     send(channel: string) { this.sent.push(channel); }
     setWindowOpenHandler() {}
     on() {}
-    session = { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} };
+    // QA31(A-Important): 종전엔 빈 함수라 **핸들러를 캡처조차 하지 않았다** — index.ts 의 창
+    // 생성 층을 실제로 로드하는 유일한 테스트인데 권한 정책이 통째로 삼켜졌고, 저장소 전체에
+    // 그 정책을 단언하는 테스트가 0건이었다. 캡처해서 검증 가능하게 만든다.
+    session = {
+      requestHandler: null as null | ((wc: unknown, p: string, cb: (ok: boolean) => void) => void),
+      checkHandler: null as null | ((wc: unknown, p: string) => boolean),
+      setPermissionRequestHandler(fn: (wc: unknown, p: string, cb: (ok: boolean) => void) => void) {
+        this.requestHandler = fn;
+      },
+      setPermissionCheckHandler(fn: (wc: unknown, p: string) => boolean) {
+        this.checkHandler = fn;
+      },
+    };
     openDevTools() {}
   }
   class FakeBrowserWindow {
@@ -405,5 +417,41 @@ describe('revertFlushMarks — 설치 무산 롤백 (QA19 본문 검증)', () =>
 
     expect(win.emitClose(), '롤백 후에는 다시 가로채 flush 해야 한다').toBe(true);
     expect(win.webContents.sent.filter((c) => c === 'app:flush-before-quit').length).toBe(2);
+  });
+});
+
+describe('창 권한 정책 — 클립보드 쓰기만 허용', () => {
+  // QA31(A-Important): 이 정책은 저장소 전체에서 **한 줄도 단언되지 않았다**. 유일하게 이 층을
+  // 로드하는 본 파일의 session 스텁이 핸들러를 캡처조차 하지 않았기 때문이다.
+  // 요약/Q&A 의 "복사" 버튼(navigator.clipboard.writeText)이 이 허용 위에 서 있고,
+  // electron 44 breaking changes 대조에서 "렌더러 clipboard 모듈 제거 → 무영향" 으로 판정한
+  // 근거도 이 경로다. 누가 하드닝처럼 보이게 `() => false` 로 단순화하면 복사가 전 경로에서
+  // 죽는데 스위트는 만점이었다.
+  function handlers() {
+    const win = createWindow() as unknown as InstanceType<typeof FakeBW>;
+    const s = win.webContents.session;
+    expect(s.requestHandler, '권한 요청 핸들러가 등록돼야 한다').toBeTypeOf('function');
+    expect(s.checkHandler, '권한 조회 핸들러가 등록돼야 한다').toBeTypeOf('function');
+    return s;
+  }
+
+  function ask(s: ReturnType<typeof handlers>, permission: string): boolean | undefined {
+    let got: boolean | undefined;
+    s.requestHandler!({}, permission, (ok: boolean) => { got = ok; });
+    return got;
+  }
+
+  it('clipboard-sanitized-write 는 허용한다 (복사 버튼의 전제)', () => {
+    const s = handlers();
+    expect(ask(s, 'clipboard-sanitized-write')).toBe(true);
+    expect(s.checkHandler!({}, 'clipboard-sanitized-write')).toBe(true);
+  });
+
+  it('나머지 권한은 전부 거부한다 (기본 거부 — 카메라·마이크·위치 등)', () => {
+    const s = handlers();
+    for (const p of ['media', 'geolocation', 'notifications', 'clipboard-read', 'display-capture', 'midi', 'openExternal']) {
+      expect(ask(s, p), `${p} 가 허용됐다`).toBe(false);
+      expect(s.checkHandler!({}, p), `${p} 가 capability probing 으로 새어나간다`).toBe(false);
+    }
   });
 });

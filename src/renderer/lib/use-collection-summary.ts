@@ -245,11 +245,20 @@ async function gatherMemberBlocks(
         unlabeledOrigin = labeled == null;
         // 영속화는 best-effort — 실패해도 이번 합성에는 생성분을 그대로 사용. saveSummary 부재(구
         // preload) 환경에서도 옵셔널 체이닝으로 안전.
-        void window.electronAPI.session.saveSummary?.({
-          docHash: m.docHash,
-          type: summaryType,
-          summary: { content: gen, model: settings.model, provider: settings.provider },
-        }).catch(() => undefined);
+        //
+        // QA31(C-Important): 렌더러의 세션 쓰기 셋 중 **이 자리만 persistSessions 게이트가
+        // 없었다**(use-session 의 doPersistCurrentSession·restoreSessionForDocument 는 둘 다
+        // 검사한다). main 쪽 mergeSessionSummary 도 설정을 보지 않으므로 어디에서도 막히지
+        // 않았다. persist OFF 로 바꿔도 openTabs 의 docHash 는 남고 CollectionBar 는
+        // persistSessions 를 보지 않으므로, 사용자가 "저장하지 않음" 을 고른 뒤에도 교차 요약이
+        // 문서 내용 파생물을 디스크에 새로 썼다. 파괴적 손실은 아니지만 정책 위반이다.
+        if (settings.persistSessions) {
+          void window.electronAPI.session.saveSummary?.({
+            docHash: m.docHash,
+            type: summaryType,
+            summary: { content: gen, model: settings.model, provider: settings.provider },
+          }).catch(() => undefined);
+        }
       }
     }
 

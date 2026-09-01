@@ -77,7 +77,9 @@ function setStore(memberHashes: string[]): void {
     qaMessages: [], qaStream: '', isGenerating: false, isQaGenerating: false, qaRequestId: null,
     ragState: { isIndexing: false, progress: null, isAvailable: true, model: MODEL, chunkCount: 1, error: null },
     notice: null, error: null,
-    settings: { ...useAppStore.getState().settings, summaryLanguage: 'ko' },
+    // QA31: persistSessions 도 함께 못박는다 — 리셋하지 않으면 persist OFF 를 세운 테스트가
+    // 뒤 테스트로 누수돼 순서 의존 그린이 된다(QA22 가 형제 파일에서 겪은 것과 같은 클래스).
+    settings: { ...useAppStore.getState().settings, summaryLanguage: 'ko', persistSessions: true },
   });
 }
 
@@ -207,6 +209,26 @@ describe('generateCollectionSummary (L2)', () => {
       type: 'full',
       summary: expect.objectContaining({ content: '통합 결과' }),
     }));
+  });
+
+  it('persistSessions=OFF 면 인라인 생성 결과를 디스크에 쓰지 않는다 (QA31 C-Important)', async () => {
+    // 렌더러의 세션 쓰기 셋 중 이 자리만 persistSessions 게이트가 없었다(use-session 의 둘은
+    // 검사한다). main 의 mergeSessionSummary 도 설정을 보지 않아 어디에서도 막히지 않았다.
+    // persist 를 끈 뒤에도 openTabs 의 docHash 는 남고 CollectionBar 는 persistSessions 를
+    // 보지 않으므로, 사용자가 "저장하지 않음" 을 고른 뒤에도 교차 요약이 문서 내용 파생물을
+    // 디스크에 새로 썼다.
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    useAppStore.setState({ settings: { ...useAppStore.getState().settings, persistSessions: false } });
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf',
+        null, h === 'a'.repeat(64) ? '알파 본문' : '베타 본문')));
+
+    await generateCollectionSummary('comparison');
+
+    expect(mockSaveSummary, 'persist OFF 인데 디스크에 썼다 — 정책 위반').not.toHaveBeenCalled();
+    // 합성 자체는 그대로 동작해야 한다(저장만 막는 것이지 기능을 끄는 게 아니다).
+    expect(M.prompt).toContain('통합 결과');
   });
 
   it('생성 실패 멤버는 본문 발췌로 fallback(영속화 skip)', async () => {
