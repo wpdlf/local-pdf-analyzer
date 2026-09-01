@@ -78,7 +78,13 @@ export function GlobalSearch() {
         if (out.status === 'no-embed-model') { setResults([]); setNote(tr('search.noEmbedModel')); return; }
         if (out.status === 'embed-failed') { setResults([]); setNote(tr('search.embedFailed')); return; }
         setResults(out.results);
-        if (out.excludedCount > 0) setNote(tr('search.excluded', { count: out.excludedCount }));
+        // QA30(C-1b): 손상 인덱스는 모델 불일치와 원인도 해결책도 다르므로 각각 안내한다.
+        // 둘 다 0 이 아닐 수 있어(서로 다른 문서) 한쪽만 표시하면 나머지가 다시 무음이 된다.
+        const notes = [
+          out.excludedCount > 0 ? tr('search.excluded', { count: out.excludedCount }) : null,
+          out.corruptedCount > 0 ? tr('search.corrupted', { count: out.corruptedCount }) : null,
+        ].filter(Boolean);
+        if (notes.length > 0) setNote(notes.join(' '));
       } else {
         const r = await window.electronAPI.session.search(q);
         if (mountedRef.current) setResults(Array.isArray(r) ? r : []);

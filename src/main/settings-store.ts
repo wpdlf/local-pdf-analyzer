@@ -36,10 +36,24 @@ export async function loadSettings(
    * 로드 경로만 무방비였던 비대칭. 미전달 시 종전 동작(키 필터만).
    */
   validateValue?: (key: string, val: unknown) => { ok: true; value: unknown } | { ok: false },
+  /**
+   * QA30(C-10): 파싱된 **원본 파일의 키 목록**을 호출자에게 알린다(파일을 실제로 읽은 경우에만).
+   *
+   * merge 결과(`{...defaults, ...filtered}`)로는 "이 키가 파일에 있었는가" 를 알 수 없어서,
+   * index.ts 의 레거시 가드(v0.16 이전 파일 = uiLanguage 는 있고 summaryLanguage 는 없음)가
+   * **같은 파일을 한 번 더 읽고 있었다**. settings.json 은 요약 청크마다·임베딩 배치마다 읽히는
+   * 핫패스라 그 중복 읽기가 EBUSY 노출 창을 정확히 2배로 넓혔다(C-5·C-6 의 도달 확률을 키운다).
+   * 키 출처를 여기서 한 번에 알려주면 재독이 필요 없다. 파일 부재·손상·일시 I/O 오류면 호출되지
+   * 않는다 — 호출자는 "판단 불가" 로 보고 종전대로 기본값을 유지한다.
+   */
+  onRawKeys?: (keys: string[]) => void,
 ): Promise<Record<string, unknown>> {
   try {
     const data = await fsp.readFile(filePath, 'utf-8');
     const parsed = JSON.parse(data);
+    // QA30(C-10): 화이트리스트 필터 **이전**의 원본 키 목록을 알린다 — 레거시 판정은 "파일에
+    // 그 키가 있었는가" 를 묻기 때문이다(위 onRawKeys 주석).
+    if (onRawKeys && parsed && typeof parsed === 'object') onRawKeys(Object.keys(parsed));
     // 허용된 키만 로드하여 임의 속성 주입 방지
     const filtered: Record<string, unknown> = {};
     for (const key of Object.keys(parsed)) {

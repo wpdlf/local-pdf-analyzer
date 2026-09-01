@@ -48,7 +48,7 @@ const H = vi.hoisted(() => ({
     pullModel: vi.fn(),
     killPullProcess: vi.fn(),
   },
-  store: { read: vi.fn(), load: vi.fn(), save: vi.fn(), delete: vi.fn(), invalidate: vi.fn() },
+  store: { read: vi.fn(), load: vi.fn(), loadState: vi.fn(), save: vi.fn(), delete: vi.fn(), invalidate: vi.fn() },
   settings: { load: vi.fn(), save: vi.fn() },
   // localeAwareDefaults 가 호출하는 app.getLocale — 테스트별 로캘 override 용
   appLocale: vi.fn(() => 'ko-KR'),
@@ -150,6 +150,7 @@ vi.mock('../api-keys-store', () => ({
   ApiKeyStore: class {
     read = H.store.read;
     load = H.store.load;
+    loadState = H.store.loadState;
     save = H.store.save;
     delete = H.store.delete;
     invalidate = H.store.invalidate;
@@ -180,6 +181,9 @@ beforeEach(() => {
   H.settings.save.mockResolvedValue(undefined);
   H.appLocale.mockReturnValue('ko-KR');
   H.store.load.mockReturnValue(undefined);
+  // QA30(C-6): loadState 는 load 의 정보 보존형(transient 구분). 기본값은 "정상 읽기" 로
+  // 세워 기존 테스트가 H.store.load 만 조작해도 종전처럼 동작하게 한다.
+  H.store.loadState.mockImplementation((provider: string) => ({ key: H.store.load(provider), transient: false }));
   H.store.save.mockReturnValue(undefined);
   H.store.delete.mockReturnValue(undefined);
   // QA22(D-MED): fsp 목 **구현**도 매 테스트 재설정한다. clearAllMocks 는 call 만 비우므로,
@@ -341,7 +345,9 @@ describe('file:save (확장자 allowlist + 크기 캡)', () => {
     H.dialog.showSaveDialog.mockResolvedValue({ filePath: '/tmp/out.md' });
     H.fsp.writeFile.mockResolvedValue(undefined);
     expect(await invoke('file:save', 'hello', 'out.md')).toBe('/tmp/out.md');
-    expect(H.fsp.writeFile).toHaveBeenCalledWith('/tmp/out.md', 'hello', 'utf-8');
+    // QA30(C-3): 제자리 덮어쓰기가 아니라 `.tmp` -> rename (아래 원자성 describe 참조).
+    expect(H.fsp.writeFile).toHaveBeenCalledWith('/tmp/out.md.tmp', 'hello', 'utf-8');
+    expect(H.fsp.rename).toHaveBeenCalledWith('/tmp/out.md.tmp', '/tmp/out.md');
   });
 
   it('writeFile 실패 → reject (E2: 취소 null 과 구분해 렌더러가 에러 표면화)', async () => {
@@ -776,6 +782,8 @@ describe('session:* (영속화 핸들러)', () => {
 
     expect(results.length, '캡을 둬도 전 세션이 검색된다').toBe(12);
     expect(peak, '캡이 없으면 12건이 한 번에 파싱돼 main 이 그만큼 잡힌다').toBeLessThanOrEqual(4);
+    // QA30(D6): 하한이 없으면 캡을 1 로 낮춘 완전 직렬화도 통과한다.
+    expect(peak, '캡이 1 로 쪼그라들면 검색이 통째로 직렬화된다 — 그것도 회귀다').toBeGreaterThan(1);
   });
 });
 
@@ -905,5 +913,280 @@ describe('collections:* 핸들러', () => {
   it('touch: 저장돼 있지 않은 id / 비문자열은 ok:false (무음 성공 금지)', async () => {
     expect(await invoke('collections:touch', 'nope')).toEqual({ ok: false });
     expect(await invoke('collections:touch', null)).toEqual({ ok: false });
+  });
+});
+
+/**
+ * QA30(C-5): QA24 가 `loadSettings` 를 throw 형으로 바꾼 뒤 **호출자 스윕이 두 곳에서 멈췄다**
+ * (ai:generate 의 preflight 는 try 밖, ai:check-available 은 try 자체가 없음).
+ *
+ * 기존 ipc-handlers 테스트가 이걸 못 잡은 이유: `beforeEach` 가 항상
+ * `H.settings.load.mockResolvedValue(...)` 로 **성공**을 세워서, loadSettings reject 시나리오가
+ * 이 파일에 한 건도 없었다. 여기서는 매 케이스가 명시적으로 reject 를 세운다.
+ */
+describe('QA30(C-5): settings 읽기 실패(EBUSY)가 AI 경로를 오염시키지 않는다', () => {
+  const ebusy = () => Object.assign(
+    new Error("EBUSY: resource busy or locked, open 'C:\\\\Users\\\\me\\\\AppData\\\\Roaming\\\\app\\\\settings.json'"),
+    { code: 'EBUSY' },
+  );
+  const genReq = {
+    text: 'hi', type: 'full' as const, model: 'llama3',
+    provider: 'ollama' as const, ollamaBaseUrl: 'http://localhost:11434',
+  };
+
+  it('ai:generate — 요약이 죽지 않고 요청측(SSRF 검증 통과) URL 로 진행한다', async () => {
+    H.settings.load.mockRejectedValue(ebusy());
+    H.ai.generate.mockResolvedValueOnce(undefined);
+    const r = await invoke('ai:generate', 'req-ebusy', genReq) as { success: boolean; error?: string };
+    // 종전: preflight 가 try 밖에서 던져 핸들러가 reject → 렌더러 배너에 EBUSY 원문이 떴다.
+    expect(r.success).toBe(true);
+    expect(H.ai.generate).toHaveBeenCalledTimes(1);
+    const passed = H.ai.generate.mock.calls[0]![1] as { ollamaBaseUrl: string };
+    expect(passed.ollamaBaseUrl).toBe('http://localhost:11434');
+  });
+
+  it('ai:check-available — 계약대로 false 로 수렴한다(reject 아님)', async () => {
+    H.settings.load.mockRejectedValue(ebusy());
+    const r = await invoke('ai:check-available', 'ollama', 'http://localhost:11434');
+    expect(r).toBe(false);
+    expect(H.ai.checkAvailability).not.toHaveBeenCalled();
+  });
+
+  it('ai:check-available — 클라우드 provider 는 settings 를 읽지 않으므로 영향이 없다', async () => {
+    H.settings.load.mockRejectedValue(ebusy());
+    H.ai.checkAvailability.mockResolvedValue(true);
+    expect(await invoke('ai:check-available', 'claude', 'http://localhost:11434')).toBe(true);
+  });
+
+  it.each([
+    ['ai:embed', () => invoke('ai:embed', ['t'], 'rid-embed')],
+    ['ai:analyze-image', () => invoke('ai:analyze-image', 'a'.repeat(200), 'rid-vision')],
+    ['ai:ocr-page', () => invoke('ai:ocr-page', 'a'.repeat(200), 'rid-ocr')],
+  ])('%s — userData 절대경로를 IPC 페이로드에 싣지 않는다 (generic + code)', async (_label, call) => {
+    H.settings.load.mockRejectedValue(ebusy());
+    const r = await call() as { success: boolean; error: string; code?: string };
+    expect(r.success).toBe(false);
+    // QA6-A 정책: fs 에러 원문(경로 포함)은 렌더러로 나가지 않는다.
+    expect(r.error).not.toMatch(/settings\.json/);
+    expect(r.error).not.toMatch(/EBUSY/);
+    expect(r.error).not.toMatch(/AppData/);
+    expect(r.code).toBe('SETTINGS_READ_FAILED');
+  });
+});
+
+/**
+ * QA30(A축 배선): callVision 이 붙인 code/errorKey/errorParams 가 Vision/OCR 응답에서 전량
+ * 버려지고 있었다(ai:generate 는 이미 싣는다).
+ */
+describe('QA30: Vision/OCR 실패도 code/errorKey 를 전파한다', () => {
+  it('BLOCKED(errorKey 보유)는 message 와 함께 그대로 전달된다', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama', model: 'llava', ollamaBaseUrl: 'http://localhost:11434' });
+    H.ai.analyzeImage.mockRejectedValueOnce(Object.assign(
+      new Error('응답이 차단되었습니다.'),
+      { code: 'BLOCKED', errorKey: 'responseBlocked', errorParams: { reason: 'SAFETY' } },
+    ));
+    const r = await invoke('ai:analyze-image', 'a'.repeat(200), 'rid-b') as
+      { success: boolean; error: string; code?: string; errorKey?: string; errorParams?: Record<string, string> };
+    expect(r).toMatchObject({
+      success: false, code: 'BLOCKED', errorKey: 'responseBlocked', errorParams: { reason: 'SAFETY' },
+    });
+    expect(r.error).toContain('차단');
+  });
+
+  it('abort 는 종전 계약 그대로(ABORTED)', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama', model: 'llava', ollamaBaseUrl: 'http://localhost:11434' });
+    H.ai.analyzeImageForOcr.mockRejectedValueOnce(Object.assign(new Error('Aborted'), { code: 'ABORT_ERR' }));
+    expect(await invoke('ai:ocr-page', 'a'.repeat(200), 'rid-a'))
+      .toEqual({ success: false, error: 'Aborted', code: 'ABORTED' });
+  });
+
+  it('Vision 모델 부재 안내처럼 **행동 가능한** 메시지는 generic 으로 뭉개지 않는다', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama', model: 'llama3', ollamaBaseUrl: 'http://localhost:11434' });
+    H.ollama.listModels.mockResolvedValue([]); // vision 모델 없음
+    const r = await invoke('ai:analyze-image', 'a'.repeat(200), 'rid-nm') as { success: boolean; error: string };
+    expect(r.success).toBe(false);
+    expect(r.error).toContain('llava');
+  });
+});
+
+/**
+ * QA30(C-6): apikey:has 가 "못 읽음" 과 "없음" 을 구분한다. 종전에는 AV 가 순간 잠그면 false 가
+ * 되어 설정 화면이 "키 미저장" 으로 뜨고 클라우드가 "API 키를 설정해주세요" 를 띄웠다.
+ */
+describe('QA30(C-6): apikey:has 는 "확인 불가" 를 false 로 단정하지 않는다', () => {
+  it('일시 I/O 오류(transient) → null', async () => {
+    H.store.loadState.mockReturnValue({ key: undefined, transient: true });
+    expect(await invoke('apikey:has', 'claude')).toBeNull();
+  });
+
+  it('정말 없음 → false / 있음 → true (종전 계약 유지)', async () => {
+    H.store.loadState.mockReturnValue({ key: undefined, transient: false });
+    expect(await invoke('apikey:has', 'claude')).toBe(false);
+    H.store.loadState.mockReturnValue({ key: 'sk-real', transient: false });
+    expect(await invoke('apikey:has', 'claude')).toBe(true);
+  });
+
+  it('미지원 provider 는 store 조회 없이 false', async () => {
+    H.store.loadState.mockClear();
+    expect(await invoke('apikey:has', 'mistral')).toBe(false);
+    expect(H.store.loadState).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * QA30(C-8): settings:set 만 인자 shape 검증이 없었다(43채널 중 유일).
+ */
+describe('QA30(C-8): settings:set 인자 shape 가드', () => {
+  it.each([['null', null], ['undefined', undefined], ['문자열', 'x'], ['숫자', 7], ['배열', ['a']]])(
+    '%s 인자는 raw TypeError 도 무의미한 재기록도 만들지 않는다',
+    async (_label, bad) => {
+      H.settings.load.mockResolvedValue({ provider: 'ollama', uiLanguage: 'ko' });
+      H.settings.save.mockClear();
+      const r = await invoke('settings:set', bad) as Record<string, unknown>;
+      expect(r).toMatchObject({ provider: 'ollama', uiLanguage: 'ko' }); // 현재 설정을 그대로
+      expect(H.settings.save, '저장할 것이 없는데 디스크를 다시 썼다').not.toHaveBeenCalled();
+    },
+  );
+
+  it('정상 객체는 종전대로 저장된다(가드가 정상 경로를 막지 않는다)', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama', uiLanguage: 'ko' });
+    H.settings.save.mockClear();
+    const r = await invoke('settings:set', { uiLanguage: 'en' }) as Record<string, unknown>;
+    expect(r.uiLanguage).toBe('en');
+    expect(H.settings.save).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * QA30(C-9): session:search 의 query 는 상한이 없는 유일한 문자열 인자였다.
+ */
+describe('QA30(C-9): session:search query 길이 상한', () => {
+  it('상한 초과 질의는 디스크를 읽지도 않고 빈 결과', async () => {
+    H.fsp.readFile.mockClear();
+    expect(await invoke('session:search', 'q'.repeat(513))).toEqual([]);
+    // "빈 결과" 만으로는 공허하다(어떤 질의든 빈 결과가 나올 수 있다) — **읽지 않았음** 을 본다.
+    expect(H.fsp.readFile).not.toHaveBeenCalled();
+  });
+
+  it('상한 이내 질의는 종전대로 세션을 읽는다', async () => {
+    H.fsp.readFile.mockClear();
+    expect(await invoke('session:search', 'q'.repeat(512))).toEqual([]);
+    expect(H.fsp.readFile).toHaveBeenCalled(); // manifest 를 읽으려 시도했다
+  });
+});
+
+/**
+ * QA30(C-3): 사용자에게 파일을 돌려주는 두 채널만 제자리 덮어쓰기였다.
+ *
+ * 반환값이 아니라 **실패 후 디스크 상태**를 본다: `writeFile` 을 실제 `open(w)` 처럼
+ * "먼저 잘라내고 쓴다" 로 모사해, 실패 시 대상 파일이 0바이트로 남는지를 직접 관측한다
+ * (조사 단계 실측: 원본 62바이트 → open(w) 직후 0바이트).
+ */
+describe('QA30(C-3): file:save / file:export-pdf 는 원자적으로 쓴다', () => {
+  const disk = new Map<string, string | Uint8Array>();
+  let failOn: string | null = null;
+
+  beforeEach(() => {
+    disk.clear();
+    failOn = null;
+    H.fsp.writeFile.mockImplementation(async (p: string, data: string | Uint8Array) => {
+      disk.set(p, ''); // open(w) 는 열자마자 기존 내용을 잘라낸다
+      if (failOn === p) throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+      disk.set(p, data);
+    });
+    H.fsp.rename.mockImplementation(async (a: string, b: string) => {
+      const v = disk.get(a);
+      if (v === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      disk.set(b, v);
+      disk.delete(a);
+    });
+    H.fsp.unlink.mockImplementation(async (p: string) => { disk.delete(p); });
+  });
+
+  it('file:save 실패 — 이전 내보내기 결과가 파괴되지 않고 tmp 찌꺼기도 남지 않는다', async () => {
+    disk.set('/tmp/out.md', '이전에 내보낸 요약본');
+    H.dialog.showSaveDialog.mockResolvedValue({ filePath: '/tmp/out.md' });
+    failOn = '/tmp/out.md.tmp';
+    await expect(invoke('file:save', 'new content', 'out.md')).rejects.toThrow('file:save failed');
+    expect(disk.get('/tmp/out.md'), '실패한 저장이 원본을 0바이트로 만들었다').toBe('이전에 내보낸 요약본');
+    expect(disk.has('/tmp/out.md.tmp')).toBe(false);
+  });
+
+  it('file:save 성공 — tmp 를 거쳐 최종 경로에 안착한다', async () => {
+    disk.set('/tmp/out.md', '옛 내용');
+    H.dialog.showSaveDialog.mockResolvedValue({ filePath: '/tmp/out.md' });
+    expect(await invoke('file:save', '새 내용', 'out.md')).toBe('/tmp/out.md');
+    expect(disk.get('/tmp/out.md')).toBe('새 내용');
+    expect(disk.has('/tmp/out.md.tmp')).toBe(false);
+  });
+
+  it('file:export-pdf 실패(ENOSPC) — 이전 PDF 가 살아남는다', async () => {
+    disk.set('/tmp/out.pdf', 'PREVIOUS-PDF-BYTES');
+    H.dialog.showSaveDialog.mockResolvedValue({ filePath: '/tmp/out.pdf' });
+    H.exportWin.loadFile.mockResolvedValue(undefined);
+    H.exportWin.printToPDF.mockResolvedValue(Buffer.from('NEW-PDF'));
+    failOn = '/tmp/out.pdf.tmp';
+    await expect(invoke('file:export-pdf', '<p>x</p>', 'out.pdf')).rejects.toThrow('file:export-pdf failed');
+    expect(disk.get('/tmp/out.pdf')).toBe('PREVIOUS-PDF-BYTES');
+    expect(disk.has('/tmp/out.pdf.tmp')).toBe(false);
+  });
+});
+
+/**
+ * QA30(C-10): loadSettings 가 settings.json 을 **매 호출 두 번** 읽던 것(본체 1회 + v0.16 레거시
+ * 가드의 원본 재독 1회). 요약 청크마다·임베딩 배치마다 도는 핫패스라, 중복 읽기가 EBUSY 노출
+ * 창을 정확히 2배로 넓혀 C-5·C-6 의 도달 확률을 직접 키웠다.
+ */
+describe('QA30(C-10): settings.json 은 호출당 한 번만 읽는다', () => {
+  it('settings:get / ai:generate 는 원본 재독(fs.readFile)을 하지 않는다', async () => {
+    H.settings.load.mockResolvedValue({ provider: 'ollama', ollamaBaseUrl: 'http://localhost:11434' });
+    H.ai.generate.mockResolvedValue(undefined);
+    H.fsp.readFile.mockClear();
+
+    await invoke('settings:get');
+    await invoke('ai:generate', 'req-c10', {
+      text: 'hi', type: 'full', model: 'llama3', provider: 'ollama', ollamaBaseUrl: 'http://localhost:11434',
+    });
+
+    const settingsReads = H.fsp.readFile.mock.calls.filter((c) => String(c[0]).includes('settings.json'));
+    expect(settingsReads, '레거시 가드가 settings.json 을 다시 읽고 있다').toHaveLength(0);
+    // 실제 읽기는 settings-store 안에서 1회 — 그 호출 자체는 그대로 일어난다.
+    expect(H.settings.load).toHaveBeenCalled();
+  });
+
+  it('레거시 파일 보정(R43 F5)은 그대로 동작한다 — 키 출처는 onRawKeys 로 받는다', async () => {
+    // v0.16 이전 파일: uiLanguage 는 있고 summaryLanguage 는 없음. 비-ko 로캘.
+    H.appLocale.mockReturnValue('en-US');
+    H.settings.load.mockImplementation(async (
+      _p: string, defaults: Record<string, unknown>, _k: unknown, _v: unknown,
+      onRawKeys?: (keys: string[]) => void,
+    ) => {
+      onRawKeys?.(['provider', 'uiLanguage']);
+      return { ...defaults, uiLanguage: 'ko' };
+    });
+    const out = await invoke('settings:get') as Record<string, unknown>;
+    // 저장된 UI 언어(ko)를 요약 언어로 승계 — 로캘 기본값(en)이 아니다.
+    expect(out.summaryLanguage).toBe('ko');
+  });
+
+  it('파일에 summaryLanguage 가 있으면 보정하지 않는다', async () => {
+    H.appLocale.mockReturnValue('en-US');
+    H.settings.load.mockImplementation(async (
+      _p: string, defaults: Record<string, unknown>, _k: unknown, _v: unknown,
+      onRawKeys?: (keys: string[]) => void,
+    ) => {
+      onRawKeys?.(['uiLanguage', 'summaryLanguage']);
+      return { ...defaults, uiLanguage: 'ko', summaryLanguage: 'en' };
+    });
+    const out = await invoke('settings:get') as Record<string, unknown>;
+    expect(out.summaryLanguage).toBe('en');
+  });
+
+  it('파일 부재·손상(onRawKeys 미호출)이면 로캘 기본값을 유지한다', async () => {
+    H.appLocale.mockReturnValue('en-US');
+    H.settings.load.mockImplementation(async (_p: string, defaults: Record<string, unknown>) => ({ ...defaults }));
+    const out = await invoke('settings:get') as Record<string, unknown>;
+    expect(out.summaryLanguage).toBe('en');
+    expect(out.uiLanguage).toBe('en');
   });
 });

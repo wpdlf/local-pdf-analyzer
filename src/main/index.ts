@@ -128,19 +128,28 @@ function localeAwareDefaults(): Record<string, unknown> {
 }
 
 async function loadSettings(): Promise<Record<string, unknown>> {
-  const settings = await _loadSettings(settingsPath, localeAwareDefaults(), VALID_SETTINGS_KEYS_SET, validateSettingValue);
-  // R43 F5: 레거시 가드 — uiLanguage 는 저장돼 있지만 summaryLanguage 키가 도입 전이라
-  // 파일에 없는 사용자(v0.16 이전 마지막 저장)가 비-ko 로캘 OS 에서 요약 언어만 묵시적으로
-  // en 으로 바뀌는 회귀 차단. 저장된 UI 언어를 따른다. (merge 결과로는 키 출처를 구분할 수
-  // 없어 원본 파일을 직접 검사 — 파일 부재/손상 시 로캘 기본값 유지)
-  try {
-    const raw = JSON.parse(await fsp.readFile(settingsPath, 'utf-8'));
-    if (raw && typeof raw === 'object' && 'uiLanguage' in raw && !('summaryLanguage' in raw)) {
-      // R44: 값 검증 — 손으로 망가진 파일의 임의 uiLanguage 가 summaryLanguage 로 전파되지 않도록
-      const ui = settings.uiLanguage;
-      if (ui === 'ko' || ui === 'en') settings.summaryLanguage = ui;
-    }
-  } catch { /* 첫 실행(파일 없음)/손상 — localeAwareDefaults 유지 */ }
+  // R43 F5: 레거시 가드 — uiLanguage 는 저장돼 있지만 summaryLanguage 키가 도입 전이라 파일에
+  // 없는 사용자(v0.16 이전 마지막 저장)가 비-ko 로캘 OS 에서 요약 언어만 묵시적으로 en 으로
+  // 바뀌는 회귀 차단. 저장된 UI 언어를 따른다.
+  //
+  // QA30(C-10): 종전에는 이 판정을 위해 **settings.json 을 한 번 더 읽었다**(merge 결과로는 키
+  // 출처를 구분할 수 없어서). 그런데 loadSettings 는 요약 청크마다·임베딩 배치마다·Vision/OCR
+  // 페이지마다 호출되는 핫패스라, 파일 하나를 매 호출 두 번 읽고 있었다(실측: ai:generate 1회당
+  // readFile 2회 → 20청크 요약 40회, 200페이지 OCR 400회 이상). 성능보다 중요한 것은 **EBUSY
+  // 노출 창을 정확히 2배로 넓힌다**는 점이다 — C-5·C-6 이 고치는 "AV 가 순간 잠그면 요약이 fs
+  // 에러로 죽는다" 의 도달 확률을 이 중복 읽기가 직접 키웠다. settings-store 가 파싱하면서 원본
+  // 키 목록을 넘겨주므로(onRawKeys) 재독이 필요 없다 — 읽기는 호출당 1회다.
+  const raw = { keys: null as string[] | null };
+  const settings = await _loadSettings(
+    settingsPath, localeAwareDefaults(), VALID_SETTINGS_KEYS_SET, validateSettingValue,
+    (keys) => { raw.keys = keys; },
+  );
+  // keys 가 null 이면 파일 부재/손상/일시 I/O 오류 — 판단 불가이므로 로캘 기본값 유지(종전 동일).
+  if (raw.keys && raw.keys.includes('uiLanguage') && !raw.keys.includes('summaryLanguage')) {
+    // R44: 값 검증 — 손으로 망가진 파일의 임의 uiLanguage 가 summaryLanguage 로 전파되지 않도록
+    const ui = settings.uiLanguage;
+    if (ui === 'ko' || ui === 'en') settings.summaryLanguage = ui;
+  }
   return settings;
 }
 
@@ -703,6 +712,15 @@ function getUpdaterService(): UpdaterService {
   return updaterService;
 }
 
+/**
+ * settings 읽기 실패의 사용자 메시지 — QA30(C-5). fs 에러 원문(EBUSY + userData 절대경로)을
+ * IPC 페이로드에 싣지 않는다는 apikey:*(QA6-A) 정책을 AI 경로에도 적용하기 위한 대체 문구.
+ *
+ * `errorKey: 'settingsReadFailed'` 를 함께 실어 렌더러가 UI 언어로 번역한다(이 문구는 errorKey
+ * 를 모르는 옛 렌더러를 위한 fallback 이다). 두 값은 errorKey↔i18n drift 가드가 묶는다.
+ */
+const SETTINGS_READ_FAILED_MSG = '설정을 읽을 수 없어 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.';
+
 const apiKeysPath = path.join(app.getPath('userData'), 'api-keys.enc');
 
 // ─── API 키 암호화 저장소 ───
@@ -758,11 +776,18 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('apikey:has', (_event, provider: string) => {
+  // QA30(C-6): 반환은 `boolean | null` — **`null` = "확인할 수 없음"**(api-keys.enc 가 존재할 수
+  // 있으나 지금 못 읽었다: AV·인덱서의 share violation 등). 종전에는 이 경우도 false 였고, 그
+  // false 가 설정 화면의 "키 미저장" 표시와 클라우드 사용 불가 안내("API 키를 설정해주세요")로
+  // 이어져 사용자는 키가 사라진 줄 알았다 — 형제 listSessions(→null)·listCollections(→throw)는
+  // 이미 둘을 구분한다. (덮어쓰기 손실은 readForWrite 가 이미 막고 있고 그 방어는 유지된다.)
+  // 렌더러가 null 을 아직 구분하지 않아도 falsy 라 종전 표시와 동일하다(무해한 확장).
+  ipcMain.handle('apikey:has', (_event, provider: string): boolean | null => {
     if (!VALID_PROVIDERS.includes(provider as typeof VALID_PROVIDERS[number])) {
       return false;
     }
-    const key = apiKeyStore.load(provider);
+    const { key, transient } = apiKeyStore.loadState(provider);
+    if (transient) return null;
     return !!key && key.length > 0;
   });
 
@@ -800,6 +825,11 @@ export function registerIpcHandlers(): void {
       // api-keys-store 의 readForWrite 가 이미 코드화해 둔 계약을 같은 구조인 이곳에 이식한다.
       // throw 는 IPC 를 통해 렌더러의 settings.set().catch 로 전달되어 저장 실패 배너가 뜬다.
       const current = await loadSettings();
+      // QA30(C-8): **인자 shape 검증** — 43개 IPC 채널 중 이 채널만 없었다. 종전에는
+      // `null`/`undefined`/문자열/숫자가 아래 `key in partial` 에서 raw TypeError 로 reject 되어
+      // (렌더러엔 정제되지 않은 예외가 간다) 배열·빈 객체는 통과해 같은 내용을 무의미하게
+      // 재기록했다(디스크 쓰기 + fsync). 어느 쪽도 저장할 것이 없으므로 현재 설정을 그대로 준다.
+      if (!partial || typeof partial !== 'object' || Array.isArray(partial)) return current;
       const filtered: Record<string, unknown> = {};
       for (const key of VALID_SETTINGS_KEYS) {
         if (!(key in partial)) continue;
@@ -947,8 +977,15 @@ export function registerIpcHandlers(): void {
 
   // 전체 문서 검색 — 저장된 모든 세션을 가로질러 키워드 매칭(pageTexts/summaries/파일명).
   // 제출 시점 1회 호출(라이브 아님): 세션 본문(≤30)을 읽어 순수 검색 후 점수순 상한.
+  // QA30(C-9, 형제 누락): query 는 **상한이 없는 유일한 문자열 인자**였다(다른 채널은 전부 캡을
+  // 갖는다 — apikey 512·shell:open-external 2048·requestId 256·embed 텍스트 32000). 검색어는
+  // 세션 수만큼 매칭 루프를 도는 입력이므로, 손상/폭주 렌더러가 멀티MB 문자열을 보내면 main 이
+  // 그만큼 붙잡힌다. 정상 검색어는 수십 자다.
+  const MAX_SEARCH_QUERY_LEN = 512;
+
   ipcMain.handle('session:search', async (_event, query: unknown): Promise<GlobalSearchResult[]> => {
     if (typeof query !== 'string' || query.trim().length < MIN_QUERY_LENGTH) return [];
+    if (query.length > MAX_SEARCH_QUERY_LEN) return [];
     // QA24(C-M2): listSessions 가 이제 일시 I/O 오류를 null 로 구분한다. 여기서는 **종전 동작을
     // 그대로 보존**한다(빈 결과) — 검색은 이전에도 흡수형이었으므로 이 변경으로 회귀시키지
     // 않는다. 다만 "못 읽어서 0건" 을 "정말 0건" 으로 보여주는 것은 남은 문제이고, 고치려면
@@ -1146,9 +1183,24 @@ export function registerIpcHandlers(): void {
     // QA28(C-Low): R39 가 ai:check-available 에서만 닫은 포트-스캔 오라클의 형제 경로 —
     // isLocalhostHost 는 포트를 보지 않고, ECONNREFUSED 와 그 외 에러가 서로 다른 errorKey 를
     // 갖는다. embeddings/vision/check-available 과 동일하게 저장된 설정의 정규 URL 만 쓴다.
-    const effective = request.provider === 'ollama'
-      ? { ...request, ollamaBaseUrl: ((await loadSettings()).ollamaBaseUrl as string) || request.ollamaBaseUrl }
-      : request;
+    //
+    // QA30(C-5): 이 `await loadSettings()` 는 **try 밖**에 있었다. QA24 가 loadSettings 를
+    // throw 형으로 바꾼 뒤 호출자 스윕이 여기서 멈춘 것이다(같은 커밋이 :674 는 감쌌고
+    // :1204·:1324·:1369 는 각자 try 안이다). settings.json 은 요약 청크마다 읽히는 핫패스라
+    // 잠금이 한 번 겹치면 preflight 가 던지고, 바깥 catch 가 그것을 GENERATE_FAIL 로 뭉개
+    // **"Ollama가 실행 중이 아닙니다" 같은 행동 가능한 안내 대신 `EBUSY: … settings.json`
+    // 원문이 요약 실패 배너로** 떴다(실측). 저장된 URL 조회는 정책 조회일 뿐이므로, 실패하면
+    // 요청측 URL 로 폴백한다 — 그 값은 validateGenerateRequest 의 SSRF 가드를 이미 통과했다.
+    let effective = request;
+    if (request.provider === 'ollama') {
+      let storedUrl: string | undefined;
+      try {
+        storedUrl = (await loadSettings()).ollamaBaseUrl as string;
+      } catch (err) {
+        console.warn('[ai:generate] settings 조회 실패 — 요청 URL 로 폴백:', (err as Error)?.message);
+      }
+      effective = { ...request, ollamaBaseUrl: storedUrl || request.ollamaBaseUrl };
+    }
 
     try {
       await generate(requestId, effective, apiKey, win);
@@ -1178,6 +1230,11 @@ export function registerIpcHandlers(): void {
     return { success: true };
   });
 
+  // QA30(C-5): 이 핸들러에는 **try 가 아예 없었다**. QA24 가 loadSettings 를 throw 형으로 바꾼
+  // 뒤로는 settings.json 잠금 한 번에 채널이 reject 되는데, preload 계약은 `Promise<boolean>` 이라
+  // 렌더러 isAvailable() 이 예상 못 한 예외를 받는다(실측: rejected "EBUSY: … settings.json").
+  // 계약대로 false 로 수렴시킨다 — "사용 불가" 는 이 채널이 이미 표현할 수 있는 결과이고,
+  // 사용자에겐 재시도 가능한 상태로 보인다.
   ipcMain.handle('ai:check-available', async (_event, provider: string, _ollamaBaseUrl: string) => {
     // R38 P1: provider 화이트리스트 + ollama localhost SSRF 가드를 ipc-validators 로 위임.
     if (!isValidProvider(provider)) return false;
@@ -1187,10 +1244,16 @@ export function registerIpcHandlers(): void {
     // 검증되나 port 미검증). embeddings/vision 핸들러와 동일하게 settings store 의 정규 URL 만
     // 사용해 renderer 인자를 신뢰 경계 밖으로 밀어낸다. renderer 의 isAvailable() 은 항상 저장된
     // settings.ollamaBaseUrl 로 호출하므로(저장 전 임의 입력 테스트 경로 없음) UX 영향 없음.
-    const ollamaBaseUrl =
-      provider === 'ollama'
-        ? ((await loadSettings()).ollamaBaseUrl as string) || 'http://localhost:11434'
-        : _ollamaBaseUrl;
+    // QA30(C-5): 저장된 URL 조회 실패는 계약대로 false (핸들러 위 주석 참조).
+    let ollamaBaseUrl = _ollamaBaseUrl;
+    if (provider === 'ollama') {
+      try {
+        ollamaBaseUrl = ((await loadSettings()).ollamaBaseUrl as string) || 'http://localhost:11434';
+      } catch (err) {
+        console.warn('[ai:check-available] settings 조회 실패:', (err as Error)?.message);
+        return false;
+      }
+    }
     if (!isValidOllamaBaseUrl(ollamaBaseUrl, provider)) return false;
     const apiKey = provider !== 'ollama' ? apiKeyStore.load(provider) : undefined;
     return checkAvailability(provider, ollamaBaseUrl, apiKey);
@@ -1201,7 +1264,16 @@ export function registerIpcHandlers(): void {
   const OLLAMA_VISION_MODELS = ['llava', 'llama3.2-vision', 'bakllava', 'moondream'];
 
   async function resolveVisionModel(errorPrefix: string) {
-    const settings = await loadSettings();
+    // QA30(C-5): loadSettings 의 fs 에러를 그대로 올리면 아래 두 핸들러의 catch 가 그 message 를
+    // `error` 로 IPC 에 실어 보낸다 — **userData 절대경로가 페이로드에 담긴다**(실측:
+    // `{"success":false,"error":"EBUSY: … open 'C:\\Users\\…\\settings.json'"}`). apikey:* 가
+    // QA6-A 에서 명시적으로 금지한 정책이라 같은 규칙을 적용한다: generic 메시지 + code.
+    let settings: Record<string, unknown>;
+    try { settings = await loadSettings(); } catch (err) {
+      // 원문(경로 포함)은 main 로그에만 — 아래 throw 는 경로를 담지 않는다.
+      console.warn('[vision] settings 조회 실패:', (err as Error)?.message);
+      throw Object.assign(new Error(SETTINGS_READ_FAILED_MSG), { code: 'SETTINGS_READ_FAILED', errorKey: 'settingsReadFailed' });
+    }
     const provider = (settings.provider as 'ollama' | 'claude' | 'openai' | 'gemini') || 'ollama';
     const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
     let model = (settings.model as string) || '';
@@ -1215,6 +1287,39 @@ export function registerIpcHandlers(): void {
     }
     const apiKey = provider !== 'ollama' ? apiKeyStore.load(provider) : undefined;
     return { provider, model, ollamaBaseUrl, apiKey };
+  }
+
+  /**
+   * Vision/OCR 실패의 IPC 페이로드 — `ai:generate` 와 **같은 계약**으로 통일한다(QA30).
+   *
+   * ① A축 배선: ai-service 의 callVision 공통 후처리가 붙이는 `code`/`errorKey`/`errorParams`
+   *    (BLOCKED · EMPTY_RESPONSE · API_KEY_INVALID)를 그대로 실어 렌더러가 translateMainError
+   *    로 UI 언어에 맞게 표시하게 한다. 종전에는 abort 만 code 를 붙이고 나머지는 message 만
+   *    보내 정보가 IPC 경계에서 전량 소실됐다.
+   * ② C-5: **raw fs 에러의 message 는 싣지 않는다**(EBUSY + userData 절대경로가 페이로드에
+   *    담기던 것 — apikey:* 가 QA6-A 에서 금지한 정책). 판정은 "Node errno 형태의 code 를
+   *    가졌는데 errorKey 는 없는 에러" 로 좁힌다: main 이 스스로 만든 안내 문구
+   *    ("Vision 모델이 필요합니다…", "설정을 읽을 수 없어…")는 사용자가 행동할 수 있는
+   *    정보라 그대로 보존해야 하고, 그것들은 errno code 를 갖지 않는다.
+   */
+  const ERRNO_RE = /^E[A-Z]+$/;
+  function visionErrorPayload(
+    err: unknown,
+    genericMessage: string,
+  ): { success: false; error: string; code?: string; errorKey?: string; errorParams?: Record<string, string> } {
+    const e = err as Error & { code?: string; errorKey?: string; errorParams?: Record<string, string> };
+    const msg = err instanceof Error ? err.message : genericMessage;
+    if (msg === 'Aborted' || e?.code === 'ABORT_ERR') {
+      return { success: false, error: 'Aborted', code: 'ABORTED' };
+    }
+    const isRawFsError = !e?.errorKey && typeof e?.code === 'string' && ERRNO_RE.test(e.code);
+    return {
+      success: false,
+      error: isRawFsError ? genericMessage : msg,
+      ...(e?.code ? { code: e.code } : {}),
+      ...(e?.errorKey ? { errorKey: e.errorKey } : {}),
+      ...(e?.errorParams ? { errorParams: e.errorParams } : {}),
+    };
   }
 
   // R38 P1: validateImageBase64 는 ipc-validators.ts 로 이동 (행위 검증 가능).
@@ -1246,13 +1351,13 @@ export function registerIpcHandlers(): void {
       const description = await analyzeImage(imageBase64, provider, model, ollamaBaseUrl, apiKey, controller?.signal);
       return { success: true, description };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Vision 분석 실패';
-      const isAbort = msg === 'Aborted' || (err as Error & { code?: string })?.code === 'ABORT_ERR';
       // R31 P2 (v0.18.19): 매직 문자열 'Aborted' 대신 code 필드 사용 — generate path 의
       // `code: 'ABORTED'` 와 일관, renderer 가 code 로 매핑 가능.
-      return isAbort
-        ? { success: false, error: 'Aborted', code: 'ABORTED' }
-        : { success: false, error: msg };
+      // QA30(A축 배선): callVision 이 붙인 `code`/`errorKey`/`errorParams`(BLOCKED /
+      // EMPTY_RESPONSE / API_KEY_INVALID)가 **여기서 전량 버려지고** 있었다 — ai:generate 는
+      // 같은 3필드를 이미 싣는데 Vision/OCR 만 abort 외에는 message 만 보냈다. 소비자
+      // (pdf-parser)는 code 가 오면 바로 동작하도록 돼 있어, 마지막 한 칸만 끊겨 있던 상태다.
+      return visionErrorPayload(err, 'Vision 분석 실패');
     } finally {
       if (visionRequestId && controller) unregisterEmbedRequest(visionRequestId, controller);
     }
@@ -1282,11 +1387,8 @@ export function registerIpcHandlers(): void {
       const text = await analyzeImageForOcr(imageBase64, provider, model, ollamaBaseUrl, apiKey, controller?.signal);
       return { success: true, text };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'OCR 실패';
-      const isAbort = msg === 'Aborted' || (err as Error & { code?: string })?.code === 'ABORT_ERR';
-      return isAbort
-        ? { success: false, error: 'Aborted', code: 'ABORTED' }
-        : { success: false, error: msg };
+      // QA30(A축 배선): analyze-image 와 동일 — code/errorKey/errorParams 를 그대로 싣는다.
+      return visionErrorPayload(err, 'OCR 실패');
     } finally {
       if (visionRequestId && controller) unregisterEmbedRequest(visionRequestId, controller);
     }
@@ -1321,7 +1423,12 @@ export function registerIpcHandlers(): void {
         controller = new AbortController();
         registerEmbedRequest(validRequestId, controller);
       }
-      const settings = await loadSettings();
+      // QA30(C-5): fs 원문(경로 포함)은 로그에만 — IPC 로는 generic + code (SETTINGS_READ_FAILED_MSG).
+      let settings: Record<string, unknown>;
+      try { settings = await loadSettings(); } catch (err) {
+        console.warn('[ai:embed] settings 조회 실패:', (err as Error)?.message);
+        return { success: false, error: SETTINGS_READ_FAILED_MSG, code: 'SETTINGS_READ_FAILED', errorKey: 'settingsReadFailed' };
+      }
       const provider = (settings.provider as 'ollama' | 'claude' | 'openai' | 'gemini') || 'ollama';
       const ollamaBaseUrl = (settings.ollamaBaseUrl as string) || 'http://localhost:11434';
       const apiKey = provider !== 'ollama' ? apiKeyStore.load(provider) : undefined;
@@ -1389,6 +1496,35 @@ export function registerIpcHandlers(): void {
   // ─── 파일 ───
 
   const MAX_EXPORT_SIZE = 10 * 1024 * 1024; // 10MB
+
+  /**
+   * 사용자가 고른 경로에 **원자적으로** 쓴다 — `.tmp` → `rename`(QA30 C-3).
+   *
+   * 네 스토어(settings/api-keys/collections/session)는 전부 이 패턴인데 **사용자에게 파일을
+   * 돌려주는 두 채널만** 제자리 덮어쓰기였다. `writeFile` 은 `open(w)` 시점에 기존 내용을
+   * 잘라내므로(실측: 원본 62바이트 → open 직후 0바이트) 쓰기 도중 실패하면 — PDF 내보내기의
+   * ENOSPC 가 가장 개연성이 높다 — **이전 내보내기 결과가 파괴된 채 "저장 실패" 안내를 받는다.**
+   * 사용자가 같은 이름으로 덮어쓰기를 승인한 파일이므로 유일 사본일 수 있다.
+   *
+   * tmp 는 대상과 **같은 디렉터리**에 만든다 → 같은 볼륨이라 rename 이 원자적이다(temp 디렉터리를
+   * 쓰면 볼륨이 달라져 rename 이 복사로 퇴화하거나 EXDEV 로 실패한다). 실패 시 tmp 를 치워
+   * 사용자 폴더에 찌꺼기를 남기지 않는다.
+   */
+  async function writeUserFileAtomic(
+    filePath: string,
+    data: string | Uint8Array,
+    encoding?: 'utf-8',
+  ): Promise<void> {
+    const tmpPath = filePath + '.tmp';
+    try {
+      if (encoding) await fsp.writeFile(tmpPath, data as string, encoding);
+      else await fsp.writeFile(tmpPath, data);
+      await fsp.rename(tmpPath, filePath);
+    } catch (err) {
+      try { await fsp.unlink(tmpPath); } catch { /* 이미 없음 */ }
+      throw err;
+    }
+  }
   ipcMain.handle('file:save', async (_event, content: unknown, defaultName: unknown) => {
     if (typeof content !== 'string' || typeof defaultName !== 'string') {
       return null;
@@ -1411,7 +1547,7 @@ export function registerIpcHandlers(): void {
         return null;
       }
       try {
-        await fsp.writeFile(filePath, content, 'utf-8');
+        await writeUserFileAtomic(filePath, content, 'utf-8');
         return filePath;
       } catch (err) {
         // E2: 계약 = 취소 시 null, 쓰기 실패(EACCES/ENOSPC/EPERM 등) 시 reject. 이전엔 실패도
@@ -1471,7 +1607,7 @@ export function registerIpcHandlers(): void {
         (async () => { await w.loadFile(tmpHtml); return w.webContents.printToPDF({ printBackground: true }); })(),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('printToPDF timeout')), 60000)),
       ]);
-      await fsp.writeFile(filePath, pdf);
+      await writeUserFileAtomic(filePath, pdf);
       return filePath;
     } catch (err) {
       // E2: 취소는 위에서 null 반환(try 진입 전), 여기 도달은 실제 실패(쓰기/printToPDF/타임아웃)

@@ -70,6 +70,16 @@ export interface GlobalSearchResult {
 export interface SemanticSearchResponse {
   results: GlobalSearchResult[];
   excludedCount: number; // 임베딩 모델/차원 불일치로 제외된 문서 수
+  /**
+   * QA30(C-1b): manifest 는 인덱스를 주장하는데 **실제로는 쓸 수 없어** 결과에서 빠진 문서 수
+   * (index.bin 부재·손상·길이 불일치·chunkMeta 손상·일시 I/O 오류).
+   *
+   * 종전에는 이 부류가 `excludedCount` 에도 안 들어가고 결과에도 없어 **완전 무음**이었다 —
+   * 사용자는 "그 문서에는 관련 내용이 없다" 로 읽는다. 모델 불일치(excludedCount)와 달리
+   * **문서를 다시 열어 재임베딩하면 회복**되므로 안내 문구가 달라야 해서 별도 필드로 둔다.
+   * 옵셔널인 이유: 렌더러 표시 배선(renderer/lib/semantic-search.ts)은 아직 없다.
+   */
+  corruptedCount?: number;
 }
 
 /**

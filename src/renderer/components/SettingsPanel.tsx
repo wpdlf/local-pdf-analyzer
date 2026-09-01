@@ -68,9 +68,11 @@ export function SettingsPanel() {
   const [claudeKey, setClaudeKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
   const [geminiKey, setGeminiKey] = useState('');
-  const [claudeKeyStored, setClaudeKeyStored] = useState(false);
-  const [openaiKeyStored, setOpenaiKeyStored] = useState(false);
-  const [geminiKeyStored, setGeminiKeyStored] = useState(false);
+  // QA30(C-6): `null` = 확인 불가(디스크에 있으나 일시 잠금). 부재(false)와 구분해야 키가
+  // 멀쩡한데 "키를 설정해주세요" 가 뜨고 저장까지 막히는 덫에 빠지지 않는다.
+  const [claudeKeyStored, setClaudeKeyStored] = useState<boolean | null>(false);
+  const [openaiKeyStored, setOpenaiKeyStored] = useState<boolean | null>(false);
+  const [geminiKeyStored, setGeminiKeyStored] = useState<boolean | null>(false);
   const [keyMessage, setKeyMessage] = useState('');
   // 청크 크기는 로컬 string state 로 관리 — 한 글자씩 타이핑 중 범위 벗어난 중간값 허용.
   // onChange 에서 즉시 거부하면 "2000" 타이핑 중 "2" 가 거부되어 입력 불가. blur 시 clamp + 커밋.
@@ -330,15 +332,15 @@ export function SettingsPanel() {
   };
 
   const handleSave = async () => {
-    if (draft.provider === 'claude' && !claudeKeyStored) {
+    if (draft.provider === 'claude' && claudeKeyStored === false) {
       setKeyMessage(t('settings.saveKeyFirst', { provider: 'Claude' }));
       return;
     }
-    if (draft.provider === 'openai' && !openaiKeyStored) {
+    if (draft.provider === 'openai' && openaiKeyStored === false) {
       setKeyMessage(t('settings.saveKeyFirst', { provider: 'OpenAI' }));
       return;
     }
-    if (draft.provider === 'gemini' && !geminiKeyStored) {
+    if (draft.provider === 'gemini' && geminiKeyStored === false) {
       setKeyMessage(t('settings.saveKeyFirst', { provider: 'Gemini' }));
       return;
     }
@@ -627,8 +629,9 @@ export function SettingsPanel() {
                 <input type="radio" name="provider" checked={draft.provider === opt.value} onChange={() => updateDraft({ provider: opt.value })} className="accent-blue-500 mt-0.5" />
                 <div>
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{opt.label}</span>
-                  {needsKey && !hasKey && <span className="ml-2 text-xs text-orange-500">{t('settings.enterApiKey')}</span>}
-                  {needsKey && hasKey && <span className="ml-2 text-xs text-green-500">{t('settings.keyRegistered')}</span>}
+                  {needsKey && hasKey === false && <span className="ml-2 text-xs text-orange-500">{t('settings.enterApiKey')}</span>}
+                  {needsKey && hasKey === true && <span className="ml-2 text-xs text-green-500">{t('settings.keyRegistered')}</span>}
+                  {needsKey && hasKey === null && <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">{t('settings.keyUnknown')}</span>}
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{opt.desc}</p>
                 </div>
               </label>

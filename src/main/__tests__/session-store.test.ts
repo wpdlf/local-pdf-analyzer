@@ -73,6 +73,7 @@ import fsp from 'fs/promises';
 import {
   writeSession, readSession, readSessionMeta, patchSession, mergeSessionSummary, deleteSession, clearAll,
   listSessions, sessionStats, enforceLru, isValidDocHash, loadManifest, reconcileSessions,
+  MAX_SESSION_JSON_BYTES, MAX_QA_MESSAGES,
 } from '../session-store';
 
 const DIR = '/userData/sessions';
@@ -1083,5 +1084,260 @@ describe('reconcileSessions — 일시 I/O 오류에 디스크를 확정하지 �
     V.files.delete(`${DIR}/manifest.json`);
     const r = await reconcileSessions(DIR, 5000);
     expect(r.registered).toBe(1);
+  });
+});
+
+/**
+ * QA30(C-1): **저장이 실패한 뒤 디스크·manifest 에 무엇이 남았는가**를 단언한다.
+ *
+ * 이 결함을 기존 테스트가 놓친 이유가 정확히 여기에 있다 — writeSession 실패 테스트가
+ * `{ok:false}` 반환값만 보고 **manifest 잔여 상태를 한 번도 보지 않았다.** 반환값은 그대로인데
+ * 엔트리는 "인덱스 있음" 을 계속 주장하고 디스크의 index.bin 은 이미 지워져 있었다.
+ */
+describe('QA30(C-1): 새 인덱스 저장이 실패하면 manifest 의 인덱스 주장도 회수한다', () => {
+  const blobOf = () => new Float32Array([1, 0, 0, 0, 1, 0]).buffer; // 2×3
+  const pathOf = (h: string, f: string) => `${DIR}/${h}/${f}`;
+
+  /** 정상 저장 1회 — index.bin + 사이드카 + "인덱스 있음" 엔트리를 만든다. */
+  async function seedIndexed(h: string) {
+    const r = await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'doc.pdf', filePath: '/x/doc.pdf', chunkMeta: [{ text: 'a' }, { text: 'b' }] },
+      blob: blobOf(),
+      now: 1000,
+    });
+    expect(r.ok).toBe(true);
+    expect(V.files.has(pathOf(h, 'index.bin'))).toBe(true);
+    const e = (await loadManifest(DIR)).entries.find((x) => x.docHash === h);
+    expect(e?.embedModel).toBe('nomic-embed-text'); // 전제: 주장이 세워져 있다
+    expect(e?.chunkCount).toBe(2);
+  }
+
+  it('session.json 기록 실패(ENOSPC) → 인덱스는 사라졌는데 엔트리가 계속 주장하지 않는다', async () => {
+    const h = hashOf(1);
+    await seedIndexed(h);
+    const before = V.files.get(pathOf(h, 'session.json'));
+
+    // 두 번째 저장(새 인덱스). 옛 인덱스를 먼저 unlink 한 직후의 **첫 writeFile**
+    // (= session.json.tmp)만 실패시킨다 — 자동저장 중 ENOSPC/EBUSY 1회를 모사.
+    vi.mocked(fsp.writeFile).mockImplementationOnce(async () => {
+      throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+    });
+    const r = await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'doc.pdf', filePath: '/x/doc.pdf', chunkMeta: [{ text: 'a' }] },
+      blob: blobOf(),
+      now: 2000,
+    });
+
+    // ① 실패 신호 + 렌더러가 시그니처를 무효화할 수 있는 표식
+    expect(r).toEqual({ ok: false, indexMissing: true });
+    // ② 디스크: 인덱스는 실제로 사라졌다(선삭제 정책) — 본문은 옛 것이 보존된다
+    expect(V.files.has(pathOf(h, 'index.bin'))).toBe(false);
+    expect(V.files.has(pathOf(h, 'index.meta.json'))).toBe(false);
+    expect(V.files.get(pathOf(h, 'session.json'))).toBe(before);
+    // ③ **manifest 가 더 이상 인덱스를 주장하지 않는다** (이 단언이 C-1 의 본체다)
+    const entry = (await loadManifest(DIR)).entries.find((e) => e.docHash === h);
+    expect(entry, '엔트리 자체는 보존돼야 한다 — 세션이 목록에서 사라지면 안 된다').toBeTruthy();
+    expect(entry!.embedModel).toBeNull();
+    expect(entry!.embedDim).toBeNull();
+    expect(entry!.chunkCount).toBe(0);
+    // ④ byteSize 도 실측으로 교정 — 사라진 인덱스를 계속 합산하면 LRU 가 남을 조기 축출한다
+    expect(entry!.byteSize).toBe(Buffer.byteLength(String(V.files.get(pathOf(h, 'session.json')))));
+    // ⑤ 다른 세션은 건드리지 않았다(흡수형 로더로 읽었다면 여기서 전량 소실됐을 것)
+    expect((await loadManifest(DIR)).entries).toHaveLength(1);
+  });
+
+  it('manifest 재기록 실패도 같은 규칙 — "인덱스 있음" 을 남기지 않는다', async () => {
+    const h = hashOf(2);
+    await seedIndexed(h);
+    // 본문·사이드카·index.bin 은 전부 성공하고 **manifest 읽기만** 실패시킨다
+    // (이 경로에서 readFile 은 loadManifestForWrite 한 곳뿐이다).
+    vi.mocked(fsp.readFile).mockImplementationOnce(async () => {
+      throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+    });
+    const r = await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'doc.pdf', filePath: '/x/doc.pdf', chunkMeta: [{ text: 'a' }] },
+      blob: blobOf(),
+      now: 3000,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.indexMissing).toBe(true);
+    const entry = (await loadManifest(DIR)).entries.find((e) => e.docHash === h);
+    expect(entry!.embedModel).toBeNull();
+    expect(entry!.chunkCount).toBe(0);
+  });
+
+  it('인덱스를 건드리지 않은 저장(keepIndex)의 실패는 종전대로 ok:false 만 — 주장은 유효하다', async () => {
+    const h = hashOf(3);
+    await seedIndexed(h);
+    // keepIndex 저장 — 디스크의 index.bin 은 그대로 두는 경로. 본문 기록만 실패시킨다.
+    vi.mocked(fsp.writeFile).mockImplementationOnce(async () => {
+      throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+    });
+    const r = await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'doc.pdf', filePath: '/x/doc.pdf' },
+      blob: null,
+      keepIndex: true,
+      now: 4000,
+    });
+    // 인덱스를 지운 적이 없으므로 회수할 거짓 주장도 없다 — 엔트리는 그대로 유효하다.
+    expect(r).toEqual({ ok: false });
+    expect(V.files.has(pathOf(h, 'index.bin'))).toBe(true);
+    const entry = (await loadManifest(DIR)).entries.find((e) => e.docHash === h);
+    expect(entry!.embedModel).toBe('nomic-embed-text');
+    expect(entry!.chunkCount).toBe(2);
+  });
+});
+
+/**
+ * QA30(C-2): 상위 schemaVersion manifest 방어. 기존 픽스처는 전부 `schemaVersion: 1` 이라
+ * 상위 값이 **한 번도 들어간 적이 없었다** — 그래서 무조건 수용 + 무조건 강등이 그대로 통과했다.
+ * 형제 collections-store 는 QA24(C-M3)에서 같은 규칙을 이미 봉인했다.
+ */
+describe('QA30(C-2): 세션 manifest 상위 스키마 다운그레이드 방어', () => {
+  const futureManifest = (h: string) => JSON.stringify({
+    schemaVersion: 99,
+    futureTop: { note: '상위 버전이 추가한 최상위 필드' },
+    entries: [{
+      docHash: h, fileName: 'f.pdf', filePath: '/f.pdf', pageCount: 3,
+      embedModel: 'nomic-embed-text', embedDim: 3, chunkCount: 2, byteSize: 10,
+      createdAt: '2026-01-01T00:00:00.000Z', lastAccessed: '2026-01-01T00:00:00.000Z',
+      futureEntryField: 'keep-me',
+    }],
+  }, null, 2);
+
+  it('listSessions 는 null(불러오지 못함) — 빈 목록으로 단정하지 않는다', async () => {
+    const h = hashOf(11);
+    V.files.set(`${DIR}/manifest.json`, futureManifest(h));
+    expect(await listSessions(DIR)).toBeNull();
+  });
+
+  it('writeSession 이 파일을 강등하지 않는다 — 미래 필드가 보존된다', async () => {
+    const h = hashOf(11);
+    V.files.set(`${DIR}/manifest.json`, futureManifest(h));
+    const before = V.files.get(`${DIR}/manifest.json`);
+    const r = await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, fileName: 'f.pdf', filePath: '/f.pdf' },
+      blob: null,
+      now: 9000,
+    });
+    expect(r.ok).toBe(false);
+    // 바이트 동일 — schemaVersion 99·futureTop·futureEntryField 가 전부 살아 있다.
+    expect(V.files.get(`${DIR}/manifest.json`)).toBe(before);
+    const raw = JSON.parse(String(V.files.get(`${DIR}/manifest.json`)));
+    expect(raw.schemaVersion).toBe(99);
+    expect(raw.futureTop).toBeTruthy();
+    expect(raw.entries[0].futureEntryField).toBe('keep-me');
+  });
+
+  it('reconcileSessions 도 상위 버전 파일을 재구축하지 않는다', async () => {
+    const h = hashOf(11);
+    V.files.set(`${DIR}/${h}/session.json`, JSON.stringify({ docHash: h, fileName: 'f.pdf', filePath: '/f.pdf' }));
+    V.files.set(`${DIR}/manifest.json`, futureManifest(h));
+    const before = V.files.get(`${DIR}/manifest.json`);
+    const r = await reconcileSessions(DIR, 9000);
+    expect(r).toEqual({ registered: 0, removed: 0, repaired: 0 });
+    expect(V.files.get(`${DIR}/manifest.json`)).toBe(before);
+  });
+
+  it('동등하거나 낮은 schemaVersion 은 종전대로 읽는다(회귀 방지)', async () => {
+    const h = hashOf(12);
+    await writeSession(DIR, {
+      meta: metaOf(h), session: { docHash: h, fileName: 'f.pdf', filePath: '/f.pdf' }, blob: null, now: 1000,
+    });
+    expect(await listSessionsOk(DIR)).toHaveLength(1);
+  });
+});
+
+/**
+ * QA30(C-7): session:stats 만 흡수형 로더였다 — EBUSY 한 번에 설정 화면이 "0개 · 0 B" 를
+ * 단정 표시했다(형제 listSessions 는 QA24 에서 전파형으로 바뀌었다).
+ */
+describe('QA30(C-7): sessionStats 는 "못 읽음" 을 0 으로 단정하지 않는다', () => {
+  it.each(['EBUSY', 'EACCES', 'EPERM'])('일시 I/O 오류(%s)는 throw — 렌더러가 표시를 감춘다', async (code) => {
+    const h = hashOf(21);
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h }, blob: null, now: 1000 });
+    const spy = vi.spyOn(fsp, 'readFile').mockRejectedValueOnce(Object.assign(new Error(code), { code }));
+    try {
+      await expect(sessionStats(DIR)).rejects.toMatchObject({ code });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('manifest 부재는 종전대로 0개 — 그건 실제로 "없음" 이 맞다', async () => {
+    await expect(sessionStats(DIR)).resolves.toEqual({ count: 0, totalBytes: 0, dir: DIR });
+  });
+});
+
+/**
+ * QA30(C-9): 상한 누락 — 세션 본문 JSON 과 qaMessages.
+ * 상한 값 자체는 상수 단언으로 못박고, "넘으면 무엇을 하는가" 는 seam(maxJsonBytes)으로
+ * 작게 검증한다 — 128MB 문자열을 실제로 만들면 테스트가 수백 MB 를 잡아 CI 를 흔든다.
+ */
+describe('QA30(C-9): 세션 본문·Q&A 상한', () => {
+  it('기본 상한 값이 계약대로다', () => {
+    expect(MAX_SESSION_JSON_BYTES).toBe(128 * 1024 * 1024);
+    expect(MAX_QA_MESSAGES).toBe(1000);
+  });
+
+  it('본문 초과 저장은 거부되며 **기존 인덱스를 파괴하지 않는다**(검사가 선삭제보다 앞이다)', async () => {
+    const h = hashOf(31);
+    await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, chunkMeta: [{ text: 'a' }] },
+      blob: new Float32Array([1, 0, 0, 0, 1, 0]).buffer,
+      now: 1000,
+    });
+    const beforeJson = V.files.get(`${DIR}/${h}/session.json`);
+    const r = await writeSession(DIR, {
+      meta: metaOf(h),
+      session: { docHash: h, extractedText: 'x'.repeat(500) },
+      blob: new Float32Array([1, 0, 0, 0, 1, 0]).buffer,
+      now: 2000,
+      maxJsonBytes: 200,
+    });
+    expect(r).toEqual({ ok: false });
+    expect(V.files.has(`${DIR}/${h}/index.bin`), '거부가 인덱스만 지우고 끝나면 최악이다').toBe(true);
+    expect(V.files.get(`${DIR}/${h}/session.json`)).toBe(beforeJson);
+  });
+
+  it('qaMessages 개수 초과 → patchSession {ok:false} (무음 절단 아님, 디스크 무변경)', async () => {
+    const h = hashOf(32);
+    await writeSession(DIR, {
+      meta: metaOf(h), session: { docHash: h, qaMessages: [{ role: 'user', content: 'q' }] }, blob: null, now: 1000,
+    });
+    const before = V.files.get(`${DIR}/${h}/session.json`);
+    const many = Array.from({ length: MAX_QA_MESSAGES + 1 }, (_, i) => ({ role: 'user', content: String(i) }));
+    const r = await patchSession(DIR, { docHash: h, summary: null, summaryType: '', qaMessages: many, now: 2000 });
+    expect(r).toEqual({ ok: false });
+    expect(V.files.get(`${DIR}/${h}/session.json`)).toBe(before);
+    // 상한 이하는 정상 저장된다(가드가 전량 차단하는 것이 아님)
+    const ok = await patchSession(DIR, {
+      docHash: h, summary: null, summaryType: '', qaMessages: many.slice(0, MAX_QA_MESSAGES), now: 3000,
+    });
+    expect(ok).toEqual({ ok: true });
+    const saved = JSON.parse(String(V.files.get(`${DIR}/${h}/session.json`))) as { qaMessages: unknown[] };
+    expect(saved.qaMessages).toHaveLength(MAX_QA_MESSAGES);
+  });
+
+  it('본문 초과는 patchSession 에서도 거부된다(델타 경로 우회 차단)', async () => {
+    const h = hashOf(33);
+    await writeSession(DIR, { meta: metaOf(h), session: { docHash: h }, blob: null, now: 1000 });
+    const before = V.files.get(`${DIR}/${h}/session.json`);
+    const r = await patchSession(DIR, {
+      docHash: h,
+      summary: { type: 'full', content: 'y'.repeat(400), model: 'm', provider: 'ollama' },
+      summaryType: 'full',
+      qaMessages: [],
+      now: 2000,
+      maxJsonBytes: 200,
+    });
+    expect(r).toEqual({ ok: false });
+    expect(V.files.get(`${DIR}/${h}/session.json`)).toBe(before);
   });
 });

@@ -11,7 +11,7 @@ import userEvent from '@testing-library/user-event';
 
 type KeyResult = { success: boolean; error?: string; code?: string };
 const api = {
-  has: vi.fn((_p: string) => Promise.resolve(false)),
+  has: vi.fn((_p: string): Promise<boolean | null> => Promise.resolve(false)),
   save: vi.fn((): Promise<KeyResult> => Promise.resolve({ success: true })),
   delete: vi.fn((): Promise<KeyResult> => Promise.resolve({ success: true })),
 };
@@ -143,6 +143,23 @@ describe('SettingsPanel — 저장 게이팅 / 전환', () => {
     await user.click(screen.getByText(t('settings.saveBtn')));
     expect(screen.getByText(t('settings.saveKeyFirst', { provider: 'Claude' }))).toBeTruthy();
     expect(useAppStore.getState().settings.provider).toBe('ollama'); // 미저장
+  });
+
+  // QA30(C-6): main 이 `null`(= 파일은 있는데 지금 못 읽음)을 주면 부재와 구분해야 한다.
+  // 종전엔 둘 다 false 라 AV 가 api-keys.enc 를 순간 잠근 것만으로 "키를 저장하세요" 가 뜨고,
+  // 재저장은 readForWrite 가 APIKEY_READ_FAILED 로 막아 사용자가 빠져나갈 길이 없었다.
+  it('키 확인 불가(null) → 부재 안내 대신 확인 불가 표시, 저장은 막지 않는다', async () => {
+    api.has.mockImplementation(() => Promise.resolve(null));
+    const user = userEvent.setup();
+    render(<SettingsPanel />);
+    await waitFor(() => expect(screen.getAllByText(t('settings.keyUnknown')).length).toBeGreaterThan(0));
+    expect(screen.queryByText(t('settings.enterApiKey'))).toBeNull();
+
+    await user.click(screen.getByRole('radio', { name: /Claude API/ }));
+    await user.click(screen.getByText(t('settings.saveBtn')));
+    // 부재 확정이 아니므로 저장 게이트에 걸리지 않는다.
+    expect(screen.queryByText(t('settings.saveKeyFirst', { provider: 'Claude' }))).toBeNull();
+    expect(useAppStore.getState().settings.provider).toBe('claude');
   });
 
   it('provider 라디오를 claude 로 바꾸면 모델이 claude 기본 모델로 전환', async () => {

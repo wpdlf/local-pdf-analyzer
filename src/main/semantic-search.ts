@@ -15,9 +15,11 @@ import type { GlobalSearchResult, SearchSnippet, SemanticSearchResponse } from '
 import { listSessions, readIndexMeta, readIndexBlob, readSessionMeta } from './session-store';
 // QA29(C-4): 무캡 팬아웃 + 동기 코사인 루프가 main 을 초 단위로 잡던 것을 캡 + 양보로 바꾼다.
 import { mapWithConcurrency, SESSION_FANOUT_LIMIT } from './async-pool';
+// QA30(B-7): 임계값은 shared 단일 출처 — 종전엔 여기와 renderer/use-qa.ts 에 리터럴 0.3 이
+// 각각 있었고 둘을 잇는 것은 "renderer 와 일치" 라는 주석뿐이었다(조용한 드리프트).
+import { RAG_MIN_SCORE } from '../shared/constants';
 
 const TOP_K_PER_DOC = 3;
-const MIN_SCORE = 0.3; // RAG_MIN_SCORE 와 동일 — 약한 유사도 노이즈 컷 (renderer 와 일치)
 const SNIPPET_MAX_CHARS = 180;
 const MAX_RESULTS = 50;
 const MAX_SNIPPETS = 2;
@@ -25,6 +27,25 @@ const MAX_SNIPPETS = 2;
 interface ChunkMetaLite {
   text: string;
   pageStart?: number;
+}
+
+interface ScoredChunk {
+  text: string;
+  score: number;
+  pageStart?: number;
+}
+
+/**
+ * 한 문서의 인덱스 검색 결과 — **"결과 없음" 과 "인덱스가 깨졌음" 을 구분한다**(QA30 C-1b).
+ *
+ * 종전에는 둘 다 빈 배열이었다. 그래서 manifest 는 인덱스를 정상 주장하는데 index.bin 이
+ * 짧거나·비-4배수거나·부재하거나·chunkMeta 가 손상된 문서가 **집계 없이** 결과에서 빠졌고
+ * (excludedCount 는 모델/차원 불일치만 센다), 사용자는 "그 문서에는 관련 내용이 없다" 로
+ * 결론냈다. 손상은 재임베딩으로 회복 가능하므로 신호를 살려 둔다.
+ */
+interface IndexSearchOutcome {
+  corrupted: boolean;
+  hits: ScoredChunk[];
 }
 
 /**
@@ -108,30 +129,37 @@ function searchIndexBlob(
   dim: number,
   chunkMeta: ChunkMetaLite[],
   blob: ArrayBuffer,
-): { text: string; score: number; pageStart?: number }[] {
-  if (dim <= 0 || chunkMeta.length === 0) return [];
+): IndexSearchOutcome {
+  if (dim <= 0 || chunkMeta.length === 0) return { corrupted: true, hits: [] };
   // byteLength 가 4의 배수가 아니면(외부 손상/트렁케이션) new Float32Array 가 RangeError 를
   // 던진다. 이 함수는 try/catch 밖에서 호출되므로 가드 없이는 손상 문서 하나가 Promise.all
   // 전체를 reject 시켜 의미검색이 통째로 빈 결과가 된다 → per-doc fail-safe skip 계약 위반.
-  if (blob.byteLength % 4 !== 0) return []; // 비-4배수 손상 → skip
+  if (blob.byteLength % 4 !== 0) return { corrupted: true, hits: [] }; // 비-4배수 손상
   const floats = new Float32Array(blob);
-  if (floats.length !== chunkMeta.length * dim) return []; // 손상/차원 불일치 → skip
-  const scored: { text: string; score: number; pageStart?: number }[] = [];
+  if (floats.length !== chunkMeta.length * dim) return { corrupted: true, hits: [] }; // 길이 불일치
+  const scored: ScoredChunk[] = [];
   for (let i = 0; i < chunkMeta.length; i++) {
     const vec = floats.subarray(i * dim, i * dim + dim);
     const score = dotClamped(queryNorm, vec);
-    if (score >= MIN_SCORE && Number.isFinite(score)) {
+    if (score >= RAG_MIN_SCORE && Number.isFinite(score)) {
       scored.push({ text: chunkMeta[i]!.text, score, pageStart: chunkMeta[i]!.pageStart });
     }
   }
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, TOP_K_PER_DOC);
+  // 여기까지 왔으면 인덱스는 온전하다 — 결과가 비어도 그건 "이 질의와 관련이 없다" 이지
+  // 손상이 아니다. 두 경우를 같은 `[]` 로 뭉개던 것이 아래 corruptedCount 가 없던 이유다.
+  return { corrupted: false, hits: scored.slice(0, TOP_K_PER_DOC) };
 }
 
 /**
  * 저장 세션 중 (model, dim) 이 일치하고 인덱스가 있는 것만 복원·검색.
  * - chunkCount<=0 또는 embedModel===null: 인덱스 없음 → skip(제외 아님).
  * - 모델/차원 불일치: 제외(excludedCount) — 렌더러가 사용자에게 개수만 알림.
+ * - 인덱스를 주장하는데 실제로 못 쓰는 문서(부재·손상·길이 불일치·일시 I/O 오류):
+ *   corruptedCount (QA30 C-1b). 종전엔 **아무 데도 집계되지 않고 사라져** 사용자가 "그 문서엔
+ *   관련 내용이 없다" 로 읽었다. 재임베딩(문서를 다시 열기)으로 회복 가능한 부류이므로 신호를
+ *   남긴다. session-store 의 keepIndex 주석이 이미 이 상태 클래스를 인지하고 있었지만
+ *   (QA21/QA26/QA27) 검색 쪽 표면은 열려 있었다.
  * model 은 렌더러의 checkEmbedModel.model(질의 임베딩 출처)이며, 이 값으로 비교해야 정상 문서가
  * ollama 태그 차이로 오제외되지 않는다(E2E 회귀 이력).
  */
@@ -165,29 +193,41 @@ export async function runSemanticSearch(
   const perDoc = await mapWithConcurrency(
     candidates,
     SESSION_FANOUT_LIMIT,
-    async (e): Promise<GlobalSearchResult | null> => {
+    async (e): Promise<{ result: GlobalSearchResult | null; corrupted: boolean }> => {
       let idx: Awaited<ReturnType<typeof loadSearchIndex>>;
       try {
         idx = await loadSearchIndex(sessionsDir, e.docHash);
       } catch {
-        return null; // 일시 I/O 오류 → 해당 문서만 skip(부분 성공)
+        // 일시 I/O 오류 → 해당 문서만 skip(부분 성공). 집계에는 넣는다 — 결과에서 빠졌다는
+        // 사실 자체는 사용자에게 보여야 한다(무음 누락 금지).
+        return { result: null, corrupted: true };
       }
-      if (!idx) return null;
-      const hits = searchIndexBlob(queryNorm, dim, idx.chunkMeta, idx.blob);
-      if (hits.length === 0) return null;
+      // 이 문서는 manifest 가 인덱스를 **주장해서** 후보가 됐다. 여기서 null 이면 그 주장이
+      // 거짓이라는 뜻이다(index.bin 부재, chunkMeta 부재·손상) — 조용히 버리지 않는다.
+      if (!idx) return { result: null, corrupted: true };
+      const outcome = searchIndexBlob(queryNorm, dim, idx.chunkMeta, idx.blob);
+      if (outcome.corrupted) return { result: null, corrupted: true };
+      const hits = outcome.hits;
+      if (hits.length === 0) return { result: null, corrupted: false }; // 정상 인덱스, 관련 없음
       return {
-        docHash: e.docHash,
-        fileName: e.fileName,
-        filePath: e.filePath,
-        pageCount: e.pageCount,
-        score: hits[0]!.score, // 최상위 청크 코사인 유사도
-        inSummary: false,
-        snippets: hits.slice(0, MAX_SNIPPETS).map((h) => chunkSnippet(h.text, h.pageStart)),
+        result: {
+          docHash: e.docHash,
+          fileName: e.fileName,
+          filePath: e.filePath,
+          pageCount: e.pageCount,
+          score: hits[0]!.score, // 최상위 청크 코사인 유사도
+          inSummary: false,
+          snippets: hits.slice(0, MAX_SNIPPETS).map((h) => chunkSnippet(h.text, h.pageStart)),
+        },
+        corrupted: false,
       };
     },
   );
 
-  const results = perDoc.filter((r): r is GlobalSearchResult => r !== null);
+  const corruptedCount = perDoc.filter((r) => r.corrupted).length;
+  const results = perDoc
+    .map((r) => r.result)
+    .filter((r): r is GlobalSearchResult => r !== null);
   results.sort((a, b) => b.score - a.score);
-  return { results: results.slice(0, MAX_RESULTS), excludedCount };
+  return { results: results.slice(0, MAX_RESULTS), excludedCount, corruptedCount };
 }

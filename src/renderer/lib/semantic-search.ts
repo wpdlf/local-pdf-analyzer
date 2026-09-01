@@ -19,24 +19,37 @@ export interface SemanticSearchOutcome {
   status: SemanticSearchStatus;
   results: GlobalSearchResult[];
   excludedCount: number; // 임베딩 모델 불일치로 제외된 문서 수
+  /**
+   * 인덱스가 손상·부재라 검색에 참여하지 못한 문서 수. QA30(C-1b).
+   *
+   * `excludedCount`(모델 불일치)와 **분리해야 하는 이유**: 종전에는 이 부류가 어디에도 집계되지
+   * 않고 결과에서만 빠져 사용자가 "그 문서에는 관련 내용이 없다" 로 읽었다. 모델 불일치는
+   * 임베딩 모델을 되돌려야 풀리지만, 손상은 **재임베딩으로 회복 가능**하므로 안내 문구가 다르다.
+   */
+  corruptedCount: number;
 }
 
 export async function searchSessionsSemantic(query: string): Promise<SemanticSearchOutcome> {
   const q = query.trim();
-  if (q.length < 2) return { status: 'ok', results: [], excludedCount: 0 };
+  if (q.length < 2) return { status: 'ok', results: [], excludedCount: 0, corruptedCount: 0 };
 
   // 1. 활성 임베딩 모델 확인 — 없으면 의미 검색 불가(호출자가 키워드로 안내).
   const check = await window.electronAPI.ai.checkEmbedModel();
-  if (!check.available || !check.model) return { status: 'no-embed-model', results: [], excludedCount: 0 };
+  if (!check.available || !check.model) return { status: 'no-embed-model', results: [], excludedCount: 0, corruptedCount: 0 };
 
   // 2. 질의 임베딩.
   const embRes = await window.electronAPI.ai.embed([q]);
   const queryEmbedding = embRes.success ? embRes.embeddings?.[0] : undefined;
-  if (!queryEmbedding || queryEmbedding.length === 0) return { status: 'embed-failed', results: [], excludedCount: 0 };
+  if (!queryEmbedding || queryEmbedding.length === 0) return { status: 'embed-failed', results: [], excludedCount: 0, corruptedCount: 0 };
 
   // 3. 코사인 검색은 main 위임. 인덱스의 embedModel 은 빌드 시 checkEmbedModel.model 로 기록되므로
   //    embed IPC 반환 model(ollama 태그 :latest 차이 가능) 대신 동일 출처인 check.model 로 비교해야
   //    정상 문서가 "모델 불일치"로 오제외되지 않는다(E2E 발견 버그). 차원은 질의 임베딩 길이.
   const outcome = await window.electronAPI.session.searchSemantic(queryEmbedding, check.model, queryEmbedding.length);
-  return { status: 'ok', results: outcome.results, excludedCount: outcome.excludedCount };
+  return {
+    status: 'ok',
+    results: outcome.results,
+    excludedCount: outcome.excludedCount,
+    corruptedCount: outcome.corruptedCount ?? 0,
+  };
 }

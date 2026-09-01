@@ -135,6 +135,26 @@ export class ApiKeyStore {
     return this.read()[provider];
   }
 
+  /**
+   * `load` 의 정보 보존형 — "키가 없다" 와 "지금 못 읽었다" 를 구분해 반환한다(QA30 C-6).
+   *
+   * `readRaw` 는 transient 를 정확히 계산하고 `readForWrite` 는 그것으로 throw 해 덮어쓰기
+   * 손실을 막는데, **읽기 경로만 그 정보를 버렸다**. 그래서 AV·인덱서가 api-keys.enc 를 순간
+   * 잠그면 `load` → undefined → `apikey:has` false 가 되어 설정 화면이 "키 미저장" 으로 뜨고,
+   * 클라우드 `ai:check-available` 이 false 를 반환해 **"API 키를 설정해주세요"** 가 뜬다 —
+   * 키는 디스크에 멀쩡히 있는데 사용자는 소실로 읽는다. 형제 `listSessions`(→null)·
+   * `listCollections`(→throw)는 이미 둘을 구분한다.
+   *
+   * 캐시 hit 이면 transient 는 항상 false(캐시된 값은 이미 확정된 진실이다 — read() 가 transient
+   * 결과를 캐시하지 않는다).
+   */
+  loadState(provider: string): { key?: string; transient: boolean } {
+    if (this.cache) return { key: this.cache[provider], transient: false };
+    const { keys, transient } = this.readRaw();
+    if (!transient) this.cache = keys;
+    return { key: keys[provider], transient };
+  }
+
   save(provider: string, key: string): void {
     // clone 후 수정 — write 실패 시 캐시가 불일치 상태로 남지 않도록 보호.
     const keys = { ...this.readForWrite(), [provider]: key };

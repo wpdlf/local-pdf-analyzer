@@ -332,3 +332,64 @@ describe('일시적 I/O 오류 방어 (QA11 MED-1)', () => {
     expect(JSON.parse(decrypted)).toEqual({ claude: 'sk-c' });
   });
 });
+
+/**
+ * QA30(C-6): `readRaw` 는 transient(파일은 있는데 지금 못 읽음)를 정확히 계산하고 `readForWrite`
+ * 는 그것으로 throw 하는데 **읽기 경로만 그 정보를 버렸다** — load()/apikey:has 가 "키 없음" 과
+ * 구분되지 않았다.
+ *
+ * 반환값만 보는 테스트로는 이 결함이 안 보인다(둘 다 undefined 였다). 여기서는 "디스크에는 키가
+ * 실재한다" 는 사실을 함께 세워 두고, 잠금 해제 후 같은 인스턴스가 키를 되찾는지까지 본다.
+ */
+describe('QA30(C-6): loadState 는 "못 읽음" 과 "없음" 을 구분한다', () => {
+  const store = () => new ApiKeyStore(PATH, makeCrypto());
+
+  it('EBUSY(파일 실재) → transient:true, 그리고 그 빈 결과를 캐시하지 않는다', () => {
+    const s = store();
+    // 잠금이 풀릴 때까지 계속 실패한다(Once 로 두면 뒤따르는 읽기가 목 기본값으로 떨어져
+    // "손상" 으로 잘못 판정되고, 그때 빈 키셋이 캐시돼 테스트가 스스로 오염된다).
+    mocks.readFileSync.mockImplementation(() => {
+      throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+    });
+    const first = s.loadState('claude');
+    expect(first).toEqual({ key: undefined, transient: true });
+    // 종전 계약(load)은 이때도 undefined — "키 미저장" 과 구분 불가였다.
+    expect(s.load('claude')).toBeUndefined();
+
+    // 잠금이 풀리면 같은 인스턴스가 키를 되찾아야 한다(빈 결과가 캐시되지 않았다는 증거).
+    mocks.readFileSync.mockReturnValue(storedBuffer({ claude: 'sk-real-key' }));
+    expect(s.loadState('claude')).toEqual({ key: 'sk-real-key', transient: false });
+  });
+
+  it('파일 부재(ENOENT) → transient:false ("정말 없음" 이 맞다)', () => {
+    const s = store();
+    mocks.readFileSync.mockImplementation(() => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    });
+    expect(s.loadState('claude')).toEqual({ key: undefined, transient: false });
+  });
+
+  it('손상/복호화 실패도 transient:false (내용이 이미 복구 불가 — 빈 키셋이 진실이다)', () => {
+    const s = store();
+    mocks.readFileSync.mockReturnValue(Buffer.from('enc:{깨진 JSON', 'utf-8'));
+    expect(s.loadState('claude')).toEqual({ key: undefined, transient: false });
+  });
+
+  it('정상 읽기 → transient:false + 캐시(두 번째 호출은 디스크를 읽지 않는다)', () => {
+    const s = store();
+    mocks.readFileSync.mockReturnValue(storedBuffer({ claude: 'sk-c', openai: 'sk-o' }));
+    expect(s.loadState('claude')).toEqual({ key: 'sk-c', transient: false });
+    mocks.readFileSync.mockClear();
+    expect(s.loadState('openai')).toEqual({ key: 'sk-o', transient: false });
+    expect(mocks.readFileSync).not.toHaveBeenCalled(); // hot path O(1) 유지
+  });
+
+  it('덮어쓰기 방어(readForWrite)는 그대로다 — transient 중 save 는 중단된다', () => {
+    const s = store();
+    mocks.readFileSync.mockImplementation(() => {
+      throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+    });
+    expect(() => s.save('claude', 'sk-new')).toThrow(/API 키 파일을 읽을 수 없어/);
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+  });
+});

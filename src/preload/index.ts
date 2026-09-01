@@ -37,9 +37,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('ai:token', handler);
       return () => ipcRenderer.removeListener('ai:token', handler);
     },
-    onDone: (callback: (requestId: string) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, requestId: string) =>
-        callback(requestId);
+    // QA30(A-F5 배선): main 은 `ai:done` 에 완료 메타(StreamDoneMeta — 지금은 출력 상한 잘림
+    // 표식 `{truncated:true}`)를 **두 번째 인자로** 실어 보내는데, 이 브리지가 그것을 버리고
+    // requestId 만 넘기고 있었다. 페이로드는 IPC 를 건넜지만 렌더러에는 도달할 경로가 없었다.
+    // meta 는 선택 인자라 기존 1-인자 콜백은 그대로 동작한다(하위호환).
+    onDone: (callback: (requestId: string, meta?: { truncated?: true }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, requestId: string, meta?: { truncated?: true }) =>
+        callback(requestId, meta);
       ipcRenderer.on('ai:done', handler);
       return () => ipcRenderer.removeListener('ai:done', handler);
     },
@@ -171,7 +175,8 @@ export type ElectronAPI = {
     checkEmbedModel: () => Promise<{ available: boolean; model?: string }>;
     checkAvailable: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', ollamaBaseUrl: string) => Promise<boolean>;
     onToken: (callback: (requestId: string, token: string) => void) => () => void;
-    onDone: (callback: (requestId: string) => void) => () => void;
+    /** meta: main 의 StreamDoneMeta — 출력 상한 잘림 표식(`{truncated:true}`). 없으면 정상 완주. */
+    onDone: (callback: (requestId: string, meta?: { truncated?: true }) => void) => () => void;
   };
   file: {
     save: (content: string, defaultName: string) => Promise<string | null>;
@@ -187,7 +192,20 @@ export type ElectronAPI = {
     // C5-L: code — main 이 에러 분류용으로 전파(KEYCHAIN_UNAVAILABLE / fs 에러코드).
     // 렌더러는 error 원문(한국어/절대경로 가능) 대신 code→i18n 매핑으로 표시한다.
     save: (provider: 'ollama' | 'claude' | 'openai' | 'gemini', key: string) => Promise<{ success: boolean; error?: string; code?: string }>;
-    has: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => Promise<boolean>;
+    /**
+     * QA30(C-6): main 은 이제 **`null`(확인 불가 — 파일은 있을 수 있으나 지금 못 읽음)** 을
+     * 반환할 수 있다. 값은 이 브리지를 그대로 통과하지만, 타입은 아직 `boolean` 으로 둔다 —
+     * 유일 소비자(SettingsPanel)의 상태가 `useState(false)`(boolean)라 지금 넓히면 렌더러가
+     * 컴파일되지 않는다(그 파일은 이번 라운드에서 다른 에이전트 소유다). `null` 은 falsy 라
+     * 렌더러 동작은 종전과 동일하며, "확인할 수 없음" 표시를 붙일 때 여기서 `boolean | null`
+     * 로 넓히면 된다. → 보고서의 렌더러 배선 항목.
+     */
+    /**
+     * 키가 저장돼 있는가. `null` = **확인 불가**(파일은 있는데 지금 읽을 수 없음 — AV·인덱서의
+     * 일시 잠금). QA30(C-6): 종전엔 못 읽은 것과 없는 것이 똑같이 false 라, 키가 멀쩡한데
+     * "API 키를 설정해주세요" 가 떴다. 소비자는 `=== false` 로 부재를 판정해야 한다.
+     */
+    has: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => Promise<boolean | null>;
     delete: (provider: 'ollama' | 'claude' | 'openai' | 'gemini') => Promise<{ success: boolean; error?: string; code?: string }>;
   };
   session: {
@@ -208,7 +226,13 @@ export type ElectronAPI = {
   };
   collections: {
     list: () => Promise<SavedCollection[]>;
-    save: (input: { id?: string; name: string; docHashes: string[] }) => Promise<{ ok: boolean; id?: string }>;
+    /**
+     * QA30(C-11): `evicted`(LRU 로 축출된 컬렉션 이름 — 사용자 통지용)가 계약에서 빠져 있었다.
+     * main 은 반환하고 CollectionBar 가 소비하는데, 중간의 이 선언만 모르는 상태였다
+     * (collections-client.ts 가 반환 타입을 다시 적어 컴파일만 통과시켰다). 형제 session.save 는
+     * evicted/indexMissing 을 제대로 선언한다.
+     */
+    save: (input: { id?: string; name: string; docHashes: string[] }) => Promise<{ ok: boolean; id?: string; evicted?: string[] }>;
     delete: (id: string) => Promise<{ ok: boolean }>;
     /** 열기 시 lastAccessed 갱신(최근 사용 표시). best-effort — 실패해도 열기에 영향 없다. */
     touch: (id: string) => Promise<{ ok: boolean }>;

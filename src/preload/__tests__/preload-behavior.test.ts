@@ -231,9 +231,24 @@ describe('on* 리스너 — 등록 / 포워딩 / 구독 해제', () => {
     const unsub = a.ai.onDone(cb);
     const handler = handlerFor('ai:done');
     handler(FAKE_EVENT, 'req9');
-    expect(cb).toHaveBeenCalledWith('req9');
+    // meta 없이 온 완료(정상 완주)는 두 번째 인자가 undefined 다.
+    expect(cb).toHaveBeenCalledWith('req9', undefined);
     unsub();
     expect(H.removeListener).toHaveBeenCalledWith('ai:done', handler);
+  });
+
+  /**
+   * QA30(추가2): main 은 `ai:done` 에 완료 메타(StreamDoneMeta — 출력 상한 잘림 표식)를 **두 번째
+   * 인자로** 실어 보내는데, 이 브리지가 그것을 버리고 requestId 만 넘겼다. 페이로드는 IPC 를
+   * 건넜지만 렌더러에는 도달할 경로가 아예 없었다(A축이 붙인 신호가 여기서 끊겼다).
+   */
+  it('ai.onDone: 완료 메타(truncated)를 렌더러로 포워딩한다', () => {
+    const a = getApi();
+    const cb = vi.fn();
+    a.ai.onDone(cb);
+    const handler = handlerFor('ai:done');
+    handler(FAKE_EVENT, 'req10', { truncated: true });
+    expect(cb).toHaveBeenCalledWith('req10', { truncated: true });
   });
 
   it('onSetupProgress: progressEvent 객체 포워딩 + unsubscribe', () => {
@@ -258,5 +273,39 @@ describe('on* 리스너 — 등록 / 포워딩 / 구독 해제', () => {
     expect(cb).toHaveBeenCalledWith(file);
     unsub();
     expect(H.removeListener).toHaveBeenCalledWith('file:dropped', handler);
+  });
+});
+
+/**
+ * QA30(C-11): preload 의 **타입 선언**이 main 의 반환 계약과 어긋나던 것.
+ *
+ * `collections.save` 는 main 이 `evicted`(LRU 로 축출된 컬렉션 이름)를 반환하고 CollectionBar 가
+ * 소비하는데 선언에서 빠져 있었다 — collections-client.ts 가 반환 타입을 **다시 적어** 컴파일만
+ * 통과시키고 있었다(형제 session.save 는 evicted/indexMissing 을 제대로 선언한다). 런타임으로는
+ * 타입을 관측할 수 없으므로 선언 텍스트를 본다. 주석은 제거하고 본다 — QA29(D축)에서 소스 스캔
+ * 가드가 **주석에 매칭돼 통과**한 전례가 있다.
+ */
+describe('QA30(C-11): preload 계약 선언에 evicted 가 포함된다', () => {
+  it('collections.save / session.save 둘 다 evicted 를 선언한다', async () => {
+    const fs = await import('node:fs/promises');
+    const url = await import('node:url');
+    const path = await import('node:path');
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.join(here, '..', 'index.ts'), 'utf-8');
+    // 주석은 제거하고 본다 — QA29(D축)에서 소스 스캔 가드가 주석에 매칭돼 통과한 전례가 있다.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    // 같은 토큰이 구현(contextBridge 래퍼)과 타입 선언 양쪽에 나온다 — 계약을 보려면
+    // `Promise<` 를 포함한 **선언 줄**을 골라야 한다(구현 줄을 보면 가드가 공허해진다).
+    const lines = code.split(String.fromCharCode(10));
+    const declOf = (head: string): string =>
+      lines.find((l) => l.includes(head) && l.includes('Promise<')) ?? '';
+    const collectionsSave = declOf('save: (input:');
+    expect(collectionsSave, 'collections.save 선언을 찾지 못했다 — 가드가 공허해졌다').toContain('docHashes');
+    expect(collectionsSave, 'main 이 반환하고 CollectionBar 가 쓰는 evicted 가 계약에 없다').toContain('evicted');
+    // 형제 대조: session.save 는 evicted/indexMissing 을 이미 선언한다.
+    const sessionSave = declOf('save: (payload: { meta: SessionSaveMeta');
+    expect(sessionSave, 'session.save 선언을 찾지 못했다 — 가드가 공허해졌다').toContain('openDocHashes');
+    expect(sessionSave).toContain('evicted');
+    expect(sessionSave).toContain('indexMissing');
   });
 });

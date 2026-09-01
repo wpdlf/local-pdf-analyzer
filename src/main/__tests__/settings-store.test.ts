@@ -193,3 +193,55 @@ describe('saveSettings (Top5 #3)', () => {
     expect(written).toContain('\n    "c"');
   });
 });
+
+/**
+ * QA30(C-10): `onRawKeys` — 파싱된 **원본 파일의 키 목록**을 호출자에게 알린다.
+ *
+ * index.ts 의 레거시 가드(v0.16 이전 파일 = uiLanguage 는 있고 summaryLanguage 는 없음)가 merge
+ * 결과로 키 출처를 알 수 없어 **같은 파일을 한 번 더 읽던 것**을 없애기 위한 계약이다. 여기서는
+ * "언제 호출되고 언제 호출되지 않는가" 를 못박는다 — 부재/손상/일시 I/O 오류에서 호출되면
+ * 호출자가 "파일에 그 키가 없었다" 로 오판해 잘못된 보정을 한다.
+ */
+describe('QA30(C-10): loadSettings 의 onRawKeys (키 출처 통지)', () => {
+  it('파일을 읽었으면 화이트리스트 필터 **이전**의 원본 키 목록을 준다', async () => {
+    mocks.readFile.mockResolvedValue(JSON.stringify({ provider: 'claude', unknownKey: 1, theme: 'dark' }));
+    const seen: string[][] = [];
+    const out = await loadSettings(TEST_PATH, DEFAULTS, VALID_KEYS, undefined, (keys) => seen.push(keys));
+    expect(seen).toHaveLength(1);
+    // 미지 키도 포함된다 — "파일에 무엇이 있었는가" 가 질문이기 때문이다.
+    expect(seen[0]).toEqual(['provider', 'unknownKey', 'theme']);
+    // 반환값은 종전대로 화이트리스트만 통과한다(회귀 방지).
+    expect(out).toEqual({ ...DEFAULTS, provider: 'claude', theme: 'dark' });
+    // 재독이 없다 — 읽기는 정확히 1회.
+    expect(mocks.readFile).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['부재(ENOENT)', Object.assign(new Error('ENOENT'), { code: 'ENOENT' })],
+  ])('%s 면 호출되지 않는다 (호출자는 판단 불가로 처리)', async (_l, err) => {
+    mocks.readFile.mockRejectedValue(err);
+    const seen: string[][] = [];
+    await loadSettings(TEST_PATH, DEFAULTS, VALID_KEYS, undefined, (keys) => seen.push(keys));
+    expect(seen).toHaveLength(0);
+  });
+
+  it('손상 JSON 이면 호출되지 않는다', async () => {
+    mocks.readFile.mockResolvedValue('{깨진');
+    const seen: string[][] = [];
+    await loadSettings(TEST_PATH, DEFAULTS, VALID_KEYS, undefined, (keys) => seen.push(keys));
+    expect(seen).toHaveLength(0);
+  });
+
+  it('일시 I/O 오류(EBUSY)는 종전대로 throw 하고 호출되지 않는다', async () => {
+    mocks.readFile.mockRejectedValue(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }));
+    const seen: string[][] = [];
+    await expect(loadSettings(TEST_PATH, DEFAULTS, VALID_KEYS, undefined, (keys) => seen.push(keys)))
+      .rejects.toMatchObject({ code: 'EBUSY' });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('미전달이어도 동작은 동일하다(선택 인자)', async () => {
+    mocks.readFile.mockResolvedValue(JSON.stringify({ provider: 'openai' }));
+    await expect(loadSettings(TEST_PATH, DEFAULTS, VALID_KEYS)).resolves.toMatchObject({ provider: 'openai' });
+  });
+});

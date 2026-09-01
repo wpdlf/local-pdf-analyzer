@@ -34,6 +34,28 @@ const INDEX_BIN = 'index.bin';
 // (이 파일 없음)은 readSession 이 session.json 의 chunkMeta 로 fallback — 파괴적 마이그레이션 없음.
 const INDEX_META = 'index.meta.json';
 
+/**
+ * 세션 본문(session.json) 1건의 상한 — QA30(C-9, 형제 누락).
+ *
+ * index.bin 은 `MAX_SESSION_BLOB_BYTES`(64MB)로 캡돼 있는데 **본문은 무캡**이었다. 본문에는
+ * `extractedText` 와 `pageTexts` 가 사실상 중복 저장되고(+summaries/qaMessages) 렌더러가 보내는
+ * 대로 기록되므로, 초대형 PDF 하나가 온디스크 총량 상한(200MB)을 단건으로 넘길 수 있다. 그러면
+ * enforceLru 가 매 저장마다 다른 모든 세션을 축출하고도 상한을 못 맞춘다(자기 자신은 방금 저장한
+ * 문서라 pin 이다) — 즉 라이브러리 전체가 문서 하나 때문에 비워진다.
+ *
+ * 거부는 `{ok:false}` 로 **보이게** 한다(렌더러의 연속 저장실패 통지망이 잡는다). 무음으로
+ * 잘라 저장하면 복원 시 본문이 절단된 세션이 되어 더 나쁘다. 실사용(5000페이지 텍스트 PDF 도
+ * 수십 MB)에서는 도달하지 않는 값이다.
+ */
+export const MAX_SESSION_JSON_BYTES = 128 * 1024 * 1024;
+
+/**
+ * Q&A 메시지 배열 길이 상한 — QA30(C-9). 종전엔 `Array.isArray` 만 통과하면 그대로 기록했다.
+ * 정상 사용에서 한 문서의 Q&A 가 이 수를 넘지 않는다(넘으면 patchSession 이 {ok:false} 로
+ * 알리고 호출자가 전체 저장으로 폴백한다 — 무음 절단은 하지 않는다).
+ */
+export const MAX_QA_MESSAGES = 1000;
+
 export function isValidDocHash(docHash: unknown): docHash is string {
   return typeof docHash === 'string' && DOC_HASH_RE.test(docHash);
 }
@@ -104,6 +126,27 @@ async function readManifest(sessionsDir: string, throwOnIoError: boolean): Promi
     if (!parsed || !Array.isArray(parsed.entries)) {
       return { schemaVersion: SESSION_SCHEMA_VERSION, entries: [] };
     }
+    // QA30(C-2): **상위 스키마 다운그레이드 방어** — 형제 collections-store 가 QA24(C-M3)에서
+    // 세운 "모르는 상위 버전은 읽지도 쓰지도 않는다" 규칙을 세션에 이식한다.
+    //
+    // normalizeEntry 는 알려진 10개 필드만 재구성하고 아래 writeSession/reconcile 은 마지막에
+    // `schemaVersion = SESSION_SCHEMA_VERSION` 으로 **무조건 강등**한다. 그래서 상위 버전 앱이
+    // 만든 manifest 를 이 버전이 한 번 읽고 다시 쓰면(자동저장은 1.5초 디바운스로 상시 재기록
+    // 한다) 신규 필드와 상위 schemaVersion 이 디스크에서 영구 제거된다 — 사용자가 구버전으로
+    // 한 번 롤백했다가 되돌아오면 최근목록·인덱스 메타가 조용히 퇴화한 상태가 된다.
+    //
+    // `code` 를 붙여야 아래 catch 의 isRealIoError 가 전파시킨다(collections 와 동일) — 붙이지
+    // 않으면 "손상 JSON" 으로 흡수돼 빈 manifest 가 반환되고, 그 위에 저장이 얹히면 방어하려던
+    // 파괴가 그대로 일어난다. RMW 경로(loadManifestForWrite)는 throw → 호출자가 디스크 보존,
+    // 읽기 전용 흡수 경로(loadManifest)는 빈 manifest — 어느 쪽도 파일을 강등하지 않는다.
+    if (typeof parsed.schemaVersion === 'number' && parsed.schemaVersion > SESSION_SCHEMA_VERSION) {
+      throw Object.assign(
+        new Error(
+          `session manifest schemaVersion ${parsed.schemaVersion} > ${SESSION_SCHEMA_VERSION} — 상위 버전 파일이라 읽지 않습니다`,
+        ),
+        { code: 'ESCHEMAVERSION' },
+      );
+    }
     const entries = parsed.entries
       .map(normalizeEntry)
       .filter((e): e is SessionManifestEntry => e !== null);
@@ -119,7 +162,15 @@ async function readManifest(sessionsDir: string, throwOnIoError: boolean): Promi
   }
 }
 
-/** 읽기 전용 경로(목록·통계·reconcile)용 — 어떤 실패든 빈 manifest 로 흡수한다. */
+/**
+ * 어떤 실패든 빈 manifest 로 흡수하는 로더 — **검사(테스트) 전용이다.**
+ *
+ * QA30(C-7) 이후 프로덕션 경로에는 흡수형 사용처가 없다: 목록(listSessions)·통계(sessionStats)는
+ * 전파형으로 "못 읽음 ≠ 없음" 을 구분하고, RMW 6경로는 loadManifestForWrite 를 쓴다. 새 호출자를
+ * 여기에 붙이지 말 것 — EBUSY 한 번을 "세션 없음" 으로 단정하는 결함이 그렇게 세 번 생겼다
+ * (QA21 C-MED · QA24 C-M2 · QA30 C-7). collections-store 는 같은 이유로 흡수형 로더를 아예 두지
+ * 않는다. 여기서 유지하는 이유는 테스트가 manifest 원본을 그대로 들여다보기 위해서다.
+ */
 export async function loadManifest(sessionsDir: string): Promise<SessionManifest> {
   return readManifest(sessionsDir, false);
 }
@@ -290,6 +341,13 @@ export async function writeSession(
   params: {
     meta: SessionSaveMeta; session: unknown; blob: ArrayBuffer | null; keepIndex?: boolean; now: number;
     /**
+     * 본문 상한 override — **테스트 주입용 seam**. 프로덕션 호출자는 넘기지 않는다(기본값
+     * MAX_SESSION_JSON_BYTES). 128MB 짜리 문자열을 실제로 만들어 검증하면 테스트가 수백 MB 를
+     * 잡아 CI 를 흔들기 때문에, "상한을 넘으면 무엇을 하는가"(디스크 무변경 + ok:false)를
+     * 작은 값으로 검증하고 기본값 자체는 상수 단언으로 따로 못박는다.
+     */
+    maxJsonBytes?: number;
+    /**
      * QA21(C-MED): 렌더러에서 지금 **열려 있는 탭**의 docHash 목록. LRU evict 대상에서 제외한다
      * (아래 pin 주석 참조). main 은 탭 상태를 보유하지 않으므로 저장 요청마다 함께 받는다.
      * 미전달(구버전 preload·테스트)이면 종전 동작 — 열린 탭 보호 없음.
@@ -303,6 +361,7 @@ export async function writeSession(
   // 알릴 수 있도록 결과에 싣는다. 근본 수정(열린 탭 pin)은 별도 — 우선 무음을 없앤다.
 ): Promise<{ ok: boolean; evicted?: string[]; indexMissing?: boolean }> {
   const { session, blob, keepIndex, now } = params;
+  const maxJsonBytes = typeof params.maxJsonBytes === 'number' ? params.maxJsonBytes : MAX_SESSION_JSON_BYTES;
   let { meta } = params;
   // 렌더러 입력이므로 신뢰하지 않고 정규화 — 유효 docHash 만 취한다(다른 렌더러 제공 meta 필드와
   // 동일 정책). 손상된 값이 와도 pin 이 과대적용돼 LRU 가 무력화되지 않도록 상한도 둔다.
@@ -314,6 +373,9 @@ export async function writeSession(
   // keepIndex 인데 디스크에 index.bin 이 없었는가(아래 정규화 참조) — 렌더러가 시그니처를
   // 무효화하고 다음 저장에서 인덱스를 재기록하도록 알린다.
   let indexMissing = false;
+  // QA30(C-1): 이 저장 과정에서 디스크의 인덱스를 **이미 지웠는가**. 지운 뒤 어디서든 실패하면
+  // manifest 엔트리가 "인덱스 있음" 을 계속 주장하게 되므로(아래 catch 참조) 그 사실을 들고 간다.
+  let indexCleared = false;
   if (!isValidDocHash(meta.docHash)) return { ok: false };
   try {
     const dir = sessionDir(sessionsDir, meta.docHash);
@@ -331,6 +393,12 @@ export async function writeSession(
     }
 
     const jsonStr = JSON.stringify(sessionForDisk);
+    // QA30(C-9): 본문 상한은 **파괴 이전에** 검사한다 — 아래 인덱스 선삭제/본문 기록보다 앞이라야
+    // 거부가 디스크를 건드리지 않는다(상한 위반 저장이 기존 인덱스만 날리고 끝나면 최악이다).
+    if (Buffer.byteLength(jsonStr) > maxJsonBytes) {
+      console.warn('[session] save rejected: session body exceeds cap', Buffer.byteLength(jsonStr));
+      return { ok: false };
+    }
     const indexBinPath = path.join(dir, INDEX_BIN);
     const indexMetaPath = path.join(dir, INDEX_META);
     // QA24(C-L2, 조용한 오답): 새 인덱스를 쓸 때는 **옛 인덱스를 먼저 치운 뒤** 본문을 기록한다.
@@ -351,6 +419,7 @@ export async function writeSession(
     if (!keepIndex && blob) {
       try { await fsp.unlink(indexBinPath); } catch { /* 없으면 무시 */ }
       try { await fsp.unlink(indexMetaPath); } catch { /* 없으면 무시 */ }
+      indexCleared = true;
     }
     await writeFileAtomic(path.join(dir, SESSION_JSON), jsonStr);
     let blobBytes = 0;
@@ -379,6 +448,7 @@ export async function writeSession(
       if (blobBytes === 0) {
         try { await fsp.unlink(indexMetaPath); } catch { /* 없으면 무시 */ }
         indexMissing = true;
+        indexCleared = true;
         meta = { ...meta, embedModel: null, embedDim: null, chunkCount: 0 };
       } else {
         try {
@@ -408,6 +478,7 @@ export async function writeSession(
       // chunkMeta 사이드카도 함께 제거해 index.bin 과 생명주기를 일치시킨다.
       try { await fsp.unlink(indexBinPath); } catch { /* 없으면 무시 */ }
       try { await fsp.unlink(indexMetaPath); } catch { /* 없으면 무시 */ }
+      indexCleared = true;
       // QA26(C-Important): 방금 인덱스를 지웠으므로 엔트리도 "없음" 이어야 한다. 종전에는 렌더러가
       // 보낸 meta 의 embedModel/chunkCount 를 **그대로** manifest 에 썼다 — keepIndex 분기는
       // blobBytes===0 에서 정규화하는데(위) 이 형제 분기만 빠져 있었다. 그러면 크래시 없이도
@@ -489,7 +560,74 @@ export async function writeSession(
     };
   } catch (err) {
     console.warn('[session] save failed:', (err as Error)?.message);
+    // QA30(C-1): **"쓰기가 실패한 경우" 가 거짓 인덱스 주장의 네 번째 생산자다.**
+    //
+    // 새 인덱스를 쓸 때는 위에서 옛 index.bin/사이드카를 **먼저 지운다**(QA24 C-L2). 그 뒤의
+    // 본문 기록·사이드카·manifest 재기록 중 어디서든 실패하면(자동저장 디바운스 중 ENOSPC/
+    // EBUSY 한 번이면 충분하다) 종전에는 `{ok:false}` 만 반환하고 **manifest 엔트리의
+    // embedModel/chunkCount 는 손대지 않았다** — 디스크에는 인덱스가 없는데 엔트리는 "청크 N개
+    // 있음" 을 계속 주장한다. QA26(C-Important)/QA27(A-Important)이 같은 상태 클래스를 세 지점
+    // (blob 부재 분기·reconcile 의 known/고아 분기)에서 닫았는데 이 실패 경로만 빠져 있었다.
+    //
+    // 그 뒤 전파는 전부 무음이다: 의미검색은 blob 부재로 그 문서를 결과에서 빼면서
+    // excludedCount 에도 넣지 않고(사용자는 "관련 내용 없음" 으로 읽는다), 컬렉션 Q&A 는 ready
+    // 배지를 켠 채 그 문서를 빼고 답한다. 회수는 다음 부팅의 reconcileSessions 뿐이라 그 세션
+    // 내내 유지된다.
+    //
+    // ① 엔트리의 인덱스 메타를 best-effort 로 "없음" 으로 정규화하고(다른 세션은 건드리지 않는다),
+    // ② `indexMissing:true` 로 렌더러가 인덱스 시그니처를 무효화해 다음 저장을 전체 저장으로
+    //    끌어올리게 한다 — keepIndex 분기가 이미 쓰는 규칙과 같은 계약이다.
+    if (indexCleared) {
+      await clearIndexClaim(sessionsDir, meta.docHash);
+      return { ok: false, indexMissing: true };
+    }
     return { ok: false };
+  }
+}
+
+/**
+ * manifest 엔트리의 인덱스 주장(embedModel/embedDim/chunkCount)을 "없음" 으로 되돌린다 —
+ * 저장 실패 회수 전용 best-effort 헬퍼(QA30 C-1).
+ *
+ * 반드시 `loadManifestForWrite`(전파형)로 읽는다. 흡수형으로 읽으면 manifest 를 못 읽은 순간
+ * `{entries: []}` 를 기준으로 saveManifest 가 돌아 **다른 모든 세션을 지워버린다** — 인덱스
+ * 주장 하나를 고치려다 라이브러리를 날리는 셈이다(QA21 C-MED 와 동일한 함정). 읽기·쓰기 어느
+ * 쪽이든 실패하면 조용히 포기한다: 다음 저장이나 부팅 reconcile 이 같은 규칙으로 회수한다.
+ */
+async function clearIndexClaim(sessionsDir: string, docHash: string): Promise<boolean> {
+  try {
+    const manifest = await loadManifestForWrite(sessionsDir);
+    const entry = manifest.entries.find((e) => e.docHash === docHash);
+    if (!entry) return false;
+    if (entry.embedModel === null && entry.embedDim === null && entry.chunkCount === 0) return false;
+    entry.embedModel = null;
+    entry.embedDim = null;
+    entry.chunkCount = 0;
+    // byteSize 도 실측으로 교정한다 — 사라진 인덱스를 계속 합산하면 enforceLru 가 다른 세션을
+    // 조기 축출한다(reconcile 의 repaired 분기가 QA28 A-Low 에서 같은 이유로 채택한 처리).
+    //
+    // index.bin 이 실제로 없으면 사이드카도 함께 치운다 — "chunkMeta 는 있고 blob 은 없는" 짝을
+    // 남기지 않는다(writeSession 의 blobBytes===0 분기·reconcile 과 동일 규칙). index.bin 이
+    // 온전히 쓰인 뒤 manifest 기록만 실패한 경우엔 유효한 짝이므로 파일은 건드리지 않는다 —
+    // 엔트리는 그래도 "없음" 으로 수렴시키고(불일치 대신 부재), indexMissing 을 받은 렌더러의
+    // 다음 전체 저장이 인덱스를 다시 등록한다.
+    const dirPath = sessionDir(sessionsDir, docHash);
+    let hasBlob = false;
+    try { hasBlob = (await fsp.stat(path.join(dirPath, INDEX_BIN))).size > 0; } catch { hasBlob = false; }
+    if (!hasBlob) {
+      try { await fsp.unlink(path.join(dirPath, INDEX_META)); } catch { /* 없으면 무시 */ }
+    }
+    try {
+      let measured = 0;
+      for (const f of await fsp.readdir(dirPath)) {
+        try { measured += (await fsp.stat(path.join(dirPath, f))).size; } catch { /* 경합 삭제 무시 */ }
+      }
+      entry.byteSize = measured;
+    } catch { /* 디렉터리를 못 읽으면 byteSize 는 그대로 — 인덱스 주장 제거가 더 중요하다 */ }
+    await saveManifest(sessionsDir, manifest);
+    return true;
+  } catch {
+    return false; // manifest 를 못 읽거나 못 쓰면 포기(디스크 보존) — reconcile 이 회수한다
   }
 }
 
@@ -590,9 +728,12 @@ export async function patchSession(
     summaryType: string;
     qaMessages: unknown;
     now: number;
+    /** 본문 상한 override — 테스트 주입용 seam(writeSession 의 동명 인자와 동일). */
+    maxJsonBytes?: number;
   },
 ): Promise<{ ok: boolean }> {
   const { docHash, summary, summaryType, qaMessages, now } = params;
+  const maxJsonBytes = typeof params.maxJsonBytes === 'number' ? params.maxJsonBytes : MAX_SESSION_JSON_BYTES;
   if (!isValidDocHash(docHash)) return { ok: false };
   try {
     const dir = sessionDir(sessionsDir, docHash);
@@ -624,9 +765,21 @@ export async function patchSession(
     if (typeof summaryType === 'string' && summaryType.length > 0 && summaryType.length <= MAX_SUMMARY_TYPE_LEN) {
       session.summaryType = summaryType;
     }
-    if (Array.isArray(qaMessages)) session.qaMessages = qaMessages;
+    // QA30(C-9, 형제 누락): 종전엔 `Array.isArray` 만 통과하면 그대로 기록했다 — 개수·크기
+    // 상한이 없는 유일한 세션 입력이었다(blob 은 64MB, 요약 타입 키는 71자 캡이 있다).
+    // 무음 절단 대신 {ok:false} — 호출자(use-session)가 전체 저장으로 폴백하고, 그것도 아래
+    // 본문 상한에 걸리면 저장 실패가 사용자에게 보인다.
+    if (Array.isArray(qaMessages)) {
+      if (qaMessages.length > MAX_QA_MESSAGES) return { ok: false };
+      session.qaMessages = qaMessages;
+    }
 
     const jsonStr = JSON.stringify(session);
+    // QA30(C-9): writeSession 과 동일한 본문 상한 — 델타 경로로 우회되지 않도록 여기에도 둔다.
+    if (Buffer.byteLength(jsonStr) > maxJsonBytes) {
+      console.warn('[session] partial save rejected: session body exceeds cap');
+      return { ok: false };
+    }
     // QA24(C-M1): 요약·Q&A 델타 경로 — 재계산 불가한 사용자 데이터라 fsync(위 mergeSessionSummary 주석).
     await writeFileAtomic(jsonPath, jsonStr, { sync: true });
 
@@ -719,8 +872,20 @@ export async function listSessions(sessionsDir: string): Promise<SessionManifest
   return [...manifest.entries].sort((a, b) => b.lastAccessed.localeCompare(a.lastAccessed));
 }
 
+/**
+ * 저장 용량/위치(설정 화면) — QA30(C-7): **일시 I/O 오류를 "0개 · 0 B" 로 단정하지 않는다.**
+ *
+ * QA24(C-M2)가 형제 `listSessions` 를 전파형으로 바꿀 때 이 함수만 흡수형 `loadManifest` 로
+ * 남아 있었다. manifest 읽기가 EBUSY 한 번 나면 설정 화면이 "저장된 문서 0개 · 0 B" 를
+ * 단정적으로 표시한다 — 사용자는 전량 소실로 읽는다(listSessions 를 고친 것과 같은 이유).
+ * 파괴적 오작동은 없지만(전체 삭제 버튼은 `count===0` 이면 비활성) 표시가 거짓이다.
+ *
+ * throw 는 IPC 를 통해 렌더러의 `refreshSessionStats().catch` 로 전달되고, 그쪽은 이미
+ * `null`(=용량 블록 미표시)로 수렴한다 — 거짓 0 보다 침묵이 정직하다. 부재·손상은 종전대로
+ * 빈 manifest → 0개(그건 실제로 "없음" 이 맞다).
+ */
 export async function sessionStats(sessionsDir: string): Promise<SessionStats> {
-  const manifest = await loadManifest(sessionsDir);
+  const manifest = await readManifest(sessionsDir, true);
   const totalBytes = manifest.entries.reduce((sum, e) => sum + e.byteSize, 0);
   return { count: manifest.entries.length, totalBytes, dir: sessionsDir };
 }

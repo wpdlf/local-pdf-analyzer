@@ -150,6 +150,28 @@ describe('GlobalSearch', () => {
     await waitFor(() => expect(screen.getByText(/2개 문서는 제외/)).toBeTruthy());
   });
 
+  it('의미 모드 + 손상 인덱스 → 손상 안내(재색인 경로 포함)', async () => {
+    M.semantic.mockResolvedValue({ status: 'ok', results: [result({ snippets: [{ page: 1, text: '청크' }] })], excludedCount: 0, corruptedCount: 3 });
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.click(screen.getByRole('button', { name: '의미' }));
+    await user.type(screen.getByLabelText('문서 검색'), '질의어');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(screen.getByText(/색인이 손상된 3개 문서/)).toBeTruthy());
+  });
+
+  // 두 부류는 서로 다른 문서라 동시에 0 이 아닐 수 있다 — 한쪽만 띄우면 나머지가 다시 무음이 된다.
+  it('제외와 손상이 동시에 있으면 두 안내가 모두 표시된다', async () => {
+    M.semantic.mockResolvedValue({ status: 'ok', results: [result({ snippets: [{ page: 1, text: '청크' }] })], excludedCount: 2, corruptedCount: 3 });
+    const user = userEvent.setup();
+    render(<GlobalSearch />);
+    await user.click(screen.getByRole('button', { name: '의미' }));
+    await user.type(screen.getByLabelText('문서 검색'), '질의어');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    await waitFor(() => expect(screen.getByText(/2개 문서는 제외/)).toBeTruthy());
+    expect(screen.getByText(/색인이 손상된 3개 문서/)).toBeTruthy();
+  });
+
   it('모드 전환 시 이전 모드의 결과/안내가 검색-전 상태로 리셋', async () => {
     M.search.mockResolvedValue([result({})]);
     const user = userEvent.setup();
