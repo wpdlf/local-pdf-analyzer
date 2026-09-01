@@ -137,7 +137,7 @@ async function retryStreamOn429(
       const controller = new AbortController();
       const now = Date.now();
       const waitEntry: ActiveRequestEntry = {
-        abort: () => controller.abort(),
+        abort: (reason: AbortReason = 'user') => controller.abort(reason),
         createdAt: ++nextRequestSeq,
         startedAt: now,
         lastProgressAt: now,
@@ -230,7 +230,7 @@ ttlCleanupInterval.unref(); // Node.js 이벤트루프 블로킹 방지
  * 취소 사유별 에러 — 렌더러가 "사용자가 멈춤" 과 "시스템이 죽임" 을 구분할 수 있어야 한다.
  * `code:'ABORTED'` 는 **사용자 의도 전용**이다(렌더러가 배너를 억제하는 유일한 코드).
  */
-function abortErrorFor(reason: AbortReason): Error {
+export function abortErrorFor(reason: AbortReason): Error {
   if (reason === 'stalled') {
     return Object.assign(
       new Error('AI 요청이 10분 동안 아무 진전이 없어 중단되었습니다.'),
@@ -327,7 +327,10 @@ export function registerEmbedRequest(requestId: string, controller: AbortControl
   }
   const now = Date.now();
   const entry: EmbedRequestEntry = {
-    abort: () => controller.abort(),
+    // QA31(B): 스위퍼는 entry.abort(reason) 으로 사유를 넘기는데 여기서 인자를 받지 않아
+    // **통째로 버려졌다** — TTL 주석 스스로 "이 TTL 의 실제 역할은 embed/vision 고아 회수" 라고
+    // 적고 있으니, 사유 타입화가 정작 주 사용자에게만 미적용이었다. signal.reason 으로 전달한다.
+    abort: (reason: AbortReason = 'user') => controller.abort(reason),
     createdAt: now,
     startedAt: now,
     lastProgressAt: now,
@@ -1557,7 +1560,10 @@ function httpPost(
       const onAbort = () => {
         if (responseStream && !responseStream.destroyed) responseStream.destroy();
         if (!req.destroyed) req.destroy();
-        safeReject(new Error('Aborted'));
+        // QA31(B): TTL 회수는 signal.reason 에 AbortReason 문자열을 싣는다 — 그때만 타입화된
+        // 에러로 낸다. 사용자 취소(reason 없음 → DOMException)는 종전대로 'Aborted'.
+        const r: unknown = signal.reason;
+        safeReject(r === 'stalled' || r === 'maxAge' ? abortErrorFor(r) : new Error('Aborted'));
       };
       signal.addEventListener('abort', onAbort);
       cleanupAbort = () => signal.removeEventListener('abort', onAbort);

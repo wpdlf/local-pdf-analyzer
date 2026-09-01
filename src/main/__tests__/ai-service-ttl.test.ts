@@ -145,6 +145,76 @@ describe('QA30 A-F1: activeRequests TTL 은 수명이 아니라 진전을 본다
     }
   });
 
+  it('abortErrorFor: 사용자 취소만 ABORTED, TTL 회수는 STALLED + errorKey (배너 게이트의 단일 출처)', async () => {
+    // QA31(B): QA30 이 A-High 로 고친 것이 **무보호**였다 — `if (reason === 'stalled')` 를
+    // `if (false)` 로 무력화해도 2359/2359 가 통과했다. 렌더러는 rawCode !== 'ABORTED' 로
+    // 에러 배너와 부분복구 제안을 태우므로, 이 매핑이 뒤집히면 시스템이 죽인 요청이
+    // 사용자 취소로 위장해 **조용히 사라진다**. 매핑 자체를 못박는다.
+    const svc = await loadServiceOnFakeTimers();
+    try {
+      const user = svc.abortErrorFor('user') as Error & { code?: string; errorKey?: string };
+      expect(user.code, '사용자 취소만 ABORTED 여야 한다(배너 억제 코드)').toBe('ABORTED');
+
+      const stalled = svc.abortErrorFor('stalled') as Error & { code?: string; errorKey?: string };
+      expect(stalled.code).toBe('STALLED');
+      expect(stalled.errorKey).toBe('streamStalled');
+      expect(stalled.code, 'TTL 회수가 ABORTED 로 나가면 배너가 통째로 스킵된다').not.toBe('ABORTED');
+
+      const maxAge = svc.abortErrorFor('maxAge') as Error & { code?: string; errorKey?: string };
+      expect(maxAge.code).toBe('STALLED');
+      expect(maxAge.errorKey).toBe('streamMaxDuration');
+    } finally {
+      svc.cleanupAiService();
+      vi.useRealTimers();
+    }
+  });
+
+  it('embed/vision 고아 회수도 사유를 버리지 않는다 (형제 누락)', async () => {
+    // 스위퍼는 entry.abort(reason) 으로 사유를 넘기는데 embed/vision entry 의 abort 는
+    // 인자를 받지 않아 통째로 버렸다. TTL 주석 스스로 "이 TTL 의 실제 역할은 embed/vision
+    // 고아 회수" 라고 적고 있으므로, 사유 타입화가 주 사용자에게만 미적용이었던 셈이다.
+    const svc = await loadServiceOnFakeTimers();
+    try {
+      const controller = new AbortController();
+      svc.registerEmbedRequest('orphan-reason', controller);
+
+      await vi.advanceTimersByTimeAsync(660000);
+
+      expect(controller.signal.aborted).toBe(true);
+      expect(controller.signal.reason, '회수 사유가 signal 로 전달돼야 한다').toBe('stalled');
+    } finally {
+      svc.cleanupAiService();
+      vi.useRealTimers();
+    }
+  });
+
+  it('embed 요청이 TTL 로 회수되면 실제 rejection 이 STALLED 로 나온다 (배선까지)', async () => {
+    // signal.reason 까지만 확인하면 배선이 끊겨도 초록이다 — 실측: httpPost 의 사유 매핑을
+    // 걷어내도 위 테스트는 통과했다. 여기서는 **호출자가 받는 에러**를 단언한다.
+    // (이 저장소의 반복 교훈: 순수 매핑 테스트가 전부 그린인데 배선이 안 먹던 전례.)
+    const svc = await loadServiceOnFakeTimers();
+    try {
+      // 응답하지 않는 HTTP — abort 로만 끝난다.
+      M.httpRequest.mockImplementation(() => makeReq());
+
+      const controller = new AbortController();
+      svc.registerEmbedRequest('embed-wire', controller);
+      const w = watch(
+        svc.generateEmbeddings(['본문'], 'ollama', 'http://127.0.0.1:11434', undefined, 'nomic-embed-text', controller.signal),
+      );
+
+      await vi.advanceTimersByTimeAsync(660000);
+
+      const err = w.get() as Error & { code?: string; errorKey?: string };
+      expect(err, 'TTL 회수가 호출자에게 도달해야 한다').toBeInstanceOf(Error);
+      expect(err.code, "사용자 취소('Aborted')와 구분돼야 한다").toBe('STALLED');
+      expect(err.errorKey).toBe('streamStalled');
+    } finally {
+      svc.cleanupAiService();
+      vi.useRealTimers();
+    }
+  });
+
   it('절대 백스톱(3시간)에 걸린 요청은 ABORTED 가 아니라 STALLED/errorKey 로 나간다', async () => {
     const svc = await loadServiceOnFakeTimers();
     try {
