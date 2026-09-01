@@ -113,7 +113,7 @@ NSIS 인스톨러가 "알 수 없는 게시자" SmartScreen 경고와 함께 배
 
 ## Tech Stack
 
-- Electron 43 + electron-vite 5 (vite 7)
+- Electron 44 + electron-vite 5 (vite 7)
 - React 19 + TypeScript 7 + Tailwind CSS 4
 - Zustand 5 (상태 관리)
 - pdfjs-dist 6 (PDF 파싱 + 이미지 추출 + OCR fallback)

@@ -260,7 +260,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 
 | Area | Technology |
 |------|------------|
-| Framework | Electron 43 + React 19 |
+| Framework | Electron 44 + React 19 |
 | Language | TypeScript (strict mode, incl. `noUncheckedIndexedAccess`) |
 | AI generation | Ollama (local) / Claude API / OpenAI API / Gemini API — via Main-process IPC |
 | AI embeddings (RAG) | Ollama /api/embed / OpenAI /v1/embeddings / Gemini batchEmbedContents — in-memory vector store |

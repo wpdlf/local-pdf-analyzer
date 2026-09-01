@@ -260,7 +260,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 
 | 항목 | 기술 |
 |------|------|
-| 프레임워크 | Electron 43 + React 19 |
+| 프레임워크 | Electron 44 + React 19 |
 | 언어 | TypeScript (strict mode, `noUncheckedIndexedAccess` 등 활성) |
 | AI 생성 | Ollama (로컬) / Claude API / OpenAI API / Gemini API — Main 프로세스 IPC 기반 |
 | AI 임베딩 (RAG) | Ollama /api/embed / OpenAI /v1/embeddings / Gemini batchEmbedContents — 인메모리 벡터 스토어 |

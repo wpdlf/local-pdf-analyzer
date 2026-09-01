@@ -385,6 +385,8 @@ jobs:
   # 시크릿 + `mac.notarize` electron-builder 구성을 추가하기 전까지 macOS 빌드를 비활성화한다.
   # 복구 방법: 위 시크릿을 등록한 뒤 build-mac 잡과 package.json 의 build.mac 블록에 notarize 설정을 추가하고
   # test.yml matrix에 macos-latest를 다시 포함하면 된다.
+  # 최소 사양 주의(electron 44 스파이크에서 확인): electron 44 부터 macOS 12(Monterey) 지원이
+  # 끊겨 최소 사양이 Ventura(13) 이상이다. 복구 시 README 의 시스템 요구사항도 함께 고쳐야 한다.
   #
   # build-mac:
   #   needs: test
