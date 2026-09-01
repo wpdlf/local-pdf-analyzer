@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
-import { stripJsComments, stripYamlComments, readGeneratedText } from './helpers/source-scan';
+import { stripJsComments, stripYamlComments, stripHtmlComments, readGeneratedText } from './helpers/source-scan';
 
 describe('stripJsComments — 주석은 지우고 코드는 남긴다', () => {
   it('줄 주석과 블록 주석을 지운다', () => {
@@ -135,6 +135,41 @@ describe('stripYamlComments — 워크플로 주석', () => {
  * 읽는 테스트를 **도출**해서 전부가 공용 제거기를 쓰는지 본다 — 11번째 가드가 새로 생기면
  * 그것도 자동으로 이 규칙 아래로 들어온다.
  */
+describe('stripHtmlComments — CSP 가드가 실물 meta 만 보게 한다', () => {
+  it('HTML 주석을 지우고 마크업은 남긴다', () => {
+    const src = `<!-- old -->
+<meta content="live">`;
+    const out = stripHtmlComments(src);
+    expect(out).not.toContain('old');
+    expect(out).toContain('content="live"');
+  });
+
+  it('줄 번호와 오프셋을 보존한다 (해시·정규식이 원본 좌표로 동작해야 한다)', () => {
+    const src = `<!--
+a
+b
+-->
+<meta>`;
+    const out = stripHtmlComments(src);
+    expect(out.length).toBe(src.length);
+    expect(out.split('\n').length).toBe(src.split('\n').length);
+  });
+
+  it('여러 줄 주석 뒤의 실물을 삼키지 않는다', () => {
+    const src = `<!--
+x
+-->
+<meta http-equiv="Content-Security-Policy" content="A">`;
+    expect(stripHtmlComments(src)).toContain('content="A"');
+  });
+
+  it('닫히지 않은 주석은 끝까지 지운다 (열린 채로 실물이 살아 보이면 안 된다)', () => {
+    const src = `<!-- x
+<meta content="B">`;
+    expect(stripHtmlComments(src)).not.toContain('content="B"');
+  });
+});
+
 describe('소스 스캔 가드는 전부 공용 제거기를 쓴다 (열거 금지)', () => {
   const SRC_ROOT = resolve(import.meta.dirname, '../..');
 
@@ -151,9 +186,12 @@ describe('소스 스캔 가드는 전부 공용 제거기를 쓴다 (열거 금�
    * 소스(.ts/.tsx/.mts/.yml)를 텍스트로 읽는 테스트인가 — 경로 리터럴 형태와 readdir 필터 형태 둘 다.
    * QA30(D2): `.mts` 를 추가했다. `vitest.config.mts` 를 읽는 가드(coverage-drift.test)가
    * 확장자 하나 차이로 이 도출 밖에 있었고, 그것이 D1(주석을 파싱하던 드리프트 가드)의 구조적 뿌리다.
+   * QA31(B·D 수렴): `.html` 을 추가했다. **같은 문장이 그대로 반복됐다** — csp-inline-hash.test 가
+   * `index.html` 을 원본으로 읽어 주석 처리된 옛 CSP 를 검사하고 있었고(실물이 'unsafe-inline'
+   * 이어도 2/2 통과), 확장자 하나 차이로 이 도출 밖이었다. 이번엔 보안 컨트롤 위였다.
    */
   function scansSource(src: string): boolean {
-    if (/readFileSync\([\s\S]{0,240}?\.(?:[mc]?tsx?|ya?ml)['"`]/.test(src)) return true;
+    if (/readFileSync\([\s\S]{0,240}?\.(?:[mc]?tsx?|ya?ml|html?)['"`]/.test(src)) return true;
     return src.includes('readdirSync') && src.includes('readFileSync') && /endsWith\(['"]\.tsx?['"]\)/.test(src);
   }
 
@@ -164,7 +202,7 @@ describe('소스 스캔 가드는 전부 공용 제거기를 쓴다 (열거 금�
     const files = derived();
     // 도출이 0건이 되면(정규식이 낡으면) 이 가드는 조용히 공허해진다 — 하한을 먼저 못박는다.
     expect(files.length, '소스 스캔 가드를 한 건도 찾지 못했다 — 이 가드가 무력화된 상태다')
-      .toBeGreaterThanOrEqual(11);
+      .toBeGreaterThanOrEqual(12);
     const offenders = files
       .filter((f) => !readFileSync(f, 'utf8').includes('helpers/source-scan'))
       .map(rel);
@@ -187,7 +225,7 @@ describe('소스 스캔 가드는 전부 공용 제거기를 쓴다 (열거 금�
    *    아래 규칙은 그 6곳에도 이미 동일하게 적용되고 있다(전부 감싼 형태).
    */
   it('파생된 가드의 모든 readFileSync 는 제거기(또는 JSON.parse)를 거친다 (파일당 1회로는 부족)', () => {
-    const WRAPPED = /(?:stripJsComments|stripYamlComments|JSON\.parse)\(\s*$/;
+    const WRAPPED = /(?:stripJsComments|stripYamlComments|stripHtmlComments|JSON\.parse)\(\s*$/;
     const offenders: string[] = [];
     let sites = 0;
     for (const f of derived()) {
@@ -208,7 +246,7 @@ describe('소스 스캔 가드는 전부 공용 제거기를 쓴다 (열거 금�
 
 describe('readGeneratedText — 소스가 아님을 확장자로 증명한 읽기만', () => {
   it('소스 확장자를 넘기면 던진다 (주석이 걸러지지 않는 통로가 되지 않도록)', () => {
-    for (const p of ['a/b.ts', 'a/b.tsx', 'vitest.config.mts', 'x.yml', 'x.yaml', 'y.js']) {
+    for (const p of ['a/b.ts', 'a/b.tsx', 'vitest.config.mts', 'x.yml', 'x.yaml', 'y.js', 'x.html', 'x.htm']) {
       expect(() => readGeneratedText(p), `${p} 를 허용하면 안 된다`).toThrow(/소스 파일/);
     }
   });

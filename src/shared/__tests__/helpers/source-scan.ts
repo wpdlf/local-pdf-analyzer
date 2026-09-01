@@ -183,8 +183,35 @@ export function stripYamlComments(src: string): string {
     .join('\n');
 }
 
+/**
+ * HTML 주석(`<!-- ... -->`)을 공백으로 덮는다 — 줄 번호와 오프셋은 원본과 같게 보존한다.
+ *
+ * QA31(수렴 B·D): `index.html` 의 CSP 를 검사하는 가드가 원본을 그대로 읽어, **주석 처리된 옛
+ * CSP** 를 검사하고 있었다. 실물 meta 가 `script-src 'unsafe-inline'` 이어도 2/2 통과한다.
+ * `.html` 이 아래 확장자 목록과 source-scan.test 의 파생 규칙 **양쪽 모두**에서 빠져 있었던 것이
+ * 뿌리다(QA24→29→30 에 이은 같은 클래스 네 번째 재발이고, 이번엔 보안 컨트롤 위였다).
+ *
+ * ※ `<script>` 본문에 리터럴 `<!--` 가 있으면 그 뒤를 주석으로 보고 지운다. HTML 명세상으로는
+ *   주석이 아니지만, 그 경우 해시 단언이 **시끄럽게 실패**하므로 조용한 오검출은 아니다.
+ */
+export function stripHtmlComments(src: string): string {
+  const out = src.split('');
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith('<!--', i)) {
+      const end = src.indexOf('-->', i + 4);
+      const to = end === -1 ? src.length : end + 3;
+      blank(out, i, to);
+      i = to;
+      continue;
+    }
+    i += 1;
+  }
+  return out.join('');
+}
+
 /** 주석 문법을 가진 소스 확장자 — 이것들은 반드시 제거기를 거쳐야 한다. */
-const COMMENTED_SOURCE_EXT = /\.(?:[mc]?tsx?|[mc]?jsx?|ya?ml)$/i;
+const COMMENTED_SOURCE_EXT = /\.(?:[mc]?tsx?|[mc]?jsx?|ya?ml|html?)$/i;
 
 /**
  * QA30(D2): **소스가 아닌** 산출물(생성된 요약·리포트 등)을 텍스트로 읽는 유일한 통로.
