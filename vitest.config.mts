@@ -1,4 +1,12 @@
 import { defineConfig } from 'vitest/config';
+// QA30(D1): 게이트 숫자의 **단일 출처**. 종전에는 아래 `thresholds:` 블록의 리터럴이 유일한
+// 값이었고, 스위트 밖 가드(scripts/coverage-drift.mjs)는 그것을 **정규식으로 재파싱**했다.
+// 그 정규식(`/thresholds:\s*\{([\s\S]*?)\}/`)은 비탐욕이라 **실제 블록보다 위에 있는 주석 안의
+// `thresholds: { ... }` 를 먼저 잡았다** — 이 파일은 라운드마다 임계 논의 산문이 쌓이는 관례라
+// (아래 200줄 넘는 주석) 언젠가 반드시 밟을 지뢰였고, 밟으면 vitest 가 실제로 강제하는 값과
+// 다른 숫자를 대조하면서 **드리프트를 영원히 못 잡는 채로 초록**이 된다(실측: 주석 한 줄
+// 추가로 exit 0 + 가드 테스트 6/6 통과). 파싱을 없애고 양쪽이 같은 파일을 읽게 한다.
+import COVERAGE_GATES from './scripts/coverage-gates.json' with { type: 'json' };
 
 // R29 #1 (v0.18.11): 명시적 Vitest 설정 도입.
 // 이전에는 별도 vitest.config 가 없어 모든 테스트가 기본값으로 실행되었고, DOM 이 필요한
@@ -202,12 +210,10 @@ export default defineConfig({
       //   (posttest:coverage)가 소유한다(측정치와 게이트의 간격이 5pp 를 넘으면 실패).
       // QA28: 실측 83.87/76.01/83.75/86.91 → 80/72/80/83 (post-step 가드가 첫 실행에서 branches
       //   마진 5.01pp 를 잡았다 — 이 가드가 실제로 도는 첫 라운드).
-      thresholds: {
-        statements: 80,
-        branches: 72,
-        functions: 80,
-        lines: 83,
-      },
+      // QA30(D1): 숫자는 scripts/coverage-gates.json 이 소유한다(파일 맨 위 주석 참고).
+      // 여기에 리터럴을 다시 적으면 드리프트 가드가 대조하는 값과 갈라지므로, 그것을
+      // coverage-drift.test.ts 의 배선 가드가 막는다.
+      thresholds: COVERAGE_GATES,
     },
   },
 });

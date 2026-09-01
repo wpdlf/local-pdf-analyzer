@@ -127,12 +127,21 @@ describe('t() 런타임 동작', () => {
 
 // R44(R43 후속 F3/F8): main 구조화 메시지 번역 헬퍼 + 키 동기화 가드
 describe('translateMainProgress / translateMainError', () => {
-  it('main 이 방출하는 진행/에러 키 전수가 i18n 에 정의돼 있다 (R44: 소스 정적 스캔 drift 가드)', async () => {
+  it('main 이 방출하는 진행 키 전수가 i18n 에 정의돼 있다 (R44: 소스 정적 스캔 drift 가드)', async () => {
     // R44 F3: 이전의 하드코딩 키 목록은 main 에 새 키가 추가되는 방향의 drift 를 못 잡았다.
     // preload-shape 와 동일하게 main 소스를 정적으로 읽어 방출 집합을 추출, 양방향 가드.
+    //
+    // QA30(D3): 이 블록은 **원본 소스**를 읽고 있었다(QA29 가 헬퍼를 도입할 때 같은 파일의
+    // 다른 블록만 고쳤다 — 임포트 한 줄이면 파일 단위 가드가 통과했기 때문이다). 실측:
+    // ai-service.ts 맨 위에 `// probe: errorKey: 'zzzGhostKey' …` 주석 한 줄을 넣으면
+    // `mainerr.zzzGhostKey 미정의` 로 **거짓 실패**했다(1 failed | 20 passed).
+    //
+    // 그리고 errorKey 절반은 아래 "errorKey ↔ i18n 사전 계약 가드(QA11)" 와 중복이었다 —
+    // 그쪽은 main **디렉터리 전체**를 주석 제거 후 스캔하므로 여기(ollama-manager +
+    // ai-service 두 파일)의 상위 집합이다. 중복을 지우고 여기서는 진행 키만 본다.
     const { _translations } = await import('../i18n');
-    const managerSrc = readFileSync(resolve(import.meta.dirname, '../../../main/ollama-manager.ts'), 'utf-8');
-    const progressSrc = readFileSync(resolve(import.meta.dirname, '../../../main/ollama-pull-progress.ts'), 'utf-8');
+    const managerSrc = stripJsComments(readFileSync(resolve(import.meta.dirname, '../../../main/ollama-manager.ts'), 'utf-8'));
+    const progressSrc = stripJsComments(readFileSync(resolve(import.meta.dirname, '../../../main/ollama-pull-progress.ts'), 'utf-8'));
 
     const progKeys = new Set<string>();
     for (const m of managerSrc.matchAll(/sendProgress\(\{\s*key:\s*'([A-Za-z]+)'/g)) progKeys.add(m[1]!);
@@ -141,18 +150,6 @@ describe('translateMainProgress / translateMainError', () => {
     expect(progKeys.size, '추출 실패 의심 — 정규식/소스 구조 확인').toBeGreaterThanOrEqual(12);
     for (const k of progKeys) {
       expect(_translations[`mainprog.${k}` as keyof typeof _translations], `mainprog.${k} 미정의`).toBeTruthy();
-    }
-
-    // QA7: ai-service 도 AI 스트리밍 에러에 errorKey 를 방출하므로 스캔 대상에 포함 —
-    // cloudRateLimit/cloudQuota/cloudOverloaded/apiKeyMissing/apiKeyInvalid/responseBlocked/
-    // streamNoResponse/streamDisconnected/streamTimeout/apiHttpError.
-    const aiSrc = readFileSync(resolve(import.meta.dirname, '../../../main/ai-service.ts'), 'utf-8');
-    const errKeys = new Set<string>();
-    for (const m of managerSrc.matchAll(/errorKey:\s*'([A-Za-z]+)'/g)) errKeys.add(m[1]!);
-    for (const m of aiSrc.matchAll(/errorKey:\s*'([A-Za-z]+)'/g)) errKeys.add(m[1]!);
-    expect(errKeys.size, '추출 실패 의심').toBeGreaterThanOrEqual(12); // pull 4 + ai 8+
-    for (const k of errKeys) {
-      expect(_translations[`mainerr.${k}` as keyof typeof _translations], `mainerr.${k} 미정의`).toBeTruthy();
     }
   });
 

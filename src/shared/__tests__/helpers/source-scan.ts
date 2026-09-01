@@ -23,6 +23,8 @@
  * 즉 이 파일을 추가하는 것만으로 어떤 게이트의 숫자도 움직이지 않는다.
  */
 
+import { readFileSync } from 'node:fs';
+
 /** 주석 구간을 공백으로 덮는다 — 줄바꿈은 보존해 오프셋과 줄 번호가 원본과 같게 유지된다. */
 function blank(out: string[], from: number, to: number): void {
   for (let k = from; k < to; k++) {
@@ -179,4 +181,21 @@ export function stripYamlComments(src: string): string {
     .split('\n')
     .map((line) => stripYamlLine(line, true) ?? stripYamlLine(line, false) ?? line)
     .join('\n');
+}
+
+/** 주석 문법을 가진 소스 확장자 — 이것들은 반드시 제거기를 거쳐야 한다. */
+const COMMENTED_SOURCE_EXT = /\.(?:[mc]?tsx?|[mc]?jsx?|ya?ml)$/i;
+
+/**
+ * QA30(D2): **소스가 아닌** 산출물(생성된 요약·리포트 등)을 텍스트로 읽는 유일한 통로.
+ *
+ * source-scan.test 의 파생 가드는 "파생된 가드 파일 안의 모든 `readFileSync` 는 제거기나
+ * `JSON.parse` 로 감싸여 있어야 한다" 를 강제한다 — 그 규칙에 예외를 뚫는 대신, 소스가
+ * **아님을 확장자로 증명**하는 함수를 하나 둔다. 여기에 `.ts`/`.yml` 을 넘기면 던진다.
+ */
+export function readGeneratedText(path: string): string {
+  if (COMMENTED_SOURCE_EXT.test(path)) {
+    throw new Error(`readGeneratedText 는 소스 파일에 쓸 수 없습니다(주석이 걸러지지 않는다): ${path}`);
+  }
+  return readFileSync(path, 'utf8');
 }

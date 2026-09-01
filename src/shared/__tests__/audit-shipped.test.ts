@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { stripYamlComments } from './helpers/source-scan';
+import { stripYamlComments, readGeneratedText } from './helpers/source-scan';
 
 /**
  * 자식 프로세스 상한.
@@ -68,7 +68,8 @@ function runGate(pkg: unknown, lock: unknown, audit: unknown) {
     code: r.status,
     out: r.stdout ?? '',
     err: r.stderr ?? '',
-    summary: readFileSync(summaryPath, 'utf8'),
+    // QA30(D2): 생성 산출물(스텝 요약 마크다운) — 소스가 아님을 확장자로 증명하는 통로로 읽는다.
+    summary: readGeneratedText(summaryPath),
   };
 }
 

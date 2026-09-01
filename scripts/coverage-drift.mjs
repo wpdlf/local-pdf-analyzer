@@ -16,15 +16,25 @@ import { fileURLToPath } from 'node:url';
 export const MAX_MARGIN_PP = 5;
 export const METRICS = ['statements', 'branches', 'functions', 'lines'];
 
-/** vitest.config 소스의 thresholds 블록에서 게이트 4종을 읽는다. 추출 실패는 throw(조용한 무력화 금지). */
-export function parseThresholds(configSrc) {
-  const block = /thresholds:\s*\{([\s\S]*?)\}/.exec(configSrc);
-  if (!block) throw new Error('vitest.config.mts 에서 thresholds 블록을 찾지 못했습니다');
+/**
+ * 게이트 4종을 검증해 돌려준다. 추출 실패는 throw(조용한 무력화 금지).
+ *
+ * QA30(D1): 종전에는 `vitest.config.mts` **소스 텍스트**를 정규식으로 파싱했다. 비탐욕
+ * `/thresholds:\s*\{([\s\S]*?)\}/` 는 실제 블록보다 **위에 있는 주석**의 `thresholds: { … }` 를
+ * 먼저 잡았고(이 config 는 라운드마다 임계 논의 산문이 쌓이는 파일이다), 그러면 vitest 가
+ * 실제로 강제하는 값이 아닌 숫자와 대조하면서 **드리프트를 영영 못 잡는 채로 초록**이었다.
+ * 실측: 주석 한 줄만 넣어도 `exit 0` + coverage-drift.test 6/6 통과.
+ *
+ * 이제 숫자는 `scripts/coverage-gates.json` 이 단일 출처이고 vitest.config.mts 가 그것을
+ * import 한다 — 문법이 하나뿐이라 파싱할 것이 없다(주석을 쓸 수 없는 JSON 인 것도 의도다).
+ */
+export function parseGates(raw) {
+  if (raw === null || typeof raw !== 'object') throw new Error('coverage-gates.json 이 객체가 아닙니다');
   const out = {};
   for (const m of METRICS) {
-    const hit = new RegExp(`${m}:\\s*(\\d+(?:\\.\\d+)?)`).exec(block[1]);
-    if (!hit) throw new Error(`thresholds 에 ${m} 이 없습니다`);
-    out[m] = Number(hit[1]);
+    const v = raw[m];
+    if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`coverage-gates.json 에 ${m} 이 없습니다`);
+    out[m] = v;
   }
   return out;
 }
@@ -58,7 +68,7 @@ function main() {
     process.exit(1);
   }
   const total = JSON.parse(readFileSync(summaryPath, 'utf-8')).total;
-  const gates = parseThresholds(readFileSync(resolve(root, 'vitest.config.mts'), 'utf-8'));
+  const gates = parseGates(JSON.parse(readFileSync(resolve(root, 'scripts/coverage-gates.json'), 'utf-8')));
   const { drifted, below, missing } = checkDrift(total, gates);
   if (missing.length > 0) {
     console.error(`[coverage-drift] 측정치가 없는 지표: ${missing.join(', ')}`);
@@ -70,7 +80,7 @@ function main() {
     process.exit(1);
   }
   if (drifted.length > 0) {
-    console.error(`[coverage-drift] 게이트가 실측에 뒤처져 그만큼의 회귀가 무감지 통과합니다(정책 -${MAX_MARGIN_PP}pp). vitest.config.mts thresholds 를 올리세요:\n  ${drifted.join('\n  ')}`);
+    console.error(`[coverage-drift] 게이트가 실측에 뒤처져 그만큼의 회귀가 무감지 통과합니다(정책 -${MAX_MARGIN_PP}pp). scripts/coverage-gates.json 을 올리세요:\n  ${drifted.join('\n  ')}`);
     process.exit(1);
   }
   const line = METRICS.map((m) => `${m} ${total[m].pct.toFixed(2)}/${gates[m]}`).join(' · ');

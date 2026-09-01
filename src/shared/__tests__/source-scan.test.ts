@@ -7,9 +7,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
-import { stripJsComments, stripYamlComments } from './helpers/source-scan';
+import { stripJsComments, stripYamlComments, readGeneratedText } from './helpers/source-scan';
 
 describe('stripJsComments — 주석은 지우고 코드는 남긴다', () => {
   it('줄 주석과 블록 주석을 지운다', () => {
@@ -146,21 +147,75 @@ describe('소스 스캔 가드는 전부 공용 제거기를 쓴다 (열거 금�
     return out;
   }
 
-  /** 소스(.ts/.tsx/.yml)를 텍스트로 읽는 테스트인가 — 경로 리터럴 형태와 readdir 필터 형태 둘 다. */
+  /**
+   * 소스(.ts/.tsx/.mts/.yml)를 텍스트로 읽는 테스트인가 — 경로 리터럴 형태와 readdir 필터 형태 둘 다.
+   * QA30(D2): `.mts` 를 추가했다. `vitest.config.mts` 를 읽는 가드(coverage-drift.test)가
+   * 확장자 하나 차이로 이 도출 밖에 있었고, 그것이 D1(주석을 파싱하던 드리프트 가드)의 구조적 뿌리다.
+   */
   function scansSource(src: string): boolean {
-    if (/readFileSync\([\s\S]{0,240}?\.(?:tsx?|ya?ml)['"`]/.test(src)) return true;
+    if (/readFileSync\([\s\S]{0,240}?\.(?:[mc]?tsx?|ya?ml)['"`]/.test(src)) return true;
     return src.includes('readdirSync') && src.includes('readFileSync') && /endsWith\(['"]\.tsx?['"]\)/.test(src);
   }
 
+  const rel = (f: string) => f.slice(SRC_ROOT.length + 1).split('\\').join('/');
+  const derived = () => walk(SRC_ROOT).filter((f) => scansSource(readFileSync(f, 'utf8')));
+
   it('소스를 텍스트로 읽는 테스트는 예외 없이 source-scan 헬퍼를 임포트한다', () => {
-    const files = walk(SRC_ROOT).filter((f) => scansSource(readFileSync(f, 'utf8')));
+    const files = derived();
     // 도출이 0건이 되면(정규식이 낡으면) 이 가드는 조용히 공허해진다 — 하한을 먼저 못박는다.
     expect(files.length, '소스 스캔 가드를 한 건도 찾지 못했다 — 이 가드가 무력화된 상태다')
-      .toBeGreaterThanOrEqual(10);
+      .toBeGreaterThanOrEqual(11);
     const offenders = files
       .filter((f) => !readFileSync(f, 'utf8').includes('helpers/source-scan'))
-      .map((f) => f.slice(SRC_ROOT.length + 1).split('\\').join('/'));
+      .map(rel);
     expect(offenders, `원본 소스에 매칭하는 가드: ${offenders.join(', ')} — 주석에 매칭해 조용히 통과한다`)
       .toEqual([]);
+  });
+
+  /**
+   * QA30(D2): 위 임포트 검사만으로는 **파일 안 어디든 한 번** 헬퍼를 쓰면 나머지 read 사이트가
+   * 자유였다. 실측: i18n.test 의 R44 블록 read 3곳을 원본 읽기로 되돌리고 임포트 줄만 남기니
+   * 36/36 전부 통과했다 — 고아 키가 주석 한 줄로 구제되는 원래 결함이 부활하는데 스위트는 만점.
+   *
+   * 그래서 파일 단위가 아니라 **read 사이트 단위**로 본다: 파생된 가드 파일 안의 모든
+   * `readFileSync(` 는 제거기(stripJsComments/stripYamlComments) 나 `JSON.parse` 로 감싸여
+   * 있어야 한다. 소스가 아닌 산출물은 헬퍼의 `readGeneratedText`(확장자를 검사해 소스면 던진다)
+   * 로 읽는다 — 그쪽은 `readFileSync` 가 아예 등장하지 않으므로 이 규칙과 충돌하지 않는다.
+   *
+   * ※ 후속(권장): 읽기까지 헬퍼가 소유하는 `readSource(path)` 로 좁히면 규칙이 API 모양으로
+   *    닫힌다. 지금은 이 라운드의 파일 소유권 밖인 가드 6곳이 함께 바뀌어야 해서 미뤘다 —
+   *    아래 규칙은 그 6곳에도 이미 동일하게 적용되고 있다(전부 감싼 형태).
+   */
+  it('파생된 가드의 모든 readFileSync 는 제거기(또는 JSON.parse)를 거친다 (파일당 1회로는 부족)', () => {
+    const WRAPPED = /(?:stripJsComments|stripYamlComments|JSON\.parse)\(\s*$/;
+    const offenders: string[] = [];
+    let sites = 0;
+    for (const f of derived()) {
+      // 자기 자신의 주석은 걷고 본다 — 주석 처리된 예시 코드가 거짓 실패를 만들지 않도록.
+      const src = stripJsComments(readFileSync(f, 'utf8'));
+      const lines = src.split('\n');
+      for (const m of src.matchAll(/readFileSync\(/g)) {
+        sites += 1;
+        if (WRAPPED.test(src.slice(0, m.index))) continue;
+        const line = src.slice(0, m.index).split('\n').length;
+        offenders.push(`${rel(f)}:${line} → ${lines[line - 1]?.trim() ?? ''}`);
+      }
+    }
+    expect(sites, 'read 사이트를 한 건도 찾지 못했다 — 이 가드가 무력화된 상태다').toBeGreaterThanOrEqual(20);
+    expect(offenders, `원본을 그대로 읽는 자리:\n  ${offenders.join('\n  ')}`).toEqual([]);
+  });
+});
+
+describe('readGeneratedText — 소스가 아님을 확장자로 증명한 읽기만', () => {
+  it('소스 확장자를 넘기면 던진다 (주석이 걸러지지 않는 통로가 되지 않도록)', () => {
+    for (const p of ['a/b.ts', 'a/b.tsx', 'vitest.config.mts', 'x.yml', 'x.yaml', 'y.js']) {
+      expect(() => readGeneratedText(p), `${p} 를 허용하면 안 된다`).toThrow(/소스 파일/);
+    }
+  });
+
+  it('생성 산출물은 읽어 준다', () => {
+    const p = join(mkdtempSync(join(tmpdir(), 'src-scan-')), 'step-summary.md');
+    writeFileSync(p, '# 요약\n');
+    expect(readGeneratedText(p)).toBe('# 요약\n');
   });
 });

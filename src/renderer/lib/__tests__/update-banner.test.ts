@@ -130,7 +130,11 @@ describe('App 배선 가드', () => {
     expect(downloadBlock).not.toMatch(/disabled=/);
     // 속성 순서에 의존하지 않는 실질 단언: 버튼 요소 자체가 게이트를 달고 있지 않아야 한다.
     const downloadButton = /<button[^>]*onClick=\{\(\) => [^}]*update\.download\(\)[\s\S]{0,400}?<\/button>/.exec(APP_SRC)?.[0] ?? '';
-    if (downloadButton) expect(downloadButton).not.toMatch(/disabled=\{updateInstallBusy\}/);
+    // QA30(D7): 종전엔 `if (downloadButton) expect(...)` 였다 — 정규식이 빗나가면 단언 자체가
+    // 실행되지 않아, 이 가드는 **아무것도 못 찾았을 때 가장 조용히 통과**했다(바로 위 QA27 이
+    // 같은 자리에서 닫은 구멍과 같은 모양이 한 줄 아래 남아 있었다). 추출을 먼저 못박는다.
+    expect(downloadButton, '다운로드 버튼 요소를 추출하지 못했다 — 가드가 무력화된 상태다').not.toBe('');
+    expect(downloadButton).not.toMatch(/disabled=\{updateInstallBusy\}/);
   });
 });
 

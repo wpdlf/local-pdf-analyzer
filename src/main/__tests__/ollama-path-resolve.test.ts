@@ -177,6 +177,33 @@ describe('ollama 경로 선택 — 존재 ≠ 실행 가능 (QA29 A-3)', () => {
     expect(M.spawn.mock.calls[0]![0]).toBe('ollama');
   });
 
+  /**
+   * QA30(D5): 위 케이스만으로는 `getOllamaPath()` 의 "**확정된** 경로를 쓴다" 가 무보호였다 —
+   * 0바이트 후보는 어차피 `ollamaPathCandidates()` 의 크기 필터에서 빠지므로, `resolvedOllamaPath ??`
+   * 를 지우고 `ollamaPathCandidates()[0]` 로 되돌려도 결과가 같아 780/780 이 그대로 통과했다.
+   * 즉 "프로브에 응답한 경로를 쓰는가" 와 "그냥 첫 후보를 쓰는가" 를 구분하지 못했다.
+   *
+   * 구분하려면 **두 후보가 모두 필터를 통과**하고 **첫 후보만 죽어 있어야** 한다.
+   */
+  it('spawn 은 첫 후보가 아니라 --version 에 응답한 후보를 쓴다', async () => {
+    setInstalled({ [PROGRAMS]: { size: 1234 }, [APPDATA]: { size: 5678 } });
+    answersVersion([APPDATA]); // 첫 후보는 크기가 있어도 실행되지 않는다
+    const proc = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => void };
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.kill = () => {};
+    M.spawn.mockReturnValue(proc);
+
+    const mgr = new OllamaManager();
+    await mgr.isInstalled();          // 경로 확정
+    const p = mgr.pullModel('gemma3');
+    proc.emit('close', 0);
+    await p;
+
+    expect(M.spawn.mock.calls[0]![0], '첫 후보로 되돌아가면 죽은 바이너리에 spawn 이 고정된다')
+      .toBe(APPDATA);
+  });
+
   it('install() 후에는 다시 고른다 (방금 설치한 바이너리를 본다)', async () => {
     const mgr = new OllamaManager();
     await mgr.isInstalled(); // 설치 전: PATH 만 후보
