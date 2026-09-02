@@ -65,12 +65,12 @@ jobs:
     steps:
       # QA20(B-MED): persist-credentials:false — 이 잡은 자산을 올리지 않으므로 토큰을
       # .git/config 에 남길 이유가 없다(npm ci 가 실행하는 서드파티 스크립트의 탈취 표면 제거).
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       # Node 24
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # R37 P5-3 (v0.18.23): 20.11 → 22. Node 20.11 EoL(2026-04) 경과 + test.yml 매트릭스/
           # engines(현재 <25) 정렬. 네이티브 모듈 0개라 빌드 Node 의존 없음.
@@ -250,7 +250,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # QA24(D-I3): **릴리즈 쓰기 토큰을 실제로 보유한 유일한 잡**인데 여기만 빠져 있었다.
           # QA20(B-MED)의 위협 모델("npm ci 가 서드파티 라이프사이클 스크립트를 돌리는데
@@ -260,7 +260,7 @@ jobs:
           # GITHUB_TOKEN/OIDC 를 쓰므로 git config 자격증명이 필요 없다.
           persist-credentials: false
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # R37 P5-3 (v0.18.23): 20.11 → 22 (위 test 잡과 동일 사유).
           node-version: '22'
@@ -366,7 +366,7 @@ jobs:
           echo "latest.yml + blockmap OK"
 
       - name: Upload installer to release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: |
             dist/*Setup*.exe

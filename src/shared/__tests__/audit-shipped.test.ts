@@ -391,7 +391,6 @@ describe('배포 분류 드리프트 가드 (QA26 D-High/D-Important)', () => {
     '@playwright/test',        // E2E 러너
     '@tailwindcss/typography', // CSS 생성 — 산출물은 CSS 이고 패키지는 배포되지 않는다
     '@tailwindcss/vite',
-    '@testing-library/jest-dom',
     '@testing-library/react',
     '@testing-library/user-event',
     '@types/react',            // 타입 전용, 런타임 0
