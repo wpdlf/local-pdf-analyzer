@@ -206,6 +206,9 @@ export const _translations = {
   'viewer.exportAria': { ko: '마크다운 파일로 내보내기', en: 'Export as markdown file' },
   'viewer.copy': { ko: '📋 복사', en: '📋 Copy' },
   'viewer.copied': { ko: '✓ 복사됨', en: '✓ Copied' },
+  // 위 문구의 스크린리더판 — 장식 기호(✓)는 눈에만 필요하고, 리더가 읽으면 "체크 표시" 가
+  // 통지 앞에 붙어 번잡해진다. Toast 의 srMessage 로 전달된다.
+  'viewer.copiedSr': { ko: '복사됨', en: 'Copied' },
   'viewer.copyAria': { ko: '클립보드에 복사', en: 'Copy to clipboard' },
   'viewer.exportPdf': { ko: '📄 PDF', en: '📄 PDF' },
   'viewer.exportPdfAria': { ko: 'PDF 파일로 내보내기', en: 'Export as PDF file' },

@@ -37,8 +37,13 @@ const TEXT = '운영체제는 프로세스를 관리한다. CPU 스케줄링과 
 
 describe('buildRagIndex — 임베딩 가용성', () => {
   it('임베딩 모델 미가용이면 isAvailable=false 로 설정하고 false 반환', async () => {
+    // ⚠️ document 를 세우지 않으면 소유권 판정(document.id !== docId)에서 먼저 돌아와
+    // checkEmbedModel 이 호출조차 되지 않는다 — 그러면 아래 단언들이 beforeEach 의 기본값을
+    // 확인하는 공허한 테스트가 된다(QA31 잔여 수정 때 실제로 그렇게 됐다).
+    useAppStore.setState({ document: { id: 'doc1' } as never });
     mockCheckEmbedModel.mockResolvedValue({ available: false });
     const ok = await buildRagIndex(TEXT, 'doc1', new AbortController().signal);
+    expect(mockCheckEmbedModel, '가용성 분기에 도달하지 못했다 — 이 테스트가 공허한 상태다').toHaveBeenCalled();
     expect(ok).toBe(false);
     expect(useAppStore.getState().ragState.isAvailable).toBe(false);
     expect(useAppStore.getState().ragIndex.size).toBe(0);
@@ -118,6 +123,46 @@ describe('buildRagIndex — 방어 분기', () => {
     expect(ok).toBe(false);
     expect(mockEmbed).not.toHaveBeenCalled();
     expect(useAppStore.getState().ragIndex.size).toBe(0);
+  });
+
+  // QA31 잔여: 배치 루프만 document.id 를 봤고, 그 **앞**의 두 await(설정 커밋·checkEmbedModel)
+  // 뒤에는 signal.aborted 만 있었다. 루프 주석이 적고 있는 사유(React cleanup 지연으로 abort 가
+  // 늦게 도달하는 창)는 앞구간에도 성립하는데, 거기에는 파괴적 쓰기가 셋 있다.
+  it('checkEmbedModel 뒤에 문서가 바뀌면 새 문서의 인덱스를 비우지 않는다', async () => {
+    useAppStore.setState({ document: { id: 'doc1' } as never });
+    // 새 문서가 이미 채워 둔 인덱스 — stale 빌드의 ragIndex.clear() 가 이것을 날리던 자리다.
+    const s = useAppStore.getState();
+    s.ragIndex.setModel('nomic-embed-text');
+    s.ragIndex.addChunk('새 문서 청크', [0.1, 0.2, 0.3], 0);
+    s.setRagState({ error: 'embedFailed' }); // QA19 가 디스크 인덱스 보존에 쓰는 표식
+
+    mockCheckEmbedModel.mockImplementation(() => {
+      // 이 await 이 풀리는 사이에 사용자가 다른 탭으로 전환했다.
+      useAppStore.setState({ document: { id: 'doc2' } as never });
+      return Promise.resolve({ available: true, model: 'nomic-embed-text' });
+    });
+
+    const ok = await buildRagIndex(TEXT, 'doc1', new AbortController().signal);
+
+    expect(ok).toBe(false);
+    expect(useAppStore.getState().ragIndex.size, 'stale 빌드가 새 문서의 인덱스를 비웠다').toBe(1);
+    expect(useAppStore.getState().ragState.error, 'stale 빌드가 새 문서의 실패 표식을 지웠다').toBe('embedFailed');
+    expect(useAppStore.getState().ragState.isIndexing, 'stale 빌드가 진행 중이라고 주장했다').toBe(false);
+    expect(mockEmbed).not.toHaveBeenCalled();
+  });
+
+  it('모델 미가용 응답이 stale 이면 새 문서를 미가용으로 표시하지 않는다', async () => {
+    useAppStore.setState({ document: { id: 'doc1' } as never });
+    useAppStore.getState().setRagState({ isAvailable: true, model: 'nomic-embed-text' });
+    mockCheckEmbedModel.mockImplementation(() => {
+      useAppStore.setState({ document: { id: 'doc2' } as never });
+      return Promise.resolve({ available: false });
+    });
+
+    const ok = await buildRagIndex(TEXT, 'doc1', new AbortController().signal);
+
+    expect(ok).toBe(false);
+    expect(useAppStore.getState().ragState.isAvailable, '옛 빌드가 새 문서의 RAG 를 껐다').toBe(true);
   });
 
   it('인덱싱 완료 시점에 문서가 바뀌어(docId 불일치) stale 이면 false 반환', async () => {

@@ -312,13 +312,23 @@ export async function buildRagIndex(
   // ai:embed(둘 다 main 이 설정을 읽음)가 구 프로바이더로 임베딩해, 인덱스 전체가 stale 모델로
   // 빌드되거나(→ 이후 질문 임베딩과 차원 불일치로 무음 키워드 강등) 빌드 중간에 차원이 섞여
   // addChunk throw → RAG 가 조용히 꺼졌다. 커밋 후 시작해 빌드 전체가 단일 설정 스냅샷을 쓴다.
+  // QA31 잔여: 무효 판정을 **한 술어**로 모은다. 종전에는 배치 루프만 `document.id` 를 봤고
+  // 그 앞의 두 await(설정 커밋·checkEmbedModel) 뒤에는 `signal.aborted` 만 있었다. 그런데
+  // 루프의 주석이 적고 있는 바로 그 사유 — React effect cleanup 이 늦어 abort 가 지연 도달하는
+  // 창 — 은 이 앞구간에도 똑같이 성립하고, 여기에는 **파괴적 쓰기 셋**이 있다:
+  // `setRagState({isAvailable:false})` · `setRagState({isIndexing:true, error:null})` ·
+  // `ragIndex.clear()`. 즉 이미 전환된 새 문서의 인덱스를 옛 빌드가 비우고, 새 문서의 실패
+  // 사유(QA19 가 디스크 인덱스 보존에 쓰는 error 표식)를 지우고, 자기 진행 상태를 덮어썼다.
+  // 술어로 묶어 앞구간과 루프가 같은 규칙을 쓰게 한다(한쪽만 고치면 형제 누락이 재발한다).
+  const stale = () => signal.aborted || useAppStore.getState().document?.id !== docId;
+
   await whenSettingsCommitted();
-  if (signal.aborted) return false;
+  if (stale()) return false;
   const store = useAppStore.getState();
 
   // 임베딩 모델 사용 가능 여부 확인
   const embedCheck = await window.electronAPI.ai.checkEmbedModel();
-  if (signal.aborted) return false;
+  if (stale()) return false;
   if (!embedCheck.available) {
     store.setRagState({ isAvailable: false, model: null });
     return false;
@@ -356,13 +366,13 @@ export async function buildRagIndex(
       // 공유 ragIndex 를 clear 한 뒤(resetSummaryState) signal abort 가 React effect cleanup
       // 지연으로 늦게 도달하는 창에서, stale 배치가 새 문서 소유의 빈 인덱스를 재오염하던 결함
       // 차단(최종 커밋 라인의 document.id 가드와 동형 — 배치 루프에도 적용).
-      if (signal.aborted || useAppStore.getState().document?.id !== docId) return false;
+      if (stale()) return false;
 
       const batch = chunks.slice(i, i + RAG_BATCH_SIZE);
       const result = await embedWithTimeout(batch, signal);
 
       // 빌드 도중 문서 전환 재확인 (post-await — 위와 동일 근거)
-      if (signal.aborted || useAppStore.getState().document?.id !== docId) return false;
+      if (stale()) return false;
 
       if (!result.success || !result.embeddings) {
         // QA19(C-MED, 데이터손실): 실패(대개 네트워크 단절)를 error 로 표식한다. 이게 없으면

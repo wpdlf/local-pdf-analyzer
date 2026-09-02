@@ -252,7 +252,18 @@ async function gatherMemberBlocks(
         // 않았다. persist OFF 로 바꿔도 openTabs 의 docHash 는 남고 CollectionBar 는
         // persistSessions 를 보지 않으므로, 사용자가 "저장하지 않음" 을 고른 뒤에도 교차 요약이
         // 문서 내용 파생물을 디스크에 새로 썼다. 파괴적 손실은 아니지만 정책 위반이다.
-        if (settings.persistSessions) {
+        //
+        // QA31 잔여(조용한 오답): 인라인 생성은 본문 **앞 6000자만** 보고(위 generateMemberSummary
+        // 의 slice) 만든 산출물인데, 저장은 정규 요약과 **같은 키**(`summaryType`)에 표식 없이
+        // 했다. 두 가지가 동시에 틀어진다:
+        //  (1) 그 멤버를 열면 SummaryViewer 가 이것을 그 문서의 "전체 요약" 으로 보여준다 —
+        //      200쪽 문서의 앞 몇 쪽만 읽고 쓴 요약과 진짜 요약이 구분 불가하다.
+        //  (2) 다음 합성에서 pickSummary 가 이것을 집어 가므로 **인라인 생성 경로가 다시는
+        //      실행되지 않는다** — 절단이 그 문서에 영구히 고착된다.
+        // 입력이 실제로 잘렸을 때만 저장을 보류한다. 문서가 상한 안에 들어오면 이것은 본문
+        // 전체를 본 정규 산출물과 다를 바 없으므로 종전대로 저장한다(Q-A2 의 재생성 절약 유지).
+        const truncated = sourceText.length > INLINE_SUMMARY_INPUT_CHARS;
+        if (settings.persistSessions && !truncated) {
           void window.electronAPI.session.saveSummary?.({
             docHash: m.docHash,
             type: summaryType,

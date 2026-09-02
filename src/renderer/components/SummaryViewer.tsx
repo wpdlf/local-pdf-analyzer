@@ -168,8 +168,10 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
 
   return (
     <div ref={splitContainerRef} className="flex flex-row h-full">
+      {/* relative: 복사 알림(Toast)이 뷰포트가 아니라 **이 패널**을 기준으로 뜨게 한다 —
+          StatusBar 겹침과 인용 패널 열림 시의 중심 어긋남이 둘 다 여기서 결정된다. */}
       <div
-        className="flex flex-col h-full min-w-0"
+        className="relative flex flex-col h-full min-w-0"
         style={{ flexBasis: leftFlexBasis, flexGrow: 0, flexShrink: 1 }}
       >
       <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-gray-800 rounded-t-lg">
@@ -287,6 +289,9 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
           <QaChat />
         </div>
       )}
+      {/* 복사 확인 알림 — 소멸 타이머는 handleCopy 가 소유(copiedTimerRef).
+          이 패널 안에 두는 이유는 위 `relative` 주석 참조. */}
+      <Toast message={copied ? t('viewer.copied') : null} srMessage={t('viewer.copiedSr')} />
       </div>
       {/* page-citation-viewer: 우측 패널 (citationTarget 활성 시만 마운트) */}
       {/* DR-01: ResizeHandle 로 좌/우 비율 조정 가능 */}
@@ -301,8 +306,6 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
           </div>
         </>
       )}
-      {/* 복사 확인 알림 — 소멸 타이머는 handleCopy 가 소유(copiedTimerRef). */}
-      <Toast message={copied ? t('viewer.copied') : null} />
     </div>
   );
 }

@@ -118,6 +118,42 @@ describe('restoreSessionForDocument (module-3)', () => {
     expect(api.session.load.mock.calls[0]![0]).toMatch(HEX);
   });
 
+  // QA31 잔여: 이 함수는 호출부 셋 모두에서 `void` 로 띄워지므로 호출부의 setTabSwitching
+  // 구간이 끝난 뒤에도 계속 돈다 — 그 창에서는 closeTab 이 열려 있다. 해시 계산 await 사이에
+  // 탭을 닫으면 종전의 upsert 는 **닫은 탭을 되살렸다**.
+  it('해시 계산 중 탭이 닫히면 되살리지 않는다', async () => {
+    const doc = makeDoc();
+    useAppStore.setState({
+      document: doc,
+      sessionRestorePending: true,
+      openTabs: [{ filePath: doc.filePath, fileName: doc.fileName, pageCount: doc.pageCount }],
+    });
+    api.session.load.mockResolvedValue(null);
+
+    // await 하지 않고 띄운다 — 첫 await(hashDocumentText)에서 제어가 돌아온 사이에 탭을 닫는다.
+    const inFlight = restoreSessionForDocument(doc);
+    useAppStore.getState().removeOpenTab(doc.filePath);
+    await inFlight;
+
+    expect(useAppStore.getState().openTabs).toEqual([]);
+  });
+
+  it('탭이 열려 있으면 docHash 를 기록한다 (patch 가 늘 no-op 이면 위 가드가 공허하다)', async () => {
+    const doc = makeDoc();
+    useAppStore.setState({
+      document: doc,
+      sessionRestorePending: true,
+      openTabs: [{ filePath: doc.filePath, fileName: doc.fileName, pageCount: doc.pageCount }],
+    });
+    api.session.load.mockResolvedValue(null);
+
+    await restoreSessionForDocument(doc);
+
+    const tab = useAppStore.getState().openTabs[0];
+    expect(tab?.filePath).toBe(doc.filePath);
+    expect(tab?.docHash).toMatch(HEX);
+  });
+
   it('miss(null) → 게이트만 해제, 복원 없음', async () => {
     const doc = makeDoc();
     useAppStore.setState({ document: doc, sessionRestorePending: true });

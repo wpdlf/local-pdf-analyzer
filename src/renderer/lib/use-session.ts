@@ -41,8 +41,16 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
     const docHash = await hashDocumentText(doc.extractedText);
     // multi-doc Phase 1: 탭에 콘텐츠 해시 기록 — 파일 재읽기가 불가능한 탭(이름-경로/파일
     // 이동)도 영속 세션에서 직접 복원해 전환할 수 있게 하는 fallback 키 (tabs.ts).
-    useAppStore.getState().upsertOpenTab({
-      filePath: doc.filePath, fileName: doc.fileName, pageCount: doc.pageCount, docHash,
+    //
+    // QA31 잔여: 여기는 **upsert 가 아니라 patch** 여야 한다. 이 함수는 호출부 셋 모두에서
+    // `void` 로 띄워지므로(pdf-parser:1259 / tabs.ts:152) 호출부의 setTabSwitching 구간이
+    // 이미 끝난 뒤에도 계속 돈다 — 그 창에서는 closeTab 이 열려 있다. 위 `hashDocumentText`
+    // await 사이에 사용자가 이 탭을 닫으면 upsert 가 **닫은 탭을 되살렸다**. 탭 등록은 두
+    // 호출부가 이 함수를 부르기 **전에** 이미 끝내 놓으므로(둘 다 upsert 후 호출), 여기서
+    // 삽입이 일어날 정당한 경우는 없다. 아래 :48 의 소유권 검사와 같은 관심사이고, 그것이
+    // 이 쓰기보다 뒤에 있어서 여기만 무보호였다.
+    useAppStore.getState().patchOpenTab(doc.filePath, {
+      fileName: doc.fileName, pageCount: doc.pageCount, docHash,
     });
     const res = await api.load(docHash);
     // abort-replace 레이스: 그 사이 다른 문서로 교체됐으면 아무것도 건드리지 않음(새 흐름이 관리)

@@ -151,9 +151,38 @@ describe('SummaryViewer', () => {
     render(<SummaryViewer />);
     expect(screen.getByRole('status').textContent).toBe('');
     fireEvent.click(screen.getByRole('button', { name: '클립보드에 복사' }));
-    await vi.waitFor(() => expect(screen.getByRole('status').textContent).toBe('✓ 복사됨'));
+    // QA31 잔여: 리더가 읽는 문구에는 장식 기호가 없다(있으면 "체크 표시" 가 함께 낭독된다).
+    await vi.waitFor(() => expect(screen.getByRole('status').textContent).toBe('복사됨'));
     // 사라짐 — 고착되면 두 번째 복사 때 "떴다" 는 신호가 안 보인다.
     await vi.waitFor(() => expect(screen.getByRole('status').textContent).toBe(''), { timeout: 3000 });
+  });
+
+  it('복사 성공 → 보이는 알약에는 ✓ 가 남는다 (SR 문구만 분리한 것이지 시각 표시를 뺀 게 아니다)', async () => {
+    // 위 테스트를 SR 기준으로 바꾸면서 시각 문구를 아무도 안 보게 되면, ✓ 가 조용히 사라져도
+    // 스위트는 초록이다 — 두 문구가 갈라진 것이 이 수정의 요지이므로 양쪽을 각각 못박는다.
+    setState({ stream: '본문' });
+    const { container } = render(<SummaryViewer />);
+    fireEvent.click(screen.getByRole('button', { name: '클립보드에 복사' }));
+    await vi.waitFor(() => {
+      const pill = container.querySelector('[aria-hidden="true"].absolute');
+      expect(pill?.textContent).toBe('✓ 복사됨');
+    });
+  });
+
+  it('복사 알림은 요약 패널 안에 있다 (뷰포트 고정이면 StatusBar 를 덮고 인용 패널에서 중심이 어긋난다)', async () => {
+    setState({ stream: '본문' });
+    const { container } = render(<SummaryViewer />);
+    fireEvent.click(screen.getByRole('button', { name: '클립보드에 복사' }));
+    const pill = await vi.waitFor(() => {
+      const el = container.querySelector('[aria-hidden="true"].absolute');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    // fixed 로 되돌아가면 기준이 다시 뷰포트가 된다.
+    expect(pill.className).not.toMatch(/\bfixed\b/);
+    // 그리고 기준이 될 조상이 실제로 positioned 여야 한다 — relative 가 빠지면 absolute 는
+    // 더 바깥의 positioned 조상(없으면 뷰포트)으로 올라가 같은 증상으로 되돌아간다.
+    expect(pill.parentElement?.className).toMatch(/\brelative\b/);
   });
 
   it('복사 실패 → 성공 피드백이 뜨지 않는다', async () => {

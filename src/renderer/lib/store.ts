@@ -251,6 +251,8 @@ interface AppState {
   openTabs: OpenTab[];
   /** 성공 로드 시 탭 등록/갱신 — filePath 중복이면 메타만 갱신 (탭 순서 유지) */
   upsertOpenTab: (tab: OpenTab) => void;
+  /** 이미 열려 있는 탭의 필드만 갱신 — 없으면 no-op(닫힌 탭을 되살리지 않는다). */
+  patchOpenTab: (filePath: string, patch: Partial<OpenTab>) => void;
   /** 탭 목록에서 제거만 담당 — 활성 문서 정리/이웃 전환은 lib/tabs.ts 가 오케스트레이션 */
   removeOpenTab: (filePath: string) => void;
 
@@ -456,6 +458,16 @@ export const useAppStore = create<AppState>((set) => ({
     // 탭은 openDocHashes(LRU pin)와 컬렉션 후보 어디에도 잡히지 않고, 복원이 upsert 전에
     // 반환·throw 하면 소실이 영구가 된다. 부분 갱신이 기존 필드를 지우지 않게 한다.
     next[idx] = { ...s.openTabs[idx]!, ...tab };
+    return { openTabs: next };
+  }),
+  patchOpenTab: (filePath, patch) => set((s) => {
+    // upsert 와 달리 **없으면 만들지 않는다.** 호출부(restoreSessionForDocument)는 이미 등록된
+    // 탭에 docHash 를 덧붙이는 것이 목적인데, 그 사이 await 이 있어 사용자가 탭을 닫을 수 있다.
+    // upsert 였을 때는 닫은 탭이 되살아났다(QA31 잔여) — 탭 등록은 호출부의 관심사가 아니다.
+    const idx = s.openTabs.findIndex((t) => t.filePath === filePath);
+    if (idx === -1) return {};
+    const next = s.openTabs.slice();
+    next[idx] = { ...s.openTabs[idx]!, ...patch };
     return { openTabs: next };
   }),
   removeOpenTab: (filePath) => set((s) => {
