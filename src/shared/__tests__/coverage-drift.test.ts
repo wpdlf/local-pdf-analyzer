@@ -100,3 +100,38 @@ describe('게이트 숫자의 단일 출처 (QA30 D1)', () => {
     for (const v of Object.values(raw)) expect(typeof v).toBe('number');
   });
 });
+
+/**
+ * QA30·QA31 이 게이트의 **분자**(숫자의 단일 출처)를 닫는 동안 **분모**는 무가드로 남아 있었다.
+ *
+ * `coverage.exclude` 에 한 줄을 더하면 그 코드가 측정에서 빠져 비율이 **올라간다** — 게이트는
+ * 당연히 통과하고, 드리프트 스크립트는 오히려 "게이트가 뒤처졌다" 며 상향을 권한다. 즉 측정
+ * 범위가 줄어드는 방향의 변경은 어떤 신호도 만들지 않고, 숫자만 좋아진다.
+ *
+ * 그래서 목록을 통째로 못박는다. 이 목록은 **줄어드는 방향**으로만 관리돼 왔고(QA25 가 App.tsx 를
+ * 절차대로 분모에 편입시켰고, preload 도 테스트 도입 후 제거됐다) 그 절차의 유일한 강제 지점이
+ * 여기다. 한 줄을 더하려면 이 핀을 함께 고쳐야 하고, 그 diff 가 리뷰에서 보인다.
+ */
+describe('커버리지 분모 (coverage.exclude) 는 조용히 자라지 않는다', () => {
+  // 파일 안에 `exclude:` 는 둘이다(테스트 제외 / 커버리지 제외) — coverage 블록 쪽만 본다.
+  const CFG = stripJsComments(readFileSync(resolve(ROOT, 'vitest.config.mts'), 'utf-8'));
+  const coverageBlock = CFG.slice(CFG.indexOf('coverage: {'));
+  const start = coverageBlock.indexOf('exclude: [');
+  const entries = [...coverageBlock.slice(start, coverageBlock.indexOf(']', start)).matchAll(/'([^']+)'/g)]
+    .map((m) => m[1]!);
+
+  it('목록을 추출했다 (추출이 비면 아래 핀이 공허해진다)', () => {
+    expect(start, 'vitest.config 의 coverage.exclude 를 찾지 못했다 — 이 가드가 무력화된 상태다')
+      .toBeGreaterThan(-1);
+    expect(entries.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('제외 목록이 핀과 정확히 일치한다', () => {
+    expect(entries).toEqual([
+      'node_modules/**', 'out/**', 'dist/**', 'test/**', 'scripts/**',
+      '**/*.config.*', '**/*.d.ts', '**/__tests__/**',
+      '**/coverage/**',
+      'src/renderer/main.tsx',
+    ]);
+  });
+});
