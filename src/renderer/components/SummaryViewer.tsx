@@ -151,7 +151,8 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
     // 동시 export 가드(빠른 더블클릭) — main 의 temp/창 race 와 별개로 렌더러 측 재진입도 차단.
     if (!summaryStream || isExportingPdf) return;
     setIsExportingPdf(true);
-    const baseName = document ? document.fileName.replace(/\.pdf$/i, '') : t('viewer.result');
+    // 파일명 폴백 — 이모지가 든 표시용 문자열이 파일명에 박히면 안 된다(평문 키 사용).
+    const baseName = document ? document.fileName.replace(/\.pdf$/i, '') : t('viewer.resultAria');
     const defaultName = `${baseName}_${t('viewer.defaultFilename').replace('.md', '')}.pdf`;
     try {
       // 지연 로드: react-dom/server(renderToStaticMarkup) 를 시작 청크에서 분리 — PDF 내보내기는
@@ -227,7 +228,7 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
         role="region"
         aria-live="polite"
         aria-busy={isGenerating}
-        aria-label={t('viewer.result')}
+        aria-label={t('viewer.resultAria')}
         className="min-h-0 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none"
         style={showQaChat
           // 채팅이 있을 때만 비율 분할. 없으면 종전대로 남는 공간을 전부 쓴다.

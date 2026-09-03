@@ -615,7 +615,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
         )}
         {loadState === 'error' && (
           <div className="flex flex-col items-center justify-center h-full gap-2 p-4 text-center">
-            <div className="text-2xl">⚠️</div>
+            <div className="text-2xl" aria-hidden="true">⚠️</div>
             <p className="text-sm text-red-600 dark:text-red-400">{t('pdfviewer.renderFail')}</p>
             {errorMessage && (
               <p className="text-xs text-gray-500 dark:text-gray-400 max-w-xs break-words">{errorMessage}</p>
@@ -766,7 +766,7 @@ export function PdfViewerPanel() {
       <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 p-4 text-center" aria-busy={!unrecoverable}>
         {unrecoverable ? (
           <>
-            <div className="text-2xl">⚠️</div>
+            <div className="text-2xl" aria-hidden="true">⚠️</div>
             <p className="text-sm text-red-600 dark:text-red-400">{t('pdfviewer.renderFail')}</p>
           </>
         ) : (

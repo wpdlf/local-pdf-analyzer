@@ -203,6 +203,9 @@ export const _translations = {
   'viewer.saveFail': { ko: '파일 저장에 실패했습니다. 다른 경로를 선택해주세요.', en: 'Failed to save file. Please choose a different path.' },
   'viewer.copyFail': { ko: '클립보드에 복사할 수 없습니다.', en: 'Cannot copy to clipboard.' },
   'viewer.result': { ko: '📎 요약 결과', en: '📎 Summary result' },
+  // a11y 재감사(2026-09-03): 위 값은 **시각 표시용**이라 이모지를 품는다. 접근성 이름으로
+  // 쓰면 리더가 "클립 이모지 요약 결과" 로 읽는다 — 이름에는 장식이 들어가면 안 된다.
+  'viewer.resultAria': { ko: '요약 결과', en: 'Summary result' },
   'viewer.analyzing': { ko: 'AI가 자료를 분석하고 있습니다...', en: 'AI is analyzing the document...' },
   'viewer.pleaseWait': { ko: '잠시만 기다려주세요', en: 'Please wait' },
   'viewer.stopSummary': { ko: '요약 중지', en: 'Stop summary' },

@@ -54,7 +54,8 @@ export class AppErrorBoundary extends Component<
       return (
         <div className="flex flex-col items-center justify-center min-h-screen p-8 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200">
           <div className="max-w-md text-center">
-            <div className="text-4xl mb-4">⚠️</div>
+            {/* 같은 뜻이 바로 아래 제목에 있다 — 리더가 "경고 이모지" 를 먼저 읽을 이유가 없다. */}
+            <div className="text-4xl mb-4" aria-hidden="true">⚠️</div>
             <h1 className="text-xl font-bold mb-2">앱에 오류가 발생했습니다 / Application Error</h1>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
               예상치 못한 오류로 화면을 그릴 수 없습니다.

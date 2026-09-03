@@ -516,7 +516,8 @@ export default function App() {
             title={tr('app.settings')}
             aria-label={tr('app.settings')}
           >
-            ⚙️
+            {/* aria-label 이 접근성 이름을 대체하므로 아이콘은 장식이다 — 의도를 명시한다. */}
+            <span aria-hidden="true">⚙️</span>
           </button>
         </div>
       </header>
@@ -763,7 +764,7 @@ export default function App() {
             {/* H3: ollama 미가용 사전 경고 + 설정 진입 링크 */}
             {ollamaNotReady && (
               <div className="w-full p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-amber-700 dark:text-amber-400 flex items-center justify-between gap-2">
-                <span>⚠️ {tr('app.ollamaNotReady')}</span>
+                <span><span aria-hidden="true">⚠️</span> {tr('app.ollamaNotReady')}</span>
                 <button
                   onClick={() => setView('settings')}
                   className="underline shrink-0 hover:text-amber-900 dark:hover:text-amber-200"
