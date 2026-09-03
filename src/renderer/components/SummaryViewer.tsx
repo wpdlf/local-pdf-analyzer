@@ -27,7 +27,12 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const citationTarget = useAppStore((s) => s.citationTarget);
   // DR-01: 사용자 조정 가능한 패널 너비 비율 (우측 PdfViewer 가 차지할 비율)
   const panelRatio = useAppStore((s) => s.citationPanelWidth);
+  const setCitationPanelWidth = useAppStore((s) => s.setCitationPanelWidth);
   const splitContainerRef = useRef<HTMLDivElement>(null);
+  // 세로 분할의 기준 컨테이너 — 좌측(요약) 패널 자신이다(우측 인용 패널은 무관).
+  const leftPaneRef = useRef<HTMLDivElement>(null);
+  const summarySplitRatio = useAppStore((s) => s.summarySplitRatio);
+  const setSummarySplitRatio = useAppStore((s) => s.setSummarySplitRatio);
   const t = useT();
 
   const [debouncedContent, setDebouncedContent] = useState(summaryStream);
@@ -166,11 +171,16 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
   const leftFlexBasis = showCitationPanel ? `${(1 - panelRatio) * 100}%` : '100%';
   const rightFlexBasis = showCitationPanel ? `${panelRatio * 100}%` : '0%';
 
+  // 요약이 끝나 채팅이 보이는 상태인가 — 세로 분할이 성립하는 조건이자 QaChat 렌더 조건.
+  // 두 곳에서 각자 판정하면 한쪽만 바뀌어 비율이 어긋난다(형제 누락).
+  const showQaChat = Boolean(summaryStream) && !isGenerating;
+
   return (
     <div ref={splitContainerRef} className="flex flex-row h-full">
       {/* relative: 복사 알림(Toast)이 뷰포트가 아니라 **이 패널**을 기준으로 뜨게 한다 —
           StatusBar 겹침과 인용 패널 열림 시의 중심 어긋남이 둘 다 여기서 결정된다. */}
       <div
+        ref={leftPaneRef}
         className="relative flex flex-col h-full min-w-0"
         style={{ flexBasis: leftFlexBasis, flexGrow: 0, flexShrink: 1 }}
       >
@@ -218,7 +228,11 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
         aria-live="polite"
         aria-busy={isGenerating}
         aria-label={t('viewer.result')}
-        className="flex-1 basis-1/2 min-h-0 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none"
+        className="min-h-0 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none"
+        style={showQaChat
+          // 채팅이 있을 때만 비율 분할. 없으면 종전대로 남는 공간을 전부 쓴다.
+          ? { flexBasis: `${summarySplitRatio * 100}%`, flexGrow: 0, flexShrink: 1 }
+          : { flex: '1 1 auto' }}
       >
         {isGenerating && !debouncedContent ? (
           <div className="flex flex-col items-center justify-center h-full gap-4">
@@ -284,10 +298,26 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
         </div>
       )}
 
-      {summaryStream && !isGenerating && (
-        <div className="flex-1 basis-1/2 min-h-0 flex flex-col overflow-hidden">
-          <QaChat />
-        </div>
+      {showQaChat && (
+        <>
+          {/* QA32 후속(실사용 보고): 종전에는 요약 본문과 채팅이 **고정 50:50** 이었다. 그런데
+              컬렉션 통합·비교 요약의 결과는 addQaMessage 로 **채팅 쪽**에 렌더되므로, 이 앱에서
+              가장 긴 출력이 절반 공간에 갇혔다. 요약 접기 토글은 Q&A까지 함께 숨기므로 채팅을
+              크게 볼 방법이 아예 없었다. 좌우 분할과 같은 핸들로 사용자가 직접 조절한다. */}
+          <ResizeHandle
+            containerRef={leftPaneRef}
+            axis="vertical"
+            ratio={summarySplitRatio}
+            onChange={setSummarySplitRatio}
+            labelKey="viewer.resizeSplit"
+          />
+          <div
+            className="min-h-0 flex flex-col overflow-hidden"
+            style={{ flexBasis: `${(1 - summarySplitRatio) * 100}%`, flexGrow: 0, flexShrink: 1 }}
+          >
+            <QaChat />
+          </div>
+        </>
       )}
       {/* 복사 확인 알림 — 소멸 타이머는 handleCopy 가 소유(copiedTimerRef).
           이 패널 안에 두는 이유는 위 `relative` 주석 참조. */}
@@ -297,7 +327,14 @@ export function SummaryViewer({ onAbort }: SummaryViewerProps) {
       {/* DR-01: ResizeHandle 로 좌/우 비율 조정 가능 */}
       {showCitationPanel && (
         <>
-          <ResizeHandle containerRef={splitContainerRef} />
+          {/* 좌우 분할: 저장값이 **우측 패널의 몫**이라 드래그 부호가 뒤집힌다(invert). */}
+          <ResizeHandle
+            containerRef={splitContainerRef}
+            ratio={panelRatio}
+            onChange={setCitationPanelWidth}
+            invert
+            labelKey="pdfviewer.resize"
+          />
           <div
             className="min-w-0 h-full"
             style={{ flexBasis: rightFlexBasis, flexGrow: 0, flexShrink: 1 }}

@@ -27,7 +27,11 @@ vi.mock('../../lib/use-collection-summary', () => ({ abortCollectionGather: M.ab
 vi.mock('../../lib/citation-focus', () => ({ setCitationReturnFocus: M.setReturnFocus, restoreCitationFocus: vi.fn() }));
 vi.mock('../QaChat', () => ({ QaChat: () => <div data-testid="qachat" /> }));
 vi.mock('../PdfViewer', () => ({ PdfViewerPanel: () => <div data-testid="pdfviewer" /> }));
-vi.mock('../ResizeHandle', () => ({ ResizeHandle: () => <div data-testid="resize" /> }));
+// QA32 후속: 핸들이 둘이 됐다(좌우 = 인용 패널 / 세로 = 요약↔채팅). 축으로 구분한다 —
+// 개수로 판정하면 한쪽이 사라져도 다른 쪽이 대신 통과한다.
+vi.mock('../ResizeHandle', () => ({
+  ResizeHandle: ({ axis = 'horizontal' }: { axis?: string }) => <div data-testid={`resize-${axis}`} />,
+}));
 vi.mock('../../lib/safe-markdown', () => ({
   SafeMarkdown: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
   // 내보내기 경로가 동적 import 하는 export-html 이 safeComponents(a/img 오버라이드)를 참조하므로 유지.
@@ -249,18 +253,36 @@ describe('SummaryViewer', () => {
     expect(M.setCollapsed).toHaveBeenCalledWith(true);
   });
 
-  it('citationTarget 없으면 PdfViewer 패널·ResizeHandle 미마운트', () => {
+  it('citationTarget 없으면 PdfViewer 패널·좌우 ResizeHandle 미마운트', () => {
     setState({ stream: '본문', citation: false });
     render(<SummaryViewer />);
     expect(screen.queryByTestId('pdfviewer')).toBeNull();
-    expect(screen.queryByTestId('resize')).toBeNull();
+    expect(screen.queryByTestId('resize-horizontal')).toBeNull();
   });
 
-  it('citationTarget 활성 → PdfViewer 패널 + ResizeHandle 마운트', () => {
+  /**
+   * QA32 후속(실사용 보고): 요약 본문과 채팅이 고정 50:50 이라, **채팅 쪽에 렌더되는**
+   * 컬렉션 통합 요약이 절반 공간에 갇혔다(요약 접기는 Q&A까지 숨기므로 넓힐 방법이 없었다).
+   */
+  it('채팅이 보이면 세로 ResizeHandle 이 함께 마운트된다', () => {
+    setState({ stream: '본문', citation: false });
+    render(<SummaryViewer />);
+    expect(screen.getByTestId('qachat')).toBeTruthy();
+    expect(screen.getByTestId('resize-vertical'), '세로 분할 핸들이 없다 — 채팅 높이를 조절할 수 없다').toBeTruthy();
+  });
+
+  it('생성 중에는 채팅도 세로 핸들도 없다 (분할할 대상이 없다)', () => {
+    setState({ stream: '진행 중', citation: false, generating: true });
+    render(<SummaryViewer />);
+    expect(screen.queryByTestId('qachat')).toBeNull();
+    expect(screen.queryByTestId('resize-vertical')).toBeNull();
+  });
+
+  it('citationTarget 활성 → PdfViewer 패널 + 좌우 ResizeHandle 마운트', () => {
     setState({ stream: '본문', citation: true });
     render(<SummaryViewer />);
     expect(screen.getByTestId('pdfviewer')).toBeTruthy();
-    expect(screen.getByTestId('resize')).toBeTruthy();
+    expect(screen.getByTestId('resize-horizontal')).toBeTruthy();
   });
 });
 

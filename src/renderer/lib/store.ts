@@ -29,26 +29,73 @@ let settingsCommitPromise: Promise<void> = Promise.resolve();
 export function whenSettingsCommitted(): Promise<void> {
   return settingsCommitPromise;
 }
-// citationPanelWidth localStorage 저장 디바운스 타이머 — 드래그 중 pointermove 마다
-// setCitationPanelWidth 가 호출되어 동기 localStorage.setItem 이 초당 수백 회 발생하는 것 방지
-let citationPanelWidthSaveTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * 패널 비율(0.2~0.8)의 localStorage 영속화 — **키별로** 디바운스 + pagehide flush.
+ *
+ * 드래그 중 pointermove 마다 setter 가 호출되므로 동기 `localStorage.setItem` 이 초당 수백 회
+ * 발생한다. trailing 200ms 디바운스로 마지막 값만 쓴다.
+ *
+ * QA32 후속: 종전에는 `citationPanelWidth` 전용 모듈 싱글턴 3개(타이머·pending·flush 분기)로
+ * 되어 있었다. 세로 분할 비율이 추가되면서 그 기계를 복제하는 대신 **키로 일반화**한다 —
+ * 열거해 두면 세 번째 비율이 생길 때 flush 대상에서 빠지는 형제 누락이 난다(이 저장소의
+ * 최다 결함 클래스). 새 비율은 `persistRatio(key, v)` 만 부르면 flush·리셋에 자동 편입된다.
+ */
+const ratioSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingRatios = new Map<string, number>();
+
+/** 패널 비율의 상하한 — 한쪽이 사라지지 않도록. ResizeHandle 의 MIN/MAX 와 같은 값이다. */
+function clampRatio(ratio: number): number {
+  return Math.min(0.8, Math.max(0.2, ratio));
+}
+
+/** 저장된 비율을 읽는다. 없거나 범위 밖이면 fallback(= 균등 분할). */
+function readStoredRatio(key: string, fallback: number): number {
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const v = Number.parseFloat(stored);
+      if (Number.isFinite(v) && v >= 0.2 && v <= 0.8) return v;
+    }
+  } catch { /* 접근 실패 무시 */ }
+  return fallback;
+}
+
+function persistRatio(key: string, value: number): void {
+  const prev = ratioSaveTimers.get(key);
+  if (prev) clearTimeout(prev);
+  pendingRatios.set(key, value); // pagehide flush 대상
+  ratioSaveTimers.set(key, setTimeout(() => {
+    ratioSaveTimers.delete(key);
+    pendingRatios.delete(key);
+    try { localStorage.setItem(key, String(value)); } catch { /* 무시 */ }
+  }, 200));
+}
+
+/** 디바운스 미발화분을 즉시 커밋 — 종료(pagehide) 경로. */
+function flushPendingRatios(): void {
+  for (const [key, timer] of ratioSaveTimers) clearTimeout(timer);
+  ratioSaveTimers.clear();
+  for (const [key, value] of pendingRatios) {
+    try { localStorage.setItem(key, String(value)); } catch { /* 무시 */ }
+  }
+  pendingRatios.clear();
+}
+
+/** 테스트/리셋 경로 — 대기 중인 쓰기를 버린다. */
+function cancelPendingRatios(): void {
+  for (const [, timer] of ratioSaveTimers) clearTimeout(timer);
+  ratioSaveTimers.clear();
+  pendingRatios.clear();
+}
 
 // QA7(B-LOW): pagehide flush 대상 — 디바운스 미발화 pending 값. 앱 종료(Cmd+Q)/새로고침 시
 // 300ms(설정)·200ms(패널폭) 발화 전이면 값이 소실됐다(테마/언어 토글 직후 종료 등). 종료
 // 직전 pagehide 에서 즉시 커밋한다. localStorage 는 동기라 확실히 저장되고, 설정 IPC 는
 // 비동기라 완료 보장은 없으나 best-effort 로 즉시 발화한다.
-let pendingPanelWidth: number | null = null;
 let pendingSettingsPayload: Record<string, unknown> | null = null;
 
 export function flushPendingWrites(): Promise<void> {
-  if (citationPanelWidthSaveTimer !== null) {
-    clearTimeout(citationPanelWidthSaveTimer);
-    citationPanelWidthSaveTimer = null;
-    if (pendingPanelWidth !== null) {
-      try { localStorage.setItem('citationPanelWidth', String(pendingPanelWidth)); } catch { /* 무시 */ }
-      pendingPanelWidth = null;
-    }
-  }
+  flushPendingRatios();
   // QA24(I5): 설정 IPC 착지를 기다린다. 종전에는 `void` 로 던지고 끝냈는데, 종료 handshake 는
   // 세션 persist promise 만 기다리므로 — 문서를 열지 않은 상태에서는 doPersistCurrentSession 이
   // 즉시 return 해 ack 가 곧바로 나가고 app.quit() 이 진행된다. 그 결과 "설정 화면에서 커스텀
@@ -225,12 +272,12 @@ if (_meta.hot) {
     if (settingsSaveTimer) { clearTimeout(settingsSaveTimer); settingsSaveTimer = null; }
     // 커밋 대기자 settle — dispose 로 타이머가 사라진 promise 를 영원히 대기하는 소비자 방지
     if (settingsCommitResolve) { settingsCommitResolve(); settingsCommitResolve = null; }
-    if (citationPanelWidthSaveTimer) { clearTimeout(citationPanelWidthSaveTimer); citationPanelWidthSaveTimer = null; }
+    cancelPendingRatios();
     // R31 (v0.18.18 patch): noticeDismissTimer HMR 누락 — 이전 store 인스턴스의 6초
     // 타이머가 fire 하면 새 store 의 notice 를 잘못 dismiss 하려 시도하므로 같이 정리.
     if (noticeDismissTimer) { clearTimeout(noticeDismissTimer); noticeDismissTimer = null; }
     // QA7: pending flush 상태 + pagehide 리스너 정리(이전 모듈 인스턴스 누수 방지).
-    pendingPanelWidth = null; pendingSettingsPayload = null;
+    pendingSettingsPayload = null;
     if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
       window.removeEventListener('pagehide', flushPendingWrites);
     }
@@ -391,6 +438,15 @@ interface AppState {
   // 기본 0.5 (50/50), min 0.2 / max 0.8.
   citationPanelWidth: number;
   setCitationPanelWidth: (ratio: number) => void;
+  /**
+   * 요약 패널의 **세로** 분할 — 위(요약 본문)가 차지하는 비율. 기본 0.5, 0.2~0.8.
+   *
+   * 왜 필요한가: 컬렉션 통합/비교 요약의 결과는 `addQaMessage` 로 **채팅 쪽**에 렌더된다.
+   * 즉 이 앱에서 가장 긴 출력이 고정 50% 공간에 들어갔고, 요약 접기 토글은 Q&A까지 함께
+   * 숨기므로(App.tsx) **채팅을 크게 볼 방법이 하나도 없었다**(실사용 보고, 2026-09-03).
+   */
+  summarySplitRatio: number;
+  setSummarySplitRatio: (ratio: number) => void;
   // 원본 PDF 바이트 (PdfViewer 가 lazy 마운트 시 참조).
   // document 와 라이프사이클 동일 — setDocument(null) / 새 문서 로드 시 교체.
   pdfBytes: Uint8Array | null;
@@ -776,28 +832,17 @@ export const useAppStore = create<AppState>((set) => ({
       : { enrichedPageTexts: pages, enrichedPageTextsVersion: s.enrichedPageTextsVersion + 1 }
   )),
   // DR-01: 패널 너비 비율 — localStorage 에서 복원, 기본 0.5
-  citationPanelWidth: (() => {
-    try {
-      const stored = localStorage.getItem('citationPanelWidth');
-      if (stored) {
-        const v = Number.parseFloat(stored);
-        if (Number.isFinite(v) && v >= 0.2 && v <= 0.8) return v;
-      }
-    } catch { /* 접근 실패 무시 */ }
-    return 0.5;
-  })(),
+  citationPanelWidth: readStoredRatio('citationPanelWidth', 0.5),
   setCitationPanelWidth: (ratio) => {
-    const clamped = Math.min(0.8, Math.max(0.2, ratio));
+    const clamped = clampRatio(ratio);
     set({ citationPanelWidth: clamped });
-    // 드래그 중 pointermove 마다 호출되므로 localStorage 쓰기는 trailing 200ms 디바운스.
-    // 마지막 값만 저장되어 동기 I/O 비용을 수백 회 → 1 회로 줄인다.
-    if (citationPanelWidthSaveTimer) clearTimeout(citationPanelWidthSaveTimer);
-    pendingPanelWidth = clamped; // pagehide flush 대상
-    citationPanelWidthSaveTimer = setTimeout(() => {
-      citationPanelWidthSaveTimer = null;
-      pendingPanelWidth = null;
-      try { localStorage.setItem('citationPanelWidth', String(clamped)); } catch { /* 무시 */ }
-    }, 200);
+    persistRatio('citationPanelWidth', clamped);
+  },
+  summarySplitRatio: readStoredRatio('summarySplitRatio', 0.5),
+  setSummarySplitRatio: (ratio) => {
+    const clamped = clampRatio(ratio);
+    set({ summarySplitRatio: clamped });
+    persistRatio('summarySplitRatio', clamped);
   },
 
   // 설정

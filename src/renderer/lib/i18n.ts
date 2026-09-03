@@ -214,6 +214,8 @@ export const _translations = {
   // 위 문구의 스크린리더판 — 장식 기호(✓)는 눈에만 필요하고, 리더가 읽으면 "체크 표시" 가
   // 통지 앞에 붙어 번잡해진다. Toast 의 srMessage 로 전달된다.
   'viewer.copiedSr': { ko: '복사됨', en: 'Copied' },
+  // QA32 후속: 세로 분할(요약 본문 ↔ Q&A) 핸들. 좌우 분할과 같은 관용구.
+  'viewer.resizeSplit': { ko: '요약과 채팅 영역 높이 조절', en: 'Resize summary and chat areas' },
   'viewer.copyAria': { ko: '클립보드에 복사', en: 'Copy to clipboard' },
   'viewer.exportPdf': { ko: '📄 PDF', en: '📄 PDF' },
   'viewer.exportPdfAria': { ko: 'PDF 파일로 내보내기', en: 'Export as PDF file' },
@@ -630,7 +632,7 @@ export const _translations = {
   'session.evictedNotice': { ko: '저장 공간 상한으로 오래된 분석 {count}개를 정리했습니다({names}). 해당 문서의 요약·Q&A·검색 인덱스는 다시 열면 재생성해야 합니다.', en: 'Cleaned up {count} old analyses to stay within the storage limit ({names}). Their summaries, Q&A, and search index will need to be regenerated when reopened.' },
 } as const;
 
-type TranslationKey = keyof typeof _translations;
+export type TranslationKey = keyof typeof _translations;
 
 // ─── 템플릿 치환 ───
 
