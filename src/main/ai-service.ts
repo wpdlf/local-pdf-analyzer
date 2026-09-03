@@ -3,6 +3,7 @@ import https from 'https';
 import { StringDecoder } from 'string_decoder';
 import { BrowserWindow } from 'electron';
 import { isLocalhostHost, MAX_AI_REQUEST_DURATION_MS } from '../shared/constants';
+import { resolveNumCtx } from './ollama-context';
 
 interface GenerateRequest {
   text: string;
@@ -493,7 +494,12 @@ async function generateOllama(
     system,
     prompt: user,
     stream: true,
-    options: { temperature: request.temperature ?? 0.3 },
+    // QA32: `num_ctx` 를 보내지 않으면 Ollama 서버 기본값 4096 이 적용되고, 프롬프트가 그것을
+    // 넘으면 **앞부분부터 조용히 버려진다**(done_reason 은 'stop' 이라 아래 detectTruncation 이
+    // 못 잡는다 — 그쪽은 출력 절단 전용이다). 실측으로 Q&A 는 2%, 컬렉션 교차 요약은 35% 가
+    // 잘리고 있었고, 컬렉션의 앞쪽은 **첫 번째 문서 블록**이라 모델이 보지도 못한 문서를
+    // 인용하게 된다. 사유·버킷 선택 근거는 ollama-context.ts 참조.
+    options: { temperature: request.temperature ?? 0.3, num_ctx: resolveNumCtx(system, user) },
     keep_alive: OLLAMA_KEEP_ALIVE,
   });
 

@@ -513,6 +513,39 @@ describe('generate → streamRequest (스트리밍)', () => {
     expect(__activeRequestCount()).toBe(0);
   });
 
+  /**
+   * QA32 배선 가드. `resolveNumCtx` 의 순수 테스트가 전부 그린이어도 **호출부에 배선되지
+   * 않으면** 아무것도 달라지지 않는다 — 수식 렌더링에서 "순수 함수 19건 그린인데 배선이 안
+   * 먹던" 전례가 있어 요청 body 를 직접 본다.
+   *
+   * num_ctx 를 안 보내면 Ollama 기본값 4096 이 적용되고 초과분은 프롬프트 **앞부터** 조용히
+   * 버려진다(done_reason='stop' 이라 detectTruncation 이 못 잡는다).
+   */
+  it('ollama 요청 body 에 num_ctx 가 실린다 — 큰 프롬프트는 기본값(4096)보다 크게', async () => {
+    let sentReq: ReturnType<typeof makeReq> | null = null;
+    M.httpRequest.mockImplementation((_opts: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      sentReq = req; // write 가 이미 vi.fn 이라 호출 기록을 그대로 읽는다
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => { res.emit('data', Buffer.from('{"response":"x"}\n')); res.emit('end'); });
+      });
+      return req;
+    });
+    // 컬렉션 교차 요약 규모(12,000자) — 실측상 6,263토큰이라 4096 을 크게 넘는다.
+    const big = '운영체제는 프로세스와 스레드를 관리하며 CPU 스케줄링 정책에 따라 실행 순서를 정한다. '.repeat(300).slice(0, 12000);
+    await generate('req-ctx', { text: big, type: 'full', provider: 'ollama', model: 'llama3', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never);
+
+    const written = (sentReq as unknown as ReturnType<typeof makeReq>).write.mock.calls
+      .map((c) => String(c[0])).join('');
+    const parsed = JSON.parse(written) as { options?: { num_ctx?: number; temperature?: number } };
+    expect(parsed.options?.num_ctx, 'num_ctx 가 요청에 실리지 않는다 — 서버 기본값 4096 으로 잘린다').toBeDefined();
+    expect(parsed.options!.num_ctx!).toBeGreaterThan(4096);
+    // 기존 옵션을 밀어내지 않았는지도 함께 본다.
+    expect(parsed.options?.temperature).toBeDefined();
+  });
+
   it('claude SSE 401 → API_KEY_INVALID', async () => {
     M.httpsRequest.mockImplementation((_opts: unknown, cb: (r: unknown) => void) => {
       const req = makeReq();
