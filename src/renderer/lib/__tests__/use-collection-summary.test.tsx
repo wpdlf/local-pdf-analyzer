@@ -231,28 +231,30 @@ describe('generateCollectionSummary (L2)', () => {
     expect(M.prompt).toContain('통합 결과');
   });
 
-  // QA31 잔여(조용한 오답): 인라인 생성은 본문 앞 6000자만 보는데, 저장은 정규 요약과 같은 키에
-  // 표식 없이 했다. 그 멤버를 열면 앞 몇 쪽만 읽고 쓴 것이 그 문서의 "전체 요약" 으로 보이고,
-  // 다음 합성에서는 pickSummary 가 그것을 집어 가 인라인 생성이 다시는 돌지 않는다(절단 고착).
-  it('입력이 잘린 인라인 요약은 정식 키에 저장하지 않는다', async () => {
+  /**
+   * QA32(A-3): 직전 라운드는 절단된 인라인 요약의 **저장을 보류**했는데 부작용이 컸다.
+   * `sourceText` 는 멤버의 전문이고 상한은 6,000자(한국어 3~4쪽)라 실제 PDF 는 거의 전부
+   * 절단이다 — "상한 안이면 저장" 은 사실상 죽은 분기였고, 요약 없는 멤버를 합성할 때마다
+   * 전량 재생성하게 됐다. 그래서 **표식과 함께 저장**으로 바꾼다: 재생성 폭주를 없애면서도
+   * 그 멤버를 열었을 때 저장본만 보고 앞부분만 읽은 산출물임을 알 수 있다.
+   */
+  it('입력이 잘린 인라인 요약은 표식과 함께 저장한다 (재생성 폭주 방지 + 절단 사실 보존)', async () => {
     seedActive();
     setStore(['a'.repeat(64), 'b'.repeat(64)]);
-    const long = '가'.repeat(6001); // INLINE_SUMMARY_INPUT_CHARS(6000) 초과 → 앞부분만 본 산출물
+    const long = '가'.repeat(6001); // INLINE_SUMMARY_INPUT_CHARS(6000) 초과
     mockSessionLoad.mockImplementation((h: string) =>
       Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf', null, long)));
 
     await generateCollectionSummary('comparison');
 
-    expect(mockSaveSummary, '앞 6000자만 본 요약을 정식 요약으로 저장했다').not.toHaveBeenCalled();
-    // 이번 합성에는 그대로 쓴다 — 저장만 보류하는 것이지 기능을 끄는 게 아니다.
-    expect(M.prompt).toContain('통합 결과');
+    expect(mockSaveSummary, '절단이라고 저장을 건너뛰면 합성할 때마다 전량 재생성된다')
+      .toHaveBeenCalledTimes(2);
+    const saved = (mockSaveSummary.mock.calls as unknown as { summary: { content: string } }[][])[0]![0]!;
+    expect(saved.summary.content, '절단 표식 없이 정식 요약으로 저장됐다')
+      .toContain('앞부분만 읽고 작성한 요약');
   });
 
-  it('상한 안에 들어오는 문서는 종전대로 저장한다 (보류가 전면 중단이 되면 재생성 절약이 죽는다)', async () => {
-    // 짝이 되는 케이스 — 위 테스트만 있으면 `truncated` 를 항상 true 로 만들어도 통과한다.
-    // ⚠️ 판정 입력은 원문이 아니라 **라벨이 붙은 sourceText** 다(labelParagraphsWithPages 가
-    // `[p.N]` 을 더해 길이를 늘린다). 그래서 원문 6000자는 이미 상한 밖이다 — 경계를 원문
-    // 길이로 적으면 안 된다.
+  it('상한 안에 들어오는 문서는 표식 없이 저장한다 (짝 — 늘 붙으면 위가 공허하다)', async () => {
     seedActive();
     setStore(['a'.repeat(64), 'b'.repeat(64)]);
     const short = '가'.repeat(100);
@@ -262,6 +264,8 @@ describe('generateCollectionSummary (L2)', () => {
     await generateCollectionSummary('comparison');
 
     expect(mockSaveSummary).toHaveBeenCalledTimes(2);
+    const saved = (mockSaveSummary.mock.calls as unknown as { summary: { content: string } }[][])[0]![0]!;
+    expect(saved.summary.content).not.toContain('앞부분만 읽고 작성한 요약');
   });
 
   it('생성 실패 멤버는 본문 발췌로 fallback(영속화 skip)', async () => {

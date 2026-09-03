@@ -549,16 +549,20 @@ async function summarizeCustom(
   checkTimeout: () => boolean, isTimedOut: () => boolean,
   append: (s: string) => void, setProgress: (p: number) => void,
   setProgressInfo: (info: ProgressInfo) => void, startTime: number, progressOffset: number,
-) {
+): Promise<boolean> {
   const progressRange = 100 - progressOffset;
   const hasPageTexts = Array.isArray(doc.pageTexts) && doc.pageTexts.length > 0;
   let text = hasPageTexts ? labelParagraphsWithPages(doc.pageTexts) : doc.extractedText;
   if (!text.trim()) {
     throw Object.assign(new Error(t('ai.noText')), { code: 'PDF_NO_TEXT' });
   }
+  let inputTruncated = false;
   if (text.length > CUSTOM_TEMPLATE_CHAR_BUDGET) {
     // QA(②A): 단일 패스라 예산 초과 문서는 앞부분만 요약된다 — 무음 절단은 "문서 전체"라는 기대와
     // 어긋나므로 사용자에게 고지(summarizeFull 의 가시적 통합 절단 라벨과 대칭, imagesSkipped 패턴).
+    // QA32(C): notice 는 **1회성**이라 세션에 남지 않는다. 산출물 자체에도 표식을 남겨야
+    // 재오픈했을 때 "이 문서의 커스텀 요약" 으로만 보이는 일이 없다(아래 반환값 → 커밋 지점).
+    inputTruncated = true;
     useAppStore.getState().setNotice({ message: t('summary.customTruncated') });
     // QA28(A-Important): 이 텍스트는 단락마다 `[p.N]` 이 박힌 모델 입력이다 — QA27 이
     // truncateChunkSummariesForIntegration 에만 넣은 반쪽 인용 제거의 형제 경로.
@@ -574,6 +578,7 @@ async function summarizeCustom(
     append(token);
   }
   if (!isTimedOut()) setProgress(100);
+  return inputTruncated;
 }
 
 // 청크+통합 전략 커스텀 요약: 문서 전체를 청크로 나눠 각 청크를 커스텀 프롬프트로 요약(길이 누락 없음),
@@ -728,6 +733,9 @@ export function useSummarize() {
     const rawDoc = currentState.document;
     const pageRange = currentState.summaryPageRange;
     const isPartialRange = pageRange != null && !isFullRange(pageRange, rawDoc.pageCount);
+    // QA32(B·C): 입력이 잘렸다는 사실을 커밋 지점까지 나른다 — 커스텀 템플릿의 예산 초과는
+    // summarizeCustom 이 반환한다(그 안의 notice 는 1회성이라 저장본에 남지 않는다).
+    let customInputTruncated = false;
     const doc = isPartialRange
       ? slicePdfDocumentByPageRange(rawDoc, pageRange.start, pageRange.end)
       : rawDoc;
@@ -1007,7 +1015,7 @@ export function useSummarize() {
         if (template.strategy === 'chunked') {
           await summarizeCustomChunked(docWithImages, template, currentSettings, trackCustom, checkTimeout, isCancelled, guardedAppend, setProgress, progressSetter, startTime, progressOffset);
         } else {
-          await summarizeCustom(docWithImages, template, trackCustom, checkTimeout, isCancelled, guardedAppend, setProgress, progressSetter, startTime, progressOffset);
+          customInputTruncated = await summarizeCustom(docWithImages, template, trackCustom, checkTimeout, isCancelled, guardedAppend, setProgress, progressSetter, startTime, progressOffset);
         }
       } else if (currentSummaryType === 'chapter' && docWithImages.chapters.length > 1) {
         await summarizeByChapter(docWithImages, currentSettings, trackSummarize, checkTimeout, isCancelled, guardedAppend, setProgress, progressSetter, startTime, progressOffset);
@@ -1048,10 +1056,21 @@ export function useSummarize() {
           // 기존 규약(INTEGRATION_LABELS.truncated / summary.partialMarker)과 같은 자리·형식 —
           // 본문 말미의 대괄호 한 줄. 배지가 아니라 본문에 넣는 이유는 **저장본만 봐도** 미완성
           // 임을 알 수 있어야 하기 때문이다(세션에서 다시 연 요약에는 UI 상태가 남지 않는다).
-          const committed = runClient.lastTruncated
-            ? `${finalContent.trimEnd()}
-
-${t('summary.outputLimitMarker')}`
+          //
+          // QA32(B·C): 표식이 **출력 절단 하나뿐**이었다. 입력이 잘린 두 경우 — 페이지 범위
+          // 요약과 커스텀 템플릿 예산 초과 — 는 표식 없이 정규 키에 저장돼, 재오픈하면
+          // "이 문서의 요약" 으로만 보였다(범위 선택기는 전체로 되돌아가 있고, customTruncated
+          // notice 는 1회성이라 세션에 남지 않는다). 게다가 교차 요약의 pickSummary 가 그것을
+          // 집어 가 200쪽 문서가 10쪽짜리 요약으로 통합 요약에 참여했다.
+          // 같은 규약(본문 말미 대괄호 한 줄)으로 통일하고, 복수일 수 있으므로 목록으로 모은다.
+          const markers: string[] = [];
+          if (runClient.lastTruncated) markers.push(t('summary.outputLimitMarker'));
+          if (isPartialRange && pageRange) {
+            markers.push(t('summary.pageRangeMarker', { range: `${pageRange.start}-${pageRange.end}` }));
+          }
+          if (customInputTruncated) markers.push(t('summary.inputTruncatedMarker'));
+          const committed = markers.length > 0
+            ? [finalContent.trimEnd(), '', ...markers].join('\n')
             : finalContent;
           if (committed !== finalContent) {
             useAppStore.getState().replaceSummaryStream(committed);

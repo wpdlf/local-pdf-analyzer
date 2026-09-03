@@ -260,14 +260,26 @@ async function gatherMemberBlocks(
         //      200쪽 문서의 앞 몇 쪽만 읽고 쓴 요약과 진짜 요약이 구분 불가하다.
         //  (2) 다음 합성에서 pickSummary 가 이것을 집어 가므로 **인라인 생성 경로가 다시는
         //      실행되지 않는다** — 절단이 그 문서에 영구히 고착된다.
-        // 입력이 실제로 잘렸을 때만 저장을 보류한다. 문서가 상한 안에 들어오면 이것은 본문
-        // 전체를 본 정규 산출물과 다를 바 없으므로 종전대로 저장한다(Q-A2 의 재생성 절약 유지).
+        //
+        // QA32(A-3): 그 수정은 **보류**를 택했는데 부작용이 컸다. `sourceText` 는 멤버의 전문이고
+        // 상한은 6,000자(한국어로 3~4쪽)라 **실제 PDF 는 거의 전부 truncated=true** 다 — "상한 안에
+        // 들어오면 종전대로 저장" 은 사실상 죽은 분기였고, 결과적으로 요약 없는 멤버를 **합성할
+        // 때마다 전량 재생성**하게 됐다(통합 요약 → 비교 분석을 이어 하면 N회 × 2). 매번 다른
+        // 산출물이 나와 같은 컬렉션의 결과가 재현되지도 않는다.
+        //
+        // 그래서 보류 대신 **표식과 함께 저장**한다. 이 파일 밖의 기존 규약(use-summarize 의
+        // partialMarker/outputLimitMarker)과 같은 자리·형식이라, 그 멤버를 열어도 저장본만 보고
+        // 앞부분만 읽은 산출물임을 알 수 있다. 표식이 본문에 있으므로 다음 합성이 재사용해도
+        // 사실이 사라지지 않는다.
         const truncated = sourceText.length > INLINE_SUMMARY_INPUT_CHARS;
-        if (settings.persistSessions && !truncated) {
+        const persisted = truncated
+          ? `${gen.trimEnd()}\n\n${t('summary.inputTruncatedMarker')}`
+          : gen;
+        if (settings.persistSessions) {
           void window.electronAPI.session.saveSummary?.({
             docHash: m.docHash,
             type: summaryType,
-            summary: { content: gen, model: settings.model, provider: settings.provider },
+            summary: { content: persisted, model: settings.model, provider: settings.provider },
           }).catch(() => undefined);
         }
       }

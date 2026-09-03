@@ -575,6 +575,21 @@ describe('useSummarize — 페이지 범위 요약 배선 (QA25)', () => {
     expect(sent).not.toContain('엡실론');
   });
 
+  /**
+   * QA32(B·C): 범위 요약은 **전체 문서의 세션**(docHash 는 원본 기준)의 `summaries[type]` 에
+   * 저장되는데, PersistedSummary 에 범위 필드가 없고 `summaryPageRange` 는 영속되지 않는다.
+   * 그래서 재오픈하면 10쪽짜리 요약이 그 문서의 "전체 요약" 으로 보이고, 교차 요약의
+   * pickSummary 가 그것을 집어 가 200쪽 문서가 10쪽 요약으로 통합 요약에 참여한다.
+   * 같은 파일의 기존 규약(partialMarker/outputLimitMarker)과 같은 자리·형식으로 표식을 남긴다.
+   */
+  it('부분 범위 요약에는 범위 표식이 본문에 남는다 (저장본만 봐도 알 수 있어야 한다)', async () => {
+    useAppStore.setState({ document: docFivePages(), summaryPageRange: { start: 2, end: 4 } });
+    await runSummarize();
+    const content = useAppStore.getState().summary?.content ?? '';
+    expect(content, '범위 표식 없이 정식 요약으로 커밋됐다').toContain('2-4');
+    expect(content).toContain('페이지만 대상으로');
+  });
+
   it('전체 범위면 문서를 그대로 쓴다 (마스킹이 과잉 적용되지 않는다)', async () => {
     useAppStore.setState({ document: docFivePages(), summaryPageRange: { start: 1, end: 5 } });
     await runSummarize();

@@ -119,6 +119,29 @@ describe('커스텀 템플릿 — 단일 패스 절단 고지', () => {
     expect(useAppStore.getState().notice?.message).toContain('앞부분만');
   });
 
+  /**
+   * QA32(C): notice 는 **1회성**이라 세션에 남지 않는다. 그래서 재오픈하면 앞부분만 보고 쓴
+   * 산출물이 "이 문서의 커스텀 요약" 으로만 보였다. 같은 파일의 기존 규약(partialMarker /
+   * outputLimitMarker)은 이미 "저장본만 봐도 미완성임을 알 수 있어야 한다" 를 근거로 본문
+   * 말미에 대괄호 한 줄을 넣는데, **입력 절단만 그 규약 밖**이었다.
+   */
+  it('예산 초과 산출물에는 절단 표식이 본문에 남는다 (notice 는 세션에 안 남는다)', async () => {
+    const long = '가'.repeat(20000);
+    useTemplate(TPL, makeDoc({ pageTexts: [long], extractedText: long }));
+    await runSummarize();
+
+    const content = useAppStore.getState().summary?.content ?? '';
+    expect(content, '표식 없이 정식 커스텀 요약으로 저장된다').toContain('앞부분만 읽고 작성한 요약');
+  });
+
+  it('예산 안이면 표식이 붙지 않는다 (짝 — 늘 붙으면 위가 공허하다)', async () => {
+    useTemplate(TPL, makeDoc({ pageTexts: ['짧은 본문'], extractedText: '짧은 본문' }));
+    await runSummarize();
+
+    const content = useAppStore.getState().summary?.content ?? '';
+    expect(content).not.toContain('앞부분만 읽고 작성한 요약');
+  });
+
   // QA28(A-Important): 절단 오프셋이 `[p.N]` 라벨 한가운데 떨어지면 `[p.12` 같은 반쪽 인용이
   // 모델 입력 끝에 남고, 모델이 `[p.12]` 로 완성해 정상처럼 보이는 오답 인용이 된다 — QA27 이
   // 통합 요약에만 넣은 stripTrailingPartialCitation 의 형제 경로.

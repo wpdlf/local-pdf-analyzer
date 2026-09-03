@@ -256,6 +256,31 @@ describe('manifest / list / stats / delete / clear', () => {
     expect(await readSession(DIR, hashOf(1))).toBeNull();
   });
 
+  /**
+   * QA32(C): QA22 는 **read 만** 파괴 이전으로 옮기고 파괴적 쓰기의 순서는 그대로 뒀다.
+   * saveManifest 가 실패하면 디렉터리는 사라졌는데 엔트리는 남는 **유령 엔트리**가 되고,
+   * reconcile 은 dirent 를 순회하므로 그것을 회수하지 못한다(고아 디렉터리와 비대칭).
+   * QA31 이 writeSession 의 LRU 축출에서 뒤집은 순서의 형제다.
+   */
+  it('manifest 쓰기가 실패하면 디렉터리를 지우지 않는다 (유령 엔트리 금지)', async () => {
+    await writeSession(DIR, { meta: metaOf(hashOf(1)), session: { a: 1 }, blob: null, now: 1000 });
+    // saveManifest → writeFileAtomic → fsp.writeFile(`<manifest>.tmp`) 경로를 막는다.
+    const realWrite = fsp.writeFile.bind(fsp);
+    const spy = vi.spyOn(fsp, 'writeFile').mockImplementation((async (p: unknown, ...rest: unknown[]) => {
+      if (String(p).includes('manifest')) throw new Error('EBUSY');
+      return (realWrite as unknown as (...a: unknown[]) => Promise<void>)(p, ...rest);
+    }) as never);
+    try {
+      const r = await deleteSession(DIR, hashOf(1));
+      expect(r.ok).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+    // 디스크가 온전해야 한다 — 회수 경로가 없는 유령 엔트리를 만드느니 아무것도 안 지운다.
+    expect(await readSession(DIR, hashOf(1)), 'manifest 실패인데 본문이 이미 지워졌다').not.toBeNull();
+    expect(await listSessionsOk(DIR), '엔트리가 사라져 유령 상태가 됐다').toHaveLength(1);
+  });
+
   it('clearAll 은 전체 비우기', async () => {
     await writeSession(DIR, { meta: metaOf(hashOf(1)), session: { a: 1 }, blob: null, now: 1000 });
     await clearAll(DIR);

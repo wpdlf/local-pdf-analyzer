@@ -697,6 +697,15 @@ export async function mergeSessionSummary(
     };
     session.summaries = summaries;
     const jsonStr = JSON.stringify(session);
+    // QA32(C): 세 번째 쓰기 경로인 여기만 본문 상한 검사가 없었다(writeSession:398 ·
+    // patchSession 은 둘 다 한다). 이 경로로 상한을 넘기면 **그 문서의 이후 모든 저장이
+    // {ok:false}** 가 된다 — 두 형제가 거부하기 때문이다. 정상 경로에서는 LLM 출력 크기가
+    // 자연 바운드라 도달하지 않지만, 상한을 세운 이유(단건이 온디스크 총량을 넘어 LRU 를
+    // 무력화)는 여기에도 그대로 적용된다. 쓰기 **이전에** 거부해 디스크를 건드리지 않는다.
+    if (Buffer.byteLength(jsonStr) > MAX_SESSION_JSON_BYTES) {
+      console.warn('[session] summary merge rejected: session body exceeds cap', Buffer.byteLength(jsonStr));
+      return { ok: false };
+    }
     // QA24(C-M1): 요약·Q&A 델타 경로는 fsync 한다. writeFileAtomic 의 제외 근거는 "세션 본문/
     // index.bin 은 손상 시 **재계산으로 자가치유**" 인데, 같은 파일에 들어 있는 summaries 와
     // qaMessages 는 재계산이 불가능한 사용자 데이터다(extractedText/pageTexts/인덱스와 다르다).
@@ -849,10 +858,28 @@ export async function deleteSession(sessionsDir: string, docHash: string): Promi
     // "디렉터리 없는 manifest 엔트리" 는 회수하지 못한다 — LRU 가 그 항목을 evict 후보로 뽑을
     // 때까지 최근목록·통계·byteSize 집계를 오염시킨다. 다른 5개 RMW 경로와 같은
     // read-then-write 순서로 맞추면 일시 오류가 파괴 이전에 중단돼 디스크가 온전히 보존된다.
+    // QA32(C): QA22 는 **read 만** 파괴 이전으로 옮기고 파괴적 쓰기의 순서는 그대로 뒀다.
+    // 그래서 `saveManifest` 가 실패하면 디렉터리는 사라졌는데 엔트리는 남는 — 위 주석이
+    // 정확히 서술한 그 유령 엔트리 — 상태가 그대로 만들어졌다. QA31 이 writeSession 의 LRU
+    // 축출에서 이미 뒤집은 순서이고(:556 대), 이쪽이 그 형제 누락이다.
+    //
+    // 비대칭이 논거다: **고아 디렉터리는 reconcile 이 회수하지만 유령 엔트리는 회수 경로가
+    // 없다**(reconcile 은 dirent 를 순회하므로 디렉터리 없는 엔트리를 만나지 못한다).
+    // 그러므로 manifest 를 먼저 확정하고, rm 실패분은 엔트리를 되살려 재시도 대상으로 둔다.
     const manifest = await loadManifestForWrite(sessionsDir);
-    await fsp.rm(sessionDir(sessionsDir, docHash), { recursive: true, force: true });
+    const removed = manifest.entries.filter((e) => e.docHash === docHash);
     manifest.entries = manifest.entries.filter((e) => e.docHash !== docHash);
     await saveManifest(sessionsDir, manifest);
+    try {
+      await fsp.rm(sessionDir(sessionsDir, docHash), { recursive: true, force: true });
+    } catch {
+      // rm 실패(Windows AV·동시 읽기의 EBUSY/EPERM) — 디스크에 그대로 남아 있으므로 엔트리를
+      // 되살린다(writeSession 의 rmFailed 처리와 같은 계약). 이 복구 쓰기까지 실패하면 남는
+      // 것은 고아 디렉터리뿐이고 그쪽은 reconcile 이 재등록한다.
+      manifest.entries = [...manifest.entries, ...removed];
+      try { await saveManifest(sessionsDir, manifest); } catch { /* 고아는 다음 부팅 reconcile 이 재등록 */ }
+      return { ok: false };
+    }
     return { ok: true };
   } catch (err) {
     console.warn('[session] delete failed:', (err as Error)?.message);

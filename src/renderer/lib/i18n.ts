@@ -78,6 +78,11 @@ export const _translations = {
   'summary.partialRecoverAction': { ko: '생성된 부분까지 저장', en: 'Save what was generated' },
   'summary.partialMarker': { ko: '[... 이하 생략 — 요약이 중단되어 여기까지만 저장되었습니다]', en: '[... truncated — the summary was interrupted, so only this much was saved]' },
   'summary.outputLimitMarker': { ko: '[... 이하 생략 — AI 출력 한도에 도달해 요약이 여기서 잘렸습니다]', en: '[... truncated — the summary hit the AI output limit and was cut off here]' },
+  // QA32(B·C): **입력** 절단 표식. 위 둘은 출력이 잘린 경우인데, 문서 앞부분만 보고 만든
+  // 산출물에는 표식이 없어 저장본이 "이 문서의 요약" 으로 보였다. 같은 자리·형식(본문 말미
+  // 대괄호 한 줄)을 쓰는 이유도 같다 — 세션에서 다시 연 요약에는 UI 상태가 남지 않는다.
+  'summary.inputTruncatedMarker': { ko: '[알림 — 문서가 길어 앞부분만 읽고 작성한 요약입니다. 뒷부분 내용은 포함되지 않았습니다]', en: '[Note — this summary was written from the beginning of the document only; later content is not included]' },
+  'summary.pageRangeMarker': { ko: '[알림 — 이 요약은 {range} 페이지만 대상으로 합니다]', en: '[Note — this summary covers only pages {range}]' },
   'summary.partialSaved': { ko: '중단된 요약을 생성된 부분까지 저장했습니다.', en: 'Saved the interrupted summary up to the portion that was generated.' },
   // Vision 실패 시 전체 요약을 막지 않고 텍스트 전용으로 강등할 때의 비차단 안내.
   'ai.imageAnalysisSkipped': { ko: '이미지 분석을 건너뛰고 텍스트만 요약했습니다 (Vision 모델 없음/실패 — llava 등 설치 시 이미지 포함).', en: 'Skipped image analysis and summarized text only (no/failed Vision model — install e.g. llava to include images).' },
