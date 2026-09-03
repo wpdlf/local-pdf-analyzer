@@ -93,6 +93,59 @@ describe('switchToTab', () => {
     expect(M.openPath).toHaveBeenCalledWith('/docs/b.pdf');
   });
 
+  /**
+   * QA32(B): restoreTabFromSession 에는 소유권 검사가 **하나도 없었다**. 의존하던 방어는
+   * `isTabSwitching` 인데 `handlePdfData` 는 그 플래그를 의도적으로 보지 않는다(자기 차단 방지).
+   * 그래서 session.load 가 도는 창에 드롭/Ctrl+O 가 끼어들면 두 setDocument 가 임의 순서로
+   * 착지해, 사용자가 방금 연 문서가 조용히 사라지고 탭만 남는다.
+   */
+  it('세션 로드 중 다른 문서가 활성화되면 복원이 그것을 덮어쓰지 않는다', async () => {
+    seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+    useAppStore.setState((s) => ({
+      openTabs: [...s.openTabs, { filePath: '/docs/big.pdf', fileName: 'big.pdf', pageCount: 9, docHash: 'e'.repeat(64) }],
+    }));
+    // load 가 풀리는 사이에 다른 흐름(드롭 등)이 활성 문서를 바꾼다.
+    M.sessionLoad.mockImplementation(async () => {
+      useAppStore.setState({ document: makeDoc('/docs/dropped.pdf', 'dropped.pdf') });
+      return {
+        session: {
+          schemaVersion: 1, docHash: 'e'.repeat(64), fileName: 'big.pdf', filePath: '/docs/big.pdf',
+          pageCount: 9, extractedText: '본문', pageTexts: ['p1'],
+          chapters: [], summaries: {}, qaMessages: [], embedModel: null, embedDim: null, chunkMeta: [],
+        },
+        blob: null,
+      };
+    });
+
+    await switchToTab('/docs/big.pdf');
+
+    expect(useAppStore.getState().document?.fileName, '늦게 끝난 복원이 새 문서를 덮어썼다')
+      .toBe('dropped.pdf');
+  });
+
+  it('파싱이 시작됐으면 복원이 끼어들지 않는다', async () => {
+    seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
+    useAppStore.setState((s) => ({
+      openTabs: [...s.openTabs, { filePath: '/docs/big.pdf', fileName: 'big.pdf', pageCount: 9, docHash: 'f'.repeat(64) }],
+    }));
+    M.sessionLoad.mockImplementation(async () => {
+      useAppStore.setState({ isParsing: true });
+      return {
+        session: {
+          schemaVersion: 1, docHash: 'f'.repeat(64), fileName: 'big.pdf', filePath: '/docs/big.pdf',
+          pageCount: 9, extractedText: '본문', pageTexts: ['p1'],
+          chapters: [], summaries: {}, qaMessages: [], embedModel: null, embedDim: null, chunkMeta: [],
+        },
+        blob: null,
+      };
+    });
+
+    await switchToTab('/docs/big.pdf');
+
+    expect(useAppStore.getState().document?.fileName, '파싱 중인데 복원이 문서를 교체했다')
+      .toBe('a.pdf');
+  });
+
   it('이미 활성 탭이면 no-op', async () => {
     seedTabs(['/docs/a.pdf'], '/docs/a.pdf');
     await switchToTab('/docs/a.pdf');

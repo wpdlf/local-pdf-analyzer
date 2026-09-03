@@ -107,11 +107,26 @@ async function openTabTarget(tab: OpenTab): Promise<boolean> {
  */
 async function restoreTabFromSession(tab: OpenTab): Promise<boolean> {
   if (!tab.docHash) return false;
+  // QA32(B): 이 함수에는 소유권 검사가 **하나도 없었다**. 의존하던 방어는 `isTabSwitching`
+  // 인데 `handlePdfData` 는 그 플래그를 **의도적으로 보지 않는다**(자기 차단 방지 — tabs.ts:47).
+  // 그래서 탭 클릭이 persistCurrentSession + session.load(수 MB) 를 도는 창에서 드롭·Ctrl+O·
+  // 최근문서·전역검색이 handlePdfData 로 직행할 수 있고, 두 setDocument 가 임의 순서로 착지한다.
+  // handlePdfData 의 가드는 **파싱끼리만** 비교하므로(activeParseController) 세션 복원이 자기
+  // 결과를 덮어쓴 것을 탐지하지 못한다 — 사용자가 방금 드롭한 문서가 조용히 사라지고 탭만 남는다
+  // (QA20 C-MED 가 요약 경로에서 닫은 클래스와 동형).
+  const startDocId = useAppStore.getState().document?.id ?? null;
   const loaded = await window.electronAPI.session.load(tab.docHash).catch(() => null);
   const session = loaded?.session as PersistedSession | undefined;
   if (!session || typeof session.extractedText !== 'string' || !Array.isArray(session.pageTexts)) {
     return false;
   }
+  // await 사이에 다른 흐름이 활성 문서를 바꿨거나 파싱을 시작했으면 이 복원은 stale 이다.
+  // 호출자 셋(switchToTab·openFromSessionOnly·openCollection)은 모두 false 폴백을 갖고 있다.
+  // ⚠️ 양쪽을 같은 방식으로 정규화해야 한다 — 업로드 화면(document=null)에서 `?.id` 는
+  // `undefined` 이고 캡처값은 `null` 이라, 정규화 없이 비교하면 **문서가 없을 때 항상 불일치**가
+  // 되어 정상 복원까지 막는다(초판이 openCollection 3건을 깨뜨렸다).
+  const now = useAppStore.getState();
+  if ((now.document?.id ?? null) !== startDocId || now.isParsing) return false;
 
   // pdfBytes 비상주(메모리 M1): 뷰어용 원본 바이트는 인용 클릭 시 PdfViewerPanel 이 디스크에서
   // lazy 로드한다(여기서 eager 로 읽지 않음 → 전환 더 빠르고 ~100MB 상주 회피). 분석 상태는

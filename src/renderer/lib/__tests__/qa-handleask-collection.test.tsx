@@ -144,6 +144,31 @@ describe('handleAsk — 문서 교체 예정 상태 가드 (QA21)', () => {
 // buildPrompt 는 'keywords' 타입만 빼고 인용 규칙을 무조건 주입하고, 그 규칙은 "각 단락은 [p.N]
 // 으로 시작합니다 / 거의 모든 문장에 붙이세요" 라고 단언한다 → 모델이 페이지 번호를 지어내고,
 // 그 출력은 CitationButton 을 거쳐 정상 인용과 구분되지 않는 클릭 가능 버튼이 된다.
+/**
+ * QA32(B): 2-pass 검증 경로의 `setQaVerifying(true)` 앞에만 소유권 검사가 없었다.
+ * 검색 임베딩 중 Stop → abortQaPreservingThread 가 qaVerifying 을 내린 뒤 stale 핸들러가
+ * 다시 켜면, finally 의 소유권 게이트가 false 라 **꺼지지 않는다** — 다음 질문의 생성 단계
+ * 라벨이 "답변 검증 중" 으로 잘못 뜬다(검증 OFF 인 경로에서도).
+ */
+describe('handleAsk — 중단된 요청이 검증 스피너를 켜 두지 않는다 (QA32 B)', () => {
+  it('검색 임베딩 중 소유권을 잃으면 qaVerifying 이 켜지지 않는다', async () => {
+    seed(false);
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, enableAnswerVerification: true },
+    });
+    // 검색 임베딩이 도는 사이에 사용자가 Stop → 다른 요청이 소유권을 가져간 상황.
+    mockEmbed.mockImplementation(async () => {
+      useAppStore.setState({ qaRequestId: 'other-req' });
+      return { success: true, embeddings: [[1, 0, 0]], model: MODEL };
+    });
+
+    const { result } = renderHook(() => useQa());
+    await act(async () => { await result.current.handleAsk('중단될 질문'); });
+
+    expect(useAppStore.getState().qaVerifying, '중단된 요청이 검증 스피너를 켜 두었다').toBe(false);
+  });
+});
+
 describe('handleAsk — 키워드 폴백 페이지 라벨 (QA21)', () => {
   it('RAG 결과가 없어 키워드 폴백으로 가도 컨텍스트에 [p.N] 라벨이 공급된다', async () => {
     seed(false);

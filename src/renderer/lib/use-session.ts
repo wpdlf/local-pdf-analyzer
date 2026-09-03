@@ -181,6 +181,14 @@ export async function restoreSessionForDocument(doc: PdfDocument): Promise<void>
     }
 
     // 인덱스 복원 여부와 무관하게 게이트 해제 (마커 유무로 skip/build 가 갈림)
+    //
+    // QA32(B): 소유권을 다시 본다. 위 `:154` 의 doc 검사는 try **안**에 있어서, 그 뒤의
+    // `checkEmbedModel()` 이 reject 하면 inner catch 가 삼키고 여기로 떨어지는데 이 경로엔
+    // 재확인이 없었다. 게이트는 문서별이 아니라 **전역**이라, 그 사이 전환된 새 문서의 복원이
+    // 세운 pending 을 옛 흐름이 내린다 → useRagBuilder 자동 재빌드와 doPersistCurrentSession
+    // (이 게이트로 막고 있다)이 반쯤 복원된 문서에 대해 발화한다. 바깥 catch 는 이미 doc 검사를
+    // 받았는데 이 정상 경로만 남아 있었다(형제 누락).
+    if (useAppStore.getState().document?.id !== doc.id) return;
     store.setSessionRestorePending(false);
   } catch {
     if (useAppStore.getState().document?.id === doc.id) {

@@ -406,7 +406,7 @@ export async function buildRagIndex(
     }
 
     // 최종 문서 일치 확인 — stale이면 새 build가 소유하므로 건드리지 않음
-    if (signal.aborted || useAppStore.getState().document?.id !== docId) {
+    if (stale()) {
       return false;
     }
 
@@ -418,8 +418,15 @@ export async function buildRagIndex(
     });
     return true;
   } catch {
-    // 자신이 아직 active한 경우에만 정리 — 새 build의 상태를 덮어쓰지 않음
-    if (!signal.aborted) {
+    // 자신이 아직 active한 경우에만 정리 — 새 build의 상태를 덮어쓰지 않음.
+    //
+    // QA32(B): 여기만 `stale()` 전환에서 빠져 `signal.aborted` 만 봤다 — **같은 함수 안의
+    // 형제 누락**이다. 그런데 이 catch 의 쓰기는 앞구간 셋보다 더 파괴적이다: `ragIndex` 는
+    // store 가 공유하는 단일 인스턴스라, cleanup 지연으로 abort 가 늦게 도달하는 창에서
+    // **이미 전환된 새 문서의 인덱스를 비우고** `error:'embedFailed'` 를 박는다. 그 표식은
+    // use-session 의 preserveDiskIndex 가 읽는 값이라, 새 문서의 자동저장이 인덱스 없는
+    // 상태로 굳는다 — QA19 가 디스크 인덱스를 지키려고 만든 방어가 반대로 작동한다.
+    if (!stale()) {
       // QA19(C-MED): 위 배치 실패와 동일 — error 표식으로 디스크 인덱스를 보존한다.
       ragIndex.clear();
       store.setRagState({ isIndexing: false, isAvailable: false, chunkCount: 0, progress: null, error: 'embedFailed' });
@@ -1370,6 +1377,11 @@ export function useQa() {
         // ─── 2-pass: Draft → Verify → (Refine or Flush) ───
         // Step 1. Draft 를 내부 변수에만 수집 (qaStream 은 건드리지 않음). UI 는 qaVerifying=true
         //         로 "답변 준비 중..." 스피너 표시. 사용자에게는 검증된 최종 답변만 보임.
+        // QA32(B): 이 setter 앞에만 `stillOwns()` 가 없었다(바로 아래 셋과 finally 는 전부
+        // 갖고 있다). 검색 임베딩 중 Stop → abortQaPreservingThread 가 qaVerifying 을 내린 뒤
+        // stale 핸들러가 다시 켜면, finally 의 소유권 게이트가 false 라 **꺼지지 않는다** —
+        // 다음 질문의 생성 단계 라벨이 "답변 검증 중" 으로 잘못 뜬다(검증 OFF 인 경로에서도).
+        if (!stillOwns()) return;
         useAppStore.getState().setQaVerifying(true);
 
         let draft = '';

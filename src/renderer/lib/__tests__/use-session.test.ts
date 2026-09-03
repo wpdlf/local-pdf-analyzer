@@ -154,6 +154,32 @@ describe('restoreSessionForDocument (module-3)', () => {
     expect(tab?.docHash).toMatch(HEX);
   });
 
+  /**
+   * QA32(B): `:154` 의 doc 검사는 try **안**에 있어서, 그 뒤의 checkEmbedModel 이 reject 하면
+   * inner catch 가 삼키고 정상 경로로 떨어지는데 그쪽엔 재확인이 없었다. 복원 게이트는
+   * 문서별이 아니라 **전역**이라, 그 사이 전환된 새 문서의 복원이 세운 pending 을 옛 흐름이
+   * 내린다 → 자동 재빌드와 자동저장이 반쯤 복원된 문서에 대해 발화한다.
+   */
+  it('인덱스 복원 중 문서가 바뀌면 새 문서의 복원 게이트를 내리지 않는다', async () => {
+    const doc = makeDoc('doc-old');
+    useAppStore.setState({ document: doc, sessionRestorePending: true });
+    const fixture = persistedSession(doc, true);
+    api.session.load.mockImplementation(async (hash: string) => {
+      fixture.session.docHash = hash;
+      return fixture;
+    });
+    // 인덱스 복원 단계에서 문서가 교체되고, 그 뒤 checkEmbedModel 이 실패한다.
+    api.ai.checkEmbedModel.mockImplementation(async () => {
+      useAppStore.setState({ document: makeDoc('doc-new'), sessionRestorePending: true });
+      throw new Error('embed check failed');
+    });
+
+    await restoreSessionForDocument(doc);
+
+    expect(useAppStore.getState().sessionRestorePending, '옛 흐름이 새 문서의 복원 게이트를 내렸다')
+      .toBe(true);
+  });
+
   it('miss(null) → 게이트만 해제, 복원 없음', async () => {
     const doc = makeDoc();
     useAppStore.setState({ document: doc, sessionRestorePending: true });

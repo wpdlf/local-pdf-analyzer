@@ -165,6 +165,42 @@ describe('buildRagIndex — 방어 분기', () => {
     expect(useAppStore.getState().ragState.isAvailable, '옛 빌드가 새 문서의 RAG 를 껐다').toBe(true);
   });
 
+  /**
+   * QA32(B): catch 만 `stale()` 전환에서 빠져 `signal.aborted` 만 봤다 — 같은 함수 안의 형제
+   * 누락이다. 그리고 이 catch 의 쓰기가 앞구간보다 더 파괴적이다: 새 문서의 인덱스를 비우고
+   * `error:'embedFailed'` 를 박는데, 그 표식은 preserveDiskIndex 가 읽는 값이라 새 문서의
+   * 자동저장이 인덱스 없는 상태로 굳는다(QA19 의 방어가 반대로 작동).
+   */
+  it('throw 시점에 문서가 바뀌었으면 새 문서에 실패 표식을 박지 않는다', async () => {
+    // ⚠️ "새 문서의 인덱스가 남아 있는가" 로는 검증할 수 없다 — 빌드는 시작 시점에 자기
+    // 소유였던 인덱스를 **정당하게** clear 하므로 그 시점엔 이미 비어 있다. 실질 피해는
+    // `error:'embedFailed'` 쪽이다: preserveDiskIndex 가 그 값을 읽어 새 문서의 자동저장을
+    // 인덱스 없는 상태로 굳힌다.
+    useAppStore.setState({ document: { id: 'doc1' } as never });
+    mockCheckEmbedModel.mockResolvedValue({ available: true, model: 'nomic-embed-text' });
+    mockEmbed.mockImplementation(() => {
+      // 배치 도중 문서 전환이 먼저 일어나고, 그 뒤 예외가 난다.
+      useAppStore.setState({ document: { id: 'doc2' } as never });
+      throw new Error('boom');
+    });
+
+    const ok = await buildRagIndex(TEXT, 'doc1', new AbortController().signal);
+
+    expect(ok).toBe(false);
+    expect(useAppStore.getState().ragState.error, 'stale catch 가 새 문서에 실패 표식을 박았다').toBeNull();
+  });
+
+  it('문서가 그대로면 throw 를 embedFailed 로 표식한다 (짝 — 늘 skip 이면 위가 공허하다)', async () => {
+    useAppStore.setState({ document: { id: 'doc1' } as never });
+    mockCheckEmbedModel.mockResolvedValue({ available: true, model: 'nomic-embed-text' });
+    mockEmbed.mockImplementation(() => { throw new Error('boom'); });
+
+    const ok = await buildRagIndex(TEXT, 'doc1', new AbortController().signal);
+
+    expect(ok).toBe(false);
+    expect(useAppStore.getState().ragState.error).toBe('embedFailed');
+  });
+
   it('인덱싱 완료 시점에 문서가 바뀌어(docId 불일치) stale 이면 false 반환', async () => {
     // 빌드는 doc1 으로 시작했지만 완료 직전 store.document 가 doc2 로 전환된 상황을 시뮬레이션.
     useAppStore.setState({ document: { id: 'doc2' } as never });
