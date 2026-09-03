@@ -202,7 +202,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 - 자동 업데이트 — 시작 시 새 버전을 감지해 클릭 한 번으로 설치. 동의 없이 다운로드하지 않으며, 재시작 전에 작업 중이던 내용을 저장합니다
 
 **품질 보증**
-- 단위 테스트 2456건 + Playwright E2E + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
+- 단위 테스트 2463건 + Playwright E2E + CI 품질 게이트, 릴리즈마다 4-에이전트 병렬 QA 수행
 - 빌드 무결성 — 인스톨러 SHA-256 해시 + Sigstore attestation 자동 게시
 - 상세 개선·수정 이력: [docs/HISTORY.md](docs/HISTORY.md)
 
@@ -270,7 +270,7 @@ PDF에 포함된 차트, 다이어그램, 표, 사진 등을 Vision AI가 자동
 | 마크다운·수식 | react-markdown + remark-gfm, KaTeX(MathML 단독 출력 — 웹폰트 없음, CSP 완화 없음) — 화면 렌더와 PDF 내보내기가 공유 |
 | 빌드 | electron-vite + electron-builder (Windows NSIS — macOS DMG는 공증 자격 확보 시까지 일시 중단) |
 | 자동 업데이트 | electron-updater (GitHub Releases 피드) — 시작 시 확인, 다운로드·설치는 사용자 승인 후, 설치 직전 렌더러 flush |
-| 테스트 | Vitest 단위 테스트 2456건/117파일 (renderer·shared 1565 + main 891) + Playwright E2E (CI-결정적 10건) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (81/74/81/85) |
+| 테스트 | Vitest 단위 테스트 2463건/117파일 (renderer·shared 1572 + main 891) + Playwright E2E (CI-결정적 10건) + `tsc --noEmit` 타입 체크 + CI 커버리지 게이트 (81/75/81/85) |
 | 다국어 (i18n) | 자체 구현 (i18n.ts) — 400+ 키, useT() 훅, 템플릿 치환 |
 | API 키 보안 | Electron safeStorage (OS 키체인 암호화), Main 프로세스에서만 복호화 |
 | 공유 상수 | `src/shared/constants.ts` — Main/Renderer 공유 (MAX_PDF_SIZE 등 drift 방지) |
@@ -323,7 +323,7 @@ src/
     │   ├── use-qa.ts          # Q&A 채팅 훅 (RAG 시맨틱 검색 + 키워드 fallback, 대화 이력)
     │   ├── vector-store.ts    # 인메모리 벡터 스토어 (코사인 유사도 검색, 차원 검증)
     │   ├── store.ts           # Zustand 상태 관리 (요약 + Q&A + RAG 인덱스)
-    │   └── __tests__/         # 단위 테스트 (2456건, 117 파일)
+    │   └── __tests__/         # 단위 테스트 (2463건, 117 파일)
     └── types/
         └── index.ts       # 타입 정의 + Provider 모델 상수
 ```
@@ -518,7 +518,7 @@ PDF 파일
 
 ## 품질 보증
 
-- **단위 테스트 2456건 / 117파일** — renderer·shared 1565 + main 891. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service·전체 문서 검색까지 행위 테스트, 렌더러/preload 레이어(컴포넌트 18종 전수 + 앱 셸 자체 + use-summarize/use-session/pdf-parser/safe-markdown 등 핵심 라이브러리 + preload 브리지)는 happy-dom 으로 행위 테스트
+- **단위 테스트 2463건 / 117파일** — renderer·shared 1572 + main 891. 메인 프로세스는 electron 모킹 하니스로 IPC 핸들러·OllamaManager·API 키 저장소·ai-service·전체 문서 검색까지 행위 테스트, 렌더러/preload 레이어(컴포넌트 18종 전수 + 앱 셸 자체 + use-summarize/use-session/pdf-parser/safe-markdown 등 핵심 라이브러리 + preload 브리지)는 happy-dom 으로 행위 테스트
 - **Playwright E2E** — 실제 Electron 빌드를 구동하는 CI-결정적 테스트 10건(콜드 스타트 위자드·PDF 파싱·세션/설정 재시작 복원·업로드 에러 경로, 그리고 수식 렌더링이 의존하는 브라우저 엔진의 수식 레이아웃), 전부 AI 비의존, 멀티탭 복원과 요약/Q&A/컬렉션은 로컬-전용 Ollama 스펙으로 커버
 - **CI 게이트** — `tsc --noEmit`(strict, e2e 전용 타입체크 프로젝트 포함), 커버리지 임계(81/74/81/84) 강제, lockfile 버전 동기화 검증, 태그 ↔ `package.json` 버전 일치 검증, 차단성 `npm audit` 게이트 2종(프로덕션 트리 전량 + 실제 배포되는 것의 **전이 의존**까지 lockfile 폐포로 검사), 수식 청크가 초기 번들로 새지 않는지 보는 빌드 시점 검사, Node 22/24 매트릭스 + Windows 유닛 테스트 레그
 - **패키징 앱 게이트(릴리즈 전용)** — 릴리즈 워크플로가 자산을 업로드하기 **전에** 실제 패키징된 바이너리를 띄워, renderer 가 **asar 안의 번들만으로** 기동하고 실제 PDF 를 파싱하는지 검증한다(+asar 크기 상한). 다른 E2E 스펙은 전부 소스 트리의 `out/` 을 실행해 리포지토리의 `node_modules` 가 그대로 보이므로, 패키징 회귀를 구조적으로 잡을 수 없다
