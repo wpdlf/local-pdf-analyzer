@@ -377,6 +377,40 @@ describe('런타임 바이너리 이름 대조 (QA26 D-High)', { timeout: 30000 
   });
 });
 
+/**
+ * QA32(D-6): `//testingPinPolicy` 는 "이 목록은 정확 핀" 이라고 선언만 하고 **아무도 검사하지
+ * 않았다** — `npm i -D vitest@latest` 한 번이면 캐럿이 들어가 정책이 조용히 무효가 된다
+ * (실제로 QA 라운드 4 에서 그 함정을 밟아 수동 복원한 전례가 있다).
+ * 그리고 주석의 개수("6종/3개")가 jest-dom 제거 뒤 실제(5종/2개)와 어긋나 있었다 —
+ * 산문 대신 이 목록이 단일 출처가 되도록 여기서 못박는다.
+ */
+describe('테스트 인프라 핀 정책 (//testingPinPolicy)', () => {
+  const TESTING_PINS = [
+    '@testing-library/react',
+    '@testing-library/user-event',
+    '@vitest/coverage-v8',
+    'happy-dom',
+    'vitest',
+  ];
+
+  const readPkg = () => JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
+    devDependencies?: Record<string, string>;
+  };
+
+  it('정책 대상이 실제 devDependencies 와 일치한다', () => {
+    const dev = Object.keys(readPkg().devDependencies ?? {});
+    const actual = dev.filter((d) => /^(vitest$|happy-dom$|@vitest\/coverage-v8$|@testing-library\/)/.test(d)).sort();
+    expect(actual, '테스트 인프라 목록이 바뀌었다 — 정책 주석과 이 배열을 함께 갱신할 것').toEqual(TESTING_PINS);
+  });
+
+  it.each(TESTING_PINS)('`%s` 는 범위 접두사 없는 정확 버전이다', (name) => {
+    const spec = (readPkg().devDependencies ?? {})[name];
+    expect(spec, `${name} 가 devDependencies 에 없다`).toBeDefined();
+    expect(spec!, `${name} 가 캐럿/틸데로 풀렸다 — 매처·DOM 시뮬레이션이 조용히 바뀌어 CI 가 그린인 채 false negative 를 낸다`)
+      .toMatch(/^\d+\.\d+\.\d+$/);
+  });
+});
+
 describe('배포 분류 드리프트 가드 (QA26 D-High/D-Important)', () => {
   /**
    * 배포물에 **닿지 않는** devDependency. 여기 없고 shipped 목록에도 없으면 테스트가 실패한다.

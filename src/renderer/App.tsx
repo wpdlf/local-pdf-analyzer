@@ -641,7 +641,12 @@ export default function App() {
       )}
 
       {/* Main Content — tabIndex={-1}: 프로그램적 포커스 폴백 대상(QA18 D-LOW), 탭 순서엔 미포함 */}
-      <main ref={mainViewRef} tabIndex={-1} className="flex-1 overflow-y-auto p-4 focus:outline-none">
+      {/* QA32(A-4): flex 컬럼 + min-h-0. 종전에는 블록 컨테이너였고 SummaryViewer 가 `h-full`
+          (=이 박스의 100%)이라, 위의 error/notice 배너가 뜨면 콘텐츠가 `배너 + 100%` 가 되어
+          패널 하단이 가시 영역 **아래**로 내려갔다. 그 상태에서 패널 기준으로 뜨는 복사 토스트는
+          접힌 영역에 그려져 보이지 않는다(배너 ≈76px > 토스트 ≈36px). 토스트는 증상이고, 선행
+          문제는 배너가 있을 때 문서 뷰가 화면 밖으로 밀리는 것 자체다 — 여기서 함께 닫는다. */}
+      <main ref={mainViewRef} tabIndex={-1} className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col focus:outline-none">
         {/* 에러 표시 — role="alert"(assertive): 모든 작업 실패의 단일 채널이므로 SR 즉시 통지(a11y H1) */}
         {error && (
           <div role="alert" className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start justify-between">
@@ -786,7 +791,11 @@ export default function App() {
 
         {/* 3) 요약 진행 중 또는 완료: 결과 뷰어 (H1: 접힌 상태면 숨김) */}
         {(isGenerating || hasSummary) && !summaryCollapsed && (
-          <SummaryViewer onAbort={handleAbort} />
+          // flex-1 min-h-0: 남는 공간만 차지한다(배너가 있으면 그만큼 줄어든다). `h-full` 이면
+          // 배너 높이만큼 넘쳐 패널 하단이 가시 영역 밖으로 나간다 — 위 <main> 주석 참조.
+          <div className="flex-1 min-h-0">
+            <SummaryViewer onAbort={handleAbort} />
+          </div>
         )}
       </main>
 

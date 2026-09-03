@@ -102,6 +102,28 @@ async function push(s: UpdateState) {
   await act(async () => { emit?.(s); });
 }
 
+/**
+ * QA32(A-4): 복사 토스트를 요약 패널 기준(absolute)으로 바꾼 뒤, **배너가 뜨면 화면 밖으로
+ * 밀려** 보이지 않는 문제가 생겼다. 원인은 토스트가 아니라 레이아웃이다 — `<main>` 이 블록
+ * 컨테이너이고 SummaryViewer 가 `h-full`(=main 의 100%)이라, 배너가 더해지면 콘텐츠가
+ * `배너 + 100%` 가 되어 패널 하단이 가시 영역 아래로 내려간다. 토스트는 그 증상일 뿐이고,
+ * 선행 문제는 **배너가 있을 때 문서 뷰가 화면 밖으로 밀리는 것** 자체다.
+ *
+ * happy-dom 은 실제 레이아웃을 계산하지 않으므로 **기제**를 못박는다: main 이 세로 flex 이고
+ * 뷰어 래퍼가 남는 공간만 차지하는가. 둘 중 하나만 빠져도 넘침이 돌아온다.
+ */
+describe('App — 배너가 있어도 문서 뷰가 화면 밖으로 밀리지 않는다 (QA32 A-4)', () => {
+  it('main 은 세로 flex 이고 넘치지 않는다', async () => {
+    await mountApp();
+    const main = document.querySelector('main');
+    expect(main, 'main 을 찾지 못했다 — 이 가드가 무력화된 상태다').not.toBeNull();
+    expect(main!.className, 'main 이 세로 flex 가 아니다 — 자식이 남는 공간을 나눠 가질 수 없다')
+      .toMatch(/(^|\s)flex-col(\s|$)/);
+    expect(main!.className, 'min-h-0 이 없으면 flex 자식이 축소되지 않아 넘친다')
+      .toMatch(/(^|\s)min-h-0(\s|$)/);
+  });
+});
+
 describe('App — 자동 업데이트 배너 배선 (QA25)', () => {
   it('main 의 상태 구독이 실제로 배너를 띄운다', async () => {
     await mountApp();

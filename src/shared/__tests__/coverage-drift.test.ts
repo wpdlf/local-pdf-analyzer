@@ -120,6 +120,22 @@ describe('커버리지 분모 (coverage.exclude) 는 조용히 자라지 않는�
   const entries = [...coverageBlock.slice(start, coverageBlock.indexOf(']', start)).matchAll(/'([^']+)'/g)]
     .map((m) => m[1]!);
 
+  /**
+   * QA32(D-2): `exclude` 만 핀하고 **`include` 는 무핀**이었다 — 분모의 나머지 절반이다.
+   * 실측: `include` 를 renderer 하위만 보도록 좁혀 **src/main 전량을 분모에서
+   * 빼도** 메타 가드 91/91 통과하고, 비율은 오히려 **오르며**(85.9→86.7 등) 드리프트
+   * 스크립트는 "게이트를 올리세요" 라고 권한다. 결함 밀도가 가장 높은 메인 프로세스를 한 줄로
+   * 측정에서 제외해도 아무 신호가 없다. exclude 핀을 만든 그 블록의 형제 누락이다.
+   */
+  it('측정 대상(include)이 좁아지지 않는다', () => {
+    const start = coverageBlock.indexOf('include: [');
+    expect(start, 'coverage.include 를 찾지 못했다 — 이 가드가 무력화된 상태다').toBeGreaterThan(-1);
+    const entries = [...coverageBlock.slice(start, coverageBlock.indexOf(']', start)).matchAll(/'([^']+)'/g)]
+      .map((m) => m[1]!);
+    expect(entries, 'src 전체가 아닌 하위만 측정하면 나머지는 회귀가 무감지로 통과한다')
+      .toEqual(['src/**/*.{ts,tsx}']);
+  });
+
   it('목록을 추출했다 (추출이 비면 아래 핀이 공허해진다)', () => {
     expect(start, 'vitest.config 의 coverage.exclude 를 찾지 못했다 — 이 가드가 무력화된 상태다')
       .toBeGreaterThan(-1);

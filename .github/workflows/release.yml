@@ -69,7 +69,9 @@ jobs:
         with:
           persist-credentials: false
 
-      # Node 24
+      # QA32(D-8): 종전 주석은 `# Node 24` 였는데 바로 아래가 `node-version: '22'` 다 —
+      # 액션의 Node 런타임(node24)과 **설치할 Node 버전**을 섞어 적은 것이라 읽는 사람을 오도한다.
+      # 액션 런타임은 `uses:` 줄 끝 주석의 태그가 결정하므로 여기 적을 것이 아니다.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # R37 P5-3 (v0.18.23): 20.11 → 22. Node 20.11 EoL(2026-04) 경과 + test.yml 매트릭스/
@@ -221,7 +223,9 @@ jobs:
       # C5-I2(QA cycle5): E2E 스모크를 릴리즈 게이트로 승격. 이전엔 E2E 실행이 test.yml(main push)
       # 에만 있고 릴리즈 경로는 e2e 타입체크만 해서, 번들/IPC/preload 배선 회귀가 태그 push 로
       # 그린 릴리즈될 수 있었다 — test.yml 이 4릴리즈 연속 red 였던 M4 사건과 동일 구조의 맹점.
-      # ubuntu 레그에서만 실행(+3~5분): CI-결정적 스펙 9건, AI 백엔드 불필요. Windows 레그는
+      # ubuntu 레그에서만 실행(+3~5분): CI-결정적 스펙만, AI 백엔드 불필요. Windows 레그는
+      # (QA32 D-8: 종전 주석은 '9건' 이라 적었는데 README 는 10건이었다 — 개수는 늘고 줄므로
+      #  주석에 적지 않는다. 실제 집합은 playwright 설정과 스펙의 skip 조건이 단일 출처다.)
       # 경로/pwsh 유닛 회귀 검증 전용 유지(이중 실행 회피).
       - name: Build + E2E smoke gate (ubuntu)
         if: matrix.e2e

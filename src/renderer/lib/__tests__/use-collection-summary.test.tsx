@@ -88,6 +88,9 @@ beforeEach(() => {
   M.prompt = '';
   M.throwAfter = false;
   M.midStream = null;
+  // QA32: `M.tokens` 도 못박는다 — 리셋하지 않으면 이것을 바꾸는 테스트가 뒤 테스트로 누수돼
+  // 순서 의존 그린이 된다(QA22 가 셔플로 실측한 클래스. 실제로 한 번 밟았다).
+  M.tokens = ['통합', ' 결과'];
   mockSessionList.mockResolvedValue([manifestEntry('b'.repeat(64), MODEL, 3)]);
   useAppStore.getState().ragIndex.clear();
   // 활성 문서 메모리 표현·busy 플래그 리셋 — 테스트 간 누수 차단(QA M1 메모리 폴백 경로가 이 값을 읽음)
@@ -177,6 +180,31 @@ describe('generateCollectionSummary (L2)', () => {
     const bare = Array.from(M.prompt.matchAll(new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags)))
       .filter((m) => m.groups?.doc === undefined);
     expect(bare, '맨 인용이 reduce 프롬프트에 남아 있다').toHaveLength(0);
+  });
+
+  /**
+   * QA32(C-1, High): 이 커밋만 인용 후처리를 하나도 거치지 않았다. 남은 맨 `[p.N]` 은
+   * docName 이 없어 CitationButton 이 **활성 문서** 페이지로 검증한다 — 근거는 다른 문서에
+   * 있는데 지금 보는 문서로 점프하는 정상 버튼이 된다. QA21 의 동명 모호성·닫힌 문서 가드는
+   * docName 이 있어야 작동하므로 전부 비껴간다. 기존 테스트는 **입력**(M.prompt)에 맨 인용이
+   * 없음만 봤고 출력 단언이 없었다.
+   */
+  it('결과 본문에 맨 [p.N] 이 남지 않는다 (활성 문서로 점프하는 오답 인용 차단)', async () => {
+    seedActive();
+    setStore(['a'.repeat(64), 'b'.repeat(64)]);
+    mockSessionLoad.mockImplementation((h: string) =>
+      Promise.resolve(memberSession(h === 'a'.repeat(64) ? 'Alpha.pdf' : 'Beta.pdf', '요약', 'fulltext')));
+    // 모델이 출처를 떼어낸 인용을 뱉는 상황 — 프롬프트 지시 이행에만 의존하면 이렇게 된다.
+    M.tokens = ['통합 결과', ' 근거[p.7] 이다.'];
+
+    await generateCollectionSummary('unified');
+
+    const content = useAppStore.getState().qaMessages.at(-1)?.content ?? '';
+    const bare = Array.from(content.matchAll(new RegExp(CITATION_REGEX.source, CITATION_REGEX.flags)))
+      .filter((m) => m.groups?.doc === undefined);
+    expect(bare, '출처 없는 인용이 결과에 남았다 — 활성 문서로 점프한다').toHaveLength(0);
+    // 본문 자체는 보존되어야 한다(인용만 제거).
+    expect(content).toContain('통합 결과');
   });
 
   it('QA27(B-High): 이미 출처가 붙은 인용은 멤버 파일명으로 덮어쓰지 않는다', async () => {

@@ -94,8 +94,58 @@ describe('릴리즈 매트릭스의 의도 플래그는 실행되는 소비처�
     const withFlag = (flag: string) =>
       steps(src).filter((s) => new RegExp(String.raw`^\s*if:\s*matrix\.${flag}\s*$`, 'm').test(s)).join('\n');
     expect(withFlag('coverage')).toMatch(/npm run test:coverage/);
-    expect(withFlag('e2e')).toMatch(/npm run (test:e2e|build)/);
+    // QA32(D-4): 초판은 `npm run (test:e2e|build)` 라 **대안 `build` 가 E2E 실행을 면제**했다 —
+    // playwright 줄만 지워도 통과했다(실측). 실제로 도는 명령을 직접 못박는다.
+    expect(withFlag('e2e')).toMatch(/npm run build/);
+    expect(withFlag('e2e'), 'E2E 실행이 사라졌다 — build 만 남아도 이 스텝은 초록이다')
+      .toMatch(/playwright test/);
     expect(withFlag('audit')).toMatch(/npm audit/);
+  });
+});
+
+/**
+ * QA32(D-1, High): 위 도출은 **매트릭스 의도 플래그**에서 출발한다. 그런데 `build-windows`
+ * 잡에는 매트릭스가 없어 **그 잡의 게이트는 도출 대상 자체가 아니었다** — 이 클래스를 닫으려고
+ * 만든 가드 안에서 같은 형제 누락이 재발했다. 실측: 세 스텝을 통째로 지워도 91/91 통과.
+ *
+ * 이 잡의 게이트는 성격이 다르다. 셋 다 **없어도 빌드는 성공하고 릴리즈도 정상으로 보이는데**
+ * 사용자 쪽에서만 조용히 깨진다:
+ *  - packaged smoke: asar 내용물 검증(소스트리 E2E 가 못 보는 층). memory 의 "실행 없이 초록이
+ *    되는 3경로" 를 막으려고 게이트화한 스펙이다.
+ *  - auto-update 메타: latest.yml/blockmap 이 없으면 **전 사용자 자동 업데이트가 정지**한다.
+ *  - 태그↔버전: 어긋나면 latest.yml 이 구버전을 가리켜 "최신 버전입니다" 로 영구 고착된다.
+ */
+describe('릴리즈 빌드 잡의 게이트는 명령까지 살아 있어야 한다', () => {
+  const src = wf(RELEASE);
+  /** `build-windows` 잡 본문만 자른다(다음 최상위 잡 키 또는 파일 끝까지). */
+  const buildJob = (() => {
+    const start = src.indexOf('\n  build-windows:');
+    expect(start, `${RELEASE}: build-windows 잡을 찾지 못했다 — 이 가드가 무력화된 상태다`)
+      .toBeGreaterThan(-1);
+    const rest = src.slice(start + 1);
+    const nextJob = rest.search(/\n {2}[a-z][\w-]*:\n/);
+    return nextJob === -1 ? rest : rest.slice(0, nextJob);
+  })();
+
+  it.each([
+    ['Packaged app smoke gate', /playwright test e2e\/packaged-smoke\.spec\.ts/],
+    ['Verify auto-update metadata exists', /dist\/latest\.yml/],
+  ])('`%s` 스텝이 실제 명령과 함께 남아 있다', (name, command) => {
+    const jobSteps = buildJob.split(/^ {6}- /m).slice(1);
+    const step = jobSteps.find((s) => s.startsWith(`name: ${name}`));
+    expect(step, `${RELEASE}: "${name}" 스텝이 사라졌다 — 빌드는 성공하고 사용자 쪽만 조용히 깨진다`)
+      .toBeDefined();
+    expect(step!, `"${name}" 스텝이 남아 있지만 명령이 바뀌었다`).toMatch(command);
+  });
+
+  // 태그↔버전 게이트는 `test` 잡에 있다(빌드 이전에 걸러야 하므로) — 잡 스코프가 다르니
+  // 파일 전체에서 본다. 어긋나면 latest.yml 이 구버전을 가리켜 전 사용자가 "최신 버전입니다"
+  // 로 고착된다(QA19 가 이 게이트를 만든 사유).
+  it('태그↔package.json 버전 게이트가 남아 있다', () => {
+    const gate = steps(src).find((s) => s.startsWith('name: Verify tag matches package.json version'));
+    expect(gate, `${RELEASE}: 태그↔버전 게이트가 사라졌다`).toBeDefined();
+    expect(gate!).toMatch(/GITHUB_REF_NAME/);
+    expect(gate!, '불일치를 실패로 다루지 않는다').toMatch(/exit 1/);
   });
 });
 
@@ -120,5 +170,57 @@ describe('test.yml 트리거는 좁아지지 않는다 (skip 은 required check 
 
   it('pull_request 트리거에는 하위 필터가 없다 (types 로 좁히면 일부 PR 이 검증 없이 통과한다)', () => {
     expect(childLines(on, 'pull_request'), `${TEST_WF}: pull_request 트리거가 좁아졌다`).toEqual([]);
+  });
+});
+
+/**
+ * QA32(D-3): 위 도출은 매트릭스 플래그를 소비하는 `if:` 를 본다. 그런데 **test.yml 에는 의도
+ * 플래그가 없어** 잡 본문이 통째로 도출 밖이었다 — `npm run test:coverage` 를 `echo` 로
+ * 바꿔도 91/91 통과했다(실측). push/PR 경로의 blocking 게이트는 이 파일이 전부이므로,
+ * 여기가 조용히 사라지면 main 에 회귀가 그대로 쌓인다.
+ *
+ * 개별 스텝 이름을 열거하지 않고 **명령**을 본다 — 스텝을 재배치하거나 이름을 바꾸는 정상
+ * 리팩터에는 걸리지 않고, 게이트가 실제로 사라질 때만 걸린다.
+ */
+describe('test.yml 의 blocking 게이트 명령이 살아 있다', () => {
+  const src = wf(TEST_WF);
+
+  it.each([
+    ['타입 체크(src)', /npx tsc --noEmit/],
+    ['타입 체크(e2e)', /npx tsc -p tsconfig\.e2e\.json/],
+    ['유닛 테스트', /npm test --/],
+    ['커버리지 게이트', /npm run test:coverage/],
+    ['lockfile 동기 검사', /package-lock\.json/],
+    ['E2E', /playwright test/],
+  ])('%s 가 남아 있다', (_label, command) => {
+    expect(src, `${TEST_WF}: 게이트 명령이 사라졌다 — push/PR 경로가 그만큼 비어 있게 된다`)
+      .toMatch(command);
+  });
+});
+
+/**
+ * QA32(D-5): CI 보안 컨트롤이 산문 주석으로만 지켜지고 있었다 — 워크플로 수준 최소권한
+ * (QA20 B-MED)과 `persist-credentials: false`(QA24 D-I3 · QA28 D-Low)를 되돌려도 91/91
+ * 통과했다(실측). QA31 의 CSP 게이트와 같은 클래스: 보안 컨트롤의 유일한 보호가 주석.
+ */
+describe('CI 보안 컨트롤 (권한 최소화 · 토큰 잔류 방지)', () => {
+  it.each([TEST_WF, RELEASE])('%s: 워크플로 수준 권한이 넓어지지 않는다', (path) => {
+    const src = wf(path);
+    const top = src.slice(0, src.indexOf('\njobs:'));
+    expect(top, `${path}: 워크플로 수준 permissions 선언이 사라졌다`).toMatch(/permissions:/);
+    // 쓰기 권한은 그것이 꼭 필요한 **잡**에서만 승격한다(릴리즈 업로드·attestation).
+    expect(top, `${path}: 워크플로 수준에 쓰기 권한이 생겼다 — 모든 잡이 그것을 상속한다`)
+      .not.toMatch(/^\s+(contents|id-token|attestations|packages):\s*write/m);
+  });
+
+  it.each([TEST_WF, RELEASE])('%s: 모든 checkout 이 토큰을 남기지 않는다', (path) => {
+    const src = wf(path);
+    const steps = src.split(/^ {6}- /m).slice(1).filter((s) => s.includes('actions/checkout@'));
+    expect(steps.length, `${path}: checkout 스텝을 찾지 못했다 — 이 가드가 무력화된 상태다`)
+      .toBeGreaterThan(0);
+    for (const s of steps) {
+      expect(s, `${path}: persist-credentials:false 가 빠진 checkout 이 있다 — npm ci 가 돌리는 서드파티 스크립트에 .git/config 토큰이 남는다`)
+        .toMatch(/persist-credentials:\s*false/);
+    }
   });
 });

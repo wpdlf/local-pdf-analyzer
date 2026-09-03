@@ -5,7 +5,10 @@ import { t } from './i18n';
 import { sanitizePromptInput } from './use-qa';
 // QA29(B-5): 발췌/인라인 생성 입력에 `[p.N]` 을 붙이는 단일 구현을 재사용(요약 경로와 동일 규칙).
 import { labelParagraphsWithPages } from './use-summarize';
-import { qualifyBareCitations, stripTrailingPartialCitation } from './citation';
+import {
+  qualifyBareCitations, stripTrailingPartialCitation,
+  stripBareCitations, normalizeCitationPlacement,
+} from './citation';
 import { isCustomSummaryType } from '../types';
 import type { PersistedSession, ResolvedMember, SummaryType, AppSettings } from '../types';
 
@@ -451,7 +454,21 @@ export async function generateCollectionSummary(kind: CollectionSummaryKind): Pr
       post.flushQaStream();
       post.clearQaStream();
       if (answer.trim()) {
-        post.addQaMessage({ role: 'assistant', content: `**${resultTitle}**\n\n${answer}` });
+        // QA32(C-1, High): 이 커밋만 인용 후처리를 하나도 거치지 않았다. 대조군인 Q&A 는
+        // `normalizeCitationPlacement(usedCollectionContext ? stripBareCitations(answer) : answer)`
+        // 를 거친다(use-qa.ts:1451).
+        //
+        // 왜 위험한가: 남은 맨 `[p.7]` 은 `docName` 이 없으므로 CitationButton 이
+        // `isCrossDoc=false` 로 보고 **활성 문서의 페이지 수**로 검증한다 — 근거는 다른 문서에
+        // 있는데 지금 보고 있는 문서 7쪽으로 점프하는 **정상 버튼**이 된다. QA21 이 만든 동명
+        // 모호성·닫힌 문서 가드는 전부 `docName` 이 있어야 작동하므로 그대로 비껴간다.
+        //
+        // QA27(B-High)은 이 클래스를 **입력 승격**(qualifyBareCitations)으로 닫았고 QA29 는
+        // "승격만으로는 모자라다 — 모델이 출처를 떼어낼 유인이 있으므로 출력에서도 지운다" 를
+        // Q&A 에만 적용했다. 교차 요약은 **정의상 전 블록이 타 문서**인 경로인데 그 출력 방어만
+        // 없었다. 조건부일 필요도 없다(항상 컬렉션 컨텍스트다).
+        const cleaned = normalizeCitationPlacement(stripBareCitations(answer));
+        post.addQaMessage({ role: 'assistant', content: `**${resultTitle}**\n\n${cleaned}` });
       } else {
         // QA post-v0.31.14: 비-abort 빈 응답이면 위에서 추가한 user 메시지가 홀로 남아 짝 FIFO
         // 불변식이 깨진다. handleAsk 와 동일하게 meta='cancelled' placeholder 로 짝 유지.
