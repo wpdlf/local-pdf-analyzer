@@ -1,10 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   CONTEXT_BUCKETS,
   DEFAULT_NUM_CTX,
   OUTPUT_RESERVE_TOKENS,
   estimateTokens,
   resolveNumCtx,
+  stickyNumCtx,
+  exceedsMaxContext,
+  numCtxTimeoutScale,
+  __resetStickyNumCtxForTest,
 } from '../ollama-context';
 
 /**
@@ -111,5 +115,74 @@ describe('resolveNumCtx — 버킷 선택', () => {
     for (let i = 1; i < CONTEXT_BUCKETS.length; i++) {
       expect(CONTEXT_BUCKETS[i]!).toBeGreaterThan(CONTEXT_BUCKETS[i - 1]!);
     }
+  });
+});
+
+/**
+ * QA32(A-1): 버킷의 근거였던 "한 활동 안에서 값이 변하지 않는다" 가 실제 문서에서 깨졌다 —
+ * 요약 지시문(1,461자)을 포함하면 8192→16384 경계가 청크 5,914자에 오는데 chunker 의 청크
+ * 상한은 라벨 포함 6,174자다. 경계가 상한 **아래**라 청크들이 양옆에 흩어지고, 한국어 40쪽
+ * 실측에서 22청크 중 전환 8회(재로드 22.4초)가 났다.
+ */
+describe('stickyNumCtx — 하강 전환 제거', () => {
+  beforeEach(() => { __resetStickyNumCtxForTest(); });
+
+  it('올라간 창은 내려오지 않는다 (재로드의 대다수가 하강이다)', () => {
+    expect(stickyNumCtx('gemma3', 8192)).toBe(8192);
+    expect(stickyNumCtx('gemma3', 16384)).toBe(16384);
+    expect(stickyNumCtx('gemma3', 4096)).toBe(16384);
+    expect(stickyNumCtx('gemma3', 8192)).toBe(16384);
+  });
+
+  it('모델이 다르면 서로 끌어올리지 않는다 (다른 모델은 어차피 별도 로드다)', () => {
+    stickyNumCtx('gemma3', 16384);
+    expect(stickyNumCtx('llama3.2', 4096)).toBe(4096);
+  });
+
+  it('청크 수열의 전환 횟수를 단언한다 (값 하나씩 보면 요동을 못 잡는다)', () => {
+    // 실측 재현: 경계 양옆에 흩어진 청크들
+    const seq = [16384, 8192, 8192, 16384, 8192, 16384, 8192, 4096];
+    const sticky = seq.map((n) => stickyNumCtx('gemma3', n));
+    const transitions = sticky.filter((v, i) => i > 0 && v !== sticky[i - 1]).length;
+    expect(transitions, `전환 ${transitions}회 — 하강이 남아 있다`).toBe(0);
+    // 원본 수열은 전환이 5회였다(이 테스트가 공허하지 않다는 근거).
+    const rawTransitions = seq.filter((v, i) => i > 0 && v !== seq[i - 1]).length;
+    expect(rawTransitions).toBeGreaterThan(0);
+  });
+
+  it('상승은 허용한다 — 필요한 창을 못 쓰면 원래 결함이 돌아온다', () => {
+    expect(stickyNumCtx('gemma3', 4096)).toBe(4096);
+    expect(stickyNumCtx('gemma3', 16384)).toBe(16384);
+  });
+});
+
+describe('exceedsMaxContext — 상한 초과는 여전히 잘린다는 사실을 알린다', () => {
+  it('상한 안이면 false', () => {
+    expect(exceedsMaxContext('시스템', '가'.repeat(1000))).toBe(false);
+  });
+
+  it('상한을 넘으면 true (설정에서 청크를 올리면 도달 가능한 구간)', () => {
+    expect(exceedsMaxContext('시스템', '가'.repeat(30_000))).toBe(true);
+  });
+
+  it('resolveNumCtx 가 상한으로 클램프한 바로 그 경우를 가리킨다', () => {
+    const huge = '가'.repeat(30_000);
+    expect(resolveNumCtx('', huge)).toBe(CONTEXT_BUCKETS[CONTEXT_BUCKETS.length - 1]);
+    expect(exceedsMaxContext('', huge)).toBe(true);
+  });
+});
+
+describe('numCtxTimeoutScale — 감시견이 정상 스트림을 죽이지 않도록', () => {
+  it('기본값에서는 1 (종전 동작 무회귀)', () => {
+    expect(numCtxTimeoutScale(DEFAULT_NUM_CTX)).toBe(1);
+  });
+
+  it('창이 커진 비율만큼 커진다 (프롬프트 평가량이 그만큼 늘어난다)', () => {
+    expect(numCtxTimeoutScale(8192)).toBe(2);
+    expect(numCtxTimeoutScale(16384)).toBe(4);
+  });
+
+  it('1 아래로는 내려가지 않는다 (상한을 줄이는 방향은 없다)', () => {
+    expect(numCtxTimeoutScale(1024)).toBe(1);
   });
 });

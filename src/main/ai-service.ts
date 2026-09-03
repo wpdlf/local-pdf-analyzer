@@ -3,7 +3,16 @@ import https from 'https';
 import { StringDecoder } from 'string_decoder';
 import { BrowserWindow } from 'electron';
 import { isLocalhostHost, MAX_AI_REQUEST_DURATION_MS } from '../shared/constants';
-import { resolveNumCtx } from './ollama-context';
+import {
+  resolveNumCtx, stickyNumCtx, exceedsMaxContext, numCtxTimeoutScale,
+} from '../shared/ollama-context';
+
+/**
+ * Vision 요청에서 이미지 한 장이 차지하는 토큰의 보수적 상한 (QA32 C-3).
+ * llava≈576 · llama3.2-vision≈1601 · minicpm-v 는 타일링으로 그 이상. 과소 산정이 곧 절단이므로
+ * 넉넉히 잡는다(창을 한 단계 올리는 비용보다 잘린 OCR 결과가 세션에 굳는 비용이 크다).
+ */
+const VISION_IMAGE_TOKEN_BUDGET = 2048;
 
 interface GenerateRequest {
   text: string;
@@ -489,8 +498,14 @@ async function generateOllama(
   validateOllamaUrl(request.ollamaBaseUrl);
   const url = new URL('/api/generate', request.ollamaBaseUrl);
   const { system, user } = splitPrompt(prompt);
+  const model = request.model || 'llama3.2';
+  const numCtx = stickyNumCtx(model, resolveNumCtx(system, user));
+  // QA32(A-5): 상한을 넘으면 클램프될 뿐 여전히 앞부분이 잘린다. 호출부 예산(maxChunkSize 는
+  // 설정에서 16000토큰까지 허용)이 이 상한을 모르므로, 그 구간에서는 수정 전과 같은 무음 절단이
+  // 남는다 — ai:done 표식으로 표면화한다(조용히 나빠지는 것이 이 라운드가 없애려는 실패다).
+  const inputOverflow = exceedsMaxContext(system, user);
   const body = JSON.stringify({
-    model: request.model || 'llama3.2',
+    model,
     system,
     prompt: user,
     stream: true,
@@ -499,7 +514,10 @@ async function generateOllama(
     // 못 잡는다 — 그쪽은 출력 절단 전용이다). 실측으로 Q&A 는 2%, 컬렉션 교차 요약은 35% 가
     // 잘리고 있었고, 컬렉션의 앞쪽은 **첫 번째 문서 블록**이라 모델이 보지도 못한 문서를
     // 인용하게 된다. 사유·버킷 선택 근거는 ollama-context.ts 참조.
-    options: { temperature: request.temperature ?? 0.3, num_ctx: resolveNumCtx(system, user) },
+    // QA32(A-1): 버킷만으로는 부족했다 — 경계가 청크 상한 **아래**라 실제 문서의 청크들이
+    // 양옆에 흩어져 재로드가 반복됐다(한국어 40쪽 실측 22청크 중 전환 8회 = 22.4초).
+    // 하강 전환은 이득이 없으므로 모델별로 올라간 창을 유지한다.
+    options: { temperature: request.temperature ?? 0.3, num_ctx: numCtx },
     keep_alive: OLLAMA_KEEP_ALIVE,
   });
 
@@ -512,7 +530,9 @@ async function generateOllama(
     // QA30(A-F5): Ollama 는 num_predict 를 보내지 않아 출력 상한이 없지만, 모델이 자체 컨텍스트
     // 상한에 걸리면 done_reason:'length' 로 끝난다 — 다른 세 프로바이더와 같은 자리에 채운다.
     detectTruncation: (parsed) => parsed.done === true && parsed.done_reason === 'length',
-    mapHttpError: (status, detail) => mapOllamaHttpError(status, detail, request.model || 'llama3.2'),
+    mapHttpError: (status, detail) => mapOllamaHttpError(status, detail, model),
+    inputOverflow,
+    idleTimeoutScale: numCtxTimeoutScale(numCtx),
   }, win);
 }
 
@@ -714,7 +734,12 @@ interface StreamChunk {
 /** ai:done 과 함께 렌더러로 가는 완료 메타 — 지금은 출력 상한 잘림 표식만 싣는다. */
 export interface StreamDoneMeta {
   /** 모델이 출력 상한(max_tokens/컨텍스트)에 걸려 **문장 중간에서** 끝났는가. */
-  truncated: true;
+  truncated?: true;
+  /**
+   * QA32(A-5): **입력**이 컨텍스트 상한을 넘어 앞부분이 잘린 채 평가됐는가.
+   * `truncated`(출력)와 원인·회복 수단이 다르다 — 이쪽은 청크 크기를 낮춰야 한다.
+   */
+  inputTruncated?: true;
 }
 
 /**
@@ -764,6 +789,18 @@ interface StreamConfig {
    * 새 프로바이더가 매퍼를 빠뜨리면 컴파일에서 걸리도록 required 로 올린다(열거 → 구조 종결).
    */
   mapHttpError: (statusCode: number, detail: string) => Error | null;
+  /**
+   * QA32(A-5): 보내는 프롬프트가 이미 컨텍스트 상한을 넘어 **앞부분이 잘린 채** 평가된다는
+   * 사실. `detectTruncation`(출력 절단)과 달리 응답에서는 알 수 없고 요청 시점에만 판정된다 —
+   * Ollama 는 이 경우에도 `done_reason: 'stop'` 으로 끝내기 때문이다.
+   */
+  inputOverflow?: boolean;
+  /**
+   * QA32(A-2): 무진전 감시견의 시간 상한에 곱할 배율. 첫 토큰까지의 대기는 프롬프트 평가
+   * 시간이고 그것은 `num_ctx` 에 비례하는데, 감시견은 토큰 수신만 진전으로 본다. 상한을
+   * 그대로 두면 창을 키운 만큼 **정상 스트림이 죽는다**(QA20 A-High 와 같은 클래스).
+   */
+  idleTimeoutScale?: number;
 }
 
 /**
@@ -914,7 +951,11 @@ function streamRequest(
 
         // idle timer를 상태코드 검증 이후에 생성하여, 에러 early return 시 타이머 누수 방지
         const MAX_RESPONSE_SIZE = 50 * 1024 * 1024; // 50MB
-        const IDLE_TIMEOUT_MS = 60000; // 60초 idle timeout — 데이터 수신 중단 감지
+        // 60초 idle timeout — 데이터 수신 중단 감지.
+        // QA32(A-2): 첫 토큰까지의 대기는 **프롬프트 평가 시간**이고 그것은 `num_ctx` 에 비례한다.
+        // 수정 전에는 Ollama 가 4096 에서 프롬프트를 잘라 평가량이 하드캡돼 있었는데 이제 최대
+        // 4배가 된다 — 상한을 그대로 두면 정상 스트림을 이 타이머가 죽인다.
+        const IDLE_TIMEOUT_MS = Math.round(60000 * (config.idleTimeoutScale ?? 1));
         let totalBytes = 0;
 
         let buffer = '';
@@ -1082,8 +1123,13 @@ function streamRequest(
           safeDeleteRequest();
           // QA30(A-F5): 정상 완료는 그대로 두고, 잘린 경우에만 메타를 덧붙인다(인자 개수가
           // 늘지 않으므로 기존 렌더러/preload 계약은 그대로 동작한다 — 표식만 추가).
-          if (truncated) {
-            const meta: StreamDoneMeta = { truncated: true };
+          // QA32(A-5): 입력 절단도 같은 자리에서 표면화한다 — 응답만 봐서는 알 수 없고
+          // 요청 시점 판정이라 config 로 받는다.
+          if (truncated || config.inputOverflow) {
+            const meta: StreamDoneMeta = {
+              ...(truncated ? { truncated: true } as const : {}),
+              ...(config.inputOverflow ? { inputTruncated: true } as const : {}),
+            };
             safeSend('ai:done', requestId, meta);
           } else {
             safeSend('ai:done', requestId);
@@ -1279,11 +1325,24 @@ async function callVision(
     case 'ollama': {
       validateOllamaUrl(ollamaBaseUrl);
       const url = new URL('/api/generate', ollamaBaseUrl);
+      // QA32(C-3): 요약 경로에만 num_ctx 를 배선했던 것의 형제. **OCR 은 문서 텍스트 자체를
+      // 만든다** — 여기서 잘린 결과가 extractedText/pageTexts 로 세션에 저장되고 요약·RAG·인용의
+      // 전 하류가 그 위에서 돈다(회수 수단은 재파싱뿐). 게다가 OCR_MAX_CHARS 주석이 "로컬은
+      // 출력 무제한" 을 전제로 그 문자 상한을 유일한 방어선으로 선언했는데, num_ctx=4096 은 그
+      // 전제를 깬다. 이미지 토큰(llava≈576, llama3.2-vision≈1600)까지 실리므로 프롬프트 기준
+      // 산정에 그만큼을 더해 잡는다.
+      const visionNumCtx = stickyNumCtx(
+        `vision:${model || 'llava'}`,
+        resolveNumCtx('', config.prompt + 'x'.repeat(VISION_IMAGE_TOKEN_BUDGET * 4)),
+      );
       const body = JSON.stringify({
         model: model || 'llava',
         prompt: config.prompt,
         images: [imageBase64],
         stream: false,
+        // 클라우드 3사는 config.maxTokens 로 출력 상한이 걸리는데 ollama 만 options 자체가 없어
+        // temperature 도 num_predict 도 안 보내고 있었다(프로바이더 파리티 갭 — QA32 B).
+        options: { temperature: 0.3, num_ctx: visionNumCtx, num_predict: config.maxTokens },
         keep_alive: OLLAMA_KEEP_ALIVE,
       });
       // QA30 후속(A-F2 형제): 요약 경로와 같은 매퍼를 Vision/OCR 에도 물린다. 없으면 모델

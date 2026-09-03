@@ -99,16 +99,79 @@ export function estimateTokens(text: string): number {
  * system 과 prompt 를 **함께** 센다 — Ollama 는 둘을 하나의 컨텍스트에 넣으므로 한쪽만 세면
  * 그 크기만큼이 그대로 절단분이 된다.
  */
-export function resolveNumCtx(system: string, prompt: string): number {
-  const needed = Math.ceil(
+function requiredTokens(system: string, prompt: string): number {
+  return Math.ceil(
     estimateTokens(system) * SAFETY_FACTOR
     + estimateTokens(prompt) * SAFETY_FACTOR
     + OUTPUT_RESERVE_TOKENS,
   );
+}
+
+export function resolveNumCtx(system: string, prompt: string): number {
+  const needed = requiredTokens(system, prompt);
   for (const bucket of CONTEXT_BUCKETS) {
     if (needed <= bucket) return bucket;
   }
   // 상한을 넘는 프롬프트는 여기서 막지 못한다(자르는 것은 호출부 예산의 몫이다).
   // 다만 메모리는 이 상한이 지킨다 — Ollama 는 모델 상한까지 그대로 늘려 준다.
   return MAX_NUM_CTX;
+}
+
+/**
+ * 모델별 "최근 사용 버킷" — 내려가지 않는다 (QA32 A-1).
+ *
+ * ## 왜 필요한가 (실측)
+ * 버킷을 쓴 근거는 "한 활동 안에서 값이 변하지 않는다" 였는데 **실제 문서에서 성립하지 않았다**.
+ * 요약 지시문(ko/full = 1,461자, 인용 규칙 블록이 그중 861자)을 포함하면 8192→16384 경계가
+ * 청크 **5,914자**에 오는데, chunker 의 청크 상한은 라벨 포함 **6,174자**다. 즉 경계가 상한
+ * 아래라 문단 길이가 고르지 않은 실제 PDF 의 청크들이 경계 양옆에 흩어진다. 한국어 40쪽 문서
+ * 실측에서 22청크 중 **전환 8회 = 재로드 8 × 2.8초 = 22.4초**가 났다.
+ *
+ * ## 왜 이 방식인가
+ * 전환의 대다수는 **하강**(큰 청크 뒤에 작은 청크)이고, 하강은 아무 이득이 없다 — 이미 그
+ * 크기로 로드된 모델을 굳이 작게 다시 로드하는 것뿐이다. 상승만 허용하면 한 문서 안에서
+ * 재로드는 **최대 버킷 수 − 1 회**로 묶인다.
+ *
+ * 메모리는 keep_alive 만료 시 Ollama 가 모델을 내리면서 함께 회수되므로 영구 점유가 아니다.
+ * 모델이 바뀌면 어차피 다른 모델이 로드되므로 키를 분리한다.
+ */
+const stickyByModel = new Map<string, number>();
+
+/** 하강 전환을 없앤 최종 `num_ctx`. 같은 모델에서 한 번 올라간 창은 내리지 않는다. */
+export function stickyNumCtx(model: string, computed: number): number {
+  const prev = stickyByModel.get(model) ?? 0;
+  const next = Math.max(prev, computed);
+  stickyByModel.set(model, next);
+  return next;
+}
+
+/** 테스트 전용 — 모듈 스코프 상태를 비운다(스위트 간 누수 방지). */
+export function __resetStickyNumCtxForTest(): void {
+  stickyByModel.clear();
+}
+
+/**
+ * 이 프롬프트가 상한을 **넘어서** 여전히 앞부분이 잘리는가 (QA32 A/C).
+ *
+ * `resolveNumCtx` 는 초과분을 조용히 클램프한다. 그런데 호출부 예산(`maxChunkSize` 는 설정에서
+ * 최대 16000토큰까지 허용된다)이 이 상한을 모르기 때문에, 라틴 문서 + 큰 청크 설정에서는
+ * **수정 전과 똑같이 앞부분부터 잘리는 구간**이 남는다. 그 사실을 호출부가 사용자에게 알릴 수
+ * 있도록 판정만 분리해 내보낸다 — 조용히 나빠지는 것이 이 라운드가 없애려는 바로 그 실패다.
+ */
+export function exceedsMaxContext(system: string, prompt: string): boolean {
+  return requiredTokens(system, prompt) > MAX_NUM_CTX;
+}
+
+/**
+ * 무진전 감시견의 시간 상한에 곱할 배율 (QA32 A-2).
+ *
+ * 감시견들은 **토큰 수신**만 진전 신호로 본다. 그런데 첫 토큰이 나오기까지는 프롬프트 평가가
+ * 끝나야 하고, 그 작업량은 `num_ctx` 에 비례한다. 수정 전에는 Ollama 가 4096 에서 프롬프트를
+ * 잘라 버려 평가량이 하드캡돼 있었는데, 이제 최대 4배가 된다 — 같은 120초 상한이면 **정상
+ * 스트림을 감시견이 죽인다**(QA20 A-High 가 이미지 분석 단계에서 겪은 것과 같은 클래스).
+ *
+ * 기준선(4096) 대비 비율을 그대로 쓴다. 상한을 늘린 만큼만 기다린다는 뜻이라 폭주 방어는 유지된다.
+ */
+export function numCtxTimeoutScale(numCtx: number): number {
+  return Math.max(1, numCtx / DEFAULT_NUM_CTX);
 }

@@ -32,6 +32,9 @@ import {
   parseVisionResponse,
   finalizeVisionResult,
 } from '../ai-service';
+import {
+  resolveNumCtx, estimateTokens, __resetStickyNumCtxForTest,
+} from '../../shared/ollama-context';
 
 function makeReq() {
   const req = new EventEmitter() as EventEmitter & {
@@ -83,6 +86,9 @@ function makeWin() {
 
 beforeEach(() => {
   cleanupAiService(); // activeRequests 잔여 정리 (테스트 격리)
+  // QA32(A-1): num_ctx 스티키는 모듈 스코프 상태다 — 비우지 않으면 앞 테스트가 올려 둔 창이
+  // 뒤 테스트로 새어 순서 의존을 만든다(QA22 가 실측한 그 클래스).
+  __resetStickyNumCtxForTest();
 });
 
 describe('checkAvailability', () => {
@@ -533,17 +539,150 @@ describe('generate → streamRequest (스트리밍)', () => {
       });
       return req;
     });
-    // 컬렉션 교차 요약 규모(12,000자) — 실측상 6,263토큰이라 4096 을 크게 넘는다.
-    const big = '운영체제는 프로세스와 스레드를 관리하며 CPU 스케줄링 정책에 따라 실행 순서를 정한다. '.repeat(300).slice(0, 12000);
+    // ⚠️ 크기와 **문자 구성**이 이 테스트의 성패를 가른다.
+    //  - 초판은 12,000자였는데 그 크기는 system 을 세든 안 세든 같은 버킷(16384)이라
+    //    `resolveNumCtx('', user)` 뮤테이션을 통과시켰다.
+    //  - 두 번째 시도(6,300자)는 문장에 `CPU`·공백·마침표가 섞여 실효 토큰이 3,933 로 낮아져
+    //    역시 양쪽 다 8192 였다. 추정식이 비-CJK 를 3.5자/토큰으로 보기 때문이다.
+    // 순수 한글 6,000자여야 system 포함 16384 / 제외 8192 로 갈린다.
+    const big = '운영체제는프로세스와스레드를관리하며스케줄링정책에따라실행순서를정한다'.repeat(200).slice(0, 6000);
     await generate('req-ctx', { text: big, type: 'full', provider: 'ollama', model: 'llama3', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never);
 
     const written = (sentReq as unknown as ReturnType<typeof makeReq>).write.mock.calls
       .map((c) => String(c[0])).join('');
-    const parsed = JSON.parse(written) as { options?: { num_ctx?: number; temperature?: number } };
+    const parsed = JSON.parse(written) as {
+      system?: string; prompt?: string; options?: { num_ctx?: number; temperature?: number };
+    };
     expect(parsed.options?.num_ctx, 'num_ctx 가 요청에 실리지 않는다 — 서버 기본값 4096 으로 잘린다').toBeDefined();
     expect(parsed.options!.num_ctx!).toBeGreaterThan(4096);
     // 기존 옵션을 밀어내지 않았는지도 함께 본다.
     expect(parsed.options?.temperature).toBeDefined();
+
+    // QA32(B·D-7): 초판은 "정의됨 + >4096" 만 봐서 **`num_ctx: 8192` 상수 고정**과
+    // **`resolveNumCtx('', user)`(system 미계수)** 두 뮤테이션을 모두 통과시켰다. 값이
+    // 실제로 보낸 프롬프트에서 나왔는지를 보려면 body 의 system·prompt 로 되짚어야 한다.
+    expect(parsed.options!.num_ctx!, 'num_ctx 가 보낸 프롬프트와 무관한 값이다')
+      .toBe(resolveNumCtx(parsed.system ?? '', parsed.prompt ?? ''));
+    // system 이 실제로 무게를 갖는 크기여야 위 단언이 system 미계수를 잡는다(공허 방지).
+    expect(estimateTokens(parsed.system ?? '')).toBeGreaterThan(300);
+  });
+
+  it('프롬프트가 커지면 num_ctx 도 올라간다 (상수 고정 검출)', async () => {
+    const send = async (text: string) => {
+      let req: ReturnType<typeof makeReq> | null = null;
+      M.httpRequest.mockImplementation((_opts: unknown, cb: (r: unknown) => void) => {
+        const r = makeReq();
+        req = r;
+        queueMicrotask(() => {
+          const res = makeRes({ statusCode: 200 });
+          cb(res);
+          queueMicrotask(() => { res.emit('data', Buffer.from('{"response":"x"}\n')); res.emit('end'); });
+        });
+        return r;
+      });
+      await generate(`rq-${text.length}`, { text, type: 'full', provider: 'ollama', model: 'llama3', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never);
+      const body = (req as unknown as ReturnType<typeof makeReq>).write.mock.calls.map((c) => String(c[0])).join('');
+      return (JSON.parse(body) as { options: { num_ctx: number } }).options.num_ctx;
+    };
+    // 작은 것 먼저 — sticky 는 상승만 하므로 순서가 중요하다.
+    const small = await send('짧은 문서');
+    const large = await send('운영체제는 프로세스와 스레드를 관리한다. '.repeat(400));
+    expect(large, `작은 요청 ${small} / 큰 요청 ${large} — 값이 프롬프트를 따라가지 않는다`)
+      .toBeGreaterThan(small);
+  });
+
+  /**
+   * QA32(A-2): 첫 토큰까지의 대기는 프롬프트 평가 시간이고 그것은 num_ctx 에 비례하는데,
+   * idle 타이머는 **토큰 수신만** 진전 신호로 본다. 상한을 그대로 두면 창을 키운 만큼
+   * 정상 스트림이 죽는다(QA20 A-High 와 같은 클래스). 큰 프롬프트에서 기준선 60초가 지나도
+   * 살아 있어야 한다.
+   */
+  it('창이 커지면 idle 상한도 함께 늘어난다 (60초에 정상 스트림이 죽지 않는다)', async () => {
+    vi.useFakeTimers();
+    try {
+      M.httpRequest.mockImplementation((_opts: unknown, cb: (r: unknown) => void) => {
+        const req = makeReq();
+        queueMicrotask(() => { cb(makeRes({ statusCode: 200 })); }); // 헤더만, 데이터 없음
+        return req;
+      });
+      const win = makeWin();
+      const big = '운영체제는 프로세스와 스레드를 관리한다. '.repeat(400);
+      const p = generate('rq-idle', { text: big, type: 'full', provider: 'ollama', model: 'llama3', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never);
+      const settled = p.then(() => 'ok').catch(() => 'failed');
+
+      // 기준선(60초)을 넘겨도 아직 살아 있어야 한다 — 이 프롬프트는 창이 4배로 열린다.
+      await vi.advanceTimersByTimeAsync(70_000);
+      expect(await Promise.race([settled, Promise.resolve('pending')]),
+        'idle 상한이 기준선 그대로다 — 정상 스트림을 감시견이 죽인다').toBe('pending');
+
+      // 스케일된 상한을 넘기면 정상적으로 실패한다(폭주 방어는 유지되어야 한다).
+      await vi.advanceTimersByTimeAsync(200_000);
+      expect(await settled).toBe('failed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // QA32(A-5): 상한을 넘는 프롬프트는 클램프될 뿐 **여전히 앞부분이 잘린다**. 설정에서
+  // maxChunkSize 를 올리면 도달하는 구간이라, 조용히 두면 원래 결함이 그대로 부활한다.
+  it('상한을 넘는 프롬프트는 ai:done 에 inputTruncated 를 싣는다', async () => {
+    M.httpRequest.mockImplementation((_opts: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => { res.emit('data', Buffer.from('{"response":"x"}\n')); res.emit('end'); });
+      });
+      return req;
+    });
+    const win = makeWin();
+    const huge = '운영체제는 프로세스와 스레드를 관리한다. '.repeat(2000); // 상한 밖
+    await generate('rq-of', { text: huge, type: 'full', provider: 'ollama', model: 'llama3', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never);
+
+    const doneCall = win.webContents.send.mock.calls.find((c) => c[0] === 'ai:done');
+    expect(doneCall, 'ai:done 이 오지 않았다').toBeDefined();
+    expect(doneCall![2], '상한 초과인데 표식이 없다 — 사용자는 잘린 줄 모른다')
+      .toMatchObject({ inputTruncated: true });
+  });
+
+  it('상한 안이면 inputTruncated 를 싣지 않는다 (짝 — 늘 켜지면 위 단언이 공허하다)', async () => {
+    M.httpRequest.mockImplementation((_opts: unknown, cb: (r: unknown) => void) => {
+      const req = makeReq();
+      queueMicrotask(() => {
+        const res = makeRes({ statusCode: 200 });
+        cb(res);
+        queueMicrotask(() => { res.emit('data', Buffer.from('{"response":"x"}\n')); res.emit('end'); });
+      });
+      return req;
+    });
+    const win = makeWin();
+    await generate('rq-ok', { text: '짧은 문서', type: 'full', provider: 'ollama', model: 'llama3', ollamaBaseUrl: 'http://localhost:11434' }, undefined, win as never);
+    const doneCall = win.webContents.send.mock.calls.find((c) => c[0] === 'ai:done');
+    expect(doneCall![2]).toBeUndefined();
+  });
+
+  // QA32(A-1): 하강 전환은 이득 없이 2.8초 재로드만 만든다. 큰 요청 뒤의 작은 요청은
+  // 창을 유지해야 한다 — 실측에서 한국어 40쪽 문서의 22청크가 전환 8회를 냈다.
+  it('큰 요청 뒤의 작은 요청은 창을 내리지 않는다 (재로드 방지)', async () => {
+    const send = async (text: string) => {
+      let req: ReturnType<typeof makeReq> | null = null;
+      M.httpRequest.mockImplementation((_opts: unknown, cb: (r: unknown) => void) => {
+        const r = makeReq();
+        req = r;
+        queueMicrotask(() => {
+          const res = makeRes({ statusCode: 200 });
+          cb(res);
+          queueMicrotask(() => { res.emit('data', Buffer.from('{"response":"x"}\n')); res.emit('end'); });
+        });
+        return r;
+      });
+      await generate(`rs-${text.length}`, { text, type: 'full', provider: 'ollama', model: 'sticky-model', ollamaBaseUrl: 'http://localhost:11434' }, undefined, makeWin() as never);
+      const body = (req as unknown as ReturnType<typeof makeReq>).write.mock.calls.map((c) => String(c[0])).join('');
+      return (JSON.parse(body) as { options: { num_ctx: number } }).options.num_ctx;
+    };
+    const big = await send('운영체제는 프로세스와 스레드를 관리한다. '.repeat(400));
+    const small = await send('짧은 문서');
+    expect(small, '창이 내려갔다 — 청크마다 모델이 재로드된다').toBe(big);
   });
 
   it('claude SSE 401 → API_KEY_INVALID', async () => {

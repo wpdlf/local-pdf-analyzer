@@ -1,5 +1,6 @@
 import type { SummaryType, AppSettings } from '../types';
 import { t, translateMainError } from './i18n';
+import { numCtxTimeoutScale, resolveNumCtx } from '../../shared/ollama-context';
 
 export class AiClient {
   private settings: AppSettings;
@@ -52,7 +53,18 @@ export class AiClient {
     // try 진입 전에 예외가 발생해도 unsub이 보장되도록 함.
     let unsubToken: (() => void) | null = null;
     let unsubDone: (() => void) | null = null;
-    const IPC_TIMEOUT_MS = 120000; // 2분 — IPC 연결 해제 감지
+    // 2분 — IPC 연결 해제 감지.
+    // QA32(A-2): 이 타이머는 **토큰 수신**만 진전 신호로 본다(아래 resetIpcTimer). 그런데 첫
+    // 토큰까지의 대기는 프롬프트 평가 시간이고 그것은 num_ctx 에 비례한다. 수정 전에는 Ollama 가
+    // 4096 에서 프롬프트를 잘라 평가량이 하드캡돼 있었으므로 2분이 충분했지만, 이제 최대 4배다 —
+    // 그대로 두면 정상 스트림을 감시견이 죽인다(QA20 A-High 와 같은 클래스).
+    //
+    // 여기서는 main 이 실제로 쓸 값을 정확히 알 수 없다(지시문은 main 의 buildPrompt 가 붙인다).
+    // 배율만 필요하므로 본문 기준 근사로 충분하고, **근사가 낮게 나와도** main 쪽 60초 타이머가
+    // 같은 배율로 함께 늘어나 실질 방어선은 유지된다.
+    const IPC_TIMEOUT_MS = Math.round(
+      120000 * numCtxTimeoutScale(resolveNumCtx('', text)),
+    );
     let ipcTimer: ReturnType<typeof setTimeout> | null = null;
     // QA18(C-MED): IPC 타임아웃으로 종료됐는지. done 과 별개로 추적해야 finally 의 abort 가
     // 도달한다(타임아웃 콜백이 done=true 를 세팅하므로 `!done` 만으로는 영원히 거짓).
