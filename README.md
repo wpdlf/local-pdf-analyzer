@@ -106,6 +106,7 @@ gh attestation verify ./Local-PDF-Analyzer-Setup-x.x.x.exe --repo wpdlf/local-pd
 - Every key fact in summaries and Q&A answers gets an automatic **`[p.12]`-style page citation**
 - **Click** a citation to open the **PDF viewer panel** on the right at that exact page — verify potential AI hallucinations with one click
 - **Outline navigation** — when the PDF carries a built-in table of contents (bookmarks), a ☰ button in the viewer opens an outline sidebar; click any heading to jump to its page (re-clicking the current section re-scrolls to it)
+- **Zoom** — `−` / `+` buttons in the viewer header (25% steps), `Ctrl`+mouse wheel (10% steps), or `Ctrl`+`=` / `Ctrl`+`-` / `Ctrl`+`0` while the viewer is open; 50–300%, click the percentage (or `Ctrl`+`0`) to return to fit-to-width. The page you were reading stays in place when the scale changes, and the level is remembered across restarts — useful for small-print papers and scanned documents
 - Drag the center divider (or use the keyboard: Tab focus then `←`/`→`, `Home`/`End`) to adjust the split between 20–80%; the ratio is saved across restarts
 - Close the panel with `ESC` or the ✕ button
 
@@ -189,6 +190,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Search across all saved documents — keyword search over page text, summaries, and filenames with highlighted snippets and one-click open
 - Multi-document tabs — keep several PDFs open and switch between them; only the active document's heavy state stays in memory (instant restore on switch). Collection mode searches across the open documents in a single question, with source-attributed citations; save a set as a named collection and generate unified/comparison summaries across it
 - PDF outline navigation — documents with a built-in table of contents get a collapsible outline sidebar in the viewer for one-click jump to any section
+- Viewer zoom — 50–300% via header buttons, `Ctrl`+wheel, or `Ctrl`+`=`/`-`/`0`; keeps your place while rescaling and remembers the level across restarts
 - Summary mind-map — a Text/Mind-map toggle renders the summary's heading hierarchy as a collapsible tree; each node carries its page citation as a `[p.N]` badge for one-click jump to the source page (keyboard- and screen-reader-friendly, no extra dependencies)
 - Mathematical notation — formulas are typeset in summaries, Q&A answers, and exported PDFs via the browser engine's built-in mathematical layout, so no webfonts are downloaded and screen readers read an equation's structure rather than its source. Currency amounts such as `$100` are never mistaken for mathematics
 - Dark mode, instant Korean/English switching — the UI language is auto-detected from your OS locale on first run, with a toggle on the setup screen; screen-reader and keyboard accessibility
@@ -202,7 +204,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 - Self-updating — new versions are detected on startup and installed with one click; downloads never start without consent, and in-progress work is saved before the app restarts
 
 **Quality assurance**
-- 2470 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
+- 2510 unit tests + Playwright E2E + CI quality gates, plus a 4-agent parallel QA round on every release
 - Build integrity — installer SHA-256 hashes + Sigstore attestation published automatically
 - Detailed improvement/fix history: [docs/HISTORY.md](docs/HISTORY.md) (Korean)
 
@@ -270,7 +272,7 @@ For image-based/scanned PDFs where text extraction fails, Vision AI recognizes t
 | Markdown · math | react-markdown + remark-gfm; KaTeX in MathML-only output (no webfonts, no CSP relaxation) — shared by the on-screen renderer and PDF export |
 | Build | electron-vite + electron-builder (Windows NSIS — macOS DMG paused until notarization credentials are in place) |
 | Auto-update | electron-updater (GitHub Releases feed) — check on startup, download and install only on user consent, renderer flush before install |
-| Testing | Vitest, 2470 unit tests / 118 files (renderer·shared 1579 + main 891) + Playwright E2E (10 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (82/75/81/85) |
+| Testing | Vitest, 2510 unit tests / 120 files (renderer·shared 1619 + main 891) + Playwright E2E (10 CI-deterministic tests) + `tsc --noEmit` type check + CI coverage gates (82/75/81/85) |
 | i18n | In-house (i18n.ts) — 400+ keys, useT() hook, template substitution |
 | API key security | Electron safeStorage (OS keychain encryption), decrypted only in the Main process |
 | Shared constants | `src/shared/constants.ts` — shared between Main/Renderer (prevents drift of MAX_PDF_SIZE etc.) |
@@ -323,7 +325,7 @@ src/
     │   ├── use-qa.ts          # Q&A chat hook (RAG semantic search + keyword fallback, history)
     │   ├── vector-store.ts    # In-memory vector store (cosine similarity, dimension checks)
     │   ├── store.ts           # Zustand state (summary + Q&A + RAG index)
-    │   └── __tests__/         # Unit tests (2470, 118 files)
+    │   └── __tests__/         # Unit tests (2510, 120 files)
     └── types/
         └── index.ts       # Type definitions + provider model constants
 ```
@@ -518,7 +520,7 @@ The threat model and mitigations currently in place. For the detailed per-versio
 
 ## Quality Assurance
 
-- **2470 unit tests / 118 files** — renderer·shared 1579 + main 891. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 18 components, the app shell itself, and core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
+- **2510 unit tests / 120 files** — renderer·shared 1619 + main 891. The main process is behavior-tested through an electron mocking harness covering IPC handlers, OllamaManager, the API key store, ai-service, and cross-session search; the renderer/preload layer (all 18 components, the app shell itself, and core libraries such as use-summarize/use-session/pdf-parser/safe-markdown and the preload bridge) is behavior-tested via happy-dom
 - **Playwright E2E** — 10 CI-deterministic tests driving the real Electron build (cold-start wizard, PDF parse, session/settings persistence across restart, upload-error paths, and the browser engine's mathematical layout that formula rendering depends on), all AI-independent; multi-tab restore and summarize/Q&A/collection flows are covered by local-only Ollama specs
 - **CI gates** — `tsc --noEmit` (strict, incl. a separate e2e type-check project), enforced coverage thresholds (81/74/81/84), lockfile version sync check, tag ↔ `package.json` version match, two blocking `npm audit` gates (the whole production tree, plus a lockfile-closure check that covers the transitive dependencies of everything actually shipped), a build-time check that the math chunk never leaks into the eager bundle, Node 22/24 matrix plus a Windows unit-test leg
 - **Packaged-app gate (release only)** — the release workflow launches the actual packaged binary before uploading any asset, and verifies that the renderer boots and parses a real PDF **from inside the asar alone**, plus an asar size ceiling. Every other E2E spec runs the source tree's `out/`, where the repo's `node_modules` is still visible — so none of them can catch a packaging regression

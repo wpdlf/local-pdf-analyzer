@@ -16,6 +16,7 @@ import { DEFAULT_SETTINGS } from '../types';
 import { VectorStore } from './vector-store';
 import { sanitizeErrorPath } from './error-sanitize';
 import { persistCurrentSession } from './use-session';
+import { ZOOM_MIN, ZOOM_MAX, clampZoom } from './viewer-zoom';
 
 // 설정 저장 IPC 디바운스 타이머
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -48,13 +49,17 @@ function clampRatio(ratio: number): number {
   return Math.min(0.8, Math.max(0.2, ratio));
 }
 
-/** 저장된 비율을 읽는다. 없거나 범위 밖이면 fallback(= 균등 분할). */
-function readStoredRatio(key: string, fallback: number): number {
+/**
+ * 저장된 비율을 읽는다. 없거나 범위 밖이면 fallback(= 균등 분할).
+ * v1.6.0: 범위를 인자로 — 뷰어 배율(0.5~3)이 같은 경로를 쓴다. 패널 비율의 0.2~0.8 을 그대로
+ * 타면 저장된 200% 가 "범위 밖" 으로 버려져 재시작마다 100% 로 돌아간다.
+ */
+function readStoredRatio(key: string, fallback: number, min = 0.2, max = 0.8): number {
   try {
     const stored = localStorage.getItem(key);
     if (stored) {
       const v = Number.parseFloat(stored);
-      if (Number.isFinite(v) && v >= 0.2 && v <= 0.8) return v;
+      if (Number.isFinite(v) && v >= min && v <= max) return v;
     }
   } catch { /* 접근 실패 무시 */ }
   return fallback;
@@ -447,6 +452,13 @@ interface AppState {
    */
   summarySplitRatio: number;
   setSummarySplitRatio: (ratio: number) => void;
+  /**
+   * v1.6.0: PdfViewer 수동 배율(0.5~3, 기본 1 = 종전 자동 fit). 앱 전체에 하나이고 재시작 후
+   * 유지 — 스캔 PDF 를 자주 보는 사용자가 한 번 150% 로 두면 인용 버튼을 누를 때마다 다시
+   * 확대할 필요가 없다. 영속화는 패널 비율과 같은 persistRatio 경로(디바운스·종료 flush 편입).
+   */
+  pdfViewerZoom: number;
+  setPdfViewerZoom: (zoom: number) => void;
   // 원본 PDF 바이트 (PdfViewer 가 lazy 마운트 시 참조).
   // document 와 라이프사이클 동일 — setDocument(null) / 새 문서 로드 시 교체.
   pdfBytes: Uint8Array | null;
@@ -843,6 +855,12 @@ export const useAppStore = create<AppState>((set) => ({
     const clamped = clampRatio(ratio);
     set({ summarySplitRatio: clamped });
     persistRatio('summarySplitRatio', clamped);
+  },
+  pdfViewerZoom: readStoredRatio('pdfViewerZoom', 1, ZOOM_MIN, ZOOM_MAX),
+  setPdfViewerZoom: (zoom) => {
+    const clamped = clampZoom(zoom);
+    set({ pdfViewerZoom: clamped });
+    persistRatio('pdfViewerZoom', clamped);
   },
 
   // 설정

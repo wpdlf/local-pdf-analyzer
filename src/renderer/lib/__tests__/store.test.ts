@@ -245,6 +245,60 @@ describe('citationPanelWidth clamp + persist', () => {
   });
 });
 
+// v1.6.0: 뷰어 배율 — 앱 전체 하나, 재시작 후 유지(persistRatio 경로에 편입).
+describe('pdfViewerZoom clamp + persist', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('기본값은 1(화면 맞춤)', () => {
+    expect(useAppStore.getState().pdfViewerZoom).toBe(1);
+  });
+
+  it('0.5–3 범위로 clamp 되고 비정상 값은 1 로', () => {
+    const s = useAppStore.getState();
+    s.setPdfViewerZoom(0.1);
+    expect(useAppStore.getState().pdfViewerZoom).toBe(0.5);
+    s.setPdfViewerZoom(7);
+    expect(useAppStore.getState().pdfViewerZoom).toBe(3);
+    s.setPdfViewerZoom(Number.NaN);
+    expect(useAppStore.getState().pdfViewerZoom).toBe(1);
+    s.setPdfViewerZoom(1.5);
+    expect(useAppStore.getState().pdfViewerZoom).toBe(1.5);
+  });
+
+  it('200ms 디바운스 후 localStorage 에 저장된다 (마지막 값만)', () => {
+    const s = useAppStore.getState();
+    s.setPdfViewerZoom(1.25);
+    s.setPdfViewerZoom(1.5);
+    expect(lsStore['pdfViewerZoom']).toBeUndefined();
+    vi.advanceTimersByTime(200);
+    expect(lsStore['pdfViewerZoom']).toBe('1.5');
+  });
+
+  it('디바운스 미발화 상태에서 flush → 즉시 저장 (종료 경로 편입)', () => {
+    useAppStore.getState().setPdfViewerZoom(2);
+    expect(lsStore['pdfViewerZoom']).toBeUndefined();
+    flushPendingWrites();
+    expect(lsStore['pdfViewerZoom']).toBe('2');
+  });
+
+  // 패널 비율 복원은 0.2~0.8 범위 검사를 거치는데 배율은 0.5~3 이다 — 그 검사를 그대로 타면
+  // 200% 가 "범위 밖" 으로 버려져 재시작마다 100% 로 돌아간다(선택된 요구: 재시작 후 유지).
+  it('모듈 초기화 시 저장된 배율(2)을 복원한다 — 패널 비율의 0.2~0.8 검사에 걸리지 않는다', async () => {
+    lsStore['pdfViewerZoom'] = '2';
+    vi.resetModules();
+    const fresh = await import('../store');
+    expect(fresh.useAppStore.getState().pdfViewerZoom).toBe(2);
+  });
+
+  it('저장값이 손상돼 있으면(범위 밖) 1 로 복원한다', async () => {
+    lsStore['pdfViewerZoom'] = '99';
+    vi.resetModules();
+    const fresh = await import('../store');
+    expect(fresh.useAppStore.getState().pdfViewerZoom).toBe(1);
+  });
+});
+
 // v0.18.6 D1 — notice 채널이 error 와 분리되어 있어 setError(null) 이 notice 를 클리어하지 않음.
 describe('notice channel (D1)', () => {
   it('setError(null) 은 notice 를 건드리지 않는다', () => {

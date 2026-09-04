@@ -7,6 +7,10 @@ import { useT } from '../lib/i18n';
 import { loadPdfjs, isReReadablePath } from '../lib/pdf-parser';
 import { restoreCitationFocus } from '../lib/citation-focus';
 import { extractOutline, type OutlineNode } from '../lib/pdf-outline';
+import {
+  ZOOM_MIN, ZOOM_MAX, ZOOM_STEP_BUTTON, ZOOM_STEP_WHEEL,
+  stepZoom, composeRenderScale, formatZoomPercent, findScrollAnchor, scrollTopForAnchor,
+} from '../lib/viewer-zoom';
 
 // pdfjs-dist 는 지연 로딩(성능): 정적 import 를 제거해 콜드스타트 eager 번들에서 제외하고,
 // 문서 로드 시 pdf-parser 의 loadPdfjs() 로 동적 로드한다(워커 설정 단일 출처). 로더가 워커를
@@ -64,8 +68,23 @@ interface PdfViewerProps {
   onClose: () => void;
 }
 
-const MAX_RENDER_SCALE = 2.0; // 고해상도 디스플레이 대응 상한
-const MIN_RENDER_SCALE = 0.6; // 너무 작은 패널에서도 가독성 유지
+// 자동 fit 의 0.6~2.0 clamp 와 배율 합성은 lib/viewer-zoom.ts(composeRenderScale) 로 이동(v1.6.0).
+
+/**
+ * 편집 요소에 포커스가 있는가 — window 레벨 단축키(Escape 닫기·Ctrl+배율)가 입력을 가로채지 않도록.
+ * v0.18.5 L1: Shadow DOM 내부에 포커스가 있을 때 `document.activeElement` 는 shadow 호스트를
+ * 반환하므로 shadowRoot.activeElement 를 재귀적으로 따라가 실제 포커스 element 를 찾는다.
+ * (현재 코드에 shadow DOM 위젯은 없으나, 서드파티/네이티브 위젯 도입 대비 future-proof.)
+ */
+function isEditableFocused(): boolean {
+  let active = document.activeElement as Element | null;
+  while (active?.shadowRoot?.activeElement) {
+    active = active.shadowRoot.activeElement;
+  }
+  if (!active) return false;
+  const tag = active.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (active as HTMLElement).isContentEditable;
+}
 // 렌더 lookahead 윈도우: 뷰포트 위/아래 1배 분 미리 렌더.
 const RENDER_ROOT_MARGIN = '100% 0px';
 // canvas 유지(LRU) 윈도우: 뷰포트 위/아래 2배 분까지 canvas 보존, 그 밖은 placeholder 로 해제.
@@ -111,6 +130,12 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
   };
   // 마지막으로 렌더된 width — 미세한 변동(스크롤바 등)에 반복 재렌더 방지
   const lastRenderedWidthRef = useRef<number>(0);
+  // v1.6.0 수동 배율 — 앱 전체 하나(store, 재시작 후 유지). 렌더 effect 의존성이라 바뀌면 재렌더.
+  const zoom = useAppStore((s) => s.pdfViewerZoom);
+  const setZoom = useAppStore((s) => s.setPdfViewerZoom);
+  // 직전 렌더의 배율 — 배율 변경(비율≠1)과 폭 변경·문서 교체(비율 1)를 정리 단계에서 구분한다.
+  const lastRenderedZoomRef = useRef<number>(zoom);
+  const zoomBy = (direction: 1 | -1, step: number) => setZoom(stepZoom(useAppStore.getState().pdfViewerZoom, direction, step));
 
   // 1. pdfjs 로 문서 로드 (pdfBytes 가 바뀔 때마다 재실행)
   useEffect(() => {
@@ -248,8 +273,20 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
     // 시 totalPages 가 같으면 React 가 wrapper DOM 을 재사용해 이전 문서의 canvas 가 남아
     // 새 문서에 표시되는 회귀 발생. effect 진입 시점에 무조건 정리하면 회귀 차단 + 비용 미미.
     // (canvas 재할당 비용은 어차피 즉시 enqueue 로 다시 발생하므로 사실상 동일.)
+    // v1.6.0 배율 변경 시 스크롤 위치 보존. 정리 루프가 높이를 전부 비우면 슬롯이 200px placeholder
+    // 로 무너져 보던 페이지가 튄다. 배율만 바뀐 경우(폭 동일)는 모든 슬롯 높이가 정확히 zoomRatio
+    // 배가 되므로 — 정리 직전에 "뷰포트 중앙의 페이지 + 페이지 안 상대 위치" 를 잡고, 높이를
+    // 비례 유지한 뒤 같은 지점으로 scrollTop 을 되돌린다. 폭 변경·문서 교체(비율 1)는 종전대로
+    // 높이를 비운다(QA22: stale 높이 고착 방지).
+    const zoomRatio = zoom / lastRenderedZoomRef.current;
+    lastRenderedZoomRef.current = zoom;
+    const preserveScroll = zoomRatio !== 1 && renderedPagesRef.current.size > 0;
+    const slotRects = () => pageRefs.current.map((w) => ({ top: w?.offsetTop ?? 0, height: w?.offsetHeight ?? 0 }));
+    const anchor = preserveScroll ? findScrollAnchor(container.scrollTop, container.clientHeight, slotRects()) : null;
     for (const wrapper of pageRefs.current) {
       if (wrapper) {
+        // 배율 변경이면 비운 자리의 높이를 비례 유지 — 옛 실높이(style.height) 또는 해제 시 보존한 minHeight.
+        const prevHeight = preserveScroll ? Number.parseFloat(wrapper.style.height || wrapper.style.minHeight || '') : Number.NaN;
         // canvas 뿐 아니라 이전 렌더에서 박힌 "페이지 렌더링 실패" 에러 placeholder 까지 모두 제거.
         // (canvas 만 지우면 문서 교체 후에도 에러 div 가 새 문서 위에 잔존하던 문제 — 빨간 문구 고착)
         wrapper.replaceChildren();
@@ -263,10 +300,14 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
         //    폭을 크게 줄여도 빈 여백이 남고 스크롤 총길이·인용 점프 오프셋이 어긋난다
         //  - 같은 페이지 수의 다른 문서 로드: React 가 wrapper DOM 을 재사용하므로 **이전 문서**의
         //    페이지 높이가 새 문서 placeholder 에 남는다(L246 canvas 재사용 회귀와 동형)
-        wrapper.style.minHeight = '';
+        wrapper.style.minHeight = Number.isFinite(prevHeight) ? `${prevHeight * zoomRatio}px` : '';
       }
     }
     renderedPagesRef.current.clear();
+    if (anchor) {
+      const restored = scrollTopForAnchor(anchor, slotRects(), container.clientHeight);
+      if (restored !== null) container.scrollTop = restored;
+    }
 
     // ─── 단일 렌더 큐 ───
     // pdfjs worker 는 단일 스레드이므로 N개 페이지 병렬 요청은 결국 worker 큐로 직렬화된다.
@@ -328,7 +369,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
             if (cancelled) { pumping = false; return; }
             const naturalViewport = page.getViewport({ scale: 1 });
             const fitScale = availableWidth / naturalViewport.width;
-            const scale = Math.min(MAX_RENDER_SCALE, Math.max(MIN_RENDER_SCALE, fitScale));
+            const scale = composeRenderScale(fitScale, zoom);
             const viewport = page.getViewport({ scale });
             const canvas = document.createElement('canvas');
             canvas.width = Math.round(viewport.width);
@@ -472,7 +513,43 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
         currentTask = null;
       }
     };
-  }, [loadState, totalPages, renderVersion]);
+  }, [loadState, totalPages, renderVersion, zoom]);
+
+  // v1.6.0 Ctrl+휠 배율. React 의 onWheel 은 passive 로 등록돼 preventDefault 가 먹지 않으므로
+  // 네이티브 리스너(passive:false). preventDefault 는 Chromium 의 페이지 줌(앱 전체 확대)으로
+  // 새는 것을 막는다. Ctrl 없는 휠은 손대지 않는다(스크롤).
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const handler = (e: WheelEvent) => {
+      if (!e.ctrlKey || e.deltaY === 0) return;
+      e.preventDefault();
+      zoomBy(e.deltaY < 0 ? 1 : -1, ZOOM_STEP_WHEEL);
+    };
+    container.addEventListener('wheel', handler, { passive: false });
+    return () => container.removeEventListener('wheel', handler);
+    // zoomBy 는 store setter 만 닫아 두므로 안정 — 의존성 불필요.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // v1.6.0 Ctrl+(=|+|-|0) — 뷰어가 열려 있는 동안 window 레벨(Escape 와 같은 방식). 뷰어 영역
+  // 핸들러로 두면 인용 버튼을 누른 직후(포커스가 요약 쪽)엔 키가 닿지 않는다(E2E 실측). 편집
+  // 요소 포커스 중에는 무시 — 입력창의 Ctrl+- 같은 조합을 가로채지 않는다.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.metaKey) return;
+      if (isEditableFocused()) return;
+      if (e.key === '=' || e.key === '+') zoomBy(1, ZOOM_STEP_BUTTON);
+      else if (e.key === '-') zoomBy(-1, ZOOM_STEP_BUTTON);
+      else if (e.key === '0') setZoom(1);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+    // zoomBy/setZoom 은 store setter 만 닫아 두므로 안정.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 3. targetPage 변경 시 해당 페이지로 scrollIntoView
   //    해당 페이지가 아직 렌더 안됐으면 폴링으로 대기 (최대 3초)
@@ -531,18 +608,7 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      // Shadow DOM walk — shadowRoot 이 있으면 내부 activeElement 로 내려간다.
-      let active = document.activeElement as Element | null;
-      while (active?.shadowRoot?.activeElement) {
-        active = active.shadowRoot.activeElement;
-      }
-      if (active) {
-        const tag = active.tagName;
-        const editable = (active as HTMLElement).isContentEditable;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || editable) {
-          return;
-        }
-      }
+      if (isEditableFocused()) return;
       e.preventDefault();
       onClose();
     };
@@ -577,14 +643,47 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
             )}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm px-2 py-1 shrink-0"
-          aria-label={t('pdfviewer.close')}
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          {/* v1.6.0 배율 — 버튼의 접근성 이름은 동작(확대/축소/맞춤)이고, 현재 배율은 아래 status 가 통지한다. */}
+          <button
+            type="button"
+            onClick={() => zoomBy(-1, ZOOM_STEP_BUTTON)}
+            disabled={zoom <= ZOOM_MIN}
+            aria-label={t('pdfviewer.zoomOut')}
+            title={`${t('pdfviewer.zoomOut')} (Ctrl+-)`}
+            className="inline-flex items-center justify-center min-w-[24px] min-h-[24px] text-sm rounded text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-40 disabled:hover:text-gray-500"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            onClick={() => setZoom(1)}
+            aria-label={t('pdfviewer.zoomReset')}
+            title={`${t('pdfviewer.zoomReset')} (Ctrl+0)`}
+            className="min-w-[44px] min-h-[24px] text-xs tabular-nums rounded text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100"
+          >
+            {formatZoomPercent(zoom)}
+          </button>
+          <button
+            type="button"
+            onClick={() => zoomBy(1, ZOOM_STEP_BUTTON)}
+            disabled={zoom >= ZOOM_MAX}
+            aria-label={t('pdfviewer.zoomIn')}
+            title={`${t('pdfviewer.zoomIn')} (Ctrl++)`}
+            className="inline-flex items-center justify-center min-w-[24px] min-h-[24px] text-sm rounded text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-40 disabled:hover:text-gray-500"
+          >
+            +
+          </button>
+          <span role="status" className="sr-only">{t('pdfviewer.zoomLevel', { percent: formatZoomPercent(zoom) })}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-sm px-2 py-1 ml-1"
+            aria-label={t('pdfviewer.close')}
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       {/* 본문 — 목차 사이드바(옵션) + 페이지 스크롤 영역 */}
@@ -602,7 +701,12 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
         role="region"
         aria-label={t('pdfviewer.title')}
         aria-busy={loadState === 'loading'}
-        className="flex-1 min-h-0 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-2"
+        data-testid="pdfviewer-scroll"
+        // scrollbar-gutter: stable — fit scale 은 clientWidth 로 계산하는데, 첫 렌더(로딩 상태)엔 세로
+        // 스크롤바가 없어 15px 넓게 측정되고 페이지가 그려진 뒤 생긴 스크롤바는 50px 미만 변동이라
+        // 재렌더를 안 한다 → 100% 인데 가로 스크롤바가 생기고 오른쪽이 잘렸다(v1.6.0 실기기 확인).
+        // 배율이 가로 스크롤을 정식 동작으로 만드니 이 오탐을 없앤다.
+        className="flex-1 min-h-0 overflow-auto [scrollbar-gutter:stable] bg-gray-100 dark:bg-gray-900 p-2"
       >
         {loadState === 'loading' && (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-500 dark:text-gray-400">
@@ -623,7 +727,10 @@ export function PdfViewer({ pdfBytes, targetPage, jumpNonce = 0, onClose }: PdfV
           </div>
         )}
         {loadState === 'loaded' && totalPages !== null && (
-          <div className="flex flex-col items-center gap-3">
+          // v1.6.0: 100% 초과 시 페이지가 컨테이너보다 넓다. items-center 열이 넘치면 왼쪽이 잘려
+          // 스크롤로도 닿을 수 없으므로(flex 중앙정렬 오버플로) 열을 내용 폭(w-max)으로 키우고
+          // 최소 폭은 컨테이너(min-w-full)로 — 좁을 땐 종전처럼 가운데, 넓을 땐 가로 스크롤.
+          <div className="flex flex-col items-center gap-3 w-max min-w-full">
             {Array.from({ length: totalPages }, (_, i) => (
               <div
                 key={i}

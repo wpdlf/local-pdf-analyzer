@@ -40,6 +40,7 @@ const OLLAMA_GATED = [
   'collection.spec.ts', // 교차문서 Q&A (실 LLM + 임베딩 필요)
   'mindmap.spec.ts', // 실 요약 → 마인드맵 토글 (실 LLM 생성 필요)
   'tabs.spec.ts', // 실 인덱싱 중 탭 전환 (실 임베딩 필요)
+  'viewer-zoom.spec.ts', // 실 요약의 인용 클릭 → 뷰어 확대·축소 (실 LLM 생성 + 실 canvas/페이지 줌 관측 필요)
 ];
 
 function specFiles(): string[] {
